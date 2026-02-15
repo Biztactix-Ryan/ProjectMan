@@ -1,0 +1,95 @@
+{% extends "base.html" %}
+{% block title %}Task — ProjectMan{% endblock %}
+
+{% block content %}
+<div class="breadcrumb"><a href="/board">Board</a> <span>/</span> {{ task_id }}</div>
+
+<div id="task-detail" hx-get="/api/tasks/{{ task_id }}" hx-trigger="load" hx-swap="innerHTML">
+  <p aria-busy="true">Loading task...</p>
+</div>
+
+<script>
+document.addEventListener("htmx:afterRequest", function(evt) {
+  if (evt.detail.pathInfo && evt.detail.pathInfo.requestPath.match(/^\/api\/tasks\/[^/]+$/)) {
+    var data = JSON.parse(evt.detail.xhr.responseText);
+    var target = document.getElementById("task-detail");
+
+    var html = '<div class="detail-header"><h1>' + data.title + '</h1>' +
+      '<div class="detail-meta">' +
+      '<span class="badge badge-' + data.status + '">' + data.status + '</span>' +
+      (data.points ? '<strong>' + data.points + ' pts</strong>' : '') +
+      (data.assignee ? '<span>Assigned to <strong>' + data.assignee + '</strong></span>' : '') +
+      '<code>' + data.id + '</code>' +
+      '<a href="/stories/' + data.story_id + '">' + data.story_id + '</a>' +
+      '</div></div>';
+
+    // Body
+    if (data.body) {
+      html += '<div class="section-card"><h3>Description</h3><p>' + data.body.replace(/\n/g, '<br>') + '</p></div>';
+    }
+
+    // Actions
+    html += '<div class="section-card"><h3>Actions</h3>';
+
+    // Status update
+    html += '<form onsubmit="return updateTaskStatus(event)" style="margin-bottom:1rem">' +
+      '<fieldset role="group">' +
+      '<select id="task-status">' +
+      '<option value="todo"' + (data.status === "todo" ? ' selected' : '') + '>Todo</option>' +
+      '<option value="in-progress"' + (data.status === "in-progress" ? ' selected' : '') + '>In Progress</option>' +
+      '<option value="review"' + (data.status === "review" ? ' selected' : '') + '>Review</option>' +
+      '<option value="done"' + (data.status === "done" ? ' selected' : '') + '>Done</option>' +
+      '<option value="blocked"' + (data.status === "blocked" ? ' selected' : '') + '>Blocked</option>' +
+      '</select>' +
+      '<button type="submit">Update Status</button>' +
+      '</fieldset></form>';
+
+    // Grab button
+    if (data.status === "todo") {
+      html += '<form onsubmit="return grabTask(event)">' +
+        '<fieldset role="group">' +
+        '<input type="text" id="grab-assignee" placeholder="Assignee name" value="claude">' +
+        '<button type="submit" class="contrast">Grab Task</button>' +
+        '</fieldset></form>';
+    }
+
+    html += '</div>';
+    target.innerHTML = html;
+  }
+});
+
+function updateTaskStatus(evt) {
+  evt.preventDefault();
+  var status = document.getElementById("task-status").value;
+  fetch("/api/tasks/{{ task_id }}", {
+    method: "PATCH",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({status: status}),
+  }).then(function(r) { return r.json(); })
+    .then(function(data) {
+      showToast("Status updated to " + data.status);
+      htmx.ajax("GET", "/api/tasks/{{ task_id }}", "#task-detail");
+    });
+  return false;
+}
+
+function grabTask(evt) {
+  evt.preventDefault();
+  var assignee = document.getElementById("grab-assignee").value || "claude";
+  fetch("/api/tasks/{{ task_id }}/grab", {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({assignee: assignee}),
+  }).then(function(r) {
+    if (!r.ok) {
+      return r.json().then(function(d) { showToast(d.detail.error || "Not ready", "error"); });
+    }
+    return r.json().then(function(data) {
+      showToast("Grabbed by " + data.task.assignee);
+      htmx.ajax("GET", "/api/tasks/{{ task_id }}", "#task-detail");
+    });
+  });
+  return false;
+}
+</script>
+{% endblock %}

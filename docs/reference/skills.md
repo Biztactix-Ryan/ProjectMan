@@ -1,6 +1,6 @@
 # Skills Reference
 
-ProjectMan installs 5 Claude Code skills (slash commands) via `projectman setup-claude`.
+ProjectMan installs 5 Claude Code skills (slash commands) via `projectman setup-claude`. These provide the primary interface for interacting with ProjectMan from Claude Code.
 
 ## /pm
 
@@ -13,6 +13,8 @@ General entry point for project management. Routes to the appropriate MCP tools 
 /pm scope US-PRJ-1           # Decompose story into tasks
 /pm audit                    # Run drift detection
 /pm fix                      # Fix malformed files
+/pm web start                # Launch the web dashboard
+/pm web stop                 # Stop the web server
 ```
 
 ## /pm-status
@@ -77,9 +79,31 @@ Automated bulk scoping. Discovers what needs scoping and walks through creation.
 **Two modes** (auto-detected):
 
 - **Full scan** (no epics/stories exist): Reads codebase signals (docs, build files, source tree), proposes epics, stories, and tasks for user approval, then creates them all.
-- **Incremental** (stories exist without tasks): Loops through each undecomposed story, proposes 2-6 tasks, gets user approval, creates them. Shows summary when done.
+- **Incremental** (stories exist without tasks): Fetches undecomposed stories in paginated batches (default 5), scopes each with `pm_scope`, proposes 2-6 tasks, gets user approval, and creates them in bulk via `pm_create_tasks`. Loops through batches until done.
 
 Also accessible via `/pm autoscope` or natural language like "scope everything".
+
+## Web Dashboard via /pm
+
+The `/pm` skill routes web-related commands to the MCP web tools:
+
+```
+/pm web                  # Start the web dashboard (default 127.0.0.1:8000)
+/pm web start 0.0.0.0    # Bind to all interfaces
+/pm web stop             # Stop the server
+/pm web status           # Check if it's running
+```
+
+If a port is already in use, Claude automatically retries with the next available port. The web dashboard provides:
+
+- Project overview with clickable stat cards
+- Kanban board with drag-drop status updates
+- Epic, story, and task detail views
+- Search across all items
+- Burndown and audit views
+- Documentation editor
+
+Requires the `web` extra: `pip install projectman[web]` or `pipx install projectman[all]`.
 
 ## Customization
 

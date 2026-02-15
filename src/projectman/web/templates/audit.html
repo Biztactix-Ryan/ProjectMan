@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+{% block title %}Audit — ProjectMan{% endblock %}
+
+{% block content %}
+<h1>Audit</h1>
+
+<div id="audit-results" hx-get="/api/audit" hx-trigger="load" hx-swap="innerHTML">
+  <p aria-busy="true">Running audit...</p>
+</div>
+
+<h2>Burndown</h2>
+<div id="burndown" hx-get="/api/burndown" hx-trigger="load" hx-swap="innerHTML">
+  <p aria-busy="true">Loading burndown...</p>
+</div>
+
+<script>
+document.addEventListener("htmx:afterRequest", function(evt) {
+  if (!evt.detail.pathInfo) return;
+  var path = evt.detail.pathInfo.requestPath;
+
+  if (path === "/api/audit") {
+    var data = JSON.parse(evt.detail.xhr.responseText);
+    var target = document.getElementById("audit-results");
+    var html = '';
+
+    for (var section in data) {
+      var items = data[section];
+      if (!items || (Array.isArray(items) && items.length === 0)) continue;
+
+      html += '<details open><summary><strong>' + section + '</strong>';
+      if (Array.isArray(items)) html += ' (' + items.length + ')';
+      html += '</summary>';
+
+      if (Array.isArray(items)) {
+        html += '<ul>';
+        items.forEach(function(item) {
+          html += '<li>' + (typeof item === "string" ? item : JSON.stringify(item)) + '</li>';
+        });
+        html += '</ul>';
+      } else if (typeof items === "object") {
+        html += '<pre><code>' + JSON.stringify(items, null, 2) + '</code></pre>';
+      } else {
+        html += '<p>' + items + '</p>';
+      }
+      html += '</details>';
+    }
+
+    if (!html) html = '<p>No issues found.</p>';
+    target.innerHTML = html;
+  }
+
+  if (path === "/api/burndown") {
+    var data = JSON.parse(evt.detail.xhr.responseText);
+    var target = document.getElementById("burndown");
+    var pct = parseInt(data.completion) || 0;
+    target.innerHTML =
+      '<div class="stat-grid">' +
+      '<div class="stat-card"><div class="stat-value">' + data.total_points + '</div><div class="stat-label">Total Points</div></div>' +
+      '<div class="stat-card"><div class="stat-value">' + data.completed_points + '</div><div class="stat-label">Completed</div></div>' +
+      '<div class="stat-card"><div class="stat-value">' + data.remaining_points + '</div><div class="stat-label">Remaining</div></div>' +
+      '<div class="stat-card"><div class="stat-value">' + data.completion + '</div><div class="stat-label">Done</div></div>' +
+      '</div>' +
+      '<div class="progress-bar"><div class="progress-bar-fill" style="width: ' + pct + '%"></div></div>';
+  }
+});
+</script>
+{% endblock %}

@@ -185,20 +185,34 @@ def pm_update_doc(
 
 
 @mcp.tool(title="Active Work", annotations=ToolAnnotations(title="Active Work", readOnlyHint=True))
-def pm_active(project: Optional[str] = None) -> str:
+def pm_active(
+    project: Optional[str] = None,
+    limit: int = 20,
+    offset: int = 0,
+) -> str:
     """List active/in-progress stories and tasks.
 
     Args:
         project: Optional project name (hub mode only)
+        limit: Max items per list (default 20)
+        offset: Starting index for pagination (default 0)
     """
     try:
         store = _store(project)
-        active_stories = store.list_stories(status="active")
-        active_tasks = store.list_tasks(status="in-progress")
+        all_stories = store.list_stories(status="active")
+        all_tasks = store.list_tasks(status="in-progress")
+
+        stories_page = all_stories[offset : offset + limit]
+        tasks_page = all_tasks[offset : offset + limit]
 
         result = {
-            "active_stories": [s.model_dump(mode="json") for s in active_stories],
-            "active_tasks": [t.model_dump(mode="json") for t in active_tasks],
+            "active_stories": [s.model_dump(mode="json") for s in stories_page],
+            "active_stories_total": len(all_stories),
+            "active_tasks": [t.model_dump(mode="json") for t in tasks_page],
+            "active_tasks_total": len(all_tasks),
+            "limit": limit,
+            "offset": offset,
+            "has_more": (offset + limit) < len(all_stories) or (offset + limit) < len(all_tasks),
         }
         return _yaml_dump(result)
     except Exception as e:
@@ -237,12 +251,14 @@ def pm_search(query: str, project: Optional[str] = None) -> str:
 def pm_board(
     project: Optional[str] = None,
     assignee: Optional[str] = None,
+    limit: int = 10,
 ) -> str:
     """Show the task board — available tasks grouped by status and readiness.
 
     Args:
         project: Optional project name (hub mode only)
         assignee: Filter to show only tasks for this assignee
+        limit: Max items per board group (default 10). Totals are always shown.
     """
     try:
         from .readiness import check_readiness, compute_hints
@@ -325,11 +341,11 @@ def pm_board(
 
         result = {
             "board": {
-                "available": available,
-                "not_ready": not_ready,
-                "in_progress": in_progress,
-                "in_review": in_review,
-                "blocked": blocked,
+                "available": available[:limit],
+                "not_ready": not_ready[:limit],
+                "in_progress": in_progress[:limit],
+                "in_review": in_review[:limit],
+                "blocked": blocked[:limit],
             },
             "summary": {
                 "available": len(available),
@@ -338,6 +354,7 @@ def pm_board(
                 "in_review": len(in_review),
                 "blocked": len(blocked),
             },
+            "limit": limit,
         }
         return _yaml_dump(result)
     except Exception as e:
@@ -443,62 +460,82 @@ def pm_create_epic(
 
 
 @mcp.tool(title="Epic Details", annotations=ToolAnnotations(title="Epic Details", readOnlyHint=True))
-def pm_epic(id: str, project: Optional[str] = None) -> str:
+def pm_epic(
+    id: str,
+    project: Optional[str] = None,
+    limit: int = 10,
+    offset: int = 0,
+) -> str:
     """Get epic details with rollup of linked stories and tasks.
 
     Args:
         id: Epic ID (e.g. EPIC-PRJ-1)
         project: Optional project name (hub mode only)
+        limit: Max stories to return (default 10)
+        offset: Starting index for story pagination (default 0)
     """
     try:
         store = _store(project)
         meta, body = store.get_epic(id)
 
-        # Find linked stories
+        # Find linked stories — compute rollup from ALL, paginate the detail list
         linked_stories = [s for s in store.list_stories() if s.epic_id == id]
         story_data = []
         total_points = 0
         completed_points = 0
 
-        for story in linked_stories:
+        for i, story in enumerate(linked_stories):
             tasks = store.list_tasks(story_id=story.id)
-            task_summary = [
-                {"id": t.id, "title": t.title, "status": t.status.value, "points": t.points}
-                for t in tasks
-            ]
             story_points = sum(t.points or 0 for t in tasks)
             done_points = sum(t.points or 0 for t in tasks if t.status.value == "done")
             total_points += story_points
             completed_points += done_points
 
-            story_data.append({
-                "id": story.id,
-                "title": story.title,
-                "status": story.status.value,
-                "points": story.points,
-                "tasks": task_summary,
-                "task_points": story_points,
-                "done_points": done_points,
-            })
+            # Only include full detail for the current page
+            if offset <= i < offset + limit:
+                task_summary = [
+                    {"id": t.id, "title": t.title, "status": t.status.value, "points": t.points}
+                    for t in tasks
+                ]
+                story_data.append({
+                    "id": story.id,
+                    "title": story.title,
+                    "status": story.status.value,
+                    "points": story.points,
+                    "tasks": task_summary,
+                    "task_points": story_points,
+                    "done_points": done_points,
+                })
+
+        total_stories = len(linked_stories)
+        has_more = (offset + limit) < total_stories
 
         result = {
             "epic": meta.model_dump(mode="json"),
             "body": body,
             "stories": story_data,
             "rollup": {
-                "story_count": len(linked_stories),
+                "story_count": total_stories,
                 "total_points": total_points,
                 "completed_points": completed_points,
                 "completion": f"{round(completed_points / max(total_points, 1) * 100)}%",
             },
+            "limit": limit,
+            "offset": offset,
+            "has_more": has_more,
         }
+        if has_more:
+            result["next_offset"] = offset + limit
         return _yaml_dump(result)
     except Exception as e:
         return f"error: {e}"
 
 
 @mcp.tool(title="Project Context", annotations=ToolAnnotations(title="Project Context", readOnlyHint=True))
-def pm_context(project: Optional[str] = None) -> str:
+def pm_context(
+    project: Optional[str] = None,
+    limit: int = 20,
+) -> str:
     """Get combined hub + project context for an agent starting work.
 
     Returns hub-level vision/architecture (if hub mode) plus project-specific
@@ -506,6 +543,7 @@ def pm_context(project: Optional[str] = None) -> str:
 
     Args:
         project: Optional project name (hub mode only)
+        limit: Max epics/stories to include (default 20)
     """
     try:
         hub_root = find_project_root()
@@ -534,18 +572,20 @@ def pm_context(project: Optional[str] = None) -> str:
 
         # Active epics
         active_epics = store.list_epics(status="active")
+        result["active_epics_total"] = len(active_epics)
         if active_epics:
             result["active_epics"] = [
                 {"id": e.id, "title": e.title, "priority": e.priority.value}
-                for e in active_epics
+                for e in active_epics[:limit]
             ]
 
         # Active stories
         active_stories = store.list_stories(status="active")
+        result["active_stories_total"] = len(active_stories)
         if active_stories:
             result["active_stories"] = [
                 {"id": s.id, "title": s.title, "epic_id": s.epic_id, "priority": s.priority.value}
-                for s in active_stories
+                for s in active_stories[:limit]
             ]
 
         return _yaml_dump(result)
@@ -575,6 +615,33 @@ def pm_create_task(
         meta = store.create_task(story_id, title, description, points)
         write_index(store)
         return _yaml_dump({"created": meta.model_dump(mode="json")})
+    except Exception as e:
+        return f"error: {e}"
+
+
+@mcp.tool(title="Batch Create Tasks", annotations=ToolAnnotations(title="Batch Create Tasks", readOnlyHint=False, destructiveHint=False))
+def pm_create_tasks(
+    story_id: str,
+    tasks: list[dict],
+    project: Optional[str] = None,
+) -> str:
+    """Create multiple tasks under a story in a single call.
+
+    Args:
+        story_id: Parent story ID (e.g. US-PRJ-1)
+        tasks: List of task dicts, each with keys: title (str), description (str), points (int, optional)
+        project: Optional project name (hub mode only)
+    """
+    try:
+        store = _store(project)
+        created = store.create_tasks(story_id, tasks)
+        write_index(store)
+        total_points = sum(t.points or 0 for t in created)
+        return _yaml_dump({
+            "created": [t.model_dump(mode="json") for t in created],
+            "count": len(created),
+            "total_points": total_points,
+        })
     except Exception as e:
         return f"error: {e}"
 
@@ -686,11 +753,12 @@ def pm_grab(
         except FileNotFoundError:
             story_context = {"id": task_meta.story_id, "error": "not found"}
 
-        # Load sibling tasks
+        # Load sibling tasks (cap at 20 to avoid bloat)
         siblings = store.list_tasks(story_id=task_meta.story_id)
+        all_siblings = [s for s in siblings if s.id != task_id]
         sibling_list = [
             {"id": s.id, "title": s.title, "status": s.status.value, "assignee": s.assignee}
-            for s in siblings if s.id != task_id
+            for s in all_siblings[:20]
         ]
 
         result = {
@@ -699,6 +767,7 @@ def pm_grab(
                 "body": task_body,
                 "story_context": story_context,
                 "sibling_tasks": sibling_list,
+                "sibling_tasks_total": len(all_siblings),
                 "warnings": readiness["warnings"],
             },
         }
@@ -1002,7 +1071,12 @@ def pm_reindex(project: Optional[str] = None) -> str:
 
 
 @mcp.tool(title="Auto-Scope Discovery", annotations=ToolAnnotations(title="Auto-Scope Discovery", readOnlyHint=True))
-def pm_auto_scope(mode: Optional[str] = None, project: Optional[str] = None) -> str:
+def pm_auto_scope(
+    mode: Optional[str] = None,
+    project: Optional[str] = None,
+    limit: int = 5,
+    offset: int = 0,
+) -> str:
     """Discover what needs scoping — returns codebase signals (full scan) or undecomposed stories (incremental).
 
     Auto-detects mode: full scan when no epics/stories exist, incremental when stories lack tasks.
@@ -1011,10 +1085,154 @@ def pm_auto_scope(mode: Optional[str] = None, project: Optional[str] = None) -> 
     Args:
         mode: Force mode: "full" (codebase scan for new projects) or "incremental" (scope existing stories). Auto-detected if omitted.
         project: Optional project name (hub mode only)
+        limit: Max stories per batch in incremental mode (default 5)
+        offset: Starting index for pagination in incremental mode (default 0)
     """
     try:
         from .scoper import auto_scope
         store = _store(project)
-        return auto_scope(store, mode=mode)
+        return auto_scope(store, mode=mode, limit=limit, offset=offset)
     except Exception as e:
         return f"error: {e}"
+
+
+# ─── Web Server Tools ───────────────────────────────────────────
+
+import subprocess
+import signal
+import socket
+
+_web_process: Optional[subprocess.Popen] = None
+_web_host: Optional[str] = None
+_web_port: Optional[int] = None
+
+
+def _port_available(host: str, port: int) -> bool:
+    """Check if a port is available for binding."""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        try:
+            s.bind((host, port))
+            return True
+        except OSError:
+            return False
+
+
+@mcp.tool(title="Start Web UI", annotations=ToolAnnotations(title="Start Web UI", readOnlyHint=False, destructiveHint=False))
+def pm_web_start(host: str = "127.0.0.1", port: int = 8000) -> str:
+    """Start the ProjectMan web dashboard as a background server.
+
+    Returns the URL on success, or an error if the port is in use (try a different port).
+
+    Args:
+        host: Host/IP to bind to (default 127.0.0.1, use 0.0.0.0 for all interfaces)
+        port: Port to listen on (default 8000, try another if this is taken)
+    """
+    global _web_process, _web_host, _web_port
+
+    # Already running?
+    if _web_process is not None and _web_process.poll() is None:
+        return _yaml_dump({
+            "status": "already_running",
+            "url": f"http://{_web_host}:{_web_port}",
+            "pid": _web_process.pid,
+        })
+
+    # Check port availability
+    if not _port_available(host, port):
+        return _yaml_dump({
+            "status": "error",
+            "error": f"Port {port} is already in use",
+            "suggestion": f"Try port {port + 1} or another available port",
+        })
+
+    # Check web dependencies
+    try:
+        import uvicorn  # noqa: F401
+        import fastapi  # noqa: F401
+    except ImportError:
+        return _yaml_dump({
+            "status": "error",
+            "error": "Web dependencies not installed. Install with: pip install projectman[web]",
+        })
+
+    # Find project root for the working directory
+    try:
+        root = find_project_root()
+    except Exception as e:
+        return _yaml_dump({"status": "error", "error": f"No project found: {e}"})
+
+    # Start uvicorn as a subprocess
+    try:
+        import sys
+        _web_process = subprocess.Popen(
+            [sys.executable, "-m", "uvicorn", "projectman.web.app:app",
+             "--host", host, "--port", str(port)],
+            cwd=str(root),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        _web_host = host
+        _web_port = port
+
+        return _yaml_dump({
+            "status": "started",
+            "url": f"http://{host}:{port}",
+            "pid": _web_process.pid,
+        })
+    except Exception as e:
+        _web_process = None
+        return _yaml_dump({"status": "error", "error": str(e)})
+
+
+@mcp.tool(title="Stop Web UI", annotations=ToolAnnotations(title="Stop Web UI", readOnlyHint=False, destructiveHint=False))
+def pm_web_stop() -> str:
+    """Stop the running ProjectMan web server."""
+    global _web_process, _web_host, _web_port
+
+    if _web_process is None or _web_process.poll() is not None:
+        _web_process = None
+        _web_host = None
+        _web_port = None
+        return _yaml_dump({"status": "not_running"})
+
+    pid = _web_process.pid
+    try:
+        _web_process.terminate()
+        try:
+            _web_process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            _web_process.kill()
+            _web_process.wait(timeout=3)
+    except Exception as e:
+        return _yaml_dump({"status": "error", "error": str(e)})
+    finally:
+        _web_process = None
+        _web_host = None
+        _web_port = None
+
+    return _yaml_dump({"status": "stopped", "pid": pid})
+
+
+@mcp.tool(title="Web UI Status", annotations=ToolAnnotations(title="Web UI Status", readOnlyHint=True))
+def pm_web_status() -> str:
+    """Check if the ProjectMan web server is running and on what host/port."""
+    global _web_process, _web_host, _web_port
+
+    if _web_process is None:
+        return _yaml_dump({"running": False})
+
+    if _web_process.poll() is not None:
+        # Process exited
+        exit_code = _web_process.returncode
+        _web_process = None
+        _web_host = None
+        _web_port = None
+        return _yaml_dump({"running": False, "exited_with": exit_code})
+
+    return _yaml_dump({
+        "running": True,
+        "url": f"http://{_web_host}:{_web_port}",
+        "pid": _web_process.pid,
+        "host": _web_host,
+        "port": _web_port,
+    })

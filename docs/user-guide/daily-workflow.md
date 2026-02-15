@@ -4,7 +4,8 @@
 
 1. `/pm-status` — see project dashboard with epic/story/task counts
 2. `/pm board` — see the task board with available, in-progress, and blocked tasks
-3. Pick a task from the board or continue in-progress work
+3. `/pm web start` — optionally launch the web dashboard for a visual overview
+4. Pick a task from the board or continue in-progress work
 
 ## Grabbing Work
 
@@ -29,6 +30,18 @@ The `/pm-do` command auto-grabs the task if it's available:
 - Mark completed tasks as done
 - Update in-progress tasks with notes
 - `/pm-status` for a final check
+
+## Web Dashboard
+
+Start the visual dashboard at any time with `/pm web start` or `projectman web`. It provides:
+
+- Clickable project overview with stat cards
+- Kanban board with drag-drop task status updates
+- Detailed epic, story, and task views
+- Search across all items
+- Burndown charts and audit findings
+
+Stop it with `/pm web stop` when you're done.
 
 ## Weekly
 

@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% block title %}Search — ProjectMan{% endblock %}
+
+{% block content %}
+<h1>Search Results</h1>
+
+{% if query %}
+<div id="search-results" hx-get="/api/search?q={{ query }}" hx-trigger="load" hx-swap="innerHTML">
+  <p aria-busy="true">Searching for "{{ query }}"...</p>
+</div>
+
+<script>
+document.addEventListener("htmx:afterRequest", function(evt) {
+  if (evt.detail.pathInfo && evt.detail.pathInfo.requestPath.match(/^\/api\/search/)) {
+    var results = JSON.parse(evt.detail.xhr.responseText);
+    var target = document.getElementById("search-results");
+
+    if (results.length === 0) {
+      target.innerHTML = '<p>No results found for "{{ query }}".</p>';
+      return;
+    }
+
+    var html = '<p>' + results.length + ' result(s) for "<strong>{{ query }}</strong>"</p>';
+    html += '<table role="grid"><thead><tr><th>ID</th><th>Title</th><th>Type</th><th>Score</th></tr></thead><tbody>';
+    results.forEach(function(r) {
+      var link = r.type === "story" ? "/stories/" + r.id : r.type === "task" ? "/tasks/" + r.id : "/epics/" + r.id;
+      html += '<tr>' +
+        '<td><a href="' + link + '">' + r.id + '</a></td>' +
+        '<td>' + r.title + '</td>' +
+        '<td><span class="badge badge-' + r.type + '">' + r.type + '</span></td>' +
+        '<td>' + (r.score || '') + '</td>' +
+        '</tr>';
+    });
+    html += '</tbody></table>';
+    target.innerHTML = html;
+  }
+});
+</script>
+{% else %}
+<p>Enter a search query in the nav bar above.</p>
+{% endif %}
+{% endblock %}

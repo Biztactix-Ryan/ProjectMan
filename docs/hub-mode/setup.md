@@ -75,7 +75,11 @@ Use `pm_context(project)` to load the hub-level vision and architecture document
 pm_context("my-api")
 ```
 
-This returns the hub's VISION.md, ARCHITECTURE.md, the project's own docs, and all active epics and stories for that project.
+This returns the hub's VISION.md, ARCHITECTURE.md, the project's own docs, and active epics and stories for that project (capped at 20 items per list by default, with totals). Use `limit` to adjust:
+
+```
+pm_context("my-api", limit=5)
+```
 
 ## Syncing and Repairing
 

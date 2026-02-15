@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+{% block title %}Stories — ProjectMan{% endblock %}
+
+{% block content %}
+<h1>Stories</h1>
+
+<div class="filter-bar">
+  <button class="story-filter outline active-filter" data-status="">All</button>
+  <button class="story-filter outline" data-status="backlog">Backlog</button>
+  <button class="story-filter outline" data-status="ready">Ready</button>
+  <button class="story-filter outline" data-status="active">Active</button>
+  <button class="story-filter outline" data-status="done">Done</button>
+</div>
+
+<div id="stories-list" hx-get="/api/stories" hx-trigger="load" hx-swap="innerHTML">
+  <p aria-busy="true">Loading stories...</p>
+</div>
+
+<script>
+function renderStories(stories) {
+  var target = document.getElementById("stories-list");
+  if (stories.length === 0) {
+    target.innerHTML = '<div class="section-card"><p>No stories found.</p></div>';
+    return;
+  }
+  var html = '<table role="grid"><thead><tr><th>ID</th><th>Title</th><th>Status</th><th>Priority</th><th>Points</th><th>Epic</th></tr></thead><tbody>';
+  stories.forEach(function(s) {
+    html += '<tr class="clickable-row" onclick="window.location=\'/stories/' + s.id + '\'">' +
+      '<td><a href="/stories/' + s.id + '">' + s.id + '</a></td>' +
+      '<td><strong>' + s.title + '</strong></td>' +
+      '<td><span class="badge badge-' + s.status + '">' + s.status + '</span></td>' +
+      '<td>' + (s.priority ? '<span class="badge badge-' + s.priority + '">' + s.priority + '</span>' : '') + '</td>' +
+      '<td>' + (s.points || '—') + '</td>' +
+      '<td>' + (s.epic_id ? '<a href="/epics/' + s.epic_id + '" onclick="event.stopPropagation()">' + s.epic_id + '</a>' : '—') + '</td>' +
+      '</tr>';
+  });
+  html += '</tbody></table>';
+  target.innerHTML = html;
+}
+
+document.addEventListener("htmx:afterRequest", function(evt) {
+  if (evt.detail.pathInfo && evt.detail.pathInfo.requestPath.match(/^\/api\/stories(\?|$)/)) {
+    renderStories(JSON.parse(evt.detail.xhr.responseText));
+  }
+});
+
+document.querySelectorAll(".story-filter").forEach(function(btn) {
+  btn.addEventListener("click", function() {
+    document.querySelectorAll(".story-filter").forEach(function(b) { b.classList.remove("active-filter"); });
+    this.classList.add("active-filter");
+    var status = this.dataset.status;
+    var url = status ? "/api/stories?status=" + status : "/api/stories";
+    htmx.ajax("GET", url, "#stories-list");
+  });
+});
+</script>
+{% endblock %}

@@ -210,6 +210,44 @@ class Store:
         self._task_path(task_id).write_text(frontmatter.dumps(post))
         return meta
 
+    def create_tasks(
+        self,
+        story_id: str,
+        tasks: list[dict],
+    ) -> list[TaskFrontmatter]:
+        """Create multiple tasks under a story in a single call.
+
+        Each entry in *tasks* should be a dict with keys ``title``,
+        ``description``, and optionally ``points``.  Returns the list of
+        created :class:`TaskFrontmatter` objects.
+        """
+        self.tasks_dir.mkdir(parents=True, exist_ok=True)
+        if not self._story_path(story_id).exists():
+            raise FileNotFoundError(f"Story not found: {story_id}")
+
+        today = date.today()
+        created: list[TaskFrontmatter] = []
+
+        for entry in tasks:
+            task_id = self._next_task_id(story_id)
+            meta = TaskFrontmatter(
+                id=task_id,
+                story_id=story_id,
+                title=entry["title"],
+                status=TaskStatus.todo,
+                points=entry.get("points"),
+                created=today,
+                updated=today,
+            )
+            post = frontmatter.Post(
+                content=entry.get("description", ""),
+                **meta.model_dump(mode="json"),
+            )
+            self._task_path(task_id).write_text(frontmatter.dumps(post))
+            created.append(meta)
+
+        return created
+
     def get_task(self, task_id: str) -> tuple[TaskFrontmatter, str]:
         """Read a task, returning (frontmatter, body)."""
         path = self._task_path(task_id)

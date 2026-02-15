@@ -216,3 +216,23 @@ def audit(audit_all):
 
     report = run_audit(root)
     click.echo(report)
+
+
+@cli.command()
+@click.option("--port", default=8000, help="Port to listen on")
+@click.option("--host", default="127.0.0.1", help="Host to bind to")
+def web(port, host):
+    """Start the ProjectMan web server."""
+    try:
+        import uvicorn
+        from projectman.web.app import app
+    except ImportError:
+        click.echo(
+            "Error: Web dependencies not installed.\n"
+            "Install them with: pip install projectman[web]",
+            err=True,
+        )
+        raise SystemExit(1)
+
+    click.echo(f"Starting ProjectMan Web on http://{host}:{port}")
+    uvicorn.run(app, host=host, port=port)

@@ -90,3 +90,18 @@ Claude grabs the task (validating readiness), loads the parent story context, im
 ```
 
 See your project dashboard with completion stats. Use `/pm board` to see remaining available work at a glance.
+
+### 11. Launch the Web Dashboard
+
+```
+/pm web start
+```
+
+Opens a visual dashboard in your browser with a kanban board, epic/story/task detail views, drag-drop status updates, search, and burndown charts. The web server runs in the background — stop it with `/pm web stop`.
+
+You can also launch it from the CLI:
+
+```bash
+projectman web                         # http://127.0.0.1:8000
+projectman web --host 0.0.0.0 --port 9000  # bind to all interfaces on port 9000
+```

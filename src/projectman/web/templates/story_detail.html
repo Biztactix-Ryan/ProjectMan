@@ -1,0 +1,82 @@
+{% extends "base.html" %}
+{% block title %}Story — ProjectMan{% endblock %}
+
+{% block content %}
+<div class="breadcrumb"><a href="/stories">Stories</a> <span>/</span> {{ story_id }}</div>
+
+<div id="story-detail" hx-get="/api/stories/{{ story_id }}" hx-trigger="load" hx-swap="innerHTML">
+  <p aria-busy="true">Loading story...</p>
+</div>
+
+<script>
+document.addEventListener("htmx:afterRequest", function(evt) {
+  if (evt.detail.pathInfo && evt.detail.pathInfo.requestPath.match(/^\/api\/stories\/[^/]+$/)) {
+    var data = JSON.parse(evt.detail.xhr.responseText);
+    var target = document.getElementById("story-detail");
+
+    var html = '<div class="detail-header"><h1>' + data.title + '</h1>' +
+      '<div class="detail-meta">' +
+      '<span class="badge badge-' + data.status + '">' + data.status + '</span>' +
+      (data.priority ? '<span class="badge badge-' + data.priority + '">' + data.priority + '</span>' : '') +
+      (data.points ? '<strong>' + data.points + ' pts</strong>' : '') +
+      '<code>' + data.id + '</code>' +
+      (data.epic_id ? '<a href="/epics/' + data.epic_id + '">' + data.epic_id + '</a>' : '') +
+      '</div></div>';
+
+    // Body
+    if (data.body) {
+      html += '<div class="section-card"><h3>Description</h3><p>' + data.body.replace(/\n/g, '<br>') + '</p></div>';
+    }
+
+    // Tasks
+    html += '<div class="section-card"><h3>Tasks (' + (data.tasks ? data.tasks.length : 0) + ')</h3>';
+    if (data.tasks && data.tasks.length > 0) {
+      html += '<table role="grid"><thead><tr><th>ID</th><th>Title</th><th>Status</th><th>Points</th><th>Assignee</th></tr></thead><tbody>';
+      data.tasks.forEach(function(t) {
+        html += '<tr class="clickable-row" onclick="window.location=\'/tasks/' + t.id + '\'">' +
+          '<td><a href="/tasks/' + t.id + '">' + t.id + '</a></td>' +
+          '<td><strong>' + t.title + '</strong></td>' +
+          '<td><span class="badge badge-' + t.status + '">' + t.status + '</span></td>' +
+          '<td>' + (t.points || '—') + '</td>' +
+          '<td>' + (t.assignee || '—') + '</td>' +
+          '</tr>';
+      });
+      html += '</tbody></table>';
+    } else {
+      html += '<p class="muted">No tasks yet.</p>';
+    }
+    html += '</div>';
+
+    // Actions
+    html += '<div class="section-card"><h3>Actions</h3>' +
+      '<form onsubmit="return updateStoryStatus(event)">' +
+      '<fieldset role="group">' +
+      '<select id="story-status">' +
+      '<option value="backlog"' + (data.status === "backlog" ? ' selected' : '') + '>Backlog</option>' +
+      '<option value="ready"' + (data.status === "ready" ? ' selected' : '') + '>Ready</option>' +
+      '<option value="active"' + (data.status === "active" ? ' selected' : '') + '>Active</option>' +
+      '<option value="done"' + (data.status === "done" ? ' selected' : '') + '>Done</option>' +
+      '</select>' +
+      '<button type="submit">Update Status</button>' +
+      '</fieldset></form></div>';
+
+    target.innerHTML = html;
+  }
+});
+
+function updateStoryStatus(evt) {
+  evt.preventDefault();
+  var status = document.getElementById("story-status").value;
+  fetch("/api/stories/{{ story_id }}", {
+    method: "PATCH",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({status: status}),
+  }).then(function(r) { return r.json(); })
+    .then(function(data) {
+      showToast("Status updated to " + data.status);
+      htmx.ajax("GET", "/api/stories/{{ story_id }}", "#story-detail");
+    });
+  return false;
+}
+</script>
+{% endblock %}

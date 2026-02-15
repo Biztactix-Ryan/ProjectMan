@@ -38,12 +38,12 @@ pm_status → present dashboard → highlight blockers
 
 ### Story Creation
 ```
-pm_create_story(epic_id) → pm_scope → pm_estimate → pm_create_task (for each)
+pm_create_story(epic_id) → pm_scope → pm_estimate → pm_create_tasks (batch)
 ```
 
 ### Epic Management
 ```
-pm_create_epic → pm_create_story(epic_id) → pm_scope → pm_create_task (for each)
+pm_create_epic → pm_create_story(epic_id) → pm_scope → pm_create_tasks (batch)
 ```
 
 ### Task Board

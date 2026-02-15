@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}ProjectMan{% endblock %}</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css">
+  <link rel="stylesheet" href="/static/style.css">
+  <script src="https://unpkg.com/htmx.org@2.0.4"></script>
+  {% block head %}{% endblock %}
+</head>
+<body hx-boost="true">
+  <nav class="container-fluid">
+    <ul>
+      <li><a href="/" class="pm-brand"><strong>ProjectMan</strong></a></li>
+    </ul>
+    <ul>
+      <li class="nav-toggle"><a href="#" onclick="document.querySelector('nav').classList.toggle('nav-open');return false;">Menu</a></li>
+    </ul>
+    <ul class="nav-links">
+      <li>
+        <form action="/search" method="get" role="search" style="margin:0">
+          <input type="search" name="q" placeholder="Search..." aria-label="Search" style="margin:0;padding:0.25rem 0.5rem;height:auto;">
+        </form>
+      </li>
+      <li><a href="/"{% if active_page == "dashboard" %} class="active"{% endif %}>Dashboard</a></li>
+      <li><a href="/board"{% if active_page == "board" %} class="active"{% endif %}>Board</a></li>
+      <li><a href="/epics"{% if active_page == "epics" %} class="active"{% endif %}>Epics</a></li>
+      <li><a href="/stories"{% if active_page == "stories" %} class="active"{% endif %}>Stories</a></li>
+      <li><a href="/project-docs"{% if active_page == "docs" %} class="active"{% endif %}>Docs</a></li>
+      <li><a href="/audit"{% if active_page == "audit" %} class="active"{% endif %}>Audit</a></li>
+    </ul>
+  </nav>
+
+  <main class="container">
+    {% block content %}{% endblock %}
+  </main>
+
+  <footer class="container">
+    <hr>
+    <small>{{ project_name | default("ProjectMan") }} &middot; v{{ version | default("") }}</small>
+  </footer>
+
+  <script src="/static/app.js"></script>
+  {% block scripts %}{% endblock %}
+</body>
+</html>

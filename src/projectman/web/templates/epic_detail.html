@@ -1,0 +1,89 @@
+{% extends "base.html" %}
+{% block title %}Epic — ProjectMan{% endblock %}
+
+{% block content %}
+<div class="breadcrumb"><a href="/epics">Epics</a> <span>/</span> {{ epic_id }}</div>
+
+<div id="epic-detail" hx-get="/api/epics/{{ epic_id }}" hx-trigger="load" hx-swap="innerHTML">
+  <p aria-busy="true">Loading epic...</p>
+</div>
+
+<script>
+document.addEventListener("htmx:afterRequest", function(evt) {
+  if (evt.detail.pathInfo && evt.detail.pathInfo.requestPath.match(/^\/api\/epics\/[^/]+$/)) {
+    var data = JSON.parse(evt.detail.xhr.responseText);
+    var target = document.getElementById("epic-detail");
+    var e = data.epic;
+    var r = data.rollup;
+    var pct = parseInt(r.completion) || 0;
+
+    var html = '<div class="detail-header"><h1>' + e.title + '</h1>' +
+      '<div class="detail-meta">' +
+      '<span class="badge badge-' + e.status + '">' + e.status + '</span>' +
+      (e.priority ? '<span class="badge badge-' + e.priority + '">' + e.priority + '</span>' : '') +
+      '<code>' + e.id + '</code>' +
+      '</div></div>';
+
+    // Rollup stat cards — clickable
+    html += '<div class="stat-grid">' +
+      '<a href="/stories" class="stat-card"><div class="stat-value">' + r.story_count + '</div><div class="stat-label">Stories</div></a>' +
+      '<div class="stat-card"><div class="stat-value">' + r.total_points + '</div><div class="stat-label">Points</div></div>' +
+      '<div class="stat-card"><div class="stat-value">' + r.completed_points + '</div><div class="stat-label">Completed</div></div>' +
+      '<div class="stat-card"><div class="stat-value">' + r.completion + '</div><div class="stat-label">Done</div></div>' +
+      '</div>';
+    html += '<div class="progress-bar progress-bar-lg" style="margin-bottom:1.5rem"><div class="progress-bar-fill" style="width:' + pct + '%"></div></div>';
+
+    // Description
+    if (data.body) {
+      html += '<div class="section-card"><h3>Description</h3><p>' + data.body.replace(/\n/g, '<br>') + '</p></div>';
+    }
+
+    // Linked stories
+    if (data.stories && data.stories.length > 0) {
+      html += '<div class="section-card"><h3>Stories</h3>';
+      html += '<table role="grid"><thead><tr><th>ID</th><th>Title</th><th>Status</th><th>Points</th><th>Progress</th></tr></thead><tbody>';
+      data.stories.forEach(function(s) {
+        var sp = s.done_points && s.task_points ? Math.round(s.done_points / s.task_points * 100) : 0;
+        html += '<tr class="clickable-row" onclick="window.location=\'/stories/' + s.id + '\'">' +
+          '<td><a href="/stories/' + s.id + '">' + s.id + '</a></td>' +
+          '<td><strong>' + s.title + '</strong></td>' +
+          '<td><span class="badge badge-' + s.status + '">' + s.status + '</span></td>' +
+          '<td>' + (s.points || '—') + '</td>' +
+          '<td><div class="progress-bar"><div class="progress-bar-fill" style="width:' + sp + '%"></div></div></td>' +
+          '</tr>';
+      });
+      html += '</tbody></table></div>';
+    }
+
+    // Actions
+    html += '<div class="section-card"><h3>Actions</h3>' +
+      '<form onsubmit="return updateEpicStatus(event)">' +
+      '<fieldset role="group">' +
+      '<select id="epic-status">' +
+      '<option value="draft"' + (e.status === "draft" ? ' selected' : '') + '>Draft</option>' +
+      '<option value="active"' + (e.status === "active" ? ' selected' : '') + '>Active</option>' +
+      '<option value="done"' + (e.status === "done" ? ' selected' : '') + '>Done</option>' +
+      '</select>' +
+      '<button type="submit">Update Status</button>' +
+      '</fieldset></form></div>';
+
+    target.innerHTML = html;
+  }
+});
+
+function updateEpicStatus(evt) {
+  evt.preventDefault();
+  var status = document.getElementById("epic-status").value;
+  fetch("/api/epics/{{ epic_id }}", {
+    method: "PATCH",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({status: status}),
+  }).then(function(r) { return r.json(); })
+    .then(function(data) {
+      showToast("Status updated to " + data.status);
+      htmx.ajax("GET", "/api/epics/{{ epic_id }}", "#epic-detail");
+    });
+  return false;
+}
+</script>
+{% endblock %}

@@ -81,9 +81,15 @@ pm_epic("EPIC-API-1")
 ```
 
 Returns the epic details plus:
-- All linked stories with their tasks
-- Total and completed points
+- Linked stories with their tasks (paginated, default 10 per page)
+- Total and completed points (rollup always covers all stories)
 - Completion percentage
+- `has_more` / `next_offset` for pagination when there are many stories
+
+Use `limit` and `offset` to page through large epics:
+```
+pm_epic("EPIC-API-1", limit=10, offset=10)
+```
 
 ## Cross-Repo Epics (Hub Mode)
 

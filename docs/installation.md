@@ -6,21 +6,46 @@
 - git
 - pipx (recommended) or pip
 
-## Install with pipx (Recommended)
+## Setting Up pipx
 
-pipx installs ProjectMan in an isolated virtual environment and puts the `projectman` command on your PATH. This is the cleanest approach on modern Linux/macOS where system-wide pip installs are restricted.
+pipx installs Python CLI tools in isolated virtual environments and puts them on your PATH. This is the cleanest approach on modern Linux/macOS where system-wide pip installs are restricted (PEP 668).
 
 ```bash
-# Install pipx if you don't have it
-sudo apt install pipx    # Debian/Ubuntu
-brew install pipx        # macOS
-pipx ensurepath          # Add to PATH (restart shell after)
+# Debian/Ubuntu
+sudo apt install pipx
 
-# Install ProjectMan with MCP support (recommended)
-pipx install "projectman[mcp] @ git+https://github.com/Biztactix-Ryan/ProjectMan.git"
+# macOS
+brew install pipx
 
-# Or with everything (MCP + semantic search)
+# Fedora/RHEL
+sudo dnf install pipx
+
+# Or via pip (any platform)
+python3 -m pip install --user pipx
+
+# Add pipx to your PATH (required after first install)
+pipx ensurepath
+```
+
+After running `pipx ensurepath`, restart your shell (or run `source ~/.bashrc` / `source ~/.zshrc`) for the PATH change to take effect.
+
+## Install with pipx (Recommended)
+
+```bash
+# Install everything (MCP + web dashboard + semantic search)
 pipx install "projectman[all] @ git+https://github.com/Biztactix-Ryan/ProjectMan.git"
+
+# Or just MCP + web dashboard (no semantic search)
+pipx install "projectman[mcp,web] @ git+https://github.com/Biztactix-Ryan/ProjectMan.git"
+
+# Or MCP only (no web dashboard or semantic search)
+pipx install "projectman[mcp] @ git+https://github.com/Biztactix-Ryan/ProjectMan.git"
+```
+
+To upgrade later:
+
+```bash
+pipx upgrade projectman
 ```
 
 ## Install with pip (in a venv)
@@ -59,6 +84,7 @@ projectman --help
 | Extra | Packages | Purpose |
 |-------|----------|---------|
 | `mcp` | mcp[cli] | MCP server for Claude Code integration |
+| `web` | fastapi, uvicorn | Web dashboard with kanban board, burndown charts, and project overview |
 | `embeddings` | sentence-transformers, numpy | Semantic search via embeddings |
-| `all` | both of the above | Everything |
-| `dev` | pytest, pytest-tmp-files | Testing |
+| `all` | all of the above | Everything |
+| `dev` | pytest, pytest-tmp-files, httpx | Testing |

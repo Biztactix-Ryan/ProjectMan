@@ -65,6 +65,29 @@ If `.mcp.json` already exists, ProjectMan merges its server config into the exis
 
 **Note:** If upgrading from an older version, stale skill directories (e.g. `pm-scope`, `pm-audit`, `pm-fix`, `pm-init`) may remain in `.claude/skills/`. These can be safely deleted.
 
+## projectman web
+
+Start the web dashboard server. Provides a visual UI with kanban board, epic/story/task views, search, burndown charts, and drag-drop status updates.
+
+```bash
+# Start with defaults (127.0.0.1:8000)
+projectman web
+
+# Bind to all interfaces on a custom port
+projectman web --host 0.0.0.0 --port 9000
+```
+
+**Options:**
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--host` | `127.0.0.1` | Host/IP to bind to (`0.0.0.0` for all interfaces) |
+| `--port` | `8000` | Port to listen on |
+
+Requires the `web` extra: `pip install "projectman[web] @ git+https://github.com/Biztactix-Ryan/ProjectMan.git"`
+
+The web dashboard can also be started via MCP tools (`pm_web_start` / `pm_web_stop`) or the `/pm web start` skill command, which allows Claude to manage the server lifecycle and automatically find an available port.
+
 ## projectman serve
 
 Start the MCP server in stdio transport mode. This is called automatically by Claude Code via the `.mcp.json` configuration — you typically don't need to run this manually.

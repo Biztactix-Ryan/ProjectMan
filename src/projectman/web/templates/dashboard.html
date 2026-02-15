@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+{% block title %}Dashboard — ProjectMan{% endblock %}
+
+{% block content %}
+<div id="status" hx-get="/api/status" hx-trigger="load" hx-swap="innerHTML">
+  <p aria-busy="true">Loading dashboard...</p>
+</div>
+
+<script>
+document.addEventListener("htmx:afterRequest", function(evt) {
+  if (evt.detail.pathInfo && evt.detail.pathInfo.requestPath === "/api/status") {
+    var data = JSON.parse(evt.detail.xhr.responseText);
+    var target = document.getElementById("status");
+    var pct = parseInt(data.completion) || 0;
+
+    var html = '<h1>' + data.project + '</h1>';
+
+    // Clickable stat cards
+    html += '<div class="stat-grid">' +
+      '<a href="/epics" class="stat-card"><div class="stat-value">' + data.epics + '</div><div class="stat-label">Epics</div></a>' +
+      '<a href="/stories" class="stat-card"><div class="stat-value">' + data.stories + '</div><div class="stat-label">Stories</div></a>' +
+      '<a href="/board" class="stat-card"><div class="stat-value">' + data.tasks + '</div><div class="stat-label">Tasks</div></a>' +
+      '<div class="stat-card"><div class="stat-value">' + data.total_points + '</div><div class="stat-label">Total Points</div></div>' +
+      '<div class="stat-card"><div class="stat-value">' + data.completion + '</div><div class="stat-label">Complete</div></div>' +
+      '</div>';
+
+    // Progress bar
+    html += '<div class="progress-bar progress-bar-lg"><div class="progress-bar-fill" style="width:' + pct + '%"></div></div>';
+
+    // Quick actions
+    html += '<div class="quick-actions" style="margin-top:1.5rem">' +
+      '<a href="/board">View Board</a>' +
+      '<a href="/epics">Browse Epics</a>' +
+      '<a href="/stories">Browse Stories</a>' +
+      '<a href="/project-docs">Documentation</a>' +
+      '<a href="/audit">Run Audit</a>' +
+      '</div>';
+
+    // Status breakdown
+    if (data.by_status && Object.keys(data.by_status).length > 0) {
+      html += '<div class="section-card"><h3>Items by Status</h3>';
+      html += '<table role="grid"><thead><tr><th>Status</th><th>Count</th><th></th></tr></thead><tbody>';
+      var total = 0;
+      for (var s in data.by_status) total += data.by_status[s];
+      for (var status in data.by_status) {
+        var count = data.by_status[status];
+        var barPct = total > 0 ? Math.round(count / total * 100) : 0;
+        html += '<tr>' +
+          '<td><span class="badge badge-' + status + '">' + status + '</span></td>' +
+          '<td><strong>' + count + '</strong></td>' +
+          '<td style="width:50%"><div class="progress-bar"><div class="progress-bar-fill" style="width:' + barPct + '%"></div></div></td>' +
+          '</tr>';
+      }
+      html += '</tbody></table></div>';
+    }
+
+    target.innerHTML = html;
+  }
+});
+</script>
+{% endblock %}

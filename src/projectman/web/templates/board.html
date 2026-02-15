@@ -1,0 +1,162 @@
+{% extends "base.html" %}
+{% block title %}Board — ProjectMan{% endblock %}
+
+{% block head %}
+<script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.6/Sortable.min.js"></script>
+{% endblock %}
+
+{% block content %}
+<h1>Board</h1>
+
+<div id="board" hx-get="/api/board" hx-trigger="load" hx-swap="innerHTML">
+  <p aria-busy="true">Loading board...</p>
+</div>
+
+<script>
+var STATUS_MAP = {
+  "available": "todo",
+  "in-progress": "in-progress",
+  "in-review": "review",
+  "blocked": "blocked"
+};
+
+function renderColumn(title, tasks, cls) {
+  var col = document.createElement("div");
+  col.className = "board-column";
+  col.innerHTML = '<h4>' + title + ' <small>(' + tasks.length + ')</small></h4>';
+
+  var list = document.createElement("div");
+  list.className = "board-sortable";
+  list.dataset.status = cls;
+
+  if (tasks.length === 0) {
+    list.innerHTML = '<p class="muted drop-hint"><small>Drop tasks here</small></p>';
+  }
+
+  tasks.forEach(function(task) {
+    var card = document.createElement("article");
+    card.className = "task-card";
+    card.dataset.taskId = task.id;
+    var badges = '<span class="badge badge-' + cls + '">' + cls + '</span>';
+    if (task.points) badges += ' <small>' + task.points + 'pt</small>';
+    if (task.assignee) badges += ' <small>&middot; ' + task.assignee + '</small>';
+    card.innerHTML = '<header>' + badges + '</header>' +
+      '<a href="/tasks/' + task.id + '">' + task.title + '</a>' +
+      '<footer><small>' + task.story + '</small></footer>';
+    list.appendChild(card);
+  });
+
+  col.appendChild(list);
+  return col;
+}
+
+function initSortable() {
+  document.querySelectorAll(".board-sortable").forEach(function(el) {
+    new Sortable(el, {
+      group: "board",
+      animation: 150,
+      ghostClass: "task-card-ghost",
+      onEnd: function(evt) {
+        var taskId = evt.item.dataset.taskId;
+        var targetStatus = STATUS_MAP[evt.to.dataset.status];
+        if (!targetStatus || !taskId) return;
+
+        // Remove empty hints
+        evt.to.querySelectorAll(".drop-hint").forEach(function(h) { h.remove(); });
+        if (evt.from.querySelectorAll(".task-card").length === 0) {
+          evt.from.innerHTML = '<p class="muted drop-hint"><small>Drop tasks here</small></p>';
+        }
+
+        fetch("/api/tasks/" + taskId, {
+          method: "PATCH",
+          headers: {"Content-Type": "application/json"},
+          body: JSON.stringify({status: targetStatus}),
+        }).then(function(r) {
+          if (r.ok) {
+            showToast(taskId + " → " + targetStatus);
+          } else {
+            showToast("Failed to update " + taskId, "error");
+            htmx.ajax("GET", "/api/board", "#board");
+          }
+        });
+      }
+    });
+  });
+}
+
+document.addEventListener("htmx:afterRequest", function(evt) {
+  if (evt.detail.pathInfo && evt.detail.pathInfo.requestPath === "/api/board") {
+    var data = JSON.parse(evt.detail.xhr.responseText);
+    var target = document.getElementById("board");
+
+    // Summary
+    var summary = data.summary;
+    var html = '<div class="stat-grid">' +
+      '<div class="stat-card"><div class="stat-value">' + summary.available + '</div><div class="stat-label">Available</div></div>' +
+      '<div class="stat-card"><div class="stat-value">' + summary.in_progress + '</div><div class="stat-label">In Progress</div></div>' +
+      '<div class="stat-card"><div class="stat-value">' + summary.in_review + '</div><div class="stat-label">In Review</div></div>' +
+      '<div class="stat-card"><div class="stat-value">' + summary.blocked + '</div><div class="stat-label">Blocked</div></div>' +
+      '<div class="stat-card"><div class="stat-value">' + summary.not_ready + '</div><div class="stat-label">Not Ready</div></div>' +
+      '</div>';
+    target.innerHTML = html;
+
+    // Columns
+    var grid = document.createElement("div");
+    grid.className = "board-grid";
+    grid.appendChild(renderColumn("Available", data.board.available, "available"));
+    grid.appendChild(renderColumn("In Progress", data.board.in_progress, "in-progress"));
+    grid.appendChild(renderColumn("In Review", data.board.in_review, "in-review"));
+    grid.appendChild(renderColumn("Blocked", data.board.blocked, "blocked"));
+    target.appendChild(grid);
+
+    // Init drag-drop
+    initSortable();
+
+    if (data.board.not_ready.length > 0) {
+      var details = document.createElement("details");
+      details.innerHTML = '<summary>Not Ready (' + data.board.not_ready.length + ')</summary>';
+      var list = document.createElement("table");
+      list.innerHTML = '<thead><tr><th>Task</th><th>Story</th><th>Blockers</th></tr></thead><tbody></tbody>';
+      var tbody = list.querySelector("tbody");
+      data.board.not_ready.forEach(function(t) {
+        var tr = document.createElement("tr");
+        tr.innerHTML = '<td>' + t.title + '</td><td><small>' + t.story + '</small></td><td><small>' + (t.blockers || []).join(", ") + '</small></td>';
+        tbody.appendChild(tr);
+      });
+      details.appendChild(list);
+      target.appendChild(details);
+    }
+  }
+});
+</script>
+
+<style>
+.board-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 1rem;
+  margin-top: 1rem;
+}
+.board-column { min-width: 0; }
+.board-sortable { min-height: 60px; }
+.task-card {
+  padding: 0.75rem;
+  margin-bottom: 0.5rem;
+  border: 1px solid var(--pico-muted-border-color);
+  border-radius: 6px;
+  cursor: grab;
+  background: var(--pico-card-background-color);
+}
+.task-card:active { cursor: grabbing; }
+.task-card header { margin-bottom: 0.25rem; padding: 0; }
+.task-card footer { margin-top: 0.25rem; padding: 0; }
+.task-card-ghost {
+  opacity: 0.4;
+  border: 2px dashed var(--pico-primary);
+}
+.muted { color: var(--pico-muted-color); }
+@media (max-width: 768px) {
+  .board-grid { grid-template-columns: 1fr; }
+}
+</style>
+{% endblock %}

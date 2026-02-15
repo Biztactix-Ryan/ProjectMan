@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+{% block title %}Epics — ProjectMan{% endblock %}
+
+{% block content %}
+<h1>Epics</h1>
+
+<div class="filter-bar">
+  <button class="epic-filter outline active-filter" data-status="">All</button>
+  <button class="epic-filter outline" data-status="draft">Draft</button>
+  <button class="epic-filter outline" data-status="active">Active</button>
+  <button class="epic-filter outline" data-status="done">Done</button>
+</div>
+
+<div id="epics-list" hx-get="/api/epics" hx-trigger="load" hx-swap="innerHTML">
+  <p aria-busy="true">Loading epics...</p>
+</div>
+
+<script>
+function renderEpics(epics) {
+  var target = document.getElementById("epics-list");
+  if (epics.length === 0) {
+    target.innerHTML = '<div class="section-card"><p>No epics found.</p></div>';
+    return;
+  }
+  var html = '<table role="grid"><thead><tr><th>ID</th><th>Title</th><th>Status</th><th>Priority</th><th>Tags</th></tr></thead><tbody>';
+  epics.forEach(function(e) {
+    html += '<tr class="clickable-row" onclick="window.location=\'/epics/' + e.id + '\'">' +
+      '<td><a href="/epics/' + e.id + '">' + e.id + '</a></td>' +
+      '<td><strong>' + e.title + '</strong></td>' +
+      '<td><span class="badge badge-' + e.status + '">' + e.status + '</span></td>' +
+      '<td>' + (e.priority ? '<span class="badge badge-' + e.priority + '">' + e.priority + '</span>' : '') + '</td>' +
+      '<td>' + (e.tags || []).join(", ") + '</td>' +
+      '</tr>';
+  });
+  html += '</tbody></table>';
+  target.innerHTML = html;
+}
+
+document.addEventListener("htmx:afterRequest", function(evt) {
+  if (evt.detail.pathInfo && evt.detail.pathInfo.requestPath.match(/^\/api\/epics(\?|$)/)) {
+    renderEpics(JSON.parse(evt.detail.xhr.responseText));
+  }
+});
+
+document.querySelectorAll(".epic-filter").forEach(function(btn) {
+  btn.addEventListener("click", function() {
+    document.querySelectorAll(".epic-filter").forEach(function(b) { b.classList.remove("active-filter"); });
+    this.classList.add("active-filter");
+    var status = this.dataset.status;
+    var url = status ? "/api/epics?status=" + status : "/api/epics";
+    htmx.ajax("GET", url, "#epics-list");
+  });
+});
+</script>
+{% endblock %}

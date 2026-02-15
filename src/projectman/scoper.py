@@ -39,12 +39,20 @@ def scope(store: Store, story_id: str) -> str:
     return yaml.dump(result, default_flow_style=False, sort_keys=False)
 
 
-def auto_scope(store: Store, mode: Optional[str] = None) -> str:
+def auto_scope(
+    store: Store,
+    mode: Optional[str] = None,
+    limit: int = 5,
+    offset: int = 0,
+) -> str:
     """Discover what needs scoping — full codebase scan or incremental story decomposition.
 
     Auto-detects mode based on project state:
     - Full scan: no epics AND no stories exist (or mode="full")
     - Incremental: stories exist that have no tasks (or mode="incremental")
+
+    For incremental mode, ``limit`` and ``offset`` control pagination over
+    undecomposed stories (default: 5 stories per batch starting from 0).
     """
     epics = store.list_epics()
     stories = store.list_stories()
@@ -59,7 +67,7 @@ def auto_scope(store: Store, mode: Optional[str] = None) -> str:
     if mode == "full":
         return _auto_scope_full(store)
     else:
-        return _auto_scope_incremental(store)
+        return _auto_scope_incremental(store, limit=limit, offset=offset)
 
 
 def _auto_scope_full(store: Store) -> str:
@@ -140,8 +148,14 @@ def _auto_scope_full(store: Store) -> str:
     return yaml.dump(signals, default_flow_style=False, sort_keys=False)
 
 
-def _auto_scope_incremental(store: Store) -> str:
-    """Incremental — find stories with no tasks and return them for decomposition."""
+def _auto_scope_incremental(store: Store, limit: int = 5, offset: int = 0) -> str:
+    """Incremental — find stories with no tasks and return them for decomposition.
+
+    Returns at most *limit* stories starting from *offset*, with pagination
+    metadata (``has_more``, ``next_offset``) so the caller can loop.  Story
+    bodies are omitted — the caller should use ``pm_scope(story_id)`` to fetch
+    full context before decomposing.
+    """
     stories = store.list_stories()
     all_tasks = store.list_tasks()
 
@@ -157,20 +171,28 @@ def _auto_scope_incremental(store: Store) -> str:
         if s.status.value in skip_statuses:
             continue
         if task_counts.get(s.id, 0) == 0:
-            # Include the story body for context
-            _, body = store.get_story(s.id)
             undecomposed.append({
-                "story": s.model_dump(mode="json"),
-                "body": body,
+                "id": s.id,
+                "title": s.title,
+                "priority": s.priority.value,
+                "points": s.points,
+                "epic_id": s.epic_id,
             })
+
+    total_undecomposed = len(undecomposed)
+    page = undecomposed[offset : offset + limit]
+    has_more = (offset + limit) < total_undecomposed
 
     result = {
         "mode": "incremental",
         "project": store.config.name,
         "prefix": store.config.prefix,
         "total_stories": len(stories),
-        "undecomposed_count": len(undecomposed),
-        "undecomposed_stories": undecomposed,
+        "undecomposed_count": total_undecomposed,
+        "offset": offset,
+        "limit": limit,
+        "has_more": has_more,
+        "stories": page,
         "decomposition_guidance": {
             "rules": [
                 "Each task should be completable in one session (1-5 points)",
@@ -186,6 +208,9 @@ def _auto_scope_incremental(store: Store) -> str:
             },
         },
     }
+
+    if has_more:
+        result["next_offset"] = offset + limit
 
     return yaml.dump(result, default_flow_style=False, sort_keys=False)
 

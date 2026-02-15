@@ -1,0 +1,90 @@
+{% extends "base.html" %}
+{% block title %}Docs — ProjectMan{% endblock %}
+
+{% block content %}
+<h1>Documentation</h1>
+
+<div id="docs-list" hx-get="/api/docs" hx-trigger="load" hx-swap="innerHTML">
+  <p aria-busy="true">Loading docs...</p>
+</div>
+
+<div id="doc-editor" style="display: none;">
+  <h2 id="doc-editor-title"></h2>
+  <textarea id="doc-content" rows="20" style="font-family: monospace;"></textarea>
+  <div role="group">
+    <button id="doc-save">Save</button>
+    <button id="doc-cancel" class="outline">Cancel</button>
+  </div>
+  <div id="doc-preview" style="margin-top: 1rem;"></div>
+</div>
+
+<script>
+var currentDoc = null;
+
+function renderDocsList(data) {
+  var target = document.getElementById("docs-list");
+  var html = '<table role="grid"><thead><tr><th>Document</th><th>File</th><th>Status</th><th>Modified</th><th>Lines</th><th></th></tr></thead><tbody>';
+  for (var key in data) {
+    var d = data[key];
+    var statusBadge = d.status === "current"
+      ? '<span class="badge badge-done">current</span>'
+      : d.status === "stale"
+      ? '<span class="badge badge-in-progress">stale</span>'
+      : '<span class="badge badge-blocked">missing</span>';
+    html += '<tr>' +
+      '<td><strong>' + key + '</strong></td>' +
+      '<td><code>' + d.file + '</code></td>' +
+      '<td>' + statusBadge + '</td>' +
+      '<td>' + (d.last_modified || '—') + '</td>' +
+      '<td>' + (d.content_lines || '—') + '</td>' +
+      '<td>' + (d.status !== "missing" ? '<button class="outline doc-edit" data-doc="' + key + '">Edit</button>' : '') + '</td>' +
+      '</tr>';
+  }
+  html += '</tbody></table>';
+  target.innerHTML = html;
+
+  target.querySelectorAll(".doc-edit").forEach(function(btn) {
+    btn.addEventListener("click", function() { openEditor(this.dataset.doc); });
+  });
+}
+
+function openEditor(name) {
+  currentDoc = name;
+  fetch("/api/docs/" + name)
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+      document.getElementById("docs-list").style.display = "none";
+      document.getElementById("doc-editor").style.display = "block";
+      document.getElementById("doc-editor-title").textContent = data.file;
+      document.getElementById("doc-content").value = data.content;
+    });
+}
+
+document.getElementById("doc-save").addEventListener("click", function() {
+  var content = document.getElementById("doc-content").value;
+  fetch("/api/docs/" + currentDoc, {
+    method: "PUT",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({content: content}),
+  }).then(function(r) { return r.json(); })
+    .then(function(data) {
+      showToast("Saved " + data.updated);
+      closeEditor();
+    });
+});
+
+document.getElementById("doc-cancel").addEventListener("click", closeEditor);
+
+function closeEditor() {
+  document.getElementById("doc-editor").style.display = "none";
+  document.getElementById("docs-list").style.display = "block";
+  htmx.ajax("GET", "/api/docs", "#docs-list");
+}
+
+document.addEventListener("htmx:afterRequest", function(evt) {
+  if (evt.detail.pathInfo && evt.detail.pathInfo.requestPath === "/api/docs") {
+    renderDocsList(JSON.parse(evt.detail.xhr.responseText));
+  }
+});
+</script>
+{% endblock %}

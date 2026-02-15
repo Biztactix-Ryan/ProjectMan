@@ -1,0 +1,426 @@
+entries:
+- id: EPIC-PRJ-1
+  title: API Layer
+  type: epic
+  status: done
+  points: null
+  story_id: null
+  epic_id: null
+- id: EPIC-PRJ-2
+  title: HTML Views
+  type: epic
+  status: done
+  points: null
+  story_id: null
+  epic_id: null
+- id: EPIC-PRJ-3
+  title: Polish
+  type: epic
+  status: done
+  points: null
+  story_id: null
+  epic_id: null
+- id: US-PRJ-1
+  title: FastAPI app setup
+  type: story
+  status: done
+  points: 5
+  story_id: null
+  epic_id: EPIC-PRJ-1
+- id: US-PRJ-10
+  title: Detail views with inline editing
+  type: story
+  status: done
+  points: 8
+  story_id: null
+  epic_id: EPIC-PRJ-2
+- id: US-PRJ-11
+  title: Documentation editor
+  type: story
+  status: done
+  points: 5
+  story_id: null
+  epic_id: EPIC-PRJ-2
+- id: US-PRJ-12
+  title: Audit and burndown views
+  type: story
+  status: done
+  points: 5
+  story_id: null
+  epic_id: EPIC-PRJ-2
+- id: US-PRJ-13
+  title: Search functionality
+  type: story
+  status: done
+  points: 3
+  story_id: null
+  epic_id: EPIC-PRJ-3
+- id: US-PRJ-14
+  title: Hub mode UI
+  type: story
+  status: done
+  points: 5
+  story_id: null
+  epic_id: EPIC-PRJ-3
+- id: US-PRJ-15
+  title: Toast notifications
+  type: story
+  status: done
+  points: 2
+  story_id: null
+  epic_id: EPIC-PRJ-3
+- id: US-PRJ-16
+  title: Responsive mobile layout
+  type: story
+  status: done
+  points: 3
+  story_id: null
+  epic_id: EPIC-PRJ-3
+- id: US-PRJ-2
+  title: REST API endpoints
+  type: story
+  status: done
+  points: 8
+  story_id: null
+  epic_id: EPIC-PRJ-1
+- id: US-PRJ-3
+  title: Request/response schemas
+  type: story
+  status: done
+  points: 3
+  story_id: null
+  epic_id: EPIC-PRJ-1
+- id: US-PRJ-4
+  title: CLI entry point for web server
+  type: story
+  status: done
+  points: 2
+  story_id: null
+  epic_id: EPIC-PRJ-1
+- id: US-PRJ-5
+  title: API test suite
+  type: story
+  status: done
+  points: 5
+  story_id: null
+  epic_id: EPIC-PRJ-1
+- id: US-PRJ-6
+  title: Base layout template
+  type: story
+  status: done
+  points: 3
+  story_id: null
+  epic_id: EPIC-PRJ-2
+- id: US-PRJ-7
+  title: Dashboard view
+  type: story
+  status: done
+  points: 3
+  story_id: null
+  epic_id: EPIC-PRJ-2
+- id: US-PRJ-8
+  title: Board view with HTMX drag-drop
+  type: story
+  status: done
+  points: 8
+  story_id: null
+  epic_id: EPIC-PRJ-2
+- id: US-PRJ-9
+  title: Epic and story list views
+  type: story
+  status: done
+  points: 5
+  story_id: null
+  epic_id: EPIC-PRJ-2
+- id: US-PRJ-1-1
+  title: Create package structure and __init__.py
+  type: task
+  status: done
+  points: 1
+  story_id: US-PRJ-1
+  epic_id: null
+- id: US-PRJ-1-2
+  title: Implement app.py with FastAPI core
+  type: task
+  status: done
+  points: 3
+  story_id: US-PRJ-1
+  epic_id: null
+- id: US-PRJ-1-3
+  title: Add stub routes and static assets
+  type: task
+  status: done
+  points: 1
+  story_id: US-PRJ-1
+  epic_id: null
+- id: US-PRJ-10-1
+  title: Create epic detail view with linked stories and rollup stats
+  type: task
+  status: done
+  points: 2
+  story_id: US-PRJ-10
+  epic_id: null
+- id: US-PRJ-10-2
+  title: Create story detail view with rendered markdown body and child tasks
+  type: task
+  status: done
+  points: 2
+  story_id: US-PRJ-10
+  epic_id: null
+- id: US-PRJ-10-3
+  title: Create task detail view with status transitions and grab button
+  type: task
+  status: done
+  points: 2
+  story_id: US-PRJ-10
+  epic_id: null
+- id: US-PRJ-10-4
+  title: Add HTMX inline editing for frontmatter fields on all detail views
+  type: task
+  status: done
+  points: 2
+  story_id: US-PRJ-10
+  epic_id: null
+- id: US-PRJ-11-1
+  title: Create docs list page with staleness indicators
+  type: task
+  status: done
+  points: 2
+  story_id: US-PRJ-11
+  epic_id: null
+- id: US-PRJ-11-2
+  title: Build doc editor with textarea and save via PUT
+  type: task
+  status: done
+  points: 2
+  story_id: US-PRJ-11
+  epic_id: null
+- id: US-PRJ-11-3
+  title: Add live markdown preview panel
+  type: task
+  status: done
+  points: 1
+  story_id: US-PRJ-11
+  epic_id: null
+- id: US-PRJ-12-1
+  title: Create audit view with findings grouped by severity
+  type: task
+  status: done
+  points: 2
+  story_id: US-PRJ-12
+  epic_id: null
+- id: US-PRJ-12-2
+  title: Create burndown chart view with Chart.js
+  type: task
+  status: done
+  points: 3
+  story_id: US-PRJ-12
+  epic_id: null
+- id: US-PRJ-13-1
+  title: Add search bar to nav in base layout
+  type: task
+  status: done
+  points: 1
+  story_id: US-PRJ-13
+  epic_id: null
+- id: US-PRJ-13-2
+  title: Create search results page with grouped results and highlighting
+  type: task
+  status: done
+  points: 2
+  story_id: US-PRJ-13
+  epic_id: null
+- id: US-PRJ-14-1
+  title: Add project switcher dropdown to nav (hub mode only)
+  type: task
+  status: done
+  points: 2
+  story_id: US-PRJ-14
+  epic_id: null
+- id: US-PRJ-14-2
+  title: Create hub dashboard with per-project cards and aggregate rollup
+  type: task
+  status: done
+  points: 3
+  story_id: US-PRJ-14
+  epic_id: null
+- id: US-PRJ-15-1
+  title: Build toast component with CSS slide-in/fade-out animations
+  type: task
+  status: done
+  points: 1
+  story_id: US-PRJ-15
+  epic_id: null
+- id: US-PRJ-15-2
+  title: Wire HTMX response triggers to toast handler
+  type: task
+  status: done
+  points: 1
+  story_id: US-PRJ-15
+  epic_id: null
+- id: US-PRJ-16-1
+  title: Add responsive breakpoints and collapsible hamburger nav
+  type: task
+  status: done
+  points: 2
+  story_id: US-PRJ-16
+  epic_id: null
+- id: US-PRJ-16-2
+  title: Adapt board columns and tables for mobile screens
+  type: task
+  status: done
+  points: 1
+  story_id: US-PRJ-16
+  epic_id: null
+- id: US-PRJ-2-1
+  title: Implement project/config endpoints and hub mode dependency pattern
+  type: task
+  status: done
+  points: 1
+  story_id: US-PRJ-2
+  epic_id: null
+- id: US-PRJ-2-2
+  title: Implement epics and stories CRUD endpoints
+  type: task
+  status: done
+  points: 3
+  story_id: US-PRJ-2
+  epic_id: null
+- id: US-PRJ-2-3
+  title: Implement tasks CRUD and grab endpoint
+  type: task
+  status: done
+  points: 2
+  story_id: US-PRJ-2
+  epic_id: null
+- id: US-PRJ-2-4
+  title: Implement board, intelligence, and documentation endpoints
+  type: task
+  status: done
+  points: 2
+  story_id: US-PRJ-2
+  epic_id: null
+- id: US-PRJ-3-1
+  title: Create request schemas for create/update operations
+  type: task
+  status: done
+  points: 2
+  story_id: US-PRJ-3
+  epic_id: null
+- id: US-PRJ-3-2
+  title: Create response schemas wrapping existing Pydantic models
+  type: task
+  status: done
+  points: 1
+  story_id: US-PRJ-3
+  epic_id: null
+- id: US-PRJ-4-1
+  title: Add web optional dependency group to pyproject.toml
+  type: task
+  status: done
+  points: 1
+  story_id: US-PRJ-4
+  epic_id: null
+- id: US-PRJ-4-2
+  title: Add projectman web CLI command with --port/--host options
+  type: task
+  status: done
+  points: 1
+  story_id: US-PRJ-4
+  epic_id: null
+- id: US-PRJ-5-1
+  title: Set up test infrastructure with conftest fixtures and TestClient
+  type: task
+  status: done
+  points: 1
+  story_id: US-PRJ-5
+  epic_id: null
+- id: US-PRJ-5-2
+  title: Write tests for project, epics, and stories CRUD endpoints
+  type: task
+  status: done
+  points: 2
+  story_id: US-PRJ-5
+  epic_id: null
+- id: US-PRJ-5-3
+  title: Write tests for tasks, board, docs, and error cases
+  type: task
+  status: done
+  points: 2
+  story_id: US-PRJ-5
+  epic_id: null
+- id: US-PRJ-6-1
+  title: Create base.html layout with nav, CSS framework, and active highlighting
+  type: task
+  status: done
+  points: 2
+  story_id: US-PRJ-6
+  epic_id: null
+- id: US-PRJ-6-2
+  title: Add HTMX script, app.js initialization, and static asset serving
+  type: task
+  status: done
+  points: 1
+  story_id: US-PRJ-6
+  epic_id: null
+- id: US-PRJ-7-1
+  title: Create dashboard template with status summary and progress bar
+  type: task
+  status: done
+  points: 2
+  story_id: US-PRJ-7
+  epic_id: null
+- id: US-PRJ-7-2
+  title: Add status counts by category and quick action links
+  type: task
+  status: done
+  points: 1
+  story_id: US-PRJ-7
+  epic_id: null
+- id: US-PRJ-8-1
+  title: Create board page route and static kanban column layout
+  type: task
+  status: done
+  points: 2
+  story_id: US-PRJ-8
+  epic_id: null
+- id: US-PRJ-8-2
+  title: Build task card and status badge HTMX partials
+  type: task
+  status: done
+  points: 2
+  story_id: US-PRJ-8
+  epic_id: null
+- id: US-PRJ-8-3
+  title: Add Sortable.js drag-drop with HTMX status updates
+  type: task
+  status: done
+  points: 3
+  story_id: US-PRJ-8
+  epic_id: null
+- id: US-PRJ-8-4
+  title: Add readiness badges and priority color coding
+  type: task
+  status: done
+  points: 1
+  story_id: US-PRJ-8
+  epic_id: null
+- id: US-PRJ-9-1
+  title: Create epics list template with status badges and progress bars
+  type: task
+  status: done
+  points: 2
+  story_id: US-PRJ-9
+  epic_id: null
+- id: US-PRJ-9-2
+  title: Create stories list template with HTMX filtering and sortable columns
+  type: task
+  status: done
+  points: 3
+  story_id: US-PRJ-9
+  epic_id: null
+total_points: 146
+completed_points: 146
+story_count: 16
+task_count: 41
+epic_count: 3
