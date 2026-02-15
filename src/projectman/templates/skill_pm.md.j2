@@ -15,5 +15,18 @@ Route based on arguments:
 - `search <query>` → search items
 - `update <id> <field>=<value>` → update an item
 - `archive <id>` → archive an item
+- `fix malformed` → fix quarantined malformed files (see /pm-fix)
+- `repair` → run hub repair via `pm_repair`
+- `sync` → pull latest across all hub submodules
 
 Use the ProjectMan MCP server tools to fulfill these requests. Present results in clean, readable format.
+
+## ID Conventions
+
+- User Stories: `US-PREFIX-N` (e.g. `US-CEO-1`)
+- Tasks: `PREFIX-N-N` (e.g. `CEO-1-1`)
+- Filenames match the ID: `US-CEO-1.md`
+
+## Hub Mode
+
+When working in hub mode, many tools accept an optional `project` parameter to target a specific subproject (e.g. `pm_status(project="CEO-Frontend")`). Without it, tools operate on the hub root or scan all subprojects.

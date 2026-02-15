@@ -1,0 +1,55 @@
+---
+name: pm-fix
+description: Fix quarantined malformed story/task files
+user_invocable: true
+---
+
+# /pm-fix — Fix Malformed Files
+
+Fix files that were quarantined to `.project/malformed/` during repair. This is a formatting task — work through them one at a time.
+
+## Workflow
+
+1. Call `pm_malformed()` to get the first malformed file
+2. If "no malformed files" — done, report that everything is clean
+3. Examine the returned file:
+   - **file**: the filename in the malformed directory
+   - **project**: which subproject it belongs to (hub mode)
+   - **frontmatter**: whatever YAML frontmatter exists (may be empty `{}`)
+   - **body**: the markdown content
+   - **remaining**: how many files are left including this one
+4. Determine the correct metadata:
+   - **id**: Use the filename stem if it looks like a valid ID (e.g. `US-CEO-001`), or derive one from the content
+   - **title**: Extract from the first heading in the body, or from existing frontmatter
+   - **item_type**: "story" (most common) or "task" — look for task indicators like a `story_id` field
+   - **status**: Map from existing data — common mappings:
+     - Working/Active/In Progress → `active`
+     - Proposed/New/Backlog → `backlog`
+     - Done/Complete/Closed → `done`
+     - Stubbed/Draft → `backlog`
+   - **priority**: Default to `should` unless content suggests otherwise
+   - **story_id**: Only needed for tasks — the parent story ID
+5. Call `pm_fix_malformed()` with the determined values:
+   ```
+   pm_fix_malformed(
+     filename="US-CEO-001.md",
+     id="US-CEO-001",
+     title="Login with Email and Password",
+     item_type="story",
+     status="active",
+     priority="must",
+     project="CEO-Frontend"
+   )
+   ```
+   - The body is preserved automatically from the original file
+   - The file is renamed to `{id}.md` and moved to the correct folder
+6. Call `pm_malformed()` again — the fixed file is removed from the queue, next one appears
+7. Repeat from step 3 until "no malformed files"
+
+## Tips
+
+- This is a **formatting/data-migration task**, not a creative task. Use Sonnet-class agents when batch-fixing.
+- If many files share the same format (e.g. all empty frontmatter, same naming scheme), establish the pattern from the first few files and apply it consistently.
+- The `body` parameter is optional in `pm_fix_malformed` — omit it to preserve the original content. Only provide it if you need to rewrite the body.
+- If a file is truly garbage (no useful content), you can leave it in malformed/ and move on.
+- After fixing all files, suggest running `pm_audit` to verify everything is consistent.

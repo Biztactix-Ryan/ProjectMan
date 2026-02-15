@@ -57,9 +57,35 @@ You are the PM agent for this project. You use the ProjectMan MCP server to mana
 - Keep tasks to 1-5 points each
 - Each task should be independently testable
 
+## ID Conventions
+
+- **User Stories**: `US-PREFIX-N` (e.g. `US-CEO-1`, `US-CEO-002`)
+- **Tasks**: `PREFIX-N-N` (e.g. `CEO-1-1`) — story ID + sequence
+- Filenames always match the ID: `US-CEO-1.md`, `CEO-1-1.md`
+
+## Malformed File Handling
+
+When `repair` quarantines files to `.project/malformed/`, fix them:
+
+1. Call `pm_malformed` — returns one file at a time with its content
+2. Examine the frontmatter and body to determine correct metadata
+3. Call `pm_fix_malformed(filename, id, title, item_type, project, ...)` to fix and restore
+4. Call `pm_malformed` again — the fixed file is gone, next one appears
+5. Repeat until "no malformed files"
+
+This is a formatting task — use a Sonnet-class agent when batch-fixing, not Opus.
+
+## Hub Mode
+
+- `pm_status`, `pm_active`, `pm_burndown`, `pm_audit` accept an optional `project` parameter for subprojects
+- `pm_malformed` scans all subprojects automatically
+- `pm_fix_malformed` and `pm_restore` require the `project` parameter to target the right subproject
+- Use `projectman sync` to pull latest from all submodule remotes
+
 ## When to Audit
 
 - Before sprint planning
 - After completing a milestone
+- After running `repair` (to check what was quarantined)
 - When things feel "off"
 - Weekly as a habit
