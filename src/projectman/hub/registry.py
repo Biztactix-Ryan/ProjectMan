@@ -9,7 +9,7 @@ import yaml
 from ..config import load_config, save_config
 
 
-def add_project(name: str, git_url: str, root: Optional[Path] = None) -> str:
+def add_project(name: str, git_url: str, branch: Optional[str] = None, root: Optional[Path] = None) -> str:
     """Register a project in the hub via git submodule add."""
     from ..config import find_project_root
     root = root or find_project_root()
@@ -27,8 +27,12 @@ def add_project(name: str, git_url: str, root: Optional[Path] = None) -> str:
 
     # Add as git submodule
     try:
+        cmd = ["git", "submodule", "add"]
+        if branch:
+            cmd += ["--branch", branch]
+        cmd += [git_url, f"projects/{name}"]
         subprocess.run(
-            ["git", "submodule", "add", git_url, f"projects/{name}"],
+            cmd,
             cwd=str(root),
             check=True,
             capture_output=True,
@@ -48,7 +52,10 @@ def add_project(name: str, git_url: str, root: Optional[Path] = None) -> str:
         config.projects.append(name)
         save_config(config, root)
 
-    return f"added project '{name}' from {git_url}"
+    msg = f"added project '{name}' from {git_url}"
+    if branch:
+        msg += f" (branch: {branch})"
+    return msg
 
 
 def _init_subproject(target: Path, name: str) -> None:

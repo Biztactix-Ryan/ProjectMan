@@ -147,10 +147,11 @@ def serve():
 @cli.command("add-project")
 @click.argument("name")
 @click.argument("git_url")
-def add_project(name, git_url):
+@click.option("--branch", "-b", default=None, help="Branch to track (default: remote HEAD)")
+def add_project(name, git_url, branch):
     """Add a project submodule to the hub."""
     from projectman.hub.registry import add_project as _add
-    result = _add(name, git_url)
+    result = _add(name, git_url, branch=branch)
     click.echo(result)
 
 
