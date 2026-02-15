@@ -8,7 +8,7 @@ import frontmatter
 
 import yaml
 
-from .config import load_config, save_config
+from .config import load_config
 from .models import (
     ProjectConfig,
     EpicFrontmatter,

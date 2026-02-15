@@ -15,20 +15,6 @@ from .store import Store
 mcp = FastMCP("projectman")
 
 
-def _resolve_root(project: Optional[str] = None) -> Path:
-    """Resolve project root, handling hub mode project names."""
-    root = find_project_root()
-    if project:
-        config = load_config(root)
-        if config.hub:
-            # New layout: PM data lives in hub's .project/projects/{name}/
-            pm_dir = root / ".project" / "projects" / project
-            if pm_dir.exists() and (pm_dir / "config.yaml").exists():
-                return root
-            raise FileNotFoundError(f"Project '{project}' not found in hub")
-    return root
-
-
 def _resolve_project_dir(project: Optional[str] = None) -> Path:
     """Return the .project/ directory for a project, handling hub layout."""
     root = find_project_root()
@@ -852,6 +838,13 @@ def pm_audit(project: Optional[str] = None) -> str:
     try:
         from .audit import run_audit
         root = find_project_root()
+        if project:
+            config = load_config(root)
+            if config.hub:
+                pm_dir = root / ".project" / "projects" / project
+                if not (pm_dir / "config.yaml").exists():
+                    return f"error: project '{project}' not found in hub"
+                return run_audit(root, project_dir=pm_dir)
         return run_audit(root)
     except Exception as e:
         return f"error: {e}"
@@ -859,8 +852,9 @@ def pm_audit(project: Optional[str] = None) -> str:
 
 @mcp.tool(title="Hub Repair", annotations=ToolAnnotations(title="Hub Repair", readOnlyHint=False, destructiveHint=False))
 def pm_repair() -> str:
-    """Scan the hub for unregistered projects, initialize missing .project/ dirs,
-    rebuild all indexes and embeddings, and regenerate dashboards.
+    """Scan the hub for unregistered projects, initialize missing PM data
+    directories (hub_root/.project/projects/{name}/), rebuild all indexes
+    and embeddings, and regenerate dashboards.
     Hub mode only. Writes a REPAIR.md report."""
     try:
         config = load_config(find_project_root())
@@ -1127,7 +1121,6 @@ def pm_auto_scope(
 # ─── Web Server Tools ───────────────────────────────────────────
 
 import subprocess
-import signal
 import socket
 
 _web_process: Optional[subprocess.Popen] = None

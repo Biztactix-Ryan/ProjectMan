@@ -35,13 +35,23 @@ my-hub/
 │   ├── tasks/
 │   ├── dashboards/
 │   ├── projects/
+│   │   ├── my-api/          # PM data for my-api
+│   │   │   ├── config.yaml
+│   │   │   ├── stories/
+│   │   │   ├── tasks/
+│   │   │   └── epics/
+│   │   └── my-frontend/     # PM data for my-frontend
+│   │       ├── config.yaml
+│   │       ├── stories/
+│   │       ├── tasks/
+│   │       └── epics/
 │   └── roadmap/
 └── projects/
-    ├── my-api/
-    │   └── .project/
-    └── my-frontend/
-        └── .project/
+    ├── my-api/              # git submodule (source code only)
+    └── my-frontend/         # git submodule (source code only)
 ```
+
+Per-project PM data (stories, tasks, epics, config) lives in the hub's own `.project/projects/{name}/` directory, not inside the submodules. Submodules remain source-code-only.
 
 ## Hub Context Documents
 

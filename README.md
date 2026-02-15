@@ -60,7 +60,7 @@ projectman setup-claude
 User → Claude Code Skills (/pm, /pm-status, /pm-plan, /pm-do)
          → PM Agent (.claude/agents/pm.md)
            → MCP Server (projectman serve, stdio)
-             → Store (.project/ files in each repo)
+             → Store (.project/ markdown files, hub-managed per project)
              → Embeddings (SQLite + sentence-transformers)
              → Web Dashboard (FastAPI + HTMX, launched via pm_web_start)
 ```

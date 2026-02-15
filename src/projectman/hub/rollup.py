@@ -9,7 +9,7 @@ from ..store import Store
 
 
 def rollup(root: Optional[Path] = None) -> dict:
-    """Iterate all subproject .project/ dirs, aggregate index stats."""
+    """Iterate hub PM data dirs (.project/projects/{name}/), aggregate index stats."""
     from ..config import find_project_root
     root = root or find_project_root()
     config = load_config(root)

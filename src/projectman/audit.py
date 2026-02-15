@@ -10,9 +10,13 @@ from .config import load_config
 from .store import Store
 
 
-def run_audit(root: Path) -> str:
-    """Run all audit checks and generate a report. Also writes DRIFT.md."""
-    store = Store(root)
+def run_audit(root: Path, project_dir: Optional[Path] = None) -> str:
+    """Run all audit checks and generate a report. Also writes DRIFT.md.
+
+    When *project_dir* is given (hub subproject), the Store is rooted at
+    *root* but reads PM data from *project_dir* instead of ``root/.project/``.
+    """
+    store = Store(root, project_dir=project_dir) if project_dir else Store(root)
     findings = []
 
     # Check 1: Done stories with incomplete tasks

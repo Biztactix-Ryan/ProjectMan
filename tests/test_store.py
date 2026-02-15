@@ -206,11 +206,12 @@ class TestStoreGet:
 
 
 class TestStoreCustomProjectDir:
-    def test_store_with_custom_project_dir(self, tmp_path):
-        """Store reads/writes to a custom project_dir instead of root/.project/."""
+
+    @staticmethod
+    def _make_hub(tmp_path):
+        """Create a hub root and sub-project PM dir for reuse across tests."""
         import yaml
 
-        # Set up a hub root with its own config
         hub_root = tmp_path / "hub"
         hub_proj = hub_root / ".project"
         hub_proj.mkdir(parents=True)
@@ -220,26 +221,36 @@ class TestStoreCustomProjectDir:
             "description": "",
             "hub": True,
             "next_story_id": 1,
+            "next_epic_id": 1,
             "projects": ["api"],
         }
         with open(hub_proj / "config.yaml", "w") as f:
             yaml.dump(hub_config, f)
 
-        # Set up PM data dir for the "api" project under the hub
         pm_dir = hub_proj / "projects" / "api"
         pm_dir.mkdir(parents=True)
         (pm_dir / "stories").mkdir()
         (pm_dir / "tasks").mkdir()
+        (pm_dir / "epics").mkdir()
         api_config = {
             "name": "api",
             "prefix": "API",
             "description": "",
             "hub": False,
             "next_story_id": 1,
+            "next_epic_id": 1,
             "projects": [],
         }
         with open(pm_dir / "config.yaml", "w") as f:
             yaml.dump(api_config, f)
+
+        return hub_root, pm_dir
+
+    def test_store_with_custom_project_dir(self, tmp_path):
+        """Store reads/writes to a custom project_dir instead of root/.project/."""
+        import yaml
+
+        hub_root, pm_dir = self._make_hub(tmp_path)
 
         # Create a store pointing at the custom project_dir
         store = Store(hub_root, project_dir=pm_dir)
@@ -247,7 +258,7 @@ class TestStoreCustomProjectDir:
         assert store.config.prefix == "API"
         assert store.project_dir == pm_dir
 
-        # Create a story — files should land in pm_dir
+        # Create a story -- files should land in pm_dir
         meta, _ = store.create_story("API Story", "Desc", points=5)
         assert meta.id == "US-API-1"
         assert (pm_dir / "stories" / "US-API-1.md").exists()
@@ -256,3 +267,24 @@ class TestStoreCustomProjectDir:
         with open(pm_dir / "config.yaml") as f:
             saved = yaml.safe_load(f)
         assert saved["next_story_id"] == 2
+
+    def test_epic_creation_with_custom_project_dir(self, tmp_path):
+        """Epic counter is saved to project_dir, not hub root."""
+        import yaml
+
+        hub_root, pm_dir = self._make_hub(tmp_path)
+        store = Store(hub_root, project_dir=pm_dir)
+
+        epic = store.create_epic("API Epic", "Epic description", priority="must")
+        assert epic.id == "EPIC-API-1"
+        assert (pm_dir / "epics" / "EPIC-API-1.md").exists()
+
+        # Counter persisted to pm_dir config, not hub root
+        with open(pm_dir / "config.yaml") as f:
+            saved = yaml.safe_load(f)
+        assert saved["next_epic_id"] == 2
+
+        # Hub config should be untouched
+        with open(hub_root / ".project" / "config.yaml") as f:
+            hub_saved = yaml.safe_load(f)
+        assert hub_saved.get("next_epic_id", 1) == 1

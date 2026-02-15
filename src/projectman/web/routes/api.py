@@ -23,10 +23,22 @@ router = APIRouter(prefix="/api")
 # ─── Dependencies ────────────────────────────────────────────────
 
 
-def get_root(project: Optional[str] = Query(None)) -> Path:
-    """Resolve project root, handling hub mode when `?project=` is provided."""
+def get_root() -> Path:
+    """Return the project root directory (always the hub/repo root)."""
+    return find_project_root()
+
+
+def get_project_dir(project: Optional[str] = Query(None)) -> Path:
+    """Return the .project/ data directory, routing to hub subprojects when needed."""
     root = find_project_root()
-    return root
+    if project:
+        config = load_config(root)
+        if config.hub:
+            proj_dir = root / ".project" / "projects" / project
+            if proj_dir.exists() and (proj_dir / "config.yaml").exists():
+                return proj_dir
+            raise HTTPException(status_code=404, detail=f"Project '{project}' not found in hub")
+    return root / ".project"
 
 
 def get_store(project: Optional[str] = Query(None)) -> Store:
@@ -465,10 +477,9 @@ def api_audit(root: Path = Depends(get_root)) -> dict:
 @router.get("/search")
 def api_search(
     q: str = Query(..., min_length=1),
-    root: Path = Depends(get_root),
+    proj_dir: Path = Depends(get_project_dir),
 ) -> list[dict]:
     """Search stories and tasks by keyword."""
-    proj_dir = root / ".project"
     try:
         from projectman.embeddings import EmbeddingStore
         emb_store = EmbeddingStore(proj_dir)
@@ -495,12 +506,11 @@ _DOC_MAP = {
 
 
 @router.get("/docs")
-def list_docs(root: Path = Depends(get_root)) -> dict:
+def list_docs(proj_dir: Path = Depends(get_project_dir)) -> dict:
     """Summary of all project docs with staleness indicators."""
     import os
     from datetime import date as _date
 
-    proj_dir = root / ".project"
     summary = {}
     for key, filename in _DOC_MAP.items():
         path = proj_dir / filename
@@ -522,12 +532,12 @@ def list_docs(root: Path = Depends(get_root)) -> dict:
 
 
 @router.get("/docs/{name}")
-def get_doc(name: str, root: Path = Depends(get_root)) -> dict:
+def get_doc(name: str, proj_dir: Path = Depends(get_project_dir)) -> dict:
     """Get full content of a specific project doc."""
     filename = _DOC_MAP.get(name.lower())
     if not filename:
         raise HTTPException(status_code=404, detail=f"Unknown doc: {name}. Use: {', '.join(_DOC_MAP)}")
-    path = root / ".project" / filename
+    path = proj_dir / filename
     if not path.exists():
         raise HTTPException(status_code=404, detail=f"{filename} not found")
     return {"name": name, "file": filename, "content": path.read_text()}
@@ -537,12 +547,12 @@ def get_doc(name: str, root: Path = Depends(get_root)) -> dict:
 def update_doc(
     name: str,
     body: UpdateDocRequest,
-    root: Path = Depends(get_root),
+    proj_dir: Path = Depends(get_project_dir),
 ) -> dict:
     """Update a project doc's content."""
     filename = _DOC_MAP.get(name.lower())
     if not filename:
         raise HTTPException(status_code=404, detail=f"Unknown doc: {name}. Use: {', '.join(_DOC_MAP)}")
-    path = root / ".project" / filename
+    path = proj_dir / filename
     path.write_text(body.content)
     return {"updated": filename}

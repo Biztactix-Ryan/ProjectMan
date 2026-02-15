@@ -120,7 +120,7 @@ def repair(root: Optional[Path] = None) -> str:
     """Scan the hub, fix missing pieces, import existing data, rebuild indexes.
 
     1. Discover unregistered projects in projects/ directory
-    2. Initialize .project/ where missing
+    2. Initialize PM data in .project/projects/{name}/ where missing
     3. Rebuild each subproject's index.yaml
     4. Rebuild hub embeddings from all subprojects
     5. Regenerate hub dashboards

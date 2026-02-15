@@ -190,7 +190,7 @@ def sync():
 
 @cli.command()
 def repair():
-    """Scan hub, discover projects, init missing .project/ dirs, rebuild indexes and embeddings."""
+    """Scan hub, discover projects, init missing PM data dirs, rebuild indexes and embeddings."""
     from projectman.hub.registry import repair as _repair
     report = _repair()
     click.echo(report)
@@ -208,10 +208,10 @@ def audit(audit_all):
         config = load_config(root)
         if config.hub:
             for name in config.projects:
-                sub_root = root / "projects" / name
-                if (sub_root / ".project" / "config.yaml").exists():
+                pm_dir = root / ".project" / "projects" / name
+                if (pm_dir / "config.yaml").exists():
                     click.echo(f"\n--- Auditing {name} ---")
-                    click.echo(run_audit(sub_root))
+                    click.echo(run_audit(root, project_dir=pm_dir))
             return
 
     report = run_audit(root)

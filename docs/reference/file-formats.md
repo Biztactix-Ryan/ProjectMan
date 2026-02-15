@@ -24,10 +24,17 @@ With `--hub`, also creates:
 ├── VISION.md            # Hub vision and mission
 ├── ARCHITECTURE.md      # System-wide architecture
 ├── DECISIONS.md         # Cross-project decision log
-├── projects/
+├── projects/            # Per-project PM data (stories, tasks, epics, config)
+│   └── {name}/          # e.g. .project/projects/my-api/
+│       ├── config.yaml
+│       ├── stories/
+│       ├── tasks/
+│       └── epics/
 ├── roadmap/
 └── dashboards/
 ```
+
+In hub mode, per-project PM data lives in `.project/projects/{name}/` inside the hub repo. Git submodules under `projects/` remain source-code-only.
 
 ## config.yaml
 

@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "projectman"
-version = "0.7.4"
+version = "0.7.5"
 description = "Git-native project management for Claude Code"
 readme = "README.md"
 license = "MIT"
@@ -21,7 +21,7 @@ dependencies = [
 mcp = ["mcp[cli]>=1.0"]
 embeddings = ["sentence-transformers>=2.0", "numpy>=1.24"]
 web = ["fastapi>=0.115", "uvicorn[standard]>=0.34"]
-all = ["projectman[mcp,embeddings,web]"]
+all = ["projectman[mcp,web]"]
 dev = ["pytest>=7.0", "pytest-tmp-files>=0.0.2", "httpx>=0.27"]
 
 [project.scripts]
