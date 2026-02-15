@@ -92,6 +92,25 @@ projectman add-project my-api git@github.com:org/my-api.git
 2. Registers the project in `.project/config.yaml`
 3. The submodule's `.project/` directory becomes visible to the hub
 
+## projectman repair
+
+Scan the hub for unregistered projects, initialize missing `.project/` directories, rebuild all indexes and embeddings, and regenerate dashboards. Hub mode only.
+
+```bash
+projectman repair
+```
+
+**What it does:**
+
+1. Discovers directories in `projects/` not registered in config — registers them
+2. Initializes `.project/` structure for projects that don't have one
+3. Rebuilds `index.yaml` for every subproject
+4. Rebuilds hub-level embeddings from all subproject stories/tasks (namespaced IDs)
+5. Regenerates hub dashboards (`status.md`, `burndown.md`)
+6. Writes a `REPAIR.md` report to `.project/`
+
+Use this after cloning a hub, adding projects manually, or whenever things seem out of sync.
+
 ## projectman audit
 
 Run drift detection and generate a `DRIFT.md` report.

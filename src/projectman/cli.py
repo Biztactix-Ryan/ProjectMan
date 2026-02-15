@@ -155,6 +155,14 @@ def add_project(name, git_url):
 
 
 @cli.command()
+def repair():
+    """Scan hub, discover projects, init missing .project/ dirs, rebuild indexes and embeddings."""
+    from projectman.hub.registry import repair as _repair
+    report = _repair()
+    click.echo(report)
+
+
+@cli.command()
 @click.option("--all", "audit_all", is_flag=True, help="Audit all projects in hub")
 def audit(audit_all):
     """Run project audit and generate DRIFT.md."""

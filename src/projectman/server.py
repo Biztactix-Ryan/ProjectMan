@@ -324,6 +324,21 @@ def pm_audit(project: Optional[str] = None) -> str:
 
 
 @mcp.tool()
+def pm_repair() -> str:
+    """Scan the hub for unregistered projects, initialize missing .project/ dirs,
+    rebuild all indexes and embeddings, and regenerate dashboards.
+    Hub mode only. Writes a REPAIR.md report."""
+    try:
+        config = load_config(find_project_root())
+        if not config.hub:
+            return "error: not a hub project"
+        from .hub.registry import repair
+        return repair()
+    except Exception as e:
+        return f"error: {e}"
+
+
+@mcp.tool()
 def pm_reindex(project: Optional[str] = None) -> str:
     """Rebuild the project index and optionally reindex embeddings.
 

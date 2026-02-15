@@ -55,3 +55,6 @@ Run project audit for drift detection.
 
 ### pm_reindex(project?)
 Rebuild project index and embeddings.
+
+### pm_repair()
+Scan the hub for unregistered projects, initialize missing `.project/` dirs, rebuild all indexes and embeddings, and regenerate dashboards. Hub mode only. Writes a `REPAIR.md` report.

@@ -102,6 +102,165 @@ def _init_subproject(target: Path, name: str) -> None:
     (proj / "index.yaml").write_text(yaml.dump(empty_index, default_flow_style=False))
 
 
+def repair(root: Optional[Path] = None) -> str:
+    """Scan the hub, fix missing pieces, import existing data, rebuild indexes.
+
+    1. Discover unregistered projects in projects/ directory
+    2. Initialize .project/ where missing
+    3. Rebuild each subproject's index.yaml
+    4. Rebuild hub embeddings from all subprojects
+    5. Regenerate hub dashboards
+    """
+    from ..config import find_project_root
+    from ..indexer import build_index, write_index
+    from ..store import Store
+
+    root = root or find_project_root()
+    config = load_config(root)
+
+    if not config.hub:
+        return "error: not a hub project — run 'projectman init --hub' first"
+
+    projects_dir = root / "projects"
+    if not projects_dir.exists():
+        projects_dir.mkdir()
+        return "created projects/ directory — no projects found yet"
+
+    report_lines = ["# Hub Repair Report\n"]
+    registered_before = set(config.projects)
+    changed = False
+
+    # 1. Discover unregistered projects (directories in projects/ not in config)
+    discovered = []
+    for entry in sorted(projects_dir.iterdir()):
+        if entry.is_dir() and entry.name not in config.projects:
+            config.projects.append(entry.name)
+            discovered.append(entry.name)
+            changed = True
+
+    if discovered:
+        report_lines.append(f"## Discovered {len(discovered)} unregistered project(s)\n")
+        for name in discovered:
+            report_lines.append(f"- **{name}** — registered in hub config")
+        report_lines.append("")
+
+    # 2. Initialize .project/ where missing, rebuild indexes where present
+    initialized = []
+    rebuilt = []
+    story_counts = {}
+
+    for name in config.projects:
+        project_path = projects_dir / name
+        if not project_path.exists():
+            report_lines.append(f"- **{name}** — directory missing, skipped")
+            continue
+
+        if not (project_path / ".project" / "config.yaml").exists():
+            _init_subproject(project_path, name)
+            initialized.append(name)
+        else:
+            # Project exists and has .project/ — rebuild its index
+            try:
+                store = Store(project_path)
+                stories = store.list_stories()
+                tasks = store.list_tasks()
+                write_index(store)
+                rebuilt.append(name)
+                story_counts[name] = {
+                    "stories": len(stories),
+                    "tasks": len(tasks),
+                }
+            except Exception as e:
+                report_lines.append(f"- **{name}** — error rebuilding index: {e}")
+
+    if initialized:
+        report_lines.append(f"## Initialized {len(initialized)} project(s)\n")
+        for name in initialized:
+            report_lines.append(f"- **{name}** — created .project/ structure")
+        report_lines.append("")
+
+    if rebuilt:
+        report_lines.append(f"## Rebuilt indexes for {len(rebuilt)} project(s)\n")
+        for name in rebuilt:
+            counts = story_counts.get(name, {})
+            s = counts.get("stories", 0)
+            t = counts.get("tasks", 0)
+            report_lines.append(f"- **{name}** — {s} stories, {t} tasks")
+        report_lines.append("")
+
+    # 3. Rebuild hub embeddings from all subprojects
+    embedded_count = 0
+    try:
+        from ..embeddings import EmbeddingStore
+
+        hub_proj_dir = root / ".project"
+        emb_store = EmbeddingStore(hub_proj_dir)
+
+        for name in config.projects:
+            project_path = projects_dir / name
+            if not (project_path / ".project" / "config.yaml").exists():
+                continue
+
+            try:
+                store = Store(project_path)
+                sub_config = store.config
+
+                for story in store.list_stories():
+                    _, body = store.get_story(story.id)
+                    # Namespace IDs so they're unique across projects
+                    hub_id = f"{name}/{story.id}"
+                    emb_store.index_item(hub_id, f"[{name}] {story.title}", "story", body)
+                    embedded_count += 1
+
+                for task in store.list_tasks():
+                    _, body = store.get_task(task.id)
+                    hub_id = f"{name}/{task.id}"
+                    emb_store.index_item(hub_id, f"[{name}] {task.title}", "task", body)
+                    embedded_count += 1
+            except Exception as e:
+                report_lines.append(f"- **{name}** — embedding error: {e}")
+
+        if embedded_count > 0:
+            report_lines.append(f"## Rebuilt hub embeddings\n")
+            report_lines.append(f"- Indexed {embedded_count} items across all projects")
+            report_lines.append("")
+    except ImportError:
+        report_lines.append("## Embeddings skipped (sentence-transformers not installed)\n")
+
+    # 4. Regenerate hub dashboards
+    try:
+        from .dashboards import generate_dashboards
+        generate_dashboards(root)
+        report_lines.append("## Regenerated hub dashboards\n")
+        report_lines.append("- Updated status.md and burndown.md")
+        report_lines.append("")
+    except Exception as e:
+        report_lines.append(f"## Dashboard generation failed: {e}\n")
+
+    # 5. Save config if changed
+    if changed:
+        save_config(config, root)
+
+    # Summary
+    total_stories = sum(c.get("stories", 0) for c in story_counts.values())
+    total_tasks = sum(c.get("tasks", 0) for c in story_counts.values())
+    report_lines.append("## Summary\n")
+    report_lines.append(f"- **Projects registered:** {len(config.projects)}")
+    report_lines.append(f"- **Newly discovered:** {len(discovered)}")
+    report_lines.append(f"- **Newly initialized:** {len(initialized)}")
+    report_lines.append(f"- **Indexes rebuilt:** {len(rebuilt)}")
+    report_lines.append(f"- **Total stories found:** {total_stories}")
+    report_lines.append(f"- **Total tasks found:** {total_tasks}")
+    report_lines.append(f"- **Items embedded:** {embedded_count}")
+
+    report = "\n".join(report_lines)
+
+    # Write repair report to hub
+    (root / ".project" / "REPAIR.md").write_text(report + "\n")
+
+    return report
+
+
 def list_projects(root: Optional[Path] = None) -> list[dict]:
     """List all registered projects with their status."""
     from ..config import find_project_root

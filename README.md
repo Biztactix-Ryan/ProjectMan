@@ -68,9 +68,9 @@ Don't have pipx? `sudo apt install pipx && pipx ensurepath`
 
 - [Installation](docs/installation.md)
 - [Getting Started](docs/getting-started.md)
-- [User Guide](docs/user-guide/)
-- [Hub Mode](docs/hub-mode/)
-- [Reference](docs/reference/)
+- [User Guide](docs/user-guide/stories.md)
+- [Hub Mode](docs/hub-mode/setup.md)
+- [Reference](docs/reference/cli.md)
 
 ## License
 
