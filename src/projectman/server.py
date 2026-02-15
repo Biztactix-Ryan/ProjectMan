@@ -339,12 +339,13 @@ def pm_repair() -> str:
 
 
 @mcp.tool()
-def pm_malformed(project: Optional[str] = None) -> str:
-    """List quarantined malformed story/task files with their full content for review.
-    In hub mode without a project specified, scans all subprojects.
+def pm_malformed(project: Optional[str] = None, offset: int = 0) -> str:
+    """Get the next malformed file to fix. Returns one file at a time with its full
+    content, plus a summary of remaining files. Call repeatedly to step through them.
 
     Args:
         project: Optional project name (hub mode only). Omit to scan all.
+        offset: Skip this many files (default 0 = first malformed file)
     """
     try:
         import frontmatter
@@ -352,7 +353,8 @@ def pm_malformed(project: Optional[str] = None) -> str:
         root = find_project_root()
         config = load_config(root)
 
-        # Collect dirs to scan
+        # Collect all malformed files across projects
+        all_files = []  # list of (project_name, path)
         dirs_to_scan = []
         if project:
             r = _resolve_root(project)
@@ -360,11 +362,9 @@ def pm_malformed(project: Optional[str] = None) -> str:
             if malformed_dir.exists():
                 dirs_to_scan.append((project, malformed_dir))
         elif config.hub:
-            # Scan hub root
             hub_mal = root / ".project" / "malformed"
             if hub_mal.exists() and any(hub_mal.iterdir()):
                 dirs_to_scan.append(("hub", hub_mal))
-            # Scan all subprojects
             projects_dir = root / "projects"
             if projects_dir.exists():
                 for name in config.projects:
@@ -376,28 +376,35 @@ def pm_malformed(project: Optional[str] = None) -> str:
             if malformed_dir.exists():
                 dirs_to_scan.append((config.name, malformed_dir))
 
-        if not dirs_to_scan:
+        for proj_name, mal_dir in dirs_to_scan:
+            for path in sorted(mal_dir.glob("*.md")):
+                all_files.append((proj_name, path))
+
+        total = len(all_files)
+        if total == 0:
             return "no malformed files"
 
-        all_results = {}
-        for proj_name, mal_dir in dirs_to_scan:
-            files = []
-            for path in sorted(mal_dir.glob("*.md")):
-                entry = {"file": path.name}
-                try:
-                    post = frontmatter.load(str(path))
-                    entry["frontmatter"] = dict(post.metadata)
-                    entry["body"] = post.content
-                except Exception:
-                    entry["raw_content"] = path.read_text()
-                files.append(entry)
-            all_results[proj_name] = {
-                "path": str(mal_dir),
-                "count": len(files),
-                "files": files,
-            }
+        if offset >= total:
+            return f"no more files (total: {total})"
 
-        return _yaml_dump(all_results)
+        proj_name, path = all_files[offset]
+
+        entry = {"file": path.name, "project": proj_name}
+        try:
+            post = frontmatter.load(str(path))
+            entry["frontmatter"] = dict(post.metadata)
+            entry["body"] = post.content
+        except Exception:
+            entry["raw_content"] = path.read_text()
+
+        result = {
+            "current": offset + 1,
+            "total": total,
+            "remaining": total - offset - 1,
+            "next_offset": offset + 1 if offset + 1 < total else None,
+            "item": entry,
+        }
+        return _yaml_dump(result)
     except Exception as e:
         return f"error: {e}"
 
