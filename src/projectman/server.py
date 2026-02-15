@@ -72,14 +72,15 @@ def pm_status(project: Optional[str] = None) -> str:
 
 
 @mcp.tool()
-def pm_get(id: str) -> str:
+def pm_get(id: str, project: Optional[str] = None) -> str:
     """Get full details of an epic, story, or task by ID.
 
     Args:
         id: Epic ID (e.g. EPIC-PRJ-1), story ID (e.g. US-PRJ-1), or task ID (e.g. US-PRJ-1-1)
+        project: Optional project name (hub mode only)
     """
     try:
-        store = _store()
+        store = _store(project)
         meta, body = store.get(id)
         result = meta.model_dump(mode="json")
         result["body"] = body
@@ -557,6 +558,7 @@ def pm_create_task(
     title: str,
     description: str,
     points: Optional[int] = None,
+    project: Optional[str] = None,
 ) -> str:
     """Create a new task under a story.
 
@@ -565,9 +567,10 @@ def pm_create_task(
         title: Task title
         description: Task description with implementation details
         points: Task points (fibonacci: 1,2,3,5,8,13)
+        project: Optional project name (hub mode only)
     """
     try:
-        store = _store()
+        store = _store(project)
         meta = store.create_task(story_id, title, description, points)
         write_index(store)
         return _yaml_dump({"created": meta.model_dump(mode="json")})
@@ -583,6 +586,7 @@ def pm_update(
     title: Optional[str] = None,
     assignee: Optional[str] = None,
     epic_id: Optional[str] = None,
+    project: Optional[str] = None,
 ) -> str:
     """Update an epic, story, or task.
 
@@ -593,9 +597,10 @@ def pm_update(
         title: New title
         assignee: Assignee name (tasks only)
         epic_id: Link a story to an epic (stories only)
+        project: Optional project name (hub mode only)
     """
     try:
-        store = _store()
+        store = _store(project)
         kwargs = {}
         if status is not None:
             kwargs["status"] = status
@@ -616,14 +621,15 @@ def pm_update(
 
 
 @mcp.tool()
-def pm_archive(id: str) -> str:
+def pm_archive(id: str, project: Optional[str] = None) -> str:
     """Archive an epic, story, or task.
 
     Args:
         id: Epic, story, or task ID to archive
+        project: Optional project name (hub mode only)
     """
     try:
-        store = _store()
+        store = _store(project)
         store.archive(id)
         write_index(store)
         return f"archived: {id}"
@@ -635,17 +641,19 @@ def pm_archive(id: str) -> str:
 def pm_grab(
     task_id: str,
     assignee: str = "claude",
+    project: Optional[str] = None,
 ) -> str:
     """Claim a task — validates readiness, assigns, sets in-progress, loads context.
 
     Args:
         task_id: Task ID to claim (e.g. US-PRJ-1-1)
         assignee: Who is claiming (default "claude" for AI agents, or a human name)
+        project: Optional project name (hub mode only)
     """
     try:
         from .readiness import check_readiness
 
-        store = _store()
+        store = _store(project)
         task_meta, task_body = store.get_task(task_id)
 
         # Validate readiness
@@ -701,30 +709,32 @@ def pm_grab(
 # ─── Intelligence Tools ─────────────────────────────────────────
 
 @mcp.tool()
-def pm_estimate(id: str) -> str:
+def pm_estimate(id: str, project: Optional[str] = None) -> str:
     """Get estimation context for a story or task — returns content + calibration guidelines.
 
     Args:
         id: Story or task ID to estimate
+        project: Optional project name (hub mode only)
     """
     try:
         from .estimator import estimate
-        store = _store()
+        store = _store(project)
         return estimate(store, id)
     except Exception as e:
         return f"error: {e}"
 
 
 @mcp.tool()
-def pm_scope(id: str) -> str:
+def pm_scope(id: str, project: Optional[str] = None) -> str:
     """Get scoping context for a story — returns story + existing tasks + decomposition guidance.
 
     Args:
         id: Story ID to scope into tasks
+        project: Optional project name (hub mode only)
     """
     try:
         from .scoper import scope
-        store = _store()
+        store = _store(project)
         return scope(store, id)
     except Exception as e:
         return f"error: {e}"
