@@ -20,6 +20,13 @@ entries:
   points: null
   story_id: null
   epic_id: null
+- id: EPIC-PRJ-4
+  title: Web Dashboard - Create Forms & Dark Mode
+  type: epic
+  status: active
+  points: null
+  story_id: null
+  epic_id: null
 - id: US-PRJ-1
   title: FastAPI app setup
   type: story
@@ -76,6 +83,20 @@ entries:
   points: 3
   story_id: null
   epic_id: EPIC-PRJ-3
+- id: US-PRJ-17
+  title: Add creation forms for Epics, Stories, and Tasks in the web UI
+  type: story
+  status: done
+  points: 8
+  story_id: null
+  epic_id: EPIC-PRJ-4
+- id: US-PRJ-18
+  title: Add dark mode theme toggle to the web dashboard
+  type: story
+  status: done
+  points: 5
+  story_id: null
+  epic_id: EPIC-PRJ-4
 - id: US-PRJ-2
   title: REST API endpoints
   type: story
@@ -272,6 +293,62 @@ entries:
   points: 1
   story_id: US-PRJ-16
   epic_id: null
+- id: US-PRJ-17-1
+  title: Add 'New Epic' dialog to epics.html
+  type: task
+  status: done
+  points: 2
+  story_id: US-PRJ-17
+  epic_id: null
+- id: US-PRJ-17-2
+  title: Add 'New Story' dialog to stories.html
+  type: task
+  status: done
+  points: 2
+  story_id: US-PRJ-17
+  epic_id: null
+- id: US-PRJ-17-3
+  title: Add 'Add Task' dialog to story_detail.html
+  type: task
+  status: done
+  points: 2
+  story_id: US-PRJ-17
+  epic_id: null
+- id: US-PRJ-17-4
+  title: Add 'Add Story' dialog to epic_detail.html
+  type: task
+  status: done
+  points: 2
+  story_id: US-PRJ-17
+  epic_id: null
+- id: US-PRJ-17-5
+  title: Add dialog and create-button CSS styles
+  type: task
+  status: done
+  points: 1
+  story_id: US-PRJ-17
+  epic_id: null
+- id: US-PRJ-18-1
+  title: Add theme toggle button to nav bar in base.html
+  type: task
+  status: done
+  points: 1
+  story_id: US-PRJ-18
+  epic_id: null
+- id: US-PRJ-18-2
+  title: Add theme management JS to app.js
+  type: task
+  status: done
+  points: 2
+  story_id: US-PRJ-18
+  epic_id: null
+- id: US-PRJ-18-3
+  title: Fix hardcoded colors for dark mode compatibility
+  type: task
+  status: done
+  points: 2
+  story_id: US-PRJ-18
+  epic_id: null
 - id: US-PRJ-2-1
   title: Implement project/config endpoints and hub mode dependency pattern
   type: task
@@ -419,8 +496,8 @@ entries:
   points: 3
   story_id: US-PRJ-9
   epic_id: null
-total_points: 146
-completed_points: 146
-story_count: 16
-task_count: 41
-epic_count: 3
+total_points: 173
+completed_points: 173
+story_count: 18
+task_count: 49
+epic_count: 4

@@ -4,6 +4,26 @@
 {% block content %}
 <div class="breadcrumb"><a href="/stories">Stories</a> <span>/</span> {{ story_id }}</div>
 
+<dialog id="dlg-new-task">
+  <article>
+    <header>
+      <h3>Add Task</h3>
+      <button class="close-btn" onclick="this.closest('dialog').close()">&times;</button>
+    </header>
+    <form id="form-new-task" onsubmit="return submitNewTask(event)">
+      <label>Title <input type="text" name="title" required></label>
+      <label>Description <textarea name="description" rows="3" required></textarea></label>
+      <label>Points
+        <select name="points"><option value="">— none —</option><option value="1">1</option><option value="2">2</option><option value="3">3</option><option value="5">5</option><option value="8">8</option><option value="13">13</option></select>
+      </label>
+      <footer>
+        <button type="button" class="secondary outline" onclick="this.closest('dialog').close()">Cancel</button>
+        <button type="submit">Create Task</button>
+      </footer>
+    </form>
+  </article>
+</dialog>
+
 <div id="story-detail" hx-get="/api/stories/{{ story_id }}" hx-trigger="load" hx-swap="innerHTML">
   <p aria-busy="true">Loading story...</p>
 </div>
@@ -29,7 +49,8 @@ document.addEventListener("htmx:afterRequest", function(evt) {
     }
 
     // Tasks
-    html += '<div class="section-card"><h3>Tasks (' + (data.tasks ? data.tasks.length : 0) + ')</h3>';
+    html += '<div class="section-card"><div class="page-heading"><h3>Tasks (' + (data.tasks ? data.tasks.length : 0) + ')</h3>' +
+      '<button class="btn-create" onclick="document.getElementById(\'dlg-new-task\').showModal()">+ Add Task</button></div>';
     if (data.tasks && data.tasks.length > 0) {
       html += '<table role="grid"><thead><tr><th>ID</th><th>Title</th><th>Status</th><th>Points</th><th>Assignee</th></tr></thead><tbody>';
       data.tasks.forEach(function(t) {
@@ -63,6 +84,32 @@ document.addEventListener("htmx:afterRequest", function(evt) {
     target.innerHTML = html;
   }
 });
+
+function submitNewTask(evt) {
+  evt.preventDefault();
+  var form = document.getElementById("form-new-task");
+  var fd = new FormData(form);
+  var body = {
+    story_id: "{{ story_id }}",
+    title: fd.get("title"),
+    description: fd.get("description"),
+  };
+  if (fd.get("points")) body.points = parseInt(fd.get("points"));
+  fetch("/api/tasks", {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify(body),
+  }).then(function(r) {
+    if (!r.ok) throw new Error(r.status);
+    return r.json();
+  }).then(function(data) {
+    document.getElementById("dlg-new-task").close();
+    form.reset();
+    showToast("Task created: " + data.id);
+    htmx.ajax("GET", "/api/stories/{{ story_id }}", "#story-detail");
+  }).catch(function() { showToast("Failed to create task", "error"); });
+  return false;
+}
 
 function updateStoryStatus(evt) {
   evt.preventDefault();

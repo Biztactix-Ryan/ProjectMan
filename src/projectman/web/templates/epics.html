@@ -2,7 +2,32 @@
 {% block title %}Epics — ProjectMan{% endblock %}
 
 {% block content %}
-<h1>Epics</h1>
+<div class="page-heading">
+  <h1>Epics</h1>
+  <button class="btn-create" onclick="document.getElementById('dlg-new-epic').showModal()">+ New Epic</button>
+</div>
+
+<dialog id="dlg-new-epic">
+  <article>
+    <header>
+      <h3>New Epic</h3>
+      <button class="close-btn" onclick="this.closest('dialog').close()">&times;</button>
+    </header>
+    <form id="form-new-epic" onsubmit="return submitNewEpic(event)">
+      <label>Title <input type="text" name="title" required></label>
+      <label>Description <textarea name="description" rows="3" required></textarea></label>
+      <label>Priority
+        <select name="priority"><option value="">— none —</option><option value="must">must</option><option value="should">should</option><option value="could">could</option><option value="wont">wont</option></select>
+      </label>
+      <label>Target Date <input type="date" name="target_date"></label>
+      <label>Tags <input type="text" name="tags" placeholder="comma-separated"></label>
+      <footer>
+        <button type="button" class="secondary outline" onclick="this.closest('dialog').close()">Cancel</button>
+        <button type="submit">Create Epic</button>
+      </footer>
+    </form>
+  </article>
+</dialog>
 
 <div class="filter-bar">
   <button class="epic-filter outline active-filter" data-status="">All</button>
@@ -41,6 +66,30 @@ document.addEventListener("htmx:afterRequest", function(evt) {
     renderEpics(JSON.parse(evt.detail.xhr.responseText));
   }
 });
+
+function submitNewEpic(evt) {
+  evt.preventDefault();
+  var form = document.getElementById("form-new-epic");
+  var fd = new FormData(form);
+  var body = {title: fd.get("title"), description: fd.get("description")};
+  if (fd.get("priority")) body.priority = fd.get("priority");
+  if (fd.get("target_date")) body.target_date = fd.get("target_date");
+  if (fd.get("tags")) body.tags = fd.get("tags");
+  fetch("/api/epics", {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify(body),
+  }).then(function(r) {
+    if (!r.ok) throw new Error(r.status);
+    return r.json();
+  }).then(function(data) {
+    document.getElementById("dlg-new-epic").close();
+    form.reset();
+    showToast("Epic created: " + data.id);
+    window.location = "/epics/" + data.id;
+  }).catch(function() { showToast("Failed to create epic", "error"); });
+  return false;
+}
 
 document.querySelectorAll(".epic-filter").forEach(function(btn) {
   btn.addEventListener("click", function() {

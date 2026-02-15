@@ -2,7 +2,36 @@
 {% block title %}Stories — ProjectMan{% endblock %}
 
 {% block content %}
-<h1>Stories</h1>
+<div class="page-heading">
+  <h1>Stories</h1>
+  <button class="btn-create" onclick="openNewStoryDialog()">+ New Story</button>
+</div>
+
+<dialog id="dlg-new-story">
+  <article>
+    <header>
+      <h3>New Story</h3>
+      <button class="close-btn" onclick="this.closest('dialog').close()">&times;</button>
+    </header>
+    <form id="form-new-story" onsubmit="return submitNewStory(event)">
+      <label>Title <input type="text" name="title" required></label>
+      <label>Description <textarea name="description" rows="3" required></textarea></label>
+      <label>Priority
+        <select name="priority"><option value="">— none —</option><option value="must">must</option><option value="should">should</option><option value="could">could</option><option value="wont">wont</option></select>
+      </label>
+      <label>Points
+        <select name="points"><option value="">— none —</option><option value="1">1</option><option value="2">2</option><option value="3">3</option><option value="5">5</option><option value="8">8</option><option value="13">13</option></select>
+      </label>
+      <label>Epic
+        <select name="epic_id" id="story-epic-select"><option value="">— none —</option></select>
+      </label>
+      <footer>
+        <button type="button" class="secondary outline" onclick="this.closest('dialog').close()">Cancel</button>
+        <button type="submit">Create Story</button>
+      </footer>
+    </form>
+  </article>
+</dialog>
 
 <div class="filter-bar">
   <button class="story-filter outline active-filter" data-status="">All</button>
@@ -43,6 +72,41 @@ document.addEventListener("htmx:afterRequest", function(evt) {
     renderStories(JSON.parse(evt.detail.xhr.responseText));
   }
 });
+
+function openNewStoryDialog() {
+  var sel = document.getElementById("story-epic-select");
+  sel.innerHTML = '<option value="">— none —</option>';
+  fetch("/api/epics").then(function(r) { return r.json(); }).then(function(epics) {
+    epics.forEach(function(e) {
+      sel.innerHTML += '<option value="' + e.id + '">' + e.id + ' — ' + e.title + '</option>';
+    });
+  });
+  document.getElementById("dlg-new-story").showModal();
+}
+
+function submitNewStory(evt) {
+  evt.preventDefault();
+  var form = document.getElementById("form-new-story");
+  var fd = new FormData(form);
+  var body = {title: fd.get("title"), description: fd.get("description")};
+  if (fd.get("priority")) body.priority = fd.get("priority");
+  if (fd.get("points")) body.points = parseInt(fd.get("points"));
+  if (fd.get("epic_id")) body.epic_id = fd.get("epic_id");
+  fetch("/api/stories", {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify(body),
+  }).then(function(r) {
+    if (!r.ok) throw new Error(r.status);
+    return r.json();
+  }).then(function(data) {
+    document.getElementById("dlg-new-story").close();
+    form.reset();
+    showToast("Story created: " + data.id);
+    window.location = "/stories/" + data.id;
+  }).catch(function() { showToast("Failed to create story", "error"); });
+  return false;
+}
 
 document.querySelectorAll(".story-filter").forEach(function(btn) {
   btn.addEventListener("click", function() {

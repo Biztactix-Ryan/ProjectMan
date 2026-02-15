@@ -4,6 +4,29 @@
 {% block content %}
 <div class="breadcrumb"><a href="/epics">Epics</a> <span>/</span> {{ epic_id }}</div>
 
+<dialog id="dlg-new-story">
+  <article>
+    <header>
+      <h3>Add Story to Epic</h3>
+      <button class="close-btn" onclick="this.closest('dialog').close()">&times;</button>
+    </header>
+    <form id="form-new-story" onsubmit="return submitNewStory(event)">
+      <label>Title <input type="text" name="title" required></label>
+      <label>Description <textarea name="description" rows="3" required></textarea></label>
+      <label>Priority
+        <select name="priority"><option value="">— none —</option><option value="must">must</option><option value="should">should</option><option value="could">could</option><option value="wont">wont</option></select>
+      </label>
+      <label>Points
+        <select name="points"><option value="">— none —</option><option value="1">1</option><option value="2">2</option><option value="3">3</option><option value="5">5</option><option value="8">8</option><option value="13">13</option></select>
+      </label>
+      <footer>
+        <button type="button" class="secondary outline" onclick="this.closest('dialog').close()">Cancel</button>
+        <button type="submit">Create Story</button>
+      </footer>
+    </form>
+  </article>
+</dialog>
+
 <div id="epic-detail" hx-get="/api/epics/{{ epic_id }}" hx-trigger="load" hx-swap="innerHTML">
   <p aria-busy="true">Loading epic...</p>
 </div>
@@ -39,8 +62,9 @@ document.addEventListener("htmx:afterRequest", function(evt) {
     }
 
     // Linked stories
+    html += '<div class="section-card"><div class="page-heading"><h3>Stories</h3>' +
+      '<button class="btn-create" onclick="document.getElementById(\'dlg-new-story\').showModal()">+ Add Story</button></div>';
     if (data.stories && data.stories.length > 0) {
-      html += '<div class="section-card"><h3>Stories</h3>';
       html += '<table role="grid"><thead><tr><th>ID</th><th>Title</th><th>Status</th><th>Points</th><th>Progress</th></tr></thead><tbody>';
       data.stories.forEach(function(s) {
         var sp = s.done_points && s.task_points ? Math.round(s.done_points / s.task_points * 100) : 0;
@@ -52,8 +76,11 @@ document.addEventListener("htmx:afterRequest", function(evt) {
           '<td><div class="progress-bar"><div class="progress-bar-fill" style="width:' + sp + '%"></div></div></td>' +
           '</tr>';
       });
-      html += '</tbody></table></div>';
+      html += '</tbody></table>';
+    } else {
+      html += '<p class="muted">No stories yet.</p>';
     }
+    html += '</div>';
 
     // Actions
     html += '<div class="section-card"><h3>Actions</h3>' +
@@ -70,6 +97,33 @@ document.addEventListener("htmx:afterRequest", function(evt) {
     target.innerHTML = html;
   }
 });
+
+function submitNewStory(evt) {
+  evt.preventDefault();
+  var form = document.getElementById("form-new-story");
+  var fd = new FormData(form);
+  var body = {
+    title: fd.get("title"),
+    description: fd.get("description"),
+    epic_id: "{{ epic_id }}",
+  };
+  if (fd.get("priority")) body.priority = fd.get("priority");
+  if (fd.get("points")) body.points = parseInt(fd.get("points"));
+  fetch("/api/stories", {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify(body),
+  }).then(function(r) {
+    if (!r.ok) throw new Error(r.status);
+    return r.json();
+  }).then(function(data) {
+    document.getElementById("dlg-new-story").close();
+    form.reset();
+    showToast("Story created: " + data.id);
+    htmx.ajax("GET", "/api/epics/{{ epic_id }}", "#epic-detail");
+  }).catch(function() { showToast("Failed to create story", "error"); });
+  return false;
+}
 
 function updateEpicStatus(evt) {
   evt.preventDefault();

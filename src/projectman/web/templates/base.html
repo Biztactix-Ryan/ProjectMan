@@ -23,6 +23,7 @@
           <input type="search" name="q" placeholder="Search..." aria-label="Search" style="margin:0;padding:0.25rem 0.5rem;height:auto;">
         </form>
       </li>
+      <li><a href="#" id="theme-toggle" onclick="toggleTheme();return false;" aria-label="Toggle dark mode" class="theme-toggle-btn" title="Toggle dark mode">&#9790;</a></li>
       <li><a href="/"{% if active_page == "dashboard" %} class="active"{% endif %}>Dashboard</a></li>
       <li><a href="/board"{% if active_page == "board" %} class="active"{% endif %}>Board</a></li>
       <li><a href="/epics"{% if active_page == "epics" %} class="active"{% endif %}>Epics</a></li>

@@ -36,9 +36,26 @@ nav a.active {
 .badge-could     { background: #dbeafe; color: #1d4ed8; }
 .badge-wont      { background: #f1f5f9; color: #475569; }
 
+/* Dark mode badge overrides */
+[data-theme="dark"] .badge-draft,
+[data-theme="dark"] .badge-backlog,
+[data-theme="dark"] .badge-todo,
+[data-theme="dark"] .badge-available { background: #334155; color: #94a3b8; }
+[data-theme="dark"] .badge-ready     { background: #1e3a5f; color: #60a5fa; }
+[data-theme="dark"] .badge-active,
+[data-theme="dark"] .badge-done      { background: #14532d; color: #4ade80; }
+[data-theme="dark"] .badge-in-progress { background: #451a03; color: #fbbf24; }
+[data-theme="dark"] .badge-review,
+[data-theme="dark"] .badge-in-review { background: #312e81; color: #818cf8; }
+[data-theme="dark"] .badge-blocked   { background: #450a0a; color: #f87171; }
+[data-theme="dark"] .badge-must      { background: #450a0a; color: #f87171; }
+[data-theme="dark"] .badge-should    { background: #451a03; color: #fbbf24; }
+[data-theme="dark"] .badge-could     { background: #1e3a5f; color: #60a5fa; }
+[data-theme="dark"] .badge-wont      { background: #334155; color: #94a3b8; }
+
 /* ─── Progress Bar ─────────────────────────────────────── */
 .progress-bar {
-  background: #e2e8f0;
+  background: var(--pico-muted-border-color);
   border-radius: 999px;
   height: 8px;
   overflow: hidden;
@@ -178,7 +195,7 @@ tr.clickable-row:hover { background: rgba(59, 130, 246, 0.04); }
 .detail-header .detail-meta code {
   font-size: 0.8rem;
   padding: 0.15em 0.4em;
-  background: #f1f5f9;
+  background: var(--pico-muted-border-color);
   border-radius: 4px;
 }
 
@@ -257,6 +274,72 @@ tr.clickable-row:hover { background: rgba(59, 130, 246, 0.04); }
   border: 2px dashed var(--pico-primary);
 }
 .muted { color: var(--pico-muted-color); }
+
+/* ─── Theme Toggle ────────────────────────────────────── */
+.theme-toggle-btn {
+  font-size: 1.25rem;
+  text-decoration: none !important;
+  cursor: pointer;
+  line-height: 1;
+}
+
+/* ─── Create Buttons ──────────────────────────────────── */
+.page-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 0.5rem;
+}
+.page-heading h1,
+.page-heading h3 { margin-bottom: 0; }
+.btn-create {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.4rem 0.9rem;
+  font-size: 0.85rem;
+  font-weight: 600;
+  border-radius: 6px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+/* ─── Dialog / Modal ──────────────────────────────────── */
+dialog {
+  max-width: 520px;
+  width: 90vw;
+  border-radius: 10px;
+}
+dialog::backdrop {
+  background: rgba(0, 0, 0, 0.45);
+}
+dialog header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 1rem;
+  padding: 0;
+}
+dialog header h3 { margin: 0; }
+dialog header .close-btn {
+  background: none;
+  border: none;
+  font-size: 1.5rem;
+  cursor: pointer;
+  color: var(--pico-muted-color);
+  padding: 0 0.25rem;
+  line-height: 1;
+  width: auto;
+}
+dialog footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  margin-top: 1rem;
+  padding: 0;
+}
+dialog footer button { width: auto; margin: 0; }
 
 /* ─── Responsive ───────────────────────────────────────── */
 .nav-toggle { display: none; }
