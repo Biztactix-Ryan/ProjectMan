@@ -50,6 +50,7 @@ def init(name, prefix, description, hub):
     proj.mkdir()
     (proj / "stories").mkdir()
     (proj / "tasks").mkdir()
+    (proj / "epics").mkdir()
 
     if hub:
         (proj / "projects").mkdir()
@@ -74,9 +75,16 @@ def init(name, prefix, description, hub):
         "completed_points": 0,
         "story_count": 0,
         "task_count": 0,
+        "epic_count": 0,
     }
     with open(proj / "index.yaml", "w") as f:
         yaml.dump(empty_index, f, default_flow_style=False)
+
+    # Hub context docs
+    if hub:
+        (proj / "VISION.md").write_text(_render_template("vision.md.j2", **ctx))
+        (proj / "ARCHITECTURE.md").write_text(_render_template("architecture_hub.md.j2", **ctx))
+        (proj / "DECISIONS.md").write_text(_render_template("decisions.md.j2", **ctx))
 
     click.echo(f"Initialized project '{name}' in .project/")
     if hub:

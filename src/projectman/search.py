@@ -20,7 +20,7 @@ def keyword_search(query: str, project_dir: Path, top_k: int = 10) -> list[Searc
     results = []
     query_lower = query.lower()
 
-    for subdir, item_type in [("stories", "story"), ("tasks", "task")]:
+    for subdir, item_type in [("epics", "epic"), ("stories", "story"), ("tasks", "task")]:
         search_dir = project_dir / subdir
         if not search_dir.exists():
             continue

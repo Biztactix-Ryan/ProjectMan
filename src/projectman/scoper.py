@@ -34,3 +34,35 @@ def scope(store: Store, story_id: str) -> str:
     }
 
     return yaml.dump(result, default_flow_style=False, sort_keys=False)
+
+
+def scope_epic(store: Store, epic_id: str) -> str:
+    """Return epic content + linked stories + decomposition guidance."""
+    meta, body = store.get_epic(epic_id)
+    linked_stories = [s for s in store.list_stories() if s.epic_id == epic_id]
+
+    guidance = {
+        "rules": [
+            "Each story should represent a user-visible outcome",
+            "Stories should be independent and deliverable on their own",
+            "Group related tasks under the same story",
+            "A story should be completable in 1-2 sprints (5-13 points)",
+            "Cover the epic's success criteria across the stories",
+        ],
+        "story_template": {
+            "title": "As a [user], I want [goal] so that [benefit]",
+            "description": "Include: user story, acceptance criteria, notes",
+            "priority": "must / should / could / wont",
+            "points": "Fibonacci: 1, 2, 3, 5, 8, 13",
+        },
+    }
+
+    result = {
+        "epic": meta.model_dump(mode="json"),
+        "epic_body": body,
+        "linked_stories": [s.model_dump(mode="json") for s in linked_stories],
+        "story_count": len(linked_stories),
+        "decomposition_guidance": guidance,
+    }
+
+    return yaml.dump(result, default_flow_style=False, sort_keys=False)

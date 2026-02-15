@@ -16,6 +16,7 @@ def rollup(root: Optional[Path] = None) -> dict:
 
     totals = {
         "projects": [],
+        "total_epics": 0,
         "total_stories": 0,
         "total_tasks": 0,
         "total_points": 0,
@@ -38,6 +39,7 @@ def rollup(root: Optional[Path] = None) -> dict:
             project_data = {
                 "name": name,
                 "status": "active",
+                "epics": index.epic_count,
                 "stories": index.story_count,
                 "tasks": index.task_count,
                 "total_points": index.total_points,
@@ -45,6 +47,7 @@ def rollup(root: Optional[Path] = None) -> dict:
             }
 
             totals["projects"].append(project_data)
+            totals["total_epics"] += index.epic_count
             totals["total_stories"] += index.story_count
             totals["total_tasks"] += index.task_count
             totals["total_points"] += index.total_points

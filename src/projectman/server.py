@@ -58,6 +58,7 @@ def pm_status(project: Optional[str] = None) -> str:
 
         result = {
             "project": store.config.name,
+            "epics": index.epic_count,
             "stories": index.story_count,
             "tasks": index.task_count,
             "total_points": index.total_points,
@@ -72,10 +73,10 @@ def pm_status(project: Optional[str] = None) -> str:
 
 @mcp.tool()
 def pm_get(id: str) -> str:
-    """Get full details of a story or task by ID.
+    """Get full details of an epic, story, or task by ID.
 
     Args:
-        id: Story ID (e.g. PRJ-1) or task ID (e.g. PRJ-1-1)
+        id: Epic ID (e.g. EPIC-PRJ-1), story ID (e.g. US-PRJ-1), or task ID (e.g. US-PRJ-1-1)
     """
     try:
         store = _store()
@@ -89,10 +90,10 @@ def pm_get(id: str) -> str:
 
 @mcp.tool()
 def pm_docs(doc: Optional[str] = None, project: Optional[str] = None) -> str:
-    """Read project documentation files (PROJECT.md, INFRASTRUCTURE.md, SECURITY.md).
+    """Read project documentation files.
 
     Args:
-        doc: Specific doc to read: "project", "infrastructure", or "security". Omit for a summary of all.
+        doc: Specific doc to read: "project", "infrastructure", "security", "vision", "architecture", or "decisions". Omit for a summary of all.
         project: Optional project name (hub mode only)
     """
     try:
@@ -103,12 +104,15 @@ def pm_docs(doc: Optional[str] = None, project: Optional[str] = None) -> str:
             "project": "PROJECT.md",
             "infrastructure": "INFRASTRUCTURE.md",
             "security": "SECURITY.md",
+            "vision": "VISION.md",
+            "architecture": "ARCHITECTURE.md",
+            "decisions": "DECISIONS.md",
         }
 
         if doc:
             filename = doc_map.get(doc.lower())
             if not filename:
-                return f"error: unknown doc '{doc}'. Use: project, infrastructure, or security"
+                return f"error: unknown doc '{doc}'. Use: project, infrastructure, security, vision, architecture, or decisions"
             path = proj_dir / filename
             if not path.exists():
                 return f"error: {filename} not found"
@@ -150,7 +154,7 @@ def pm_update_doc(
     """Update a project documentation file.
 
     Args:
-        doc: Which doc to update: "project", "infrastructure", or "security"
+        doc: Which doc to update: "project", "infrastructure", "security", "vision", "architecture", or "decisions"
         content: The full new content for the document
         project: Optional project name (hub mode only)
     """
@@ -162,11 +166,14 @@ def pm_update_doc(
             "project": "PROJECT.md",
             "infrastructure": "INFRASTRUCTURE.md",
             "security": "SECURITY.md",
+            "vision": "VISION.md",
+            "architecture": "ARCHITECTURE.md",
+            "decisions": "DECISIONS.md",
         }
 
         filename = doc_map.get(doc.lower())
         if not filename:
-            return f"error: unknown doc '{doc}'. Use: project, infrastructure, or security"
+            return f"error: unknown doc '{doc}'. Use: project, infrastructure, security, vision, architecture, or decisions"
 
         path = proj_dir / filename
         path.write_text(content)
@@ -225,6 +232,117 @@ def pm_search(query: str, project: Optional[str] = None) -> str:
 
 
 @mcp.tool()
+def pm_board(
+    project: Optional[str] = None,
+    assignee: Optional[str] = None,
+) -> str:
+    """Show the task board — available tasks grouped by status and readiness.
+
+    Args:
+        project: Optional project name (hub mode only)
+        assignee: Filter to show only tasks for this assignee
+    """
+    try:
+        from .readiness import check_readiness, compute_hints
+
+        store = _store(project)
+        all_tasks = store.list_tasks()
+
+        # Build a story lookup for priority ordering and context
+        story_cache = {}
+        for story in store.list_stories():
+            story_cache[story.id] = story
+
+        available = []
+        not_ready = []
+        in_progress = []
+        in_review = []
+        blocked = []
+
+        for task in all_tasks:
+            _, task_body = store.get_task(task.id)
+            story = story_cache.get(task.story_id)
+            story_label = f"{story.id} — {story.title}" if story else task.story_id
+
+            if assignee and task.assignee != assignee:
+                continue
+
+            if task.status.value == "in-progress":
+                in_progress.append({
+                    "id": task.id,
+                    "title": task.title,
+                    "points": task.points,
+                    "assignee": task.assignee,
+                    "story": story_label,
+                })
+            elif task.status.value == "review":
+                in_review.append({
+                    "id": task.id,
+                    "title": task.title,
+                    "points": task.points,
+                    "assignee": task.assignee,
+                    "story": story_label,
+                })
+            elif task.status.value == "blocked":
+                blocked.append({
+                    "id": task.id,
+                    "title": task.title,
+                    "points": task.points,
+                    "assignee": task.assignee,
+                    "story": story_label,
+                })
+            elif task.status.value == "todo" and not assignee:
+                readiness = check_readiness(task, task_body, store)
+                if readiness["ready"]:
+                    hints = compute_hints(task, task_body)
+                    priority_order = {"must": 0, "should": 1, "could": 2, "wont": 3}
+                    story_priority = priority_order.get(
+                        story.priority.value if story else "should", 1
+                    )
+                    available.append({
+                        "id": task.id,
+                        "title": task.title,
+                        "points": task.points,
+                        "story": story_label,
+                        "hints": hints,
+                        "_sort": (story_priority, task.story_id, task.id, task.points or 99),
+                    })
+                else:
+                    not_ready.append({
+                        "id": task.id,
+                        "title": task.title,
+                        "points": task.points,
+                        "story": story_label,
+                        "blockers": readiness["blockers"],
+                    })
+
+        # Sort available tasks by priority > story > task sequence > points
+        available.sort(key=lambda t: t["_sort"])
+        for t in available:
+            del t["_sort"]
+
+        result = {
+            "board": {
+                "available": available,
+                "not_ready": not_ready,
+                "in_progress": in_progress,
+                "in_review": in_review,
+                "blocked": blocked,
+            },
+            "summary": {
+                "available": len(available),
+                "not_ready": len(not_ready),
+                "in_progress": len(in_progress),
+                "in_review": len(in_review),
+                "blocked": len(blocked),
+            },
+        }
+        return _yaml_dump(result)
+    except Exception as e:
+        return f"error: {e}"
+
+
+@mcp.tool()
 def pm_burndown(project: Optional[str] = None) -> str:
     """Get burndown data: total vs completed points.
 
@@ -268,6 +386,7 @@ def pm_create_story(
     description: str,
     priority: Optional[str] = None,
     points: Optional[int] = None,
+    epic_id: Optional[str] = None,
     project: Optional[str] = None,
 ) -> str:
     """Create a new user story.
@@ -277,13 +396,157 @@ def pm_create_story(
         description: Story description ("As a [user], I want [goal] so that [benefit]")
         priority: Priority level: must, should, could, wont
         points: Story points (fibonacci: 1,2,3,5,8,13)
+        epic_id: Optional parent epic ID (e.g. EPIC-PRJ-1)
         project: Optional project name (hub mode only)
     """
     try:
         store = _store(project)
         meta = store.create_story(title, description, priority, points)
+        if epic_id:
+            store.update(meta.id, epic_id=epic_id)
+            meta, _ = store.get_story(meta.id)
         write_index(store)
         return _yaml_dump({"created": meta.model_dump(mode="json")})
+    except Exception as e:
+        return f"error: {e}"
+
+
+@mcp.tool()
+def pm_create_epic(
+    title: str,
+    description: str,
+    priority: Optional[str] = None,
+    target_date: Optional[str] = None,
+    tags: Optional[str] = None,
+    project: Optional[str] = None,
+) -> str:
+    """Create a new epic for grouping related stories.
+
+    Args:
+        title: Epic title (short strategic name)
+        description: Epic description (vision, success criteria, scope)
+        priority: Priority level: must, should, could, wont
+        target_date: Optional target date (YYYY-MM-DD)
+        tags: Comma-separated tags (e.g. "security,mvp")
+        project: Optional project name (hub mode only)
+    """
+    try:
+        store = _store(project)
+        tag_list = [t.strip() for t in tags.split(",")] if tags else None
+        meta = store.create_epic(title, description, priority, target_date, tag_list)
+        write_index(store)
+        return _yaml_dump({"created": meta.model_dump(mode="json")})
+    except Exception as e:
+        return f"error: {e}"
+
+
+@mcp.tool()
+def pm_epic(id: str, project: Optional[str] = None) -> str:
+    """Get epic details with rollup of linked stories and tasks.
+
+    Args:
+        id: Epic ID (e.g. EPIC-PRJ-1)
+        project: Optional project name (hub mode only)
+    """
+    try:
+        store = _store(project)
+        meta, body = store.get_epic(id)
+
+        # Find linked stories
+        linked_stories = [s for s in store.list_stories() if s.epic_id == id]
+        story_data = []
+        total_points = 0
+        completed_points = 0
+
+        for story in linked_stories:
+            tasks = store.list_tasks(story_id=story.id)
+            task_summary = [
+                {"id": t.id, "title": t.title, "status": t.status.value, "points": t.points}
+                for t in tasks
+            ]
+            story_points = sum(t.points or 0 for t in tasks)
+            done_points = sum(t.points or 0 for t in tasks if t.status.value == "done")
+            total_points += story_points
+            completed_points += done_points
+
+            story_data.append({
+                "id": story.id,
+                "title": story.title,
+                "status": story.status.value,
+                "points": story.points,
+                "tasks": task_summary,
+                "task_points": story_points,
+                "done_points": done_points,
+            })
+
+        result = {
+            "epic": meta.model_dump(mode="json"),
+            "body": body,
+            "stories": story_data,
+            "rollup": {
+                "story_count": len(linked_stories),
+                "total_points": total_points,
+                "completed_points": completed_points,
+                "completion": f"{round(completed_points / max(total_points, 1) * 100)}%",
+            },
+        }
+        return _yaml_dump(result)
+    except Exception as e:
+        return f"error: {e}"
+
+
+@mcp.tool()
+def pm_context(project: Optional[str] = None) -> str:
+    """Get combined hub + project context for an agent starting work.
+
+    Returns hub-level vision/architecture (if hub mode) plus project-specific
+    docs, active epics, and active stories.
+
+    Args:
+        project: Optional project name (hub mode only)
+    """
+    try:
+        hub_root = find_project_root()
+        hub_config = load_config(hub_root)
+        proj_root = _resolve_root(project)
+        proj_dir = proj_root / ".project"
+        store = Store(proj_root)
+
+        result = {}
+
+        # Hub-level context (if hub mode)
+        if hub_config.hub:
+            hub_dir = hub_root / ".project"
+            for doc_key, filename in [("vision", "VISION.md"), ("architecture", "ARCHITECTURE.md")]:
+                path = hub_dir / filename
+                if path.exists():
+                    result[f"hub_{doc_key}"] = path.read_text()
+
+        # Project-level context
+        project_docs = {}
+        for doc_key, filename in [("project", "PROJECT.md"), ("infrastructure", "INFRASTRUCTURE.md"), ("security", "SECURITY.md")]:
+            path = proj_dir / filename
+            if path.exists():
+                project_docs[doc_key] = path.read_text()
+        result["project_docs"] = project_docs
+
+        # Active epics
+        active_epics = store.list_epics(status="active")
+        if active_epics:
+            result["active_epics"] = [
+                {"id": e.id, "title": e.title, "priority": e.priority.value}
+                for e in active_epics
+            ]
+
+        # Active stories
+        active_stories = store.list_stories(status="active")
+        if active_stories:
+            result["active_stories"] = [
+                {"id": s.id, "title": s.title, "epic_id": s.epic_id, "priority": s.priority.value}
+                for s in active_stories
+            ]
+
+        return _yaml_dump(result)
     except Exception as e:
         return f"error: {e}"
 
@@ -319,15 +582,17 @@ def pm_update(
     points: Optional[int] = None,
     title: Optional[str] = None,
     assignee: Optional[str] = None,
+    epic_id: Optional[str] = None,
 ) -> str:
-    """Update a story or task.
+    """Update an epic, story, or task.
 
     Args:
-        id: Story or task ID
-        status: New status (stories: backlog/ready/active/done/archived; tasks: todo/in-progress/review/done/blocked)
+        id: Epic, story, or task ID
+        status: New status (epics: draft/active/done/archived; stories: backlog/ready/active/done/archived; tasks: todo/in-progress/review/done/blocked)
         points: New point estimate (fibonacci: 1,2,3,5,8,13)
         title: New title
         assignee: Assignee name (tasks only)
+        epic_id: Link a story to an epic (stories only)
     """
     try:
         store = _store()
@@ -340,6 +605,8 @@ def pm_update(
             kwargs["title"] = title
         if assignee is not None:
             kwargs["assignee"] = assignee
+        if epic_id is not None:
+            kwargs["epic_id"] = epic_id
 
         meta = store.update(id, **kwargs)
         write_index(store)
@@ -350,16 +617,83 @@ def pm_update(
 
 @mcp.tool()
 def pm_archive(id: str) -> str:
-    """Archive a story or task.
+    """Archive an epic, story, or task.
 
     Args:
-        id: Story or task ID to archive
+        id: Epic, story, or task ID to archive
     """
     try:
         store = _store()
         store.archive(id)
         write_index(store)
         return f"archived: {id}"
+    except Exception as e:
+        return f"error: {e}"
+
+
+@mcp.tool()
+def pm_grab(
+    task_id: str,
+    assignee: str = "claude",
+) -> str:
+    """Claim a task — validates readiness, assigns, sets in-progress, loads context.
+
+    Args:
+        task_id: Task ID to claim (e.g. PRJ-1-1)
+        assignee: Who is claiming (default "claude" for AI agents, or a human name)
+    """
+    try:
+        from .readiness import check_readiness
+
+        store = _store()
+        task_meta, task_body = store.get_task(task_id)
+
+        # Validate readiness
+        readiness = check_readiness(task_meta, task_body, store)
+        if not readiness["ready"]:
+            return _yaml_dump({
+                "error": "task is not ready to grab",
+                "blockers": readiness["blockers"],
+            })
+
+        # Claim: set assignee and status
+        store.update(task_id, assignee=assignee, status="in-progress")
+        write_index(store)
+
+        # Re-read updated task
+        task_meta, task_body = store.get_task(task_id)
+
+        # Load parent story context
+        story_context = {}
+        try:
+            story_meta, story_body = store.get_story(task_meta.story_id)
+            story_context = {
+                "id": story_meta.id,
+                "title": story_meta.title,
+                "status": story_meta.status.value,
+                "priority": story_meta.priority.value,
+                "body": story_body,
+            }
+        except FileNotFoundError:
+            story_context = {"id": task_meta.story_id, "error": "not found"}
+
+        # Load sibling tasks
+        siblings = store.list_tasks(story_id=task_meta.story_id)
+        sibling_list = [
+            {"id": s.id, "title": s.title, "status": s.status.value, "assignee": s.assignee}
+            for s in siblings if s.id != task_id
+        ]
+
+        result = {
+            "grabbed": {
+                "task": task_meta.model_dump(mode="json"),
+                "body": task_body,
+                "story_context": story_context,
+                "sibling_tasks": sibling_list,
+                "warnings": readiness["warnings"],
+            },
+        }
+        return _yaml_dump(result)
     except Exception as e:
         return f"error: {e}"
 

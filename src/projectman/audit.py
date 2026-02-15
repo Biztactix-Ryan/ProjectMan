@@ -134,7 +134,112 @@ def run_audit(root: Path) -> str:
                 "items": [doc_name],
             })
 
-    # Check 7: Malformed files in quarantine
+    # Check 7: Empty active epic (active epic with no linked stories)
+    for epic in store.list_epics(status="active"):
+        linked = [s for s in store.list_stories() if s.epic_id == epic.id]
+        if not linked:
+            findings.append({
+                "severity": "warning",
+                "check": "empty-active-epic",
+                "message": f"Epic {epic.id} is active but has no linked stories",
+                "items": [epic.id],
+            })
+
+    # Check 8: Done epic with open stories
+    for epic in store.list_epics(status="done"):
+        linked = [s for s in store.list_stories() if s.epic_id == epic.id]
+        open_stories = [s for s in linked if s.status.value not in ("done", "archived")]
+        if open_stories:
+            findings.append({
+                "severity": "error",
+                "check": "done-epic-open-stories",
+                "message": f"Epic {epic.id} is done but has {len(open_stories)} open story/stories",
+                "items": [s.id for s in open_stories],
+            })
+
+    # Check 9: Orphaned epic reference (story references non-existent epic_id)
+    epic_ids = {e.id for e in store.list_epics()}
+    for story in store.list_stories():
+        if story.epic_id and story.epic_id not in epic_ids:
+            findings.append({
+                "severity": "warning",
+                "check": "orphaned-epic-reference",
+                "message": f"Story {story.id} references non-existent epic {story.epic_id}",
+                "items": [story.id],
+            })
+
+    # Check 10: Stale draft epic (draft >30 days with no stories)
+    draft_threshold = date.today() - timedelta(days=30)
+    for epic in store.list_epics(status="draft"):
+        if epic.updated < draft_threshold:
+            linked = [s for s in store.list_stories() if s.epic_id == epic.id]
+            if not linked:
+                days = (date.today() - epic.updated).days
+                findings.append({
+                    "severity": "info",
+                    "check": "stale-draft-epic",
+                    "message": f"Epic {epic.id} has been in draft for {days} days with no stories",
+                    "items": [epic.id],
+                })
+
+    # Check 11: Hub documentation checks (when hub mode)
+    config = load_config(root)
+    if config.hub:
+        hub_docs = {
+            "VISION.md": ["## Mission", "## Product Principles"],
+            "ARCHITECTURE.md": ["## Overview", "## Service Map"],
+            "DECISIONS.md": ["## Decisions"],
+        }
+        for doc_name, _sections in hub_docs.items():
+            doc_path = store.project_dir / doc_name
+            if not doc_path.exists():
+                findings.append({
+                    "severity": "warning",
+                    "check": "missing-hub-documentation",
+                    "message": f"{doc_name} is missing from hub .project/",
+                    "items": [doc_name],
+                })
+                continue
+
+            content = doc_path.read_text()
+            lines = [l.strip() for l in content.splitlines()
+                     if l.strip() and not l.strip().startswith("#")
+                     and not l.strip().startswith("<!--")
+                     and not l.strip().startswith("-->")
+                     and not l.strip().startswith("---")
+                     and not l.strip().startswith("|")
+                     and l.strip() != "|"]
+            if len(lines) < 3:
+                findings.append({
+                    "severity": "info",
+                    "check": "unfilled-hub-documentation",
+                    "message": f"{doc_name} appears to be an unfilled template — needs real content",
+                    "items": [doc_name],
+                })
+
+            import os
+            mtime = date.fromtimestamp(os.path.getmtime(doc_path))
+            age_days = (date.today() - mtime).days
+            if age_days > 30:
+                findings.append({
+                    "severity": "info",
+                    "check": "stale-hub-documentation",
+                    "message": f"{doc_name} hasn't been updated in {age_days} days",
+                    "items": [doc_name],
+                })
+
+    # Check 12: Stale task assignment (in-progress with assignee, no updates in 14+ days)
+    for task in store.list_tasks(status="in-progress"):
+        if task.assignee and task.updated < stale_threshold:
+            days = (date.today() - task.updated).days
+            findings.append({
+                "severity": "warning",
+                "check": "stale-assignment",
+                "message": f"Task {task.id} assigned to {task.assignee} with no updates for {days} days",
+                "items": [task.id],
+            })
+
+    # Check 13: Malformed files in quarantine
     malformed_dir = store.project_dir / "malformed"
     if malformed_dir.exists():
         malformed_count = len(list(malformed_dir.glob("*.md")))

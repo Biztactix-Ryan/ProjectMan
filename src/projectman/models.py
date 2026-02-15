@@ -18,6 +18,13 @@ class StoryStatus(str, Enum):
     archived = "archived"
 
 
+class EpicStatus(str, Enum):
+    draft = "draft"
+    active = "active"
+    done = "done"
+    archived = "archived"
+
+
 class TaskStatus(str, Enum):
     todo = "todo"
     in_progress = "in-progress"
@@ -39,6 +46,7 @@ class StoryFrontmatter(BaseModel):
     status: StoryStatus = StoryStatus.backlog
     priority: Priority = Priority.should
     points: Optional[int] = None
+    epic_id: Optional[str] = None
     tags: list[str] = []
     created: date
     updated: date
@@ -57,6 +65,36 @@ class StoryFrontmatter(BaseModel):
     def validate_id(cls, v: str) -> str:
         if not re.match(r"^[A-Za-z][\w-]*$", v):
             raise ValueError(f"Story ID must be alphanumeric with hyphens, got: {v}")
+        return v
+
+
+class EpicFrontmatter(BaseModel):
+    id: str
+    title: str
+    status: EpicStatus = EpicStatus.draft
+    priority: Priority = Priority.should
+    points: Optional[int] = None
+    target_date: Optional[date] = None
+    tags: list[str] = []
+    created: date
+    updated: date
+
+    @field_validator("points")
+    @classmethod
+    def validate_fibonacci(cls, v: Optional[int]) -> Optional[int]:
+        if v is not None and v not in FIBONACCI_POINTS:
+            raise ValueError(
+                f"Points must be fibonacci: {sorted(FIBONACCI_POINTS)}"
+            )
+        return v
+
+    @field_validator("id")
+    @classmethod
+    def validate_id(cls, v: str) -> str:
+        if not re.match(r"^[A-Za-z][\w-]*$", v):
+            raise ValueError(
+                f"Epic ID must be alphanumeric with hyphens, got: {v}"
+            )
         return v
 
 
@@ -95,6 +133,7 @@ class ProjectConfig(BaseModel):
     description: str = ""
     hub: bool = False
     next_story_id: int = 1
+    next_epic_id: int = 1
     projects: list[str] = []
 
     @field_validator("prefix")
@@ -108,10 +147,11 @@ class ProjectConfig(BaseModel):
 class IndexEntry(BaseModel):
     id: str
     title: str
-    type: str  # "story" or "task"
+    type: str  # "story", "task", or "epic"
     status: str
     points: Optional[int] = None
     story_id: Optional[str] = None
+    epic_id: Optional[str] = None
 
 
 class ProjectIndex(BaseModel):
@@ -120,3 +160,4 @@ class ProjectIndex(BaseModel):
     completed_points: int = 0
     story_count: int = 0
     task_count: int = 0
+    epic_count: int = 0

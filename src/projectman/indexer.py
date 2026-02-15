@@ -9,10 +9,20 @@ from .store import Store
 
 
 def build_index(store: Store) -> ProjectIndex:
-    """Read all stories and tasks, produce a ProjectIndex."""
+    """Read all epics, stories, and tasks, produce a ProjectIndex."""
     entries: list[IndexEntry] = []
     total_points = 0
     completed_points = 0
+
+    for epic in store.list_epics():
+        entries.append(
+            IndexEntry(
+                id=epic.id,
+                title=epic.title,
+                type="epic",
+                status=epic.status.value,
+            )
+        )
 
     for story in store.list_stories():
         entries.append(
@@ -22,6 +32,7 @@ def build_index(store: Store) -> ProjectIndex:
                 type="story",
                 status=story.status.value,
                 points=story.points,
+                epic_id=story.epic_id,
             )
         )
         if story.points:
@@ -45,6 +56,7 @@ def build_index(store: Store) -> ProjectIndex:
             if task.status.value == "done":
                 completed_points += task.points
 
+    epic_count = sum(1 for e in entries if e.type == "epic")
     story_count = sum(1 for e in entries if e.type == "story")
     task_count = sum(1 for e in entries if e.type == "task")
 
@@ -54,6 +66,7 @@ def build_index(store: Store) -> ProjectIndex:
         completed_points=completed_points,
         story_count=story_count,
         task_count=task_count,
+        epic_count=epic_count,
     )
 
 

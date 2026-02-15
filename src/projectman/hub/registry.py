@@ -72,6 +72,7 @@ def _init_subproject(target: Path, name: str) -> None:
     proj.mkdir(exist_ok=True)
     (proj / "stories").mkdir(exist_ok=True)
     (proj / "tasks").mkdir(exist_ok=True)
+    (proj / "epics").mkdir(exist_ok=True)
 
     # Try to render from templates, fall back to inline
     try:
@@ -106,6 +107,7 @@ def _init_subproject(target: Path, name: str) -> None:
         "completed_points": 0,
         "story_count": 0,
         "task_count": 0,
+        "epic_count": 0,
     }
     (proj / "index.yaml").write_text(yaml.dump(empty_index, default_flow_style=False))
 
@@ -232,12 +234,40 @@ def repair(root: Optional[Path] = None) -> str:
             report_lines.append(f"- **{name}** — {s} stories, {t} tasks")
         report_lines.append("")
 
-    # 3. Rebuild hub embeddings from all subprojects
+    # 3. Create missing hub docs (VISION.md, ARCHITECTURE.md, DECISIONS.md)
+    hub_proj_dir = root / ".project"
+    (hub_proj_dir / "epics").mkdir(exist_ok=True)
+    hub_docs_created = []
+    try:
+        import importlib.resources
+        from jinja2 import Environment, FileSystemLoader
+        tdir = str(importlib.resources.files("projectman") / "templates")
+        env = Environment(loader=FileSystemLoader(tdir), keep_trailing_newline=True)
+        ctx = dict(name=config.name, prefix=config.prefix, description=config.description, hub=True)
+
+        for doc_name, template_name in [
+            ("VISION.md", "vision.md.j2"),
+            ("ARCHITECTURE.md", "architecture_hub.md.j2"),
+            ("DECISIONS.md", "decisions.md.j2"),
+        ]:
+            doc_path = hub_proj_dir / doc_name
+            if not doc_path.exists():
+                doc_path.write_text(env.get_template(template_name).render(**ctx))
+                hub_docs_created.append(doc_name)
+    except Exception:
+        pass
+
+    if hub_docs_created:
+        report_lines.append(f"## Created {len(hub_docs_created)} missing hub doc(s)\n")
+        for doc_name in hub_docs_created:
+            report_lines.append(f"- **{doc_name}**")
+        report_lines.append("")
+
+    # 4. Rebuild hub embeddings from all subprojects
     embedded_count = 0
     try:
         from ..embeddings import EmbeddingStore
 
-        hub_proj_dir = root / ".project"
         emb_store = EmbeddingStore(hub_proj_dir)
 
         for name in config.projects:
@@ -271,7 +301,7 @@ def repair(root: Optional[Path] = None) -> str:
     except ImportError:
         report_lines.append("## Embeddings skipped (sentence-transformers not installed)\n")
 
-    # 4. Regenerate hub dashboards
+    # 5. Regenerate hub dashboards
     try:
         from .dashboards import generate_dashboards
         generate_dashboards(root)
@@ -281,7 +311,7 @@ def repair(root: Optional[Path] = None) -> str:
     except Exception as e:
         report_lines.append(f"## Dashboard generation failed: {e}\n")
 
-    # 5. Save config if changed
+    # 6. Save config if changed
     if changed:
         save_config(config, root)
 

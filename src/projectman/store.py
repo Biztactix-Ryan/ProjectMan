@@ -8,6 +8,8 @@ import frontmatter
 
 from .config import load_config, save_config
 from .models import (
+    EpicFrontmatter,
+    EpicStatus,
     Priority,
     StoryFrontmatter,
     StoryStatus,
@@ -24,6 +26,7 @@ class Store:
         self.project_dir = root / ".project"
         self.stories_dir = self.project_dir / "stories"
         self.tasks_dir = self.project_dir / "tasks"
+        self.epics_dir = self.project_dir / "epics"
         self.config = load_config(root)
 
     def _next_story_id(self) -> str:
@@ -42,6 +45,18 @@ class Store:
 
     def _task_path(self, task_id: str) -> Path:
         return self.tasks_dir / f"{task_id}.md"
+
+    def _next_epic_id(self) -> str:
+        eid = f"EPIC-{self.config.prefix}-{self.config.next_epic_id}"
+        self.config.next_epic_id += 1
+        save_config(self.config, self.root)
+        return eid
+
+    def _epic_path(self, epic_id: str) -> Path:
+        return self.epics_dir / f"{epic_id}.md"
+
+    def _is_epic_id(self, item_id: str) -> bool:
+        return item_id.startswith("EPIC-")
 
     def _is_task_id(self, item_id: str) -> bool:
         """Task IDs have 3 parts (PREFIX-N-N), story IDs have 2 (PREFIX-N)."""
@@ -104,6 +119,63 @@ class Store:
             except Exception:
                 continue
         return stories
+
+    def create_epic(
+        self,
+        title: str,
+        description: str,
+        priority: Optional[str] = None,
+        target_date: Optional[str] = None,
+        tags: Optional[list[str]] = None,
+    ) -> EpicFrontmatter:
+        """Create a new epic and write it to disk."""
+        self.epics_dir.mkdir(parents=True, exist_ok=True)
+        epic_id = self._next_epic_id()
+        today = date.today()
+
+        meta = EpicFrontmatter(
+            id=epic_id,
+            title=title,
+            status=EpicStatus.draft,
+            priority=Priority(priority) if priority else Priority.should,
+            target_date=target_date,
+            tags=tags or [],
+            created=today,
+            updated=today,
+        )
+
+        post = frontmatter.Post(
+            content=description,
+            **meta.model_dump(mode="json"),
+        )
+        self._epic_path(epic_id).write_text(frontmatter.dumps(post))
+        return meta
+
+    def get_epic(self, epic_id: str) -> tuple[EpicFrontmatter, str]:
+        """Read an epic, returning (frontmatter, body)."""
+        path = self._epic_path(epic_id)
+        if not path.exists():
+            raise FileNotFoundError(f"Epic not found: {epic_id}")
+        post = frontmatter.load(str(path))
+        meta = EpicFrontmatter(**post.metadata)
+        return meta, post.content
+
+    def list_epics(
+        self, status: Optional[str] = None
+    ) -> list[EpicFrontmatter]:
+        """List all epics, optionally filtered by status. Skips malformed files."""
+        if not self.epics_dir.exists():
+            return []
+        epics = []
+        for path in sorted(self.epics_dir.glob("*.md")):
+            try:
+                post = frontmatter.load(str(path))
+                meta = EpicFrontmatter(**post.metadata)
+                if status is None or meta.status.value == status:
+                    epics.append(meta)
+            except Exception:
+                continue
+        return epics
 
     def create_task(
         self,
@@ -169,11 +241,14 @@ class Store:
                 continue
         return tasks
 
-    def update(self, item_id: str, **kwargs) -> StoryFrontmatter | TaskFrontmatter:
-        """Update fields on a story or task."""
-        is_task = self._is_task_id(item_id)
+    def update(self, item_id: str, **kwargs) -> EpicFrontmatter | StoryFrontmatter | TaskFrontmatter:
+        """Update fields on an epic, story, or task."""
+        is_epic = self._is_epic_id(item_id)
+        is_task = not is_epic and self._is_task_id(item_id)
 
-        if is_task:
+        if is_epic:
+            path = self._epic_path(item_id)
+        elif is_task:
             path = self._task_path(item_id)
         else:
             path = self._story_path(item_id)
@@ -187,7 +262,9 @@ class Store:
                 post.metadata[key] = value
         post.metadata["updated"] = date.today().isoformat()
 
-        if is_task:
+        if is_epic:
+            meta = EpicFrontmatter(**post.metadata)
+        elif is_task:
             meta = TaskFrontmatter(**post.metadata)
         else:
             meta = StoryFrontmatter(**post.metadata)
@@ -196,15 +273,18 @@ class Store:
         return meta
 
     def archive(self, item_id: str) -> None:
-        """Archive a story or task by setting status to archived/done."""
-        is_task = self._is_task_id(item_id)
-        if is_task:
+        """Archive an epic, story, or task."""
+        if self._is_epic_id(item_id):
+            self.update(item_id, status=EpicStatus.archived.value)
+        elif self._is_task_id(item_id):
             self.update(item_id, status=TaskStatus.done.value)
         else:
             self.update(item_id, status=StoryStatus.archived.value)
 
-    def get(self, item_id: str) -> tuple[StoryFrontmatter | TaskFrontmatter, str]:
-        """Unified lookup by ID — dispatches to get_story or get_task."""
+    def get(self, item_id: str) -> tuple[EpicFrontmatter | StoryFrontmatter | TaskFrontmatter, str]:
+        """Unified lookup by ID — dispatches to get_epic, get_story, or get_task."""
+        if self._is_epic_id(item_id):
+            return self.get_epic(item_id)
         if self._is_task_id(item_id):
             return self.get_task(item_id)
         return self.get_story(item_id)
