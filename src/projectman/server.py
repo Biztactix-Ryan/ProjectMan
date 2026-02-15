@@ -341,28 +341,63 @@ def pm_repair() -> str:
 @mcp.tool()
 def pm_malformed(project: Optional[str] = None) -> str:
     """List quarantined malformed story/task files with their full content for review.
+    In hub mode without a project specified, scans all subprojects.
 
     Args:
-        project: Optional project name (hub mode only)
+        project: Optional project name (hub mode only). Omit to scan all.
     """
     try:
-        root = _resolve_root(project)
-        malformed_dir = root / ".project" / "malformed"
-        if not malformed_dir.exists() or not any(malformed_dir.iterdir()):
+        import frontmatter
+
+        root = find_project_root()
+        config = load_config(root)
+
+        # Collect dirs to scan
+        dirs_to_scan = []
+        if project:
+            r = _resolve_root(project)
+            malformed_dir = r / ".project" / "malformed"
+            if malformed_dir.exists():
+                dirs_to_scan.append((project, malformed_dir))
+        elif config.hub:
+            # Scan hub root
+            hub_mal = root / ".project" / "malformed"
+            if hub_mal.exists() and any(hub_mal.iterdir()):
+                dirs_to_scan.append(("hub", hub_mal))
+            # Scan all subprojects
+            projects_dir = root / "projects"
+            if projects_dir.exists():
+                for name in config.projects:
+                    mal = projects_dir / name / ".project" / "malformed"
+                    if mal.exists() and any(mal.iterdir()):
+                        dirs_to_scan.append((name, mal))
+        else:
+            malformed_dir = root / ".project" / "malformed"
+            if malformed_dir.exists():
+                dirs_to_scan.append((config.name, malformed_dir))
+
+        if not dirs_to_scan:
             return "no malformed files"
 
-        import frontmatter
-        results = []
-        for path in sorted(malformed_dir.glob("*.md")):
-            entry = {"file": path.name}
-            try:
-                post = frontmatter.load(str(path))
-                entry["frontmatter"] = dict(post.metadata)
-                entry["body"] = post.content
-            except Exception:
-                entry["raw_content"] = path.read_text()
-            results.append(entry)
-        return _yaml_dump({"malformed_files": results, "path": str(malformed_dir)})
+        all_results = {}
+        for proj_name, mal_dir in dirs_to_scan:
+            files = []
+            for path in sorted(mal_dir.glob("*.md")):
+                entry = {"file": path.name}
+                try:
+                    post = frontmatter.load(str(path))
+                    entry["frontmatter"] = dict(post.metadata)
+                    entry["body"] = post.content
+                except Exception:
+                    entry["raw_content"] = path.read_text()
+                files.append(entry)
+            all_results[proj_name] = {
+                "path": str(mal_dir),
+                "count": len(files),
+                "files": files,
+            }
+
+        return _yaml_dump(all_results)
     except Exception as e:
         return f"error: {e}"
 
