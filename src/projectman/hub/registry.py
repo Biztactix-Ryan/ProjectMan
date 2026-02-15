@@ -268,6 +268,48 @@ def repair(root: Optional[Path] = None) -> str:
     return report
 
 
+def set_branch(name: str, branch: str, root: Optional[Path] = None) -> str:
+    """Change the branch a submodule tracks and update it."""
+    from ..config import find_project_root
+    root = root or find_project_root()
+    config = load_config(root)
+
+    if not config.hub:
+        return "error: not a hub project"
+
+    if name not in config.projects:
+        return f"error: project '{name}' not registered in hub"
+
+    target = root / "projects" / name
+    if not target.exists():
+        return f"error: project '{name}' directory not found"
+
+    try:
+        # Update .gitmodules to track the new branch
+        subprocess.run(
+            ["git", "config", "-f", ".gitmodules",
+             f"submodule.projects/{name}.branch", branch],
+            cwd=str(root),
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        # Fetch and checkout the new branch in the submodule
+        subprocess.run(
+            ["git", "submodule", "update", "--remote", f"projects/{name}"],
+            cwd=str(root),
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    except subprocess.CalledProcessError as e:
+        return f"error switching branch: {e.stderr}"
+    except FileNotFoundError:
+        return "error: git is not installed or not on PATH"
+
+    return f"project '{name}' now tracking branch '{branch}'"
+
+
 def list_projects(root: Optional[Path] = None) -> list[dict]:
     """List all registered projects with their status."""
     from ..config import find_project_root

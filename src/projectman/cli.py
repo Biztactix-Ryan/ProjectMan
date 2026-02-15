@@ -155,6 +155,16 @@ def add_project(name, git_url, branch):
     click.echo(result)
 
 
+@cli.command("set-branch")
+@click.argument("name")
+@click.argument("branch")
+def set_branch(name, branch):
+    """Change the branch a hub submodule tracks."""
+    from projectman.hub.registry import set_branch as _set_branch
+    result = _set_branch(name, branch)
+    click.echo(result)
+
+
 @cli.command()
 def repair():
     """Scan hub, discover projects, init missing .project/ dirs, rebuild indexes and embeddings."""
