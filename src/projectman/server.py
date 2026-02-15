@@ -561,7 +561,7 @@ def pm_create_task(
     """Create a new task under a story.
 
     Args:
-        story_id: Parent story ID (e.g. PRJ-1)
+        story_id: Parent story ID (e.g. US-PRJ-1)
         title: Task title
         description: Task description with implementation details
         points: Task points (fibonacci: 1,2,3,5,8,13)
@@ -639,7 +639,7 @@ def pm_grab(
     """Claim a task — validates readiness, assigns, sets in-progress, loads context.
 
     Args:
-        task_id: Task ID to claim (e.g. PRJ-1-1)
+        task_id: Task ID to claim (e.g. US-PRJ-1-1)
         assignee: Who is claiming (default "claude" for AI agents, or a human name)
     """
     try:

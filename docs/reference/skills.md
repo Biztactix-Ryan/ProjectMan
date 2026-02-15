@@ -1,15 +1,18 @@
 # Skills Reference
 
-ProjectMan installs 6 Claude Code skills (slash commands) via `projectman setup-claude`.
+ProjectMan installs 4 Claude Code skills (slash commands) via `projectman setup-claude`.
 
 ## /pm
 
-General entry point for project management. Routes to the appropriate MCP tools based on your request.
+General entry point for project management. Routes to the appropriate MCP tools based on your request, including scope, audit, fix, and other subcommands.
 
 ```
 /pm                          # Interactive — Claude asks what you need
 /pm create story "Title"     # Route to story creation
-/pm show PRJ-1               # Route to pm_get
+/pm show US-PRJ-1            # Route to pm_get
+/pm scope US-PRJ-1           # Decompose story into tasks
+/pm audit                    # Run drift detection
+/pm fix                      # Fix malformed files
 ```
 
 ## /pm-status
@@ -24,7 +27,7 @@ Quick project dashboard. Shows story/task counts, points, completion percentage,
 1. Calls `pm_status` to get the compact index
 2. Calls `pm_active` to show in-progress work
 3. Highlights blockers or items needing attention
-4. Suggests `/pm-audit` if drift is detected
+4. Suggests `/pm audit` if drift is detected
 
 ## /pm-plan
 
@@ -45,57 +48,19 @@ Guided sprint planning workflow. Walks through the full planning process.
 8. Assign stories to sprint
 9. Sprint summary with point target (20-30 for solo dev with AI)
 
-## /pm-scope
-
-Decompose a user story into concrete implementation tasks.
-
-```
-/pm-scope PRJ-1
-```
-
-**Workflow:**
-1. Reads story via `pm_scope` to get context
-2. Analyzes acceptance criteria and description
-3. Proposes a task breakdown (each task 1-3 points)
-4. Presents tasks for your approval
-5. Creates approved tasks via `pm_create_task`
-6. Estimates each task via `pm_estimate` + `pm_update`
-7. Shows final breakdown with total points
-
-## /pm-audit
-
-Run drift detection and review findings.
-
-```
-/pm-audit
-```
-
-**Workflow:**
-1. Calls `pm_audit` to generate the drift report
-2. Presents findings organized by severity
-3. For each finding, suggests a resolution:
-   - Done stories with incomplete tasks → complete tasks or reopen story
-   - Stale items → check relevance, update or archive
-   - Missing descriptions → offer to flesh out with `/pm-scope`
-   - Point mismatches → recalibrate with `pm_estimate`
-4. Offers to execute suggested fixes
-
 ## /pm-do
 
 Pick up and execute a specific task. This is the "do the work" command.
 
 ```
-/pm-do PRJ-1-1
+/pm-do US-PRJ-1-1
 ```
 
-**Workflow:**
-1. Reads the full task via `pm_get`
-2. Sets task status to `in-progress` via `pm_update`
-3. Reads implementation steps and definition of done
-4. Implements the work described in the task
-5. Verifies all definition-of-done items are met
-6. Sets task status to `done` via `pm_update`
-7. Reports what was accomplished
+**Workflow (3 phases):**
+
+1. **Claim & Context** — Auto-grabs the task via `pm_grab` with readiness validation. Loads task context including parent story, related files, and definition of done.
+2. **Execute** — Implements the work described in the task. Follows implementation steps and verifies definition-of-done items as they are completed.
+3. **Complete** — Reviews task status, detects sibling task completion (whether all tasks under the parent story are now done), and updates status via `pm_update`.
 
 **Note:** This skill has `disable-model-invocation: true` — it only runs when you explicitly invoke it with `/pm-do`, never automatically. This is because it performs real code changes.
 

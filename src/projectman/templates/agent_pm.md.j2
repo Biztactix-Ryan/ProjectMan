@@ -26,7 +26,7 @@ Epics (EPIC-PREFIX-N) — large structural initiatives
   ↓  decompose into
 Stories (US-PREFIX-N) — user-facing value, linked to epic via epic_id
   ↓  decompose into
-Tasks (PREFIX-N-N) — implementation units, 1-3 points each
+Tasks (US-PREFIX-N-N) — implementation units, 1-3 points each
   ↓  pass Definition of Ready gates
 Task Board — available pool, ordered by priority
   ↓  devs grab tasks
@@ -59,7 +59,7 @@ Continuous audit — checks alignment across all layers
 - Statuses: backlog → ready → active → done → archived
 - "As a [user], I want [goal] so that [benefit]"
 
-### Tasks (PREFIX-N-N)
+### Tasks (US-PREFIX-N-N)
 - Implementation units under stories, 1-5 points each
 - Statuses: todo → in-progress → review → done | blocked
 - Must pass Definition of Ready before being grabbable
@@ -82,8 +82,8 @@ The task board (`pm_board`) is the "home screen" for developers:
 ```
 Developer starts session
   → pm_board          (see what's available)
-  → pm_grab PRJ-1-1   (claim a task)
-  → /pm-do PRJ-1-1    (implement it)
+  → pm_grab US-PRJ-1-1   (claim a task)
+  → /pm-do US-PRJ-1-1    (implement it)
   → pm_board          (see what's next)
 ```
 
@@ -123,7 +123,7 @@ Use `pm_context(project)` at the start of any work session to get the full pictu
 
 - **Epics**: `EPIC-PREFIX-N` (e.g. `EPIC-CEO-1`)
 - **User Stories**: `US-PREFIX-N` (e.g. `US-CEO-1`)
-- **Tasks**: `PREFIX-N-N` (e.g. `CEO-1-1`) — story ID + sequence
+- **Tasks**: `US-PREFIX-N-N` (e.g. `US-CEO-1-1`) — story ID + sequence
 - Filenames always match the ID
 
 ## Malformed File Handling

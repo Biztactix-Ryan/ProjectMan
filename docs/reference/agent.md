@@ -1,19 +1,20 @@
 # PM Agent Reference
 
-The PM agent (`.claude/agents/pm.md`) is a Claude Code agent specialized in project management. It knows how to use ProjectMan's MCP tools effectively and follows structured workflows.
+The PM agent (`.claude/agents/pm.md`) is a Claude Code agent specialized in project management. It manages epics, stories, tasks, estimation, and sprint planning using ProjectMan's MCP tools, including the task board and hub context.
 
 ## When It Activates
 
-The agent is invoked when Claude Code detects project management context in your conversation — discussions about stories, tasks, sprints, estimation, or project status.
+The agent is invoked when Claude Code detects project management context in your conversation — discussions about epics, stories, tasks, sprints, estimation, or project status.
 
 ## Token Discipline
 
 The agent follows strict rules to minimize context window usage:
 
-1. **Always start with `pm_status`** — never bulk-read project data
-2. **One story/task at a time** via `pm_get` — never load everything
-3. **Use `pm_search` for discovery** — don't scan files directly
-4. **Read PROJECT.md for architecture context** — only when scoping or estimating
+1. **Fetch context** via `pm_context` — get combined hub + project context (hub vision/architecture + project docs + active epics/stories)
+2. **Always start with `pm_status`** — never bulk-read project data
+3. **One story/task at a time** via `pm_get` — never load everything
+4. **Use `pm_search` for discovery** — don't scan files directly
+5. **Read PROJECT.md for architecture context** — only when scoping or estimating
 
 ## Story Point Calibration
 
@@ -37,7 +38,17 @@ pm_status → present dashboard → highlight blockers
 
 ### Story Creation
 ```
-pm_create_story → pm_scope → pm_estimate → pm_create_task (for each)
+pm_create_story(epic_id) → pm_scope → pm_estimate → pm_create_task (for each)
+```
+
+### Epic Management
+```
+pm_create_epic → pm_create_story(epic_id) → pm_scope → pm_create_task (for each)
+```
+
+### Task Board
+```
+pm_board → pm_grab → implement → pm_update (done)
 ```
 
 ### Sprint Planning
@@ -47,7 +58,7 @@ pm_status → pm_audit → pm_active → pm_burndown → prioritize → scope �
 
 ### Task Execution
 ```
-pm_get (task) → pm_update (in-progress) → implement → pm_update (done)
+pm_grab (validates readiness) → implement → pm_update (review or done)
 ```
 
 ### Drift Detection
@@ -70,7 +81,7 @@ The agent file is installed at `.claude/agents/pm.md`. You can edit it to:
 ```yaml
 ---
 name: pm
-description: Project management agent for planning, scoping, and sprint orchestration
+description: Project management agent — manages epics, stories, tasks, estimation, and sprint planning
 mcpServers:
   - projectman
 ---

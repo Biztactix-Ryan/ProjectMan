@@ -1,82 +1,116 @@
-# Cross-Repo Epics
+# Epics
 
-Epics are large initiatives that span multiple projects. They live in the hub's `roadmap/` directory as markdown files and link to stories across your repos.
+Epics are strategic initiatives that group related stories. They are first-class entities stored in `.project/epics/` with YAML frontmatter, just like stories and tasks.
 
 ## Creating an Epic
 
-Create a markdown file in your hub's `roadmap/` directory:
+```
+/pm create epic "Unified Authentication" "Single sign-on across all services"
+```
 
-```markdown
-# Epic: Unified Authentication
+Or via MCP: `pm_create_epic(title, description, priority?, target_date?, tags?)`
 
-## Goal
+This creates an epic file like `EPIC-API-1.md` in `.project/epics/`.
+
+## Epic Format
+
+```yaml
+---
+id: EPIC-API-1
+title: "Unified Authentication"
+status: draft
+priority: must
+points: null
+target_date: '2026-06-30'
+tags: [security, mvp]
+created: '2026-02-15'
+updated: '2026-02-15'
+---
+
+## Vision
+
 Single sign-on across all services by Q2.
 
-## Stories
+## Success Criteria
 
-| Project | Story | Title | Status |
-|---------|-------|-------|--------|
-| my-api | API-5 | Backend auth service | active |
-| my-api | API-6 | JWT middleware | backlog |
-| my-frontend | FE-3 | Login UI | backlog |
-| my-frontend | FE-4 | Session management | backlog |
-| my-mobile | MOB-2 | Biometric login | backlog |
-
-## Acceptance Criteria
 - [ ] Users can log in once and access all services
 - [ ] JWT tokens are validated across all backends
 - [ ] Session timeout is consistent (30 min)
-
-## Notes
-Depends on API-5 completing first — frontend and mobile work blocked until
-the auth service is deployed.
 ```
 
 ## Epic Lifecycle
 
-1. **Draft** — write the epic with a goal and rough story list
-2. **Scope** — use `/pm-scope` on each linked story to break into tasks
-3. **Estimate** — sum story points across all linked stories for total effort
-4. **Track** — check progress with `pm_status` for each project
-5. **Close** — when all linked stories are done, mark the epic complete
-
-## Tracking Epic Progress
-
-Hub-wide status (all projects):
 ```
-/pm-status
+draft → active → done → archived
 ```
 
-Single project within the hub:
-```
-pm_status(project="my-api")
-```
-
-Cross-repo burndown:
-```
-/pm-burndown
-```
+1. **Draft** -- write the epic with vision and success criteria
+2. **Active** -- stories are being created and worked on
+3. **Done** -- all linked stories are complete
+4. **Archived** -- historical record
 
 ## Linking Stories to Epics
 
-Stories reference their epic in the frontmatter tags:
+Stories link to epics via the `epic_id` frontmatter field:
 
 ```yaml
 ---
-id: API-5
+id: US-API-5
 title: Backend auth service
-tags: [epic:unified-auth]
+epic_id: EPIC-API-1
+status: active
 ---
 ```
 
-This lets you search for all stories in an epic:
+Link during creation:
 ```
-pm_search("epic:unified-auth")
+pm_create_story(title, description, epic_id="EPIC-API-1")
 ```
+
+Or link an existing story:
+```
+pm_update("US-API-5", epic_id="EPIC-API-1")
+```
+
+## Viewing Epic Progress
+
+Get full epic rollup with linked stories and completion percentage:
+
+```
+pm_epic("EPIC-API-1")
+```
+
+Returns the epic details plus:
+- All linked stories with their tasks
+- Total and completed points
+- Completion percentage
+
+## Cross-Repo Epics (Hub Mode)
+
+In hub mode, epics can span multiple projects. Create the epic in the hub's `.project/epics/`, then link stories from different subprojects:
+
+```
+# Create epic at hub level
+pm_create_epic("Unified Auth", "Cross-service authentication")
+
+# Link stories from different projects
+pm_update("US-API-5", epic_id="EPIC-HUB-1")  # in my-api project
+pm_update("US-FE-3", epic_id="EPIC-HUB-1")   # in my-frontend project
+```
+
+## Audit Checks
+
+The audit system validates epic consistency:
+
+- **Empty active epic** [WARNING] -- active epic with no linked stories
+- **Done epic with open stories** [ERROR] -- epic marked done but stories still open
+- **Orphaned epic reference** [WARNING] -- story references non-existent epic
+- **Stale draft epic** [INFO] -- draft epic with no stories for 30+ days
 
 ## Best Practices
 
-- Keep epics focused — if it spans more than 4-5 repos, consider splitting
-- Identify cross-repo dependencies early and note them in the epic
-- Review epic progress weekly during sprint planning
-- Archive completed epics by moving them to `roadmap/archive/`
+- Keep epics focused on a clear strategic goal
+- Link all related stories to their epic for tracking
+- Use `pm_epic(id)` to review progress regularly
+- Move epics to done only when all linked stories are complete
+- Archive completed epics to keep the board clean

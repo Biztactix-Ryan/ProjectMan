@@ -4,10 +4,15 @@
 
 1. Run `/pm-plan` to start the sprint planning workflow
 2. Review project status and audit findings
-3. Prioritize backlog stories
-4. Scope selected stories into tasks
-5. Estimate each task
-6. Assign work
+3. Check epics for strategic alignment and priority
+4. Prioritize backlog stories
+5. Scope selected stories into tasks
+6. Estimate each task
+7. Review the task board (`/pm board`) to see what's ready
+
+## Board-Driven Development
+
+Rather than assigning tasks during planning, prefer a board-driven approach: developers grab tasks from the task board (`/pm board`) as they become available. Tasks that pass readiness checks appear on the board automatically. Use `/pm-do <task-id>` to claim and start work on a task.
 
 ## Velocity
 

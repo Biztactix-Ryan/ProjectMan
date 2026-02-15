@@ -8,17 +8,17 @@ Two dashboards are generated in `.project/dashboards/`:
 
 ### status.md
 
-A summary table of every project in your hub:
+A summary table of every project in your hub, including epic rollup data:
 
 ```markdown
 # Hub Status
 
-| Project | Stories | Tasks | Points | Done | Remaining | % |
-|---------|---------|-------|--------|------|-----------|----|
-| my-api | 24 | 67 | 145 | 98 | 47 | 68% |
-| my-frontend | 18 | 42 | 89 | 45 | 44 | 51% |
-| my-mobile | 12 | 31 | 64 | 20 | 44 | 31% |
-| **Total** | **54** | **140** | **298** | **163** | **135** | **55%** |
+| Project | Epics | Stories | Tasks | Points | Done | Remaining | % |
+|---------|-------|---------|-------|--------|------|-----------|----|
+| my-api | 3 | 24 | 67 | 145 | 98 | 47 | 68% |
+| my-frontend | 2 | 18 | 42 | 89 | 45 | 44 | 51% |
+| my-mobile | 1 | 12 | 31 | 64 | 20 | 44 | 31% |
+| **Total** | **6** | **54** | **140** | **298** | **163** | **135** | **55%** |
 ```
 
 ### burndown.md
@@ -58,6 +58,10 @@ Since dashboards are markdown files committed to git, you can:
 - Read them in any markdown viewer
 - Track changes over time via git history (useful for velocity trends)
 - Reference them in PRs or standup notes
+
+## Epic Rollup
+
+Dashboards now include epic rollup data. Each project row shows the number of epics linked to stories in that project, and the status table reflects completion across epic boundaries. Hub-level epics that span multiple projects are counted under each project they touch.
 
 ## Customization
 
