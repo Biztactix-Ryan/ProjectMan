@@ -21,12 +21,14 @@ def test_rollup_empty(tmp_hub):
 
 
 def test_rollup_with_subproject(tmp_hub):
-    # Manually create a subproject
+    # Manually create a subproject's source dir and PM data in hub
     sub_path = tmp_hub / "projects" / "sub1"
-    sub_proj = sub_path / ".project"
-    sub_proj.mkdir(parents=True)
-    (sub_proj / "stories").mkdir()
-    (sub_proj / "tasks").mkdir()
+    sub_path.mkdir(parents=True)
+
+    pm_dir = tmp_hub / ".project" / "projects" / "sub1"
+    pm_dir.mkdir(parents=True)
+    (pm_dir / "stories").mkdir()
+    (pm_dir / "tasks").mkdir()
 
     config = {
         "name": "sub1",
@@ -36,7 +38,7 @@ def test_rollup_with_subproject(tmp_hub):
         "next_story_id": 1,
         "projects": [],
     }
-    with open(sub_proj / "config.yaml", "w") as f:
+    with open(pm_dir / "config.yaml", "w") as f:
         yaml.dump(config, f)
 
     # Register in hub config
@@ -45,8 +47,8 @@ def test_rollup_with_subproject(tmp_hub):
     hub_config.projects.append("sub1")
     save_config(hub_config, tmp_hub)
 
-    # Create a story in subproject
-    sub_store = Store(sub_path)
+    # Create a story in subproject using hub root + project_dir
+    sub_store = Store(tmp_hub, project_dir=pm_dir)
     sub_store.create_story("Sub Story", "Desc", points=3)
 
     # Rollup

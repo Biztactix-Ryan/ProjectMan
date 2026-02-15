@@ -6,8 +6,11 @@ from typing import Optional
 
 import frontmatter
 
+import yaml
+
 from .config import load_config, save_config
 from .models import (
+    ProjectConfig,
     EpicFrontmatter,
     EpicStatus,
     Priority,
@@ -21,18 +24,31 @@ from .models import (
 class Store:
     """File-backed store for stories and tasks."""
 
-    def __init__(self, root: Path):
+    def __init__(self, root: Path, project_dir: Path | None = None):
         self.root = root
-        self.project_dir = root / ".project"
+        self.project_dir = project_dir if project_dir is not None else (root / ".project")
         self.stories_dir = self.project_dir / "stories"
         self.tasks_dir = self.project_dir / "tasks"
         self.epics_dir = self.project_dir / "epics"
-        self.config = load_config(root)
+        self.config = load_config(root) if project_dir is None else self._load_config()
+
+    def _load_config(self) -> ProjectConfig:
+        """Load config.yaml from self.project_dir."""
+        config_path = self.project_dir / "config.yaml"
+        with open(config_path) as f:
+            data = yaml.safe_load(f)
+        return ProjectConfig(**data)
+
+    def _save_config(self) -> None:
+        """Save config.yaml to self.project_dir."""
+        config_path = self.project_dir / "config.yaml"
+        with open(config_path, "w") as f:
+            yaml.dump(self.config.model_dump(), f, default_flow_style=False)
 
     def _next_story_id(self) -> str:
         sid = f"US-{self.config.prefix}-{self.config.next_story_id}"
         self.config.next_story_id += 1
-        save_config(self.config, self.root)
+        self._save_config()
         return sid
 
     def _next_task_id(self, story_id: str) -> str:
@@ -49,7 +65,7 @@ class Store:
     def _next_epic_id(self) -> str:
         eid = f"EPIC-{self.config.prefix}-{self.config.next_epic_id}"
         self.config.next_epic_id += 1
-        save_config(self.config, self.root)
+        self._save_config()
         return eid
 
     def _epic_path(self, epic_id: str) -> Path:

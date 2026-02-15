@@ -43,9 +43,10 @@ def add_project(name: str, git_url: str, branch: Optional[str] = None, root: Opt
     except FileNotFoundError:
         return "error: git is not installed or not on PATH"
 
-    # Initialize .project/ in the submodule if it doesn't have one
-    if not (target / ".project" / "config.yaml").exists():
-        _init_subproject(target, name)
+    # Initialize PM data in hub's .project/projects/{name}/
+    pm_dir = root / ".project" / "projects" / name
+    if not (pm_dir / "config.yaml").exists():
+        _init_subproject(pm_dir, name)
 
     # Register in config
     if name not in config.projects:
@@ -60,7 +61,11 @@ def add_project(name: str, git_url: str, branch: Optional[str] = None, root: Opt
 
 
 def _init_subproject(target: Path, name: str) -> None:
-    """Initialize .project/ inside a submodule."""
+    """Initialize PM data directory for a subproject.
+
+    ``target`` is the project dir itself (e.g. hub_root/.project/projects/{name}/).
+    Stories, tasks, epics, config.yaml, and docs are created directly inside it.
+    """
     import yaml
     from jinja2 import Environment, FileSystemLoader
 
@@ -68,11 +73,10 @@ def _init_subproject(target: Path, name: str) -> None:
     clean = name.replace("-", "").replace("_", "")
     prefix = clean[:3].upper() or "PRJ"
 
-    proj = target / ".project"
-    proj.mkdir(exist_ok=True)
-    (proj / "stories").mkdir(exist_ok=True)
-    (proj / "tasks").mkdir(exist_ok=True)
-    (proj / "epics").mkdir(exist_ok=True)
+    target.mkdir(parents=True, exist_ok=True)
+    (target / "stories").mkdir(exist_ok=True)
+    (target / "tasks").mkdir(exist_ok=True)
+    (target / "epics").mkdir(exist_ok=True)
 
     # Try to render from templates, fall back to inline
     try:
@@ -81,10 +85,10 @@ def _init_subproject(target: Path, name: str) -> None:
         env = Environment(loader=FileSystemLoader(tdir), keep_trailing_newline=True)
         ctx = dict(name=name, prefix=prefix, description="", hub=False)
 
-        (proj / "config.yaml").write_text(env.get_template("config.yaml.j2").render(**ctx))
-        (proj / "PROJECT.md").write_text(env.get_template("project.md.j2").render(**ctx))
-        (proj / "INFRASTRUCTURE.md").write_text(env.get_template("infrastructure.md.j2").render(**ctx))
-        (proj / "SECURITY.md").write_text(env.get_template("security.md.j2").render(**ctx))
+        (target / "config.yaml").write_text(env.get_template("config.yaml.j2").render(**ctx))
+        (target / "PROJECT.md").write_text(env.get_template("project.md.j2").render(**ctx))
+        (target / "INFRASTRUCTURE.md").write_text(env.get_template("infrastructure.md.j2").render(**ctx))
+        (target / "SECURITY.md").write_text(env.get_template("security.md.j2").render(**ctx))
     except Exception:
         # Minimal fallback if templates aren't available
         config_data = {
@@ -95,10 +99,10 @@ def _init_subproject(target: Path, name: str) -> None:
             "next_story_id": 1,
             "projects": [],
         }
-        (proj / "config.yaml").write_text(yaml.dump(config_data, default_flow_style=False))
-        (proj / "PROJECT.md").write_text(f"# {name}\n\n## Architecture\n\n## Key Decisions\n")
-        (proj / "INFRASTRUCTURE.md").write_text(f"# {name} — Infrastructure\n\n## Environments\n")
-        (proj / "SECURITY.md").write_text(f"# {name} — Security\n\n## Authentication\n")
+        (target / "config.yaml").write_text(yaml.dump(config_data, default_flow_style=False))
+        (target / "PROJECT.md").write_text(f"# {name}\n\n## Architecture\n\n## Key Decisions\n")
+        (target / "INFRASTRUCTURE.md").write_text(f"# {name} — Infrastructure\n\n## Environments\n")
+        (target / "SECURITY.md").write_text(f"# {name} — Security\n\n## Authentication\n")
 
     # Write empty index
     empty_index = {
@@ -109,7 +113,7 @@ def _init_subproject(target: Path, name: str) -> None:
         "task_count": 0,
         "epic_count": 0,
     }
-    (proj / "index.yaml").write_text(yaml.dump(empty_index, default_flow_style=False))
+    (target / "index.yaml").write_text(yaml.dump(empty_index, default_flow_style=False))
 
 
 def repair(root: Optional[Path] = None) -> str:
@@ -154,28 +158,41 @@ def repair(root: Optional[Path] = None) -> str:
             report_lines.append(f"- **{name}** — registered in hub config")
         report_lines.append("")
 
-    # 2. Initialize .project/ where missing, rebuild indexes where present
+    # 2. Initialize PM data where missing, rebuild indexes where present
     initialized = []
     rebuilt = []
     story_counts = {}
 
     for name in config.projects:
         project_path = projects_dir / name
+        pm_dir = root / ".project" / "projects" / name
+
         if not project_path.exists():
             report_lines.append(f"- **{name}** — directory missing, skipped")
             continue
 
-        if not (project_path / ".project" / "config.yaml").exists():
-            _init_subproject(project_path, name)
+        # Migration: if old-style projects/{name}/.project/ exists but new-style doesn't, move data
+        old_style = project_path / ".project"
+        if old_style.exists() and not (pm_dir / "config.yaml").exists():
+            import shutil
+            pm_dir.mkdir(parents=True, exist_ok=True)
+            for item in old_style.iterdir():
+                dest = pm_dir / item.name
+                if not dest.exists():
+                    shutil.move(str(item), str(dest))
+            report_lines.append(f"- **{name}** — migrated PM data from submodule to hub")
+
+        if not (pm_dir / "config.yaml").exists():
+            _init_subproject(pm_dir, name)
             initialized.append(name)
         else:
-            # Project exists and has .project/ — quarantine bad files, rebuild index
+            # Project PM data exists — quarantine bad files, rebuild index
             try:
                 import frontmatter as fm
                 from ..models import StoryFrontmatter, TaskFrontmatter
                 import shutil
 
-                store = Store(project_path)
+                store = Store(root, project_dir=pm_dir)
                 malformed_dir = store.project_dir / "malformed"
                 quarantined = []
 
@@ -204,7 +221,7 @@ def repair(root: Optional[Path] = None) -> str:
                 if quarantined:
                     report_lines.append(f"### {name} — {len(quarantined)} malformed file(s) quarantined\n")
                     for fname, err in quarantined:
-                        report_lines.append(f"- `{fname}` → `.project/malformed/{fname}`: {err}")
+                        report_lines.append(f"- `{fname}` → `.project/projects/{name}/malformed/{fname}`: {err}")
                     report_lines.append("")
 
                 stories = store.list_stories()
@@ -271,13 +288,12 @@ def repair(root: Optional[Path] = None) -> str:
         emb_store = EmbeddingStore(hub_proj_dir)
 
         for name in config.projects:
-            project_path = projects_dir / name
-            if not (project_path / ".project" / "config.yaml").exists():
+            pm_dir = root / ".project" / "projects" / name
+            if not (pm_dir / "config.yaml").exists():
                 continue
 
             try:
-                store = Store(project_path)
-                sub_config = store.config
+                store = Store(root, project_dir=pm_dir)
 
                 for story in store.list_stories():
                     _, body = store.get_story(story.id)
@@ -452,12 +468,13 @@ def list_projects(root: Optional[Path] = None) -> list[dict]:
     results = []
     for name in config.projects:
         project_path = root / "projects" / name
-        has_project_dir = (project_path / ".project").exists()
+        pm_dir = root / ".project" / "projects" / name
+        has_pm_data = (pm_dir / "config.yaml").exists()
         results.append({
             "name": name,
             "path": str(project_path),
             "exists": project_path.exists(),
-            "initialized": has_project_dir,
+            "initialized": has_pm_data,
         })
 
     return results

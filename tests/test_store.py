@@ -203,3 +203,56 @@ class TestStoreGet:
         store.create_task("US-TST-1", "Task", "Desc")
         meta, body = store.get("US-TST-1-1")
         assert meta.title == "Task"
+
+
+class TestStoreCustomProjectDir:
+    def test_store_with_custom_project_dir(self, tmp_path):
+        """Store reads/writes to a custom project_dir instead of root/.project/."""
+        import yaml
+
+        # Set up a hub root with its own config
+        hub_root = tmp_path / "hub"
+        hub_proj = hub_root / ".project"
+        hub_proj.mkdir(parents=True)
+        hub_config = {
+            "name": "hub",
+            "prefix": "HUB",
+            "description": "",
+            "hub": True,
+            "next_story_id": 1,
+            "projects": ["api"],
+        }
+        with open(hub_proj / "config.yaml", "w") as f:
+            yaml.dump(hub_config, f)
+
+        # Set up PM data dir for the "api" project under the hub
+        pm_dir = hub_proj / "projects" / "api"
+        pm_dir.mkdir(parents=True)
+        (pm_dir / "stories").mkdir()
+        (pm_dir / "tasks").mkdir()
+        api_config = {
+            "name": "api",
+            "prefix": "API",
+            "description": "",
+            "hub": False,
+            "next_story_id": 1,
+            "projects": [],
+        }
+        with open(pm_dir / "config.yaml", "w") as f:
+            yaml.dump(api_config, f)
+
+        # Create a store pointing at the custom project_dir
+        store = Store(hub_root, project_dir=pm_dir)
+        assert store.config.name == "api"
+        assert store.config.prefix == "API"
+        assert store.project_dir == pm_dir
+
+        # Create a story — files should land in pm_dir
+        meta, _ = store.create_story("API Story", "Desc", points=5)
+        assert meta.id == "US-API-1"
+        assert (pm_dir / "stories" / "US-API-1.md").exists()
+
+        # Config counter should be saved to pm_dir, not hub root
+        with open(pm_dir / "config.yaml") as f:
+            saved = yaml.safe_load(f)
+        assert saved["next_story_id"] == 2

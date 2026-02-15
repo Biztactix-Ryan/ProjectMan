@@ -21,15 +21,37 @@ def _resolve_root(project: Optional[str] = None) -> Path:
     if project:
         config = load_config(root)
         if config.hub:
-            sub_root = root / "projects" / project
-            if sub_root.exists() and (sub_root / ".project").exists():
-                return sub_root
+            # New layout: PM data lives in hub's .project/projects/{name}/
+            pm_dir = root / ".project" / "projects" / project
+            if pm_dir.exists() and (pm_dir / "config.yaml").exists():
+                return root
             raise FileNotFoundError(f"Project '{project}' not found in hub")
     return root
 
 
+def _resolve_project_dir(project: Optional[str] = None) -> Path:
+    """Return the .project/ directory for a project, handling hub layout."""
+    root = find_project_root()
+    if project:
+        config = load_config(root)
+        if config.hub:
+            pm_dir = root / ".project" / "projects" / project
+            if pm_dir.exists() and (pm_dir / "config.yaml").exists():
+                return pm_dir
+            raise FileNotFoundError(f"Project '{project}' not found in hub")
+    return root / ".project"
+
+
 def _store(project: Optional[str] = None) -> Store:
-    return Store(_resolve_root(project))
+    root = find_project_root()
+    if project:
+        config = load_config(root)
+        if config.hub:
+            project_dir = root / ".project" / "projects" / project
+            if project_dir.exists() and (project_dir / "config.yaml").exists():
+                return Store(root, project_dir=project_dir)
+            raise FileNotFoundError(f"Project '{project}' not found in hub")
+    return Store(root)
 
 
 def _yaml_dump(data) -> str:
@@ -99,8 +121,7 @@ def pm_docs(doc: Optional[str] = None, project: Optional[str] = None) -> str:
         project: Optional project name (hub mode only)
     """
     try:
-        root = _resolve_root(project)
-        proj_dir = root / ".project"
+        proj_dir = _resolve_project_dir(project)
 
         doc_map = {
             "project": "PROJECT.md",
@@ -161,8 +182,7 @@ def pm_update_doc(
         project: Optional project name (hub mode only)
     """
     try:
-        root = _resolve_root(project)
-        proj_dir = root / ".project"
+        proj_dir = _resolve_project_dir(project)
 
         doc_map = {
             "project": "PROJECT.md",
@@ -228,8 +248,7 @@ def pm_search(query: str, project: Optional[str] = None) -> str:
         project: Optional project name (hub mode only)
     """
     try:
-        root = _resolve_root(project)
-        proj_dir = root / ".project"
+        proj_dir = _resolve_project_dir(project)
 
         # Try embeddings first, fall back to keyword
         try:
@@ -369,7 +388,7 @@ def pm_burndown(project: Optional[str] = None) -> str:
         project: Optional project name (hub mode only)
     """
     try:
-        root = _resolve_root(project)
+        root = find_project_root()
         config = load_config(root)
 
         # Hub mode: aggregate across projects
@@ -554,9 +573,8 @@ def pm_context(
     try:
         hub_root = find_project_root()
         hub_config = load_config(hub_root)
-        proj_root = _resolve_root(project)
-        proj_dir = proj_root / ".project"
-        store = Store(proj_root)
+        store = _store(project)
+        proj_dir = store.project_dir
 
         result = {}
 
@@ -833,7 +851,7 @@ def pm_audit(project: Optional[str] = None) -> str:
     """
     try:
         from .audit import run_audit
-        root = _resolve_root(project)
+        root = find_project_root()
         return run_audit(root)
     except Exception as e:
         return f"error: {e}"
@@ -873,20 +891,18 @@ def pm_malformed(project: Optional[str] = None) -> str:
         all_files = []  # list of (project_name, path)
         dirs_to_scan = []
         if project:
-            r = _resolve_root(project)
-            malformed_dir = r / ".project" / "malformed"
+            proj_dir = _resolve_project_dir(project)
+            malformed_dir = proj_dir / "malformed"
             if malformed_dir.exists():
                 dirs_to_scan.append((project, malformed_dir))
         elif config.hub:
             hub_mal = root / ".project" / "malformed"
             if hub_mal.exists() and any(hub_mal.iterdir()):
                 dirs_to_scan.append(("hub", hub_mal))
-            projects_dir = root / "projects"
-            if projects_dir.exists():
-                for name in config.projects:
-                    mal = projects_dir / name / ".project" / "malformed"
-                    if mal.exists() and any(mal.iterdir()):
-                        dirs_to_scan.append((name, mal))
+            for name in config.projects:
+                mal = root / ".project" / "projects" / name / "malformed"
+                if mal.exists() and any(mal.iterdir()):
+                    dirs_to_scan.append((name, mal))
         else:
             malformed_dir = root / ".project" / "malformed"
             if malformed_dir.exists():
@@ -952,8 +968,7 @@ def pm_fix_malformed(
         from datetime import date
         from .models import StoryFrontmatter, TaskFrontmatter
 
-        root = _resolve_root(project)
-        proj_dir = root / ".project"
+        proj_dir = _resolve_project_dir(project)
         malformed_dir = proj_dir / "malformed"
         source = malformed_dir / filename
 
@@ -1026,8 +1041,7 @@ def pm_restore(filename: str, project: Optional[str] = None) -> str:
         import frontmatter as fm
         from .models import StoryFrontmatter, TaskFrontmatter
 
-        root = _resolve_root(project)
-        proj_dir = root / ".project"
+        proj_dir = _resolve_project_dir(project)
         malformed_dir = proj_dir / "malformed"
         source = malformed_dir / filename
 

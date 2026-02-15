@@ -26,18 +26,19 @@ router = APIRouter(prefix="/api")
 def get_root(project: Optional[str] = Query(None)) -> Path:
     """Resolve project root, handling hub mode when `?project=` is provided."""
     root = find_project_root()
-    if project:
-        config = load_config(root)
-        if config.hub:
-            sub_root = root / "projects" / project
-            if sub_root.exists() and (sub_root / ".project").exists():
-                return sub_root
-            raise HTTPException(status_code=404, detail=f"Project '{project}' not found in hub")
     return root
 
 
-def get_store(root: Path = Depends(get_root)) -> Store:
-    """Provide a Store instance for the resolved project root."""
+def get_store(project: Optional[str] = Query(None)) -> Store:
+    """Provide a Store instance, routing hub subprojects to .project/projects/{name}/."""
+    root = find_project_root()
+    if project:
+        config = load_config(root)
+        if config.hub:
+            project_dir = root / ".project" / "projects" / project
+            if project_dir.exists() and (project_dir / "config.yaml").exists():
+                return Store(root, project_dir=project_dir)
+            raise HTTPException(status_code=404, detail=f"Project '{project}' not found in hub")
     return Store(root)
 
 

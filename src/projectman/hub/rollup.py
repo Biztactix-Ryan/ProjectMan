@@ -24,8 +24,8 @@ def rollup(root: Optional[Path] = None) -> dict:
     }
 
     for name in config.projects:
-        project_path = root / "projects" / name
-        if not (project_path / ".project").exists():
+        pm_dir = root / ".project" / "projects" / name
+        if not (pm_dir / "config.yaml").exists():
             totals["projects"].append({
                 "name": name,
                 "status": "not initialized",
@@ -33,7 +33,7 @@ def rollup(root: Optional[Path] = None) -> dict:
             continue
 
         try:
-            store = Store(project_path)
+            store = Store(root, project_dir=pm_dir)
             index = build_index(store)
 
             project_data = {
