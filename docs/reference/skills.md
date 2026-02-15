@@ -1,6 +1,6 @@
 # Skills Reference
 
-ProjectMan installs 4 Claude Code skills (slash commands) via `projectman setup-claude`.
+ProjectMan installs 5 Claude Code skills (slash commands) via `projectman setup-claude`.
 
 ## /pm
 
@@ -63,6 +63,23 @@ Pick up and execute a specific task. This is the "do the work" command.
 3. **Complete** — Reviews task status, detects sibling task completion (whether all tasks under the parent story are now done), and updates status via `pm_update`.
 
 **Note:** This skill has `disable-model-invocation: true` — it only runs when you explicitly invoke it with `/pm-do`, never automatically. This is because it performs real code changes.
+
+## /pm-autoscope
+
+Automated bulk scoping. Discovers what needs scoping and walks through creation.
+
+```
+/pm-autoscope
+/pm-autoscope full
+/pm-autoscope incremental
+```
+
+**Two modes** (auto-detected):
+
+- **Full scan** (no epics/stories exist): Reads codebase signals (docs, build files, source tree), proposes epics, stories, and tasks for user approval, then creates them all.
+- **Incremental** (stories exist without tasks): Loops through each undecomposed story, proposes 2-6 tasks, gets user approval, creates them. Shows summary when done.
+
+Also accessible via `/pm autoscope` or natural language like "scope everything".
 
 ## Customization
 

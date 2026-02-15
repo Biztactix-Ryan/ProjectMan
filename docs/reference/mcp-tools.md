@@ -94,6 +94,12 @@ Get estimation context with calibration guidelines.
 ### pm_scope(id)
 Get scoping context for story decomposition.
 
+### pm_auto_scope(mode?, project?)
+Discover what needs scoping — returns codebase signals or undecomposed stories.
+- **mode** (optional): `"full"` for codebase scan (new projects) or `"incremental"` for scoping existing stories. Auto-detected if omitted.
+- **project** (optional): Project name for hub mode
+- **Returns**: Full scan returns documentation, build files, source tree, and creation guidance. Incremental returns undecomposed stories with bodies and decomposition guidance.
+
 ### pm_audit(project?)
 Run project audit for drift detection. Performs 13 checks covering stories, tasks, epics, documentation, hub docs, assignments, and malformed files.
 

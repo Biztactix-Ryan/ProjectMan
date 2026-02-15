@@ -5,6 +5,7 @@ from typing import Optional
 
 import yaml
 from mcp.server.fastmcp import FastMCP
+from mcp.types import ToolAnnotations
 
 from .config import find_project_root, load_config
 from .indexer import build_index, write_index
@@ -37,7 +38,7 @@ def _yaml_dump(data) -> str:
 
 # ─── Query Tools ────────────────────────────────────────────────
 
-@mcp.tool()
+@mcp.tool(title="Project Status", annotations=ToolAnnotations(title="Project Status", readOnlyHint=True))
 def pm_status(project: Optional[str] = None) -> str:
     """Get project status summary: story/task counts, points, completion percentage.
 
@@ -71,7 +72,7 @@ def pm_status(project: Optional[str] = None) -> str:
         return f"error: {e}"
 
 
-@mcp.tool()
+@mcp.tool(title="Get Item", annotations=ToolAnnotations(title="Get Item", readOnlyHint=True))
 def pm_get(id: str, project: Optional[str] = None) -> str:
     """Get full details of an epic, story, or task by ID.
 
@@ -89,7 +90,7 @@ def pm_get(id: str, project: Optional[str] = None) -> str:
         return f"error: {e}"
 
 
-@mcp.tool()
+@mcp.tool(title="Read Documentation", annotations=ToolAnnotations(title="Read Documentation", readOnlyHint=True))
 def pm_docs(doc: Optional[str] = None, project: Optional[str] = None) -> str:
     """Read project documentation files.
 
@@ -146,7 +147,7 @@ def pm_docs(doc: Optional[str] = None, project: Optional[str] = None) -> str:
         return f"error: {e}"
 
 
-@mcp.tool()
+@mcp.tool(title="Update Documentation", annotations=ToolAnnotations(title="Update Documentation", readOnlyHint=False, destructiveHint=False))
 def pm_update_doc(
     doc: str,
     content: str,
@@ -183,7 +184,7 @@ def pm_update_doc(
         return f"error: {e}"
 
 
-@mcp.tool()
+@mcp.tool(title="Active Work", annotations=ToolAnnotations(title="Active Work", readOnlyHint=True))
 def pm_active(project: Optional[str] = None) -> str:
     """List active/in-progress stories and tasks.
 
@@ -204,7 +205,7 @@ def pm_active(project: Optional[str] = None) -> str:
         return f"error: {e}"
 
 
-@mcp.tool()
+@mcp.tool(title="Search Items", annotations=ToolAnnotations(title="Search Items", readOnlyHint=True))
 def pm_search(query: str, project: Optional[str] = None) -> str:
     """Search stories and tasks by keyword or semantic similarity.
 
@@ -232,7 +233,7 @@ def pm_search(query: str, project: Optional[str] = None) -> str:
         return f"error: {e}"
 
 
-@mcp.tool()
+@mcp.tool(title="Task Board", annotations=ToolAnnotations(title="Task Board", readOnlyHint=True))
 def pm_board(
     project: Optional[str] = None,
     assignee: Optional[str] = None,
@@ -343,7 +344,7 @@ def pm_board(
         return f"error: {e}"
 
 
-@mcp.tool()
+@mcp.tool(title="Burndown Data", annotations=ToolAnnotations(title="Burndown Data", readOnlyHint=True))
 def pm_burndown(project: Optional[str] = None) -> str:
     """Get burndown data: total vs completed points.
 
@@ -381,7 +382,7 @@ def pm_burndown(project: Optional[str] = None) -> str:
 
 # ─── Write Tools ────────────────────────────────────────────────
 
-@mcp.tool()
+@mcp.tool(title="Create Story", annotations=ToolAnnotations(title="Create Story", readOnlyHint=False, destructiveHint=False))
 def pm_create_story(
     title: str,
     description: str,
@@ -412,7 +413,7 @@ def pm_create_story(
         return f"error: {e}"
 
 
-@mcp.tool()
+@mcp.tool(title="Create Epic", annotations=ToolAnnotations(title="Create Epic", readOnlyHint=False, destructiveHint=False))
 def pm_create_epic(
     title: str,
     description: str,
@@ -441,7 +442,7 @@ def pm_create_epic(
         return f"error: {e}"
 
 
-@mcp.tool()
+@mcp.tool(title="Epic Details", annotations=ToolAnnotations(title="Epic Details", readOnlyHint=True))
 def pm_epic(id: str, project: Optional[str] = None) -> str:
     """Get epic details with rollup of linked stories and tasks.
 
@@ -496,7 +497,7 @@ def pm_epic(id: str, project: Optional[str] = None) -> str:
         return f"error: {e}"
 
 
-@mcp.tool()
+@mcp.tool(title="Project Context", annotations=ToolAnnotations(title="Project Context", readOnlyHint=True))
 def pm_context(project: Optional[str] = None) -> str:
     """Get combined hub + project context for an agent starting work.
 
@@ -552,7 +553,7 @@ def pm_context(project: Optional[str] = None) -> str:
         return f"error: {e}"
 
 
-@mcp.tool()
+@mcp.tool(title="Create Task", annotations=ToolAnnotations(title="Create Task", readOnlyHint=False, destructiveHint=False))
 def pm_create_task(
     story_id: str,
     title: str,
@@ -578,7 +579,7 @@ def pm_create_task(
         return f"error: {e}"
 
 
-@mcp.tool()
+@mcp.tool(title="Update Item", annotations=ToolAnnotations(title="Update Item", readOnlyHint=False, destructiveHint=False))
 def pm_update(
     id: str,
     status: Optional[str] = None,
@@ -620,7 +621,7 @@ def pm_update(
         return f"error: {e}"
 
 
-@mcp.tool()
+@mcp.tool(title="Archive Item", annotations=ToolAnnotations(title="Archive Item", readOnlyHint=False, destructiveHint=True))
 def pm_archive(id: str, project: Optional[str] = None) -> str:
     """Archive an epic, story, or task.
 
@@ -637,7 +638,7 @@ def pm_archive(id: str, project: Optional[str] = None) -> str:
         return f"error: {e}"
 
 
-@mcp.tool()
+@mcp.tool(title="Grab Task", annotations=ToolAnnotations(title="Grab Task", readOnlyHint=False, destructiveHint=False))
 def pm_grab(
     task_id: str,
     assignee: str = "claude",
@@ -708,7 +709,7 @@ def pm_grab(
 
 # ─── Intelligence Tools ─────────────────────────────────────────
 
-@mcp.tool()
+@mcp.tool(title="Estimation Context", annotations=ToolAnnotations(title="Estimation Context", readOnlyHint=True))
 def pm_estimate(id: str, project: Optional[str] = None) -> str:
     """Get estimation context for a story or task — returns content + calibration guidelines.
 
@@ -724,7 +725,7 @@ def pm_estimate(id: str, project: Optional[str] = None) -> str:
         return f"error: {e}"
 
 
-@mcp.tool()
+@mcp.tool(title="Scoping Context", annotations=ToolAnnotations(title="Scoping Context", readOnlyHint=True))
 def pm_scope(id: str, project: Optional[str] = None) -> str:
     """Get scoping context for a story — returns story + existing tasks + decomposition guidance.
 
@@ -740,7 +741,7 @@ def pm_scope(id: str, project: Optional[str] = None) -> str:
         return f"error: {e}"
 
 
-@mcp.tool()
+@mcp.tool(title="Project Audit", annotations=ToolAnnotations(title="Project Audit", readOnlyHint=True))
 def pm_audit(project: Optional[str] = None) -> str:
     """Run project audit — checks for drift, inconsistencies, stale items.
 
@@ -755,7 +756,7 @@ def pm_audit(project: Optional[str] = None) -> str:
         return f"error: {e}"
 
 
-@mcp.tool()
+@mcp.tool(title="Hub Repair", annotations=ToolAnnotations(title="Hub Repair", readOnlyHint=False, destructiveHint=False))
 def pm_repair() -> str:
     """Scan the hub for unregistered projects, initialize missing .project/ dirs,
     rebuild all indexes and embeddings, and regenerate dashboards.
@@ -770,7 +771,7 @@ def pm_repair() -> str:
         return f"error: {e}"
 
 
-@mcp.tool()
+@mcp.tool(title="Next Malformed File", annotations=ToolAnnotations(title="Next Malformed File", readOnlyHint=True))
 def pm_malformed(project: Optional[str] = None) -> str:
     """Get the next malformed file to fix. Returns one file at a time with its full
     content. Call pm_fix_malformed to fix it (which removes it from the queue),
@@ -836,7 +837,7 @@ def pm_malformed(project: Optional[str] = None) -> str:
         return f"error: {e}"
 
 
-@mcp.tool()
+@mcp.tool(title="Fix Malformed File", annotations=ToolAnnotations(title="Fix Malformed File", readOnlyHint=False, destructiveHint=False))
 def pm_fix_malformed(
     filename: str,
     id: str,
@@ -930,7 +931,7 @@ def pm_fix_malformed(
         return f"error: {e}"
 
 
-@mcp.tool()
+@mcp.tool(title="Restore File", annotations=ToolAnnotations(title="Restore File", readOnlyHint=False, destructiveHint=False))
 def pm_restore(filename: str, project: Optional[str] = None) -> str:
     """Restore a fixed file from the malformed quarantine back to stories/ or tasks/.
 
@@ -977,7 +978,7 @@ def pm_restore(filename: str, project: Optional[str] = None) -> str:
         return f"error: {e}"
 
 
-@mcp.tool()
+@mcp.tool(title="Rebuild Index", annotations=ToolAnnotations(title="Rebuild Index", readOnlyHint=False, destructiveHint=False))
 def pm_reindex(project: Optional[str] = None) -> str:
     """Rebuild the project index and optionally reindex embeddings.
 
@@ -996,5 +997,24 @@ def pm_reindex(project: Optional[str] = None) -> str:
             return "reindexed: index.yaml + embeddings"
         except (ImportError, Exception):
             return "reindexed: index.yaml (embeddings not available)"
+    except Exception as e:
+        return f"error: {e}"
+
+
+@mcp.tool(title="Auto-Scope Discovery", annotations=ToolAnnotations(title="Auto-Scope Discovery", readOnlyHint=True))
+def pm_auto_scope(mode: Optional[str] = None, project: Optional[str] = None) -> str:
+    """Discover what needs scoping — returns codebase signals (full scan) or undecomposed stories (incremental).
+
+    Auto-detects mode: full scan when no epics/stories exist, incremental when stories lack tasks.
+    Use with /pm-autoscope skill for automated epic/story/task creation.
+
+    Args:
+        mode: Force mode: "full" (codebase scan for new projects) or "incremental" (scope existing stories). Auto-detected if omitted.
+        project: Optional project name (hub mode only)
+    """
+    try:
+        from .scoper import auto_scope
+        store = _store(project)
+        return auto_scope(store, mode=mode)
     except Exception as e:
         return f"error: {e}"

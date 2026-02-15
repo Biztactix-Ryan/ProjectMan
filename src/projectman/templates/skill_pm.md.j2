@@ -36,6 +36,7 @@ Call `pm_status`, then `pm_active`. Based on project state, suggest the most use
 
 ### Workflows (absorbed from former standalone skills)
 - `scope <story-id>` → Call `pm_scope(id)`, propose task breakdown, create approved tasks, estimate each
+- `autoscope [full|incremental]` → Call `pm_auto_scope(mode)`, bulk-create epics/stories/tasks. Redirect to `/pm-autoscope`
 - `audit` → Call `pm_audit`, review DRIFT.md findings, suggest and execute approved fixes
 - `init [project]` → Set up project documentation (wizard mode for new, import mode for existing)
 - `fix` → Call `pm_malformed`, fix quarantined files one at a time via `pm_fix_malformed`
@@ -52,6 +53,7 @@ Also accept natural language and route intelligently:
 - "plan the sprint" → redirect to `/pm-plan`
 - "how are we doing?" → `pm_status` + `pm_burndown`
 - "scope this story" → ask which story, then `pm_scope`
+- "scope everything" / "autoscope" / "bulk scope" → redirect to `/pm-autoscope`
 
 ## Post-Action Chaining
 
