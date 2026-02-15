@@ -1,0 +1,19 @@
+---
+name: pm-audit
+description: Run project audit and show findings
+user_invocable: true
+---
+
+# /pm-audit — Project Audit
+
+1. Call `pm_audit` to run all audit checks
+2. Present findings grouped by severity:
+   - **Errors** — Must fix (e.g., done stories with incomplete tasks)
+   - **Warnings** — Should address (e.g., stale items, undecomposed stories)
+   - **Info** — Nice to fix (e.g., thin descriptions, point mismatches)
+3. For each finding, suggest a resolution:
+   - Done story with incomplete tasks → complete or reopen the story
+   - Undecomposed story → run /pm-scope
+   - Stale in-progress → check with assignee or re-estimate
+   - Point mismatch → re-estimate story or tasks
+   - Thin description → flesh out the description

@@ -1,0 +1,19 @@
+---
+name: pm-scope
+description: Scope a story into tasks
+user_invocable: true
+args: "<story-id>"
+---
+
+# /pm-scope — Story Scoping
+
+1. Call `pm_scope(story_id)` to get story details and decomposition guidance
+2. Analyze the story and propose a task breakdown:
+   - Each task should be 1-5 points
+   - Tasks should be independently testable
+   - Include implementation + testing in each task
+   - First task sets up foundation
+   - Last task handles integration
+3. Present the proposed tasks to the user
+4. On approval, create each task with `pm_create_task`
+5. Estimate each task with `pm_estimate`

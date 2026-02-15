@@ -1,0 +1,19 @@
+---
+name: pm
+description: General project management entry point
+user_invocable: true
+---
+
+# /pm — Project Management
+
+Route based on arguments:
+- No args → show status (call `pm_status`)
+- `status` → detailed status dashboard
+- `create story "<title>" "<description>"` → create a new story
+- `create task <story-id> "<title>" "<description>"` → create a task
+- `get <id>` → show item details
+- `search <query>` → search items
+- `update <id> <field>=<value>` → update an item
+- `archive <id>` → archive an item
+
+Use the ProjectMan MCP server tools to fulfill these requests. Present results in clean, readable format.

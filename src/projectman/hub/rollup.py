@@ -1,0 +1,63 @@
+"""Hub rollup — aggregate stats across all subprojects."""
+
+from pathlib import Path
+from typing import Optional
+
+from ..config import load_config
+from ..indexer import build_index
+from ..store import Store
+
+
+def rollup(root: Optional[Path] = None) -> dict:
+    """Iterate all subproject .project/ dirs, aggregate index stats."""
+    from ..config import find_project_root
+    root = root or find_project_root()
+    config = load_config(root)
+
+    totals = {
+        "projects": [],
+        "total_stories": 0,
+        "total_tasks": 0,
+        "total_points": 0,
+        "completed_points": 0,
+    }
+
+    for name in config.projects:
+        project_path = root / "projects" / name
+        if not (project_path / ".project").exists():
+            totals["projects"].append({
+                "name": name,
+                "status": "not initialized",
+            })
+            continue
+
+        try:
+            store = Store(project_path)
+            index = build_index(store)
+
+            project_data = {
+                "name": name,
+                "status": "active",
+                "stories": index.story_count,
+                "tasks": index.task_count,
+                "total_points": index.total_points,
+                "completed_points": index.completed_points,
+            }
+
+            totals["projects"].append(project_data)
+            totals["total_stories"] += index.story_count
+            totals["total_tasks"] += index.task_count
+            totals["total_points"] += index.total_points
+            totals["completed_points"] += index.completed_points
+        except Exception as e:
+            totals["projects"].append({
+                "name": name,
+                "status": f"error: {e}",
+            })
+
+    pct = 0
+    if totals["total_points"] > 0:
+        pct = round(totals["completed_points"] / totals["total_points"] * 100)
+    totals["completion"] = f"{pct}%"
+
+    return totals

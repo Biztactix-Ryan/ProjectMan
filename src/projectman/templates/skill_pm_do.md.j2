@@ -1,0 +1,20 @@
+---
+name: pm-do
+description: Execute a task — read, implement, and mark done
+user_invocable: true
+disable-model-invocation: true
+args: "<task-id>"
+---
+
+# /pm-do — Execute Task
+
+1. Call `pm_get(task_id)` to read the task details
+2. Call `pm_update(task_id, status="in-progress")` to mark it active
+3. Read the implementation section and DoD
+4. Implement the work described in the task:
+   - Follow the implementation instructions
+   - Write/modify the specified files
+   - Run tests as described
+5. Verify all DoD criteria are met
+6. Call `pm_update(task_id, status="done")` when complete
+7. Summarize what was done
