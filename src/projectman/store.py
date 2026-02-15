@@ -27,7 +27,7 @@ class Store:
         self.config = load_config(root)
 
     def _next_story_id(self) -> str:
-        sid = f"{self.config.prefix}-{self.config.next_story_id}"
+        sid = f"US-{self.config.prefix}-{self.config.next_story_id}"
         self.config.next_story_id += 1
         save_config(self.config, self.root)
         return sid

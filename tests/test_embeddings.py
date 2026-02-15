@@ -24,7 +24,7 @@ class TestEmbeddingStore:
 
         results = emb.search("login auth", top_k=5)
         assert len(results) > 0
-        assert results[0].id == "TST-1"  # Auth story should rank first
+        assert results[0].id == "US-TST-1"  # Auth story should rank first
 
     def test_skip_unchanged(self, tmp_project):
         from projectman.embeddings import EmbeddingStore
@@ -32,6 +32,6 @@ class TestEmbeddingStore:
         store.create_story("Test", "Content")
 
         emb = EmbeddingStore(tmp_project / ".project")
-        emb.index_item("TST-1", "Test", "story", "Content")
+        emb.index_item("US-TST-1", "Test", "story", "Content")
         # Second call should skip (same hash)
-        emb.index_item("TST-1", "Test", "story", "Content")
+        emb.index_item("US-TST-1", "Test", "story", "Content")

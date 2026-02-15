@@ -55,8 +55,8 @@ class StoryFrontmatter(BaseModel):
     @field_validator("id")
     @classmethod
     def validate_id(cls, v: str) -> str:
-        if not re.match(r"^[A-Z]+-\d+$", v):
-            raise ValueError(f"Story ID must match pattern PREFIX-N, got: {v}")
+        if not re.match(r"^[A-Za-z][\w-]*$", v):
+            raise ValueError(f"Story ID must be alphanumeric with hyphens, got: {v}")
         return v
 
 
@@ -82,9 +82,9 @@ class TaskFrontmatter(BaseModel):
     @field_validator("id")
     @classmethod
     def validate_id(cls, v: str) -> str:
-        if not re.match(r"^[A-Z]+-\d+-\d+$", v):
+        if not re.match(r"^[A-Za-z][\w-]*$", v):
             raise ValueError(
-                f"Task ID must match pattern PREFIX-N-N, got: {v}"
+                f"Task ID must be alphanumeric with hyphens, got: {v}"
             )
         return v
 

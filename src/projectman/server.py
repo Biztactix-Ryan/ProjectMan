@@ -339,13 +339,13 @@ def pm_repair() -> str:
 
 
 @mcp.tool()
-def pm_malformed(project: Optional[str] = None, offset: int = 0) -> str:
+def pm_malformed(project: Optional[str] = None) -> str:
     """Get the next malformed file to fix. Returns one file at a time with its full
-    content, plus a summary of remaining files. Call repeatedly to step through them.
+    content. Call pm_fix_malformed to fix it (which removes it from the queue),
+    then call pm_malformed again to get the next one. Repeat until done.
 
     Args:
         project: Optional project name (hub mode only). Omit to scan all.
-        offset: Skip this many files (default 0 = first malformed file)
     """
     try:
         import frontmatter
@@ -384,10 +384,8 @@ def pm_malformed(project: Optional[str] = None, offset: int = 0) -> str:
         if total == 0:
             return "no malformed files"
 
-        if offset >= total:
-            return f"no more files (total: {total})"
-
-        proj_name, path = all_files[offset]
+        # Always return the first file — fixing removes it, so next call gets the next one
+        proj_name, path = all_files[0]
 
         entry = {"file": path.name, "project": proj_name}
         try:
@@ -398,10 +396,7 @@ def pm_malformed(project: Optional[str] = None, offset: int = 0) -> str:
             entry["raw_content"] = path.read_text()
 
         result = {
-            "current": offset + 1,
-            "total": total,
-            "remaining": total - offset - 1,
-            "next_offset": offset + 1 if offset + 1 < total else None,
+            "remaining": total,
             "item": entry,
         }
         return _yaml_dump(result)
@@ -459,6 +454,8 @@ def pm_fix_malformed(
 
         today = date.today()
 
+        dest_filename = f"{id}.md"
+
         if item_type == "task":
             if not story_id:
                 return "error: story_id is required for tasks"
@@ -471,7 +468,7 @@ def pm_fix_malformed(
                 created=today,
                 updated=today,
             )
-            dest = proj_dir / "tasks" / filename
+            dest = proj_dir / "tasks" / dest_filename
         else:
             meta = StoryFrontmatter(
                 id=id,
@@ -483,9 +480,9 @@ def pm_fix_malformed(
                 created=today,
                 updated=today,
             )
-            dest = proj_dir / "stories" / filename
+            dest = proj_dir / "stories" / dest_filename
 
-        # Write the fixed file directly to its correct location
+        # Write the fixed file to its correct location with ID-based filename
         post = fm.Post(content=body, **meta.model_dump(mode="json"))
         dest.write_text(fm.dumps(post))
         source.unlink()

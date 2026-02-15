@@ -21,8 +21,8 @@ def test_build_index_with_stories(store):
 
 def test_build_index_with_tasks(store):
     store.create_story("Story", "Desc", points=5)
-    store.create_task("TST-1", "Task 1", "Desc", points=2)
-    store.create_task("TST-1", "Task 2", "Desc", points=3)
+    store.create_task("US-TST-1", "Task 1", "Desc", points=2)
+    store.create_task("US-TST-1", "Task 2", "Desc", points=3)
     index = build_index(store)
     assert index.task_count == 2
     assert index.total_points == 10  # 5 + 2 + 3
@@ -30,7 +30,7 @@ def test_build_index_with_tasks(store):
 
 def test_completed_points(store):
     store.create_story("Story", "Desc", points=5)
-    store.update("TST-1", status="done")
+    store.update("US-TST-1", status="done")
     index = build_index(store)
     assert index.completed_points == 5
 

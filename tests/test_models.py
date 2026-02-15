@@ -46,10 +46,16 @@ class TestStoryFrontmatter:
             id="ABC-123", title="Test", created=date.today(), updated=date.today()
         )
 
+    def test_id_user_story_prefix(self):
+        story = StoryFrontmatter(
+            id="US-CEO-001", title="Test", created=date.today(), updated=date.today()
+        )
+        assert story.id == "US-CEO-001"
+
     def test_id_pattern_invalid(self):
         with pytest.raises(ValidationError):
             StoryFrontmatter(
-                id="invalid", title="Test", created=date.today(), updated=date.today()
+                id="123-bad", title="Test", created=date.today(), updated=date.today()
             )
 
     def test_none_points_valid(self):
@@ -69,10 +75,10 @@ class TestTaskFrontmatter:
         assert task.id == "PRJ-1-1"
         assert task.status == TaskStatus.todo
 
-    def test_task_id_pattern(self):
+    def test_task_id_pattern_invalid(self):
         with pytest.raises(ValidationError):
             TaskFrontmatter(
-                id="PRJ-1", story_id="PRJ-1", title="Test",
+                id="123-bad", story_id="PRJ-1", title="Test",
                 created=date.today(), updated=date.today()
             )
 
