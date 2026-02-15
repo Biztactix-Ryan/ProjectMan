@@ -4,24 +4,27 @@
 
 - Python 3.10+
 - pip
+- git
 
-## Install
+## Install from GitHub
 
 ```bash
-# Base package
-pip install projectman
+# Recommended — includes MCP server for Claude Code integration
+pip install "projectman[mcp] @ git+https://github.com/Biztactix-Ryan/ProjectMan.git"
 
-# With MCP server support (for Claude Code integration)
-pip install "projectman[mcp]"
+# Base package only (CLI + store, no MCP server)
+pip install "git+https://github.com/Biztactix-Ryan/ProjectMan.git"
 
 # With semantic search (requires sentence-transformers)
-pip install "projectman[embeddings]"
+pip install "projectman[embeddings] @ git+https://github.com/Biztactix-Ryan/ProjectMan.git"
 
-# Everything
-pip install "projectman[all]"
+# Everything (MCP + embeddings)
+pip install "projectman[all] @ git+https://github.com/Biztactix-Ryan/ProjectMan.git"
 
-# Development
-pip install "projectman[all,dev]"
+# Development (clone + editable install)
+git clone https://github.com/Biztactix-Ryan/ProjectMan.git
+cd ProjectMan
+pip install -e ".[all,dev]"
 ```
 
 ## Verify

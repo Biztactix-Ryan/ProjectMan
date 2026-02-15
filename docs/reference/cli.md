@@ -69,7 +69,7 @@ Start the MCP server in stdio transport mode. This is called automatically by Cl
 projectman serve
 ```
 
-Requires the `mcp` extra: `pip install "projectman[mcp]"`
+Requires the `mcp` extra: `pip install "projectman[mcp] @ git+https://github.com/Biztactix-Ryan/ProjectMan.git"`
 
 ## projectman add-project
 

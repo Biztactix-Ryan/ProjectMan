@@ -14,8 +14,8 @@ Managing a growing number of projects with Claude Code leads to documentation dr
 ## Quick Start
 
 ```bash
-# 1. Install
-pip install projectman
+# 1. Install from GitHub
+pip install "projectman[mcp] @ git+https://github.com/Biztactix-Ryan/ProjectMan.git"
 
 # 2. Initialize your project
 cd your-repo
@@ -54,16 +54,16 @@ User → Claude Code Skills (/pm, /pm-scope, etc.)
 
 ```bash
 # Base (CLI + store)
-pip install projectman
+pip install "git+https://github.com/Biztactix-Ryan/ProjectMan.git"
 
-# With MCP server
-pip install "projectman[mcp]"
+# With MCP server (recommended — required for Claude Code integration)
+pip install "projectman[mcp] @ git+https://github.com/Biztactix-Ryan/ProjectMan.git"
 
 # With semantic search
-pip install "projectman[embeddings]"
+pip install "projectman[embeddings] @ git+https://github.com/Biztactix-Ryan/ProjectMan.git"
 
 # Everything
-pip install "projectman[all]"
+pip install "projectman[all] @ git+https://github.com/Biztactix-Ryan/ProjectMan.git"
 ```
 
 ## Documentation
