@@ -19,19 +19,27 @@ projectman setup-claude
 
 Restart Claude Code to pick up the new MCP server and skills.
 
-### 3. Create Your First Story
+### 3. Describe Your Project
 
-Use `/pm` in Claude Code:
+Run the getting-started wizard to fill in your project documentation:
 
 ```
-/pm create story "User Authentication" "As a user, I want to log in so that I can access my account"
+/pm init
 ```
 
-This creates a story with an ID like `US-APP-1`.
+Claude walks you through describing your project's architecture, infrastructure, and security posture. This fills in PROJECT.md, INFRASTRUCTURE.md, and SECURITY.md — the context that feeds into story creation, scoping, and audits.
+
+You can also read or update individual docs at any time:
+
+```
+/pm docs project           # read PROJECT.md
+/pm docs infrastructure    # read INFRASTRUCTURE.md
+/pm docs security          # read SECURITY.md
+```
 
 ### 4. Create an Epic
 
-Group related stories under a strategic initiative:
+Start with a strategic initiative that groups related work:
 
 ```
 /pm create epic "Authentication System"
@@ -39,38 +47,46 @@ Group related stories under a strategic initiative:
 
 This creates an epic with an ID like `EPIC-APP-1`.
 
-### 5. Scope the Story
+### 5. Create Your First Story
+
+```
+/pm create story "User Authentication" "As a user, I want to log in so that I can access my account"
+```
+
+This creates a story with an ID like `US-APP-1`. Link it to your epic during creation or afterwards.
+
+### 6. Scope the Story
 
 ```
 /pm scope US-APP-1
 ```
 
-Claude will propose a task breakdown. Approve to create tasks. You can also link stories to epics during scoping or via `/pm` commands.
+Claude reads your project docs for context, proposes a task breakdown, and creates approved tasks with implementation details and definitions of done.
 
-### 6. Estimate Tasks
+### 7. Estimate Tasks
 
 Claude uses fibonacci points (1, 2, 3, 5, 8, 13) calibrated for AI-assisted development speed.
 
-### 7. See Available Work
+### 8. See Available Work
 
 ```
 /pm board
 ```
 
-The task board shows tasks that are ready to work on, with dependencies resolved. You can also use the `pm_board` MCP tool directly.
+The task board shows tasks that pass readiness checks — estimated, well-described, and with an active parent story.
 
-### 8. Execute Work
+### 9. Execute Work
 
 ```
 /pm-do US-APP-1-1
 ```
 
-Claude reads the task, implements it, and marks it done.
+Claude grabs the task (validating readiness), loads the parent story context, implements the work, and marks it done.
 
-### 9. Check Status
+### 10. Check Status
 
 ```
 /pm-status
 ```
 
-See your project dashboard with completion stats. You can also use `/pm board` to see remaining available work at a glance.
+See your project dashboard with completion stats. Use `/pm board` to see remaining available work at a glance.

@@ -25,11 +25,12 @@ projectman init --name "My Project" --prefix MP
 # 3. Install Claude Code integration
 projectman setup-claude
 
-# 4. Restart Claude Code, then use:
-#    /pm status         — see project dashboard
-#    /pm scope US-MP-1  — decompose a story into tasks
-#    /pm-plan           — sprint planning workflow
-#    /pm-do US-MP-1-1   — execute a task
+# 4. Restart Claude Code, then:
+#    /pm init            — describe your project (wizard)
+#    /pm create epic     — define strategic initiatives
+#    /pm create story    — add user stories
+#    /pm scope US-MP-1   — decompose into tasks
+#    /pm-do US-MP-1-1    — grab and execute a task
 ```
 
 ## Features
