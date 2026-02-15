@@ -166,6 +166,14 @@ def set_branch(name, branch):
 
 
 @cli.command()
+def sync():
+    """Pull latest from all hub submodules (fast-forward only, skips dirty repos)."""
+    from projectman.hub.registry import sync as _sync
+    result = _sync()
+    click.echo(result)
+
+
+@cli.command()
 def repair():
     """Scan hub, discover projects, init missing .project/ dirs, rebuild indexes and embeddings."""
     from projectman.hub.registry import repair as _repair

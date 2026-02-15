@@ -339,6 +339,174 @@ def pm_repair() -> str:
 
 
 @mcp.tool()
+def pm_malformed(project: Optional[str] = None) -> str:
+    """List quarantined malformed story/task files with their full content for review.
+
+    Args:
+        project: Optional project name (hub mode only)
+    """
+    try:
+        root = _resolve_root(project)
+        malformed_dir = root / ".project" / "malformed"
+        if not malformed_dir.exists() or not any(malformed_dir.iterdir()):
+            return "no malformed files"
+
+        import frontmatter
+        results = []
+        for path in sorted(malformed_dir.glob("*.md")):
+            entry = {"file": path.name}
+            try:
+                post = frontmatter.load(str(path))
+                entry["frontmatter"] = dict(post.metadata)
+                entry["body"] = post.content
+            except Exception:
+                entry["raw_content"] = path.read_text()
+            results.append(entry)
+        return _yaml_dump({"malformed_files": results, "path": str(malformed_dir)})
+    except Exception as e:
+        return f"error: {e}"
+
+
+@mcp.tool()
+def pm_fix_malformed(
+    filename: str,
+    id: str,
+    title: str,
+    item_type: str,
+    body: Optional[str] = None,
+    status: Optional[str] = None,
+    priority: Optional[str] = None,
+    points: Optional[int] = None,
+    story_id: Optional[str] = None,
+    project: Optional[str] = None,
+) -> str:
+    """Fix a malformed file by rewriting it with valid frontmatter, then restore it.
+
+    Args:
+        filename: The malformed filename (e.g. PRJ-1.md)
+        id: Correct item ID (e.g. PRJ-1 for story, PRJ-1-1 for task)
+        title: Correct title
+        item_type: "story" or "task"
+        body: New body content (keeps original if not provided)
+        status: Status (stories: backlog/ready/active/done; tasks: todo/in-progress/review/done/blocked)
+        priority: Priority for stories (must/should/could/wont)
+        points: Story points
+        story_id: Parent story ID (required for tasks)
+        project: Optional project name (hub mode only)
+    """
+    try:
+        import frontmatter as fm
+        from datetime import date
+        from .models import StoryFrontmatter, TaskFrontmatter
+
+        root = _resolve_root(project)
+        proj_dir = root / ".project"
+        malformed_dir = proj_dir / "malformed"
+        source = malformed_dir / filename
+
+        if not source.exists():
+            return f"error: {filename} not found in malformed/"
+
+        # Read existing body if not provided
+        if body is None:
+            try:
+                post = fm.load(str(source))
+                body = post.content or ""
+            except Exception:
+                body = source.read_text()
+
+        today = date.today()
+
+        if item_type == "task":
+            if not story_id:
+                return "error: story_id is required for tasks"
+            meta = TaskFrontmatter(
+                id=id,
+                story_id=story_id,
+                title=title,
+                status=status or "todo",
+                points=points,
+                created=today,
+                updated=today,
+            )
+            dest = proj_dir / "tasks" / filename
+        else:
+            meta = StoryFrontmatter(
+                id=id,
+                title=title,
+                status=status or "backlog",
+                priority=priority or "should",
+                points=points,
+                tags=[],
+                created=today,
+                updated=today,
+            )
+            dest = proj_dir / "stories" / filename
+
+        # Write the fixed file directly to its correct location
+        post = fm.Post(content=body, **meta.model_dump(mode="json"))
+        dest.write_text(fm.dumps(post))
+        source.unlink()
+
+        # Clean up empty malformed dir
+        if not any(malformed_dir.iterdir()):
+            malformed_dir.rmdir()
+
+        store = _store(project)
+        write_index(store)
+        return _yaml_dump({"fixed": meta.model_dump(mode="json"), "restored_to": str(dest)})
+    except Exception as e:
+        return f"error: {e}"
+
+
+@mcp.tool()
+def pm_restore(filename: str, project: Optional[str] = None) -> str:
+    """Restore a fixed file from the malformed quarantine back to stories/ or tasks/.
+
+    Args:
+        filename: The filename to restore (e.g. PRJ-1.md)
+        project: Optional project name (hub mode only)
+    """
+    try:
+        import frontmatter as fm
+        from .models import StoryFrontmatter, TaskFrontmatter
+
+        root = _resolve_root(project)
+        proj_dir = root / ".project"
+        malformed_dir = proj_dir / "malformed"
+        source = malformed_dir / filename
+
+        if not source.exists():
+            return f"error: {filename} not found in malformed/"
+
+        # Validate before restoring
+        post = fm.load(str(source))
+        stem = source.stem
+        parts = stem.split("-")
+        is_task = len(parts) >= 3 and parts[-1].isdigit() and parts[-2].isdigit()
+
+        if is_task:
+            TaskFrontmatter(**post.metadata)
+            dest = proj_dir / "tasks" / filename
+        else:
+            StoryFrontmatter(**post.metadata)
+            dest = proj_dir / "stories" / filename
+
+        import shutil
+        shutil.move(str(source), str(dest))
+
+        # Clean up empty malformed dir
+        if not any(malformed_dir.iterdir()):
+            malformed_dir.rmdir()
+
+        store = _store(project)
+        write_index(store)
+        return f"restored: {filename} → {'tasks' if is_task else 'stories'}/"
+    except Exception as e:
+        return f"error: {e}"
+
+
+@mcp.tool()
 def pm_reindex(project: Optional[str] = None) -> str:
     """Rebuild the project index and optionally reindex embeddings.
 

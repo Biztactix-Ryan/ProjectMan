@@ -91,15 +91,18 @@ class Store:
     def list_stories(
         self, status: Optional[str] = None
     ) -> list[StoryFrontmatter]:
-        """List all stories, optionally filtered by status."""
+        """List all stories, optionally filtered by status. Skips malformed files."""
         if not self.stories_dir.exists():
             return []
         stories = []
         for path in sorted(self.stories_dir.glob("*.md")):
-            post = frontmatter.load(str(path))
-            meta = StoryFrontmatter(**post.metadata)
-            if status is None or meta.status.value == status:
-                stories.append(meta)
+            try:
+                post = frontmatter.load(str(path))
+                meta = StoryFrontmatter(**post.metadata)
+                if status is None or meta.status.value == status:
+                    stories.append(meta)
+            except Exception:
+                continue
         return stories
 
     def create_task(
@@ -149,18 +152,21 @@ class Store:
         story_id: Optional[str] = None,
         status: Optional[str] = None,
     ) -> list[TaskFrontmatter]:
-        """List tasks, optionally filtered by story and/or status."""
+        """List tasks, optionally filtered by story and/or status. Skips malformed files."""
         if not self.tasks_dir.exists():
             return []
         tasks = []
         for path in sorted(self.tasks_dir.glob("*.md")):
-            post = frontmatter.load(str(path))
-            meta = TaskFrontmatter(**post.metadata)
-            if story_id and meta.story_id != story_id:
+            try:
+                post = frontmatter.load(str(path))
+                meta = TaskFrontmatter(**post.metadata)
+                if story_id and meta.story_id != story_id:
+                    continue
+                if status and meta.status.value != status:
+                    continue
+                tasks.append(meta)
+            except Exception:
                 continue
-            if status and meta.status.value != status:
-                continue
-            tasks.append(meta)
         return tasks
 
     def update(self, item_id: str, **kwargs) -> StoryFrontmatter | TaskFrontmatter:

@@ -166,9 +166,44 @@ def repair(root: Optional[Path] = None) -> str:
             _init_subproject(project_path, name)
             initialized.append(name)
         else:
-            # Project exists and has .project/ — rebuild its index
+            # Project exists and has .project/ — quarantine bad files, rebuild index
             try:
+                import frontmatter as fm
+                from ..models import StoryFrontmatter, TaskFrontmatter
+                import shutil
+
                 store = Store(project_path)
+                malformed_dir = store.project_dir / "malformed"
+                quarantined = []
+
+                # Check stories for bad frontmatter
+                for path in sorted(store.stories_dir.glob("*.md")):
+                    try:
+                        post = fm.load(str(path))
+                        StoryFrontmatter(**post.metadata)
+                    except Exception as e:
+                        malformed_dir.mkdir(exist_ok=True)
+                        dest = malformed_dir / path.name
+                        shutil.move(str(path), str(dest))
+                        quarantined.append((path.name, str(e).split("\n")[0]))
+
+                # Check tasks for bad frontmatter
+                for path in sorted(store.tasks_dir.glob("*.md")):
+                    try:
+                        post = fm.load(str(path))
+                        TaskFrontmatter(**post.metadata)
+                    except Exception as e:
+                        malformed_dir.mkdir(exist_ok=True)
+                        dest = malformed_dir / path.name
+                        shutil.move(str(path), str(dest))
+                        quarantined.append((path.name, str(e).split("\n")[0]))
+
+                if quarantined:
+                    report_lines.append(f"### {name} — {len(quarantined)} malformed file(s) quarantined\n")
+                    for fname, err in quarantined:
+                        report_lines.append(f"- `{fname}` → `.project/malformed/{fname}`: {err}")
+                    report_lines.append("")
+
                 stories = store.list_stories()
                 tasks = store.list_tasks()
                 write_index(store)
@@ -308,6 +343,72 @@ def set_branch(name: str, branch: str, root: Optional[Path] = None) -> str:
         return "error: git is not installed or not on PATH"
 
     return f"project '{name}' now tracking branch '{branch}'"
+
+
+def sync(root: Optional[Path] = None) -> str:
+    """Pull latest from all submodule remotes. Aborts cleanly on conflicts."""
+    from ..config import find_project_root
+    root = root or find_project_root()
+    config = load_config(root)
+
+    if not config.hub:
+        return "error: not a hub project"
+
+    projects_dir = root / "projects"
+    if not projects_dir.exists():
+        return "error: no projects/ directory"
+
+    results = []
+    ok = 0
+    skipped = 0
+    failed = 0
+
+    for name in config.projects:
+        target = projects_dir / name
+        if not target.exists():
+            results.append(f"  {name}: missing, skipped")
+            skipped += 1
+            continue
+
+        # Check for dirty working tree
+        try:
+            status = subprocess.run(
+                ["git", "status", "--porcelain"],
+                cwd=str(target),
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+            if status.stdout.strip():
+                results.append(f"  {name}: dirty working tree, skipped")
+                skipped += 1
+                continue
+        except subprocess.CalledProcessError:
+            results.append(f"  {name}: not a git repo, skipped")
+            skipped += 1
+            continue
+
+        # Pull latest
+        try:
+            subprocess.run(
+                ["git", "pull", "--ff-only"],
+                cwd=str(target),
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            results.append(f"  {name}: updated")
+            ok += 1
+        except subprocess.CalledProcessError as e:
+            stderr = e.stderr.strip()
+            if "Not possible to fast-forward" in stderr or "diverged" in stderr:
+                results.append(f"  {name}: diverged, skipped (merge needed)")
+            else:
+                results.append(f"  {name}: error — {stderr}")
+            failed += 1
+
+    summary = f"sync complete: {ok} updated, {skipped} skipped, {failed} failed"
+    return summary + "\n" + "\n".join(results)
 
 
 def list_projects(root: Optional[Path] = None) -> list[dict]:
