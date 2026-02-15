@@ -123,17 +123,21 @@ def setup_claude():
     (agents_dir / "pm.md").write_text(_render_template("agent_pm.md.j2"))
     click.echo("Wrote .claude/agents/pm.md")
 
-    # Write skills
+    # Write skills (consolidated: /pm is the smart router, 3 power-user shortcuts)
     skills = [
         ("pm", "skill_pm.md.j2"),
         ("pm-status", "skill_pm_status.md.j2"),
         ("pm-plan", "skill_pm_plan.md.j2"),
-        ("pm-scope", "skill_pm_scope.md.j2"),
-        ("pm-audit", "skill_pm_audit.md.j2"),
         ("pm-do", "skill_pm_do.md.j2"),
-        ("pm-fix", "skill_pm_fix.md.j2"),
-        ("pm-init", "skill_pm_init.md.j2"),
     ]
+    # Remove stale skills that were folded into /pm
+    stale_skills = ["pm-scope", "pm-audit", "pm-fix", "pm-init"]
+    for stale in stale_skills:
+        stale_dir = root / ".claude" / "skills" / stale
+        if stale_dir.exists():
+            shutil.rmtree(stale_dir)
+            click.echo(f"Removed stale .claude/skills/{stale}/")
+
     for skill_name, template_name in skills:
         skill_dir = root / ".claude" / "skills" / skill_name
         skill_dir.mkdir(parents=True, exist_ok=True)
