@@ -70,8 +70,13 @@ class Store:
         priority: Optional[str] = None,
         points: Optional[int] = None,
         tags: Optional[list[str]] = None,
-    ) -> StoryFrontmatter:
-        """Create a new story and write it to disk."""
+        acceptance_criteria: Optional[list[str]] = None,
+    ) -> tuple[StoryFrontmatter, list["TaskFrontmatter"]]:
+        """Create a new story and write it to disk.
+
+        Returns a tuple of (story_meta, auto_created_test_tasks).
+        If *acceptance_criteria* are provided, a test task is created for each.
+        """
         self.stories_dir.mkdir(parents=True, exist_ok=True)
         story_id = self._next_story_id()
         today = date.today()
@@ -83,6 +88,7 @@ class Store:
             priority=Priority(priority) if priority else Priority.should,
             points=points,
             tags=tags or [],
+            acceptance_criteria=acceptance_criteria or [],
             created=today,
             updated=today,
         )
@@ -92,7 +98,21 @@ class Store:
             **meta.model_dump(mode="json"),
         )
         self._story_path(story_id).write_text(frontmatter.dumps(post))
-        return meta
+
+        # Auto-create test tasks for each acceptance criterion
+        test_tasks: list[TaskFrontmatter] = []
+        for criterion in (acceptance_criteria or []):
+            task_title = f"Test: {criterion}"
+            if len(task_title) > 120:
+                task_title = task_title[:117] + "..."
+            task_desc = (
+                f"Verify acceptance criterion for story {story_id}:\n\n"
+                f"> {criterion}"
+            )
+            task_meta = self.create_task(story_id, task_title, task_desc)
+            test_tasks.append(task_meta)
+
+        return meta, test_tasks
 
     def get_story(self, story_id: str) -> tuple[StoryFrontmatter, str]:
         """Read a story, returning (frontmatter, body)."""
@@ -280,7 +300,11 @@ class Store:
         return tasks
 
     def update(self, item_id: str, **kwargs) -> EpicFrontmatter | StoryFrontmatter | TaskFrontmatter:
-        """Update fields on an epic, story, or task."""
+        """Update fields on an epic, story, or task.
+
+        Accepts frontmatter fields as keyword arguments.  The special
+        ``body`` kwarg replaces the markdown body content (not frontmatter).
+        """
         is_epic = self._is_epic_id(item_id)
         is_task = not is_epic and self._is_task_id(item_id)
 
@@ -295,6 +319,12 @@ class Store:
             raise FileNotFoundError(f"Item not found: {item_id}")
 
         post = frontmatter.load(str(path))
+
+        # Handle body separately — it replaces markdown content, not metadata
+        new_body = kwargs.pop("body", None)
+        if new_body is not None:
+            post.content = new_body
+
         for key, value in kwargs.items():
             if value is not None:
                 post.metadata[key] = value

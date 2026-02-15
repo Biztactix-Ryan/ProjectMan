@@ -187,17 +187,21 @@ def list_stories(
 @router.post("/stories", status_code=201)
 def create_story(body: CreateStoryRequest, store: Store = Depends(get_store)) -> dict:
     """Create a new story."""
-    meta = store.create_story(
+    meta, test_tasks = store.create_story(
         title=body.title,
         description=body.description,
         priority=body.priority,
         points=body.points,
+        acceptance_criteria=body.acceptance_criteria,
     )
     if body.epic_id:
         store.update(meta.id, epic_id=body.epic_id)
         meta, _ = store.get_story(meta.id)
     write_index(store)
-    return meta.model_dump(mode="json")
+    result = meta.model_dump(mode="json")
+    if test_tasks:
+        result["test_tasks"] = [t.model_dump(mode="json") for t in test_tasks]
+    return result
 
 
 @router.get("/stories/{story_id}")

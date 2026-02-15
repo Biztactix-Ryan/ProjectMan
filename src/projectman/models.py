@@ -48,6 +48,7 @@ class StoryFrontmatter(BaseModel):
     points: Optional[int] = None
     epic_id: Optional[str] = None
     tags: list[str] = []
+    acceptance_criteria: list[str] = []
     created: date
     updated: date
 

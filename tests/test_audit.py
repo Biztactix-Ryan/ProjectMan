@@ -37,6 +37,22 @@ def test_thin_description(tmp_project):
     assert "thin description" in report.lower()
 
 
+def test_missing_acceptance_criteria(tmp_project):
+    store = Store(tmp_project)
+    store.create_story("Story", "Desc")
+    store.update("US-TST-1", status="active")
+    report = run_audit(tmp_project)
+    assert "no acceptance criteria" in report.lower()
+
+
+def test_missing_acceptance_criteria_not_triggered_with_acs(tmp_project):
+    store = Store(tmp_project)
+    store.create_story("Story", "Desc", acceptance_criteria=["AC one"])
+    store.update("US-TST-1", status="active")
+    report = run_audit(tmp_project)
+    assert "no acceptance criteria" not in report.lower()
+
+
 def test_drift_md_written(tmp_project):
     run_audit(tmp_project)
     drift_path = tmp_project / ".project" / "DRIFT.md"

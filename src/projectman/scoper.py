@@ -124,6 +124,7 @@ def _auto_scope_full(store: Store) -> str:
         "story_template": {
             "title": "As a [user], I want [goal] so that [benefit]",
             "description": "Acceptance criteria, notes, context",
+            "acceptance_criteria": "List of verifiable criteria — each auto-generates a test task",
             "priority": "must / should / could / wont",
             "points": "Fibonacci: 1, 2, 3, 5, 8, 13",
         },
@@ -256,6 +257,7 @@ def scope_epic(store: Store, epic_id: str) -> str:
         "story_template": {
             "title": "As a [user], I want [goal] so that [benefit]",
             "description": "Include: user story, acceptance criteria, notes",
+            "acceptance_criteria": "List of verifiable criteria — each auto-generates a test task",
             "priority": "must / should / could / wont",
             "points": "Fibonacci: 1, 2, 3, 5, 8, 13",
         },

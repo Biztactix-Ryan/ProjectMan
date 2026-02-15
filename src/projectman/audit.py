@@ -85,7 +85,18 @@ def run_audit(root: Path) -> str:
                 "items": [task.id],
             })
 
-    # Check 6: Documentation staleness and completeness
+    # Check 6: Active/ready stories missing acceptance criteria
+    for story in store.list_stories():
+        if story.status.value in ("active", "ready"):
+            if not story.acceptance_criteria:
+                findings.append({
+                    "severity": "warning",
+                    "check": "missing-acceptance-criteria",
+                    "message": f"Story {story.id} is {story.status.value} but has no acceptance criteria",
+                    "items": [story.id],
+                })
+
+    # Check 7: Documentation staleness and completeness
     doc_files = {
         "PROJECT.md": ["## Architecture", "## Key Decisions"],
         "INFRASTRUCTURE.md": ["## Environments", "## CI/CD"],

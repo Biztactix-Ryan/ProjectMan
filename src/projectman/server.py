@@ -406,6 +406,7 @@ def pm_create_story(
     priority: Optional[str] = None,
     points: Optional[int] = None,
     epic_id: Optional[str] = None,
+    acceptance_criteria: Optional[str] = None,
     project: Optional[str] = None,
 ) -> str:
     """Create a new user story.
@@ -416,16 +417,21 @@ def pm_create_story(
         priority: Priority level: must, should, could, wont
         points: Story points (fibonacci: 1,2,3,5,8,13)
         epic_id: Optional parent epic ID (e.g. EPIC-PRJ-1)
+        acceptance_criteria: Comma-separated acceptance criteria (e.g. "Users can log in,Error shown on invalid password")
         project: Optional project name (hub mode only)
     """
     try:
         store = _store(project)
-        meta = store.create_story(title, description, priority, points)
+        ac_list = [c.strip() for c in acceptance_criteria.split(",")] if acceptance_criteria else None
+        meta, test_tasks = store.create_story(title, description, priority, points, acceptance_criteria=ac_list)
         if epic_id:
             store.update(meta.id, epic_id=epic_id)
             meta, _ = store.get_story(meta.id)
         write_index(store)
-        return _yaml_dump({"created": meta.model_dump(mode="json")})
+        result = {"created": meta.model_dump(mode="json")}
+        if test_tasks:
+            result["test_tasks"] = [t.model_dump(mode="json") for t in test_tasks]
+        return _yaml_dump(result)
     except Exception as e:
         return f"error: {e}"
 
@@ -654,6 +660,8 @@ def pm_update(
     title: Optional[str] = None,
     assignee: Optional[str] = None,
     epic_id: Optional[str] = None,
+    body: Optional[str] = None,
+    acceptance_criteria: Optional[str] = None,
     project: Optional[str] = None,
 ) -> str:
     """Update an epic, story, or task.
@@ -665,6 +673,8 @@ def pm_update(
         title: New title
         assignee: Assignee name (tasks only)
         epic_id: Link a story to an epic (stories only)
+        body: New markdown body/description content
+        acceptance_criteria: Comma-separated acceptance criteria (stories only, e.g. "Users can log in,Error shown on invalid password")
         project: Optional project name (hub mode only)
     """
     try:
@@ -680,6 +690,10 @@ def pm_update(
             kwargs["assignee"] = assignee
         if epic_id is not None:
             kwargs["epic_id"] = epic_id
+        if body is not None:
+            kwargs["body"] = body
+        if acceptance_criteria is not None:
+            kwargs["acceptance_criteria"] = [c.strip() for c in acceptance_criteria.split(",")]
 
         meta = store.update(id, **kwargs)
         write_index(store)
