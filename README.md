@@ -14,8 +14,8 @@ Managing a growing number of projects with Claude Code leads to documentation dr
 ## Quick Start
 
 ```bash
-# 1. Install from GitHub
-pip install "projectman[mcp] @ git+https://github.com/Biztactix-Ryan/ProjectMan.git"
+# 1. Install from GitHub (pipx recommended for CLI tools)
+pipx install "projectman[mcp] @ git+https://github.com/Biztactix-Ryan/ProjectMan.git"
 
 # 2. Initialize your project
 cd your-repo
@@ -53,18 +53,16 @@ User → Claude Code Skills (/pm, /pm-scope, etc.)
 ## Install Options
 
 ```bash
-# Base (CLI + store)
-pip install "git+https://github.com/Biztactix-Ryan/ProjectMan.git"
+# Recommended: pipx (auto-manages venv, puts projectman on PATH)
+pipx install "projectman[mcp] @ git+https://github.com/Biztactix-Ryan/ProjectMan.git"
 
-# With MCP server (recommended — required for Claude Code integration)
+# Or with pip inside a venv
 pip install "projectman[mcp] @ git+https://github.com/Biztactix-Ryan/ProjectMan.git"
-
-# With semantic search
-pip install "projectman[embeddings] @ git+https://github.com/Biztactix-Ryan/ProjectMan.git"
-
-# Everything
-pip install "projectman[all] @ git+https://github.com/Biztactix-Ryan/ProjectMan.git"
 ```
+
+Extras: `[mcp]` for Claude Code integration, `[embeddings]` for semantic search, `[all]` for everything.
+
+Don't have pipx? `sudo apt install pipx && pipx ensurepath`
 
 ## Documentation
 
