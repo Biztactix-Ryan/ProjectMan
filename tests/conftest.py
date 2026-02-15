@@ -24,6 +24,11 @@ def tmp_project(tmp_path):
     with open(proj / "config.yaml", "w") as f:
         yaml.dump(config, f)
 
+    # Create documentation files
+    (proj / "PROJECT.md").write_text("# test-project\n\nA test project.\n\n## Architecture\n\nPython CLI tool.\n\n## Key Decisions\n\nUse pytest for testing.\n")
+    (proj / "INFRASTRUCTURE.md").write_text("# test-project — Infrastructure\n\n## Environments\n\nLocal development only.\nNo staging or production environments.\n\n## CI/CD\n\nGitHub Actions runs pytest on push.\nNo deployment pipeline configured.\n")
+    (proj / "SECURITY.md").write_text("# test-project — Security\n\n## Authentication\n\nNone — CLI tool.\n\n## Authorization\n\nN/A.\n\n## Known Risks\n\nNone identified.\n")
+
     return tmp_path
 
 

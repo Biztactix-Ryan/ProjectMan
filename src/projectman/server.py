@@ -88,6 +88,94 @@ def pm_get(id: str) -> str:
 
 
 @mcp.tool()
+def pm_docs(doc: Optional[str] = None, project: Optional[str] = None) -> str:
+    """Read project documentation files (PROJECT.md, INFRASTRUCTURE.md, SECURITY.md).
+
+    Args:
+        doc: Specific doc to read: "project", "infrastructure", or "security". Omit for a summary of all.
+        project: Optional project name (hub mode only)
+    """
+    try:
+        root = _resolve_root(project)
+        proj_dir = root / ".project"
+
+        doc_map = {
+            "project": "PROJECT.md",
+            "infrastructure": "INFRASTRUCTURE.md",
+            "security": "SECURITY.md",
+        }
+
+        if doc:
+            filename = doc_map.get(doc.lower())
+            if not filename:
+                return f"error: unknown doc '{doc}'. Use: project, infrastructure, or security"
+            path = proj_dir / filename
+            if not path.exists():
+                return f"error: {filename} not found"
+            return path.read_text()
+
+        # Summary mode: return all docs with their status
+        import os
+        from datetime import date as _date
+        summary = {}
+        for key, filename in doc_map.items():
+            path = proj_dir / filename
+            if path.exists():
+                content = path.read_text()
+                mtime = _date.fromtimestamp(os.path.getmtime(path))
+                age = (_date.today() - mtime).days
+                lines = [l for l in content.splitlines() if l.strip()
+                         and not l.strip().startswith("<!--")
+                         and not l.strip().startswith("-->")]
+                summary[key] = {
+                    "file": filename,
+                    "last_modified": str(mtime),
+                    "age_days": age,
+                    "content_lines": len(lines),
+                    "status": "stale" if age > 30 else "current",
+                }
+            else:
+                summary[key] = {"file": filename, "status": "missing"}
+        return _yaml_dump(summary)
+    except Exception as e:
+        return f"error: {e}"
+
+
+@mcp.tool()
+def pm_update_doc(
+    doc: str,
+    content: str,
+    project: Optional[str] = None,
+) -> str:
+    """Update a project documentation file.
+
+    Args:
+        doc: Which doc to update: "project", "infrastructure", or "security"
+        content: The full new content for the document
+        project: Optional project name (hub mode only)
+    """
+    try:
+        root = _resolve_root(project)
+        proj_dir = root / ".project"
+
+        doc_map = {
+            "project": "PROJECT.md",
+            "infrastructure": "INFRASTRUCTURE.md",
+            "security": "SECURITY.md",
+        }
+
+        filename = doc_map.get(doc.lower())
+        if not filename:
+            return f"error: unknown doc '{doc}'. Use: project, infrastructure, or security"
+
+        path = proj_dir / filename
+        path.write_text(content)
+        return f"updated: {filename}"
+    except Exception as e:
+        return f"error: {e}"
+
+
+@mcp.tool()
 def pm_active(project: Optional[str] = None) -> str:
     """List active/in-progress stories and tasks.
 

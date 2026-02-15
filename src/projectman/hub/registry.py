@@ -55,6 +55,7 @@ def add_project(name: str, git_url: str, branch: Optional[str] = None, root: Opt
     msg = f"added project '{name}' from {git_url}"
     if branch:
         msg += f" (branch: {branch})"
+    msg += f"\n\nRun /pm-init {name} to set up project documentation."
     return msg
 
 
@@ -220,6 +221,7 @@ def repair(root: Optional[Path] = None) -> str:
         for name in initialized:
             report_lines.append(f"- **{name}** — created .project/ structure")
         report_lines.append("")
+        report_lines.append("**Next step:** Run `/pm-init <project-name>` for each to set up documentation.\n")
 
     if rebuilt:
         report_lines.append(f"## Rebuilt indexes for {len(rebuilt)} project(s)\n")

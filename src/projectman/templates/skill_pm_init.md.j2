@@ -1,0 +1,122 @@
+---
+name: pm-init
+description: Initialize project documentation — wizard for new projects, scanner for existing ones
+user_invocable: true
+args: "[project-name]"
+---
+
+# /pm-init — Project Setup
+
+This skill sets up project documentation. It adapts based on context:
+- **New project** (no source files): Interactive wizard — ask questions, build docs
+- **Existing project** (has code): Scan the codebase, present findings, ask about gaps
+
+If a `project` argument is given, operate on that hub subproject.
+
+## Step 1: Detect Context
+
+1. Call `pm_docs(project?)` to check documentation status
+2. Look at the project directory — does it have source code?
+   - Check for: `package.json`, `pyproject.toml`, `Cargo.toml`, `go.mod`, `pom.xml`, `*.sln`, `Gemfile`, `composer.json`
+   - Check for: `src/`, `lib/`, `app/`, `cmd/`, source files
+3. If code exists → **Import Mode**. If not → **Wizard Mode**.
+
+## Wizard Mode (New Project)
+
+You are a project manager helping set up a new project. Have a conversation to understand what's being built, then generate the documentation.
+
+### Questions to ask (adapt based on answers):
+
+**Project Overview:**
+- What are we building? What problem does it solve?
+- Who are the users? (internal team, customers, API consumers)
+- What's the scale? (prototype, internal tool, production SaaS)
+
+**Tech Stack:**
+- Language and framework?
+- Database? (type, hosted/self-managed)
+- Key libraries or services? (auth provider, payment, email, etc.)
+- Any existing codebase or starting from scratch?
+
+**Architecture:**
+- Monolith or microservices?
+- What are the major components? (API, frontend, workers, etc.)
+- How does data flow through the system?
+- Any external integrations?
+
+**Infrastructure:**
+- Where will it be hosted? (cloud provider, PaaS, self-hosted)
+- What environments do you need? (dev, staging, prod)
+- CI/CD approach? (GitHub Actions, GitLab CI, etc.)
+- Monitoring/alerting plans?
+
+**Security:**
+- How will users authenticate? (JWT, session, OAuth, API keys)
+- What roles/permissions are needed?
+- Any compliance requirements? (GDPR, SOC2, HIPAA)
+- Sensitive data handling?
+
+### After the conversation:
+1. Generate PROJECT.md from the discussion
+2. Generate INFRASTRUCTURE.md from the discussion
+3. Generate SECURITY.md from the discussion
+4. Write all three with `pm_update_doc(doc, content, project?)`
+5. Suggest creating initial user stories based on what was discussed
+
+## Import Mode (Existing Project)
+
+Scan the codebase to understand what exists, then fill gaps through conversation.
+
+### Scan Phase — look for these files:
+
+**Tech Stack:**
+- `package.json` / `pyproject.toml` / `Cargo.toml` / `go.mod` / `pom.xml` — language, dependencies
+- `tsconfig.json` / `babel.config.*` — frontend tooling
+- Framework-specific: `next.config.*`, `nuxt.config.*`, `angular.json`, `settings.py`, `config/routes.rb`
+
+**Infrastructure:**
+- `Dockerfile` / `docker-compose.yml` — containerization
+- `.github/workflows/` / `.gitlab-ci.yml` / `Jenkinsfile` — CI/CD
+- `terraform/` / `cdk/` / `pulumi/` / `cloudformation/` — IaC
+- `Procfile` / `app.yaml` / `fly.toml` / `render.yaml` — PaaS config
+- `nginx.conf` / `Caddyfile` — reverse proxy
+- `.env.example` / `.env.sample` — environment variables
+
+**Security:**
+- Auth middleware/guards (search for JWT, OAuth, session, passport, auth)
+- CORS configuration
+- Rate limiting setup
+- Encryption/hashing (bcrypt, argon2, crypto)
+- `helmet`, `csrf`, security headers
+
+**Architecture:**
+- Directory structure and organization
+- README.md if it exists (may have architecture notes)
+- API routes/endpoints
+- Database schema/migrations
+
+### Present Phase:
+1. Summarize what you found in a clear format
+2. State your confidence level for each section
+3. Flag anything concerning (hardcoded secrets, no auth, no CI/CD)
+
+### Ask Phase:
+For things you couldn't determine or are unsure about, ask:
+- "I see JWT auth in the middleware — is this the primary auth method?"
+- "I found a Dockerfile but no CI/CD config — how do you deploy?"
+- "What environment URLs should I document?"
+- "I don't see any monitoring setup — is there one?"
+- "What's your backup/recovery strategy?"
+
+### Generate Phase:
+1. Generate all three docs from scan results + conversation
+2. Write with `pm_update_doc(doc, content, project?)`
+3. Flag anything that needs follow-up as a user story suggestion
+
+## Writing Guidelines
+
+- Be specific: "FastAPI 0.104 on Python 3.11" not "Python web framework"
+- Include rationale for decisions when the user explains them
+- Use tables for structured data (environments, env vars, roles)
+- Don't guess — if you're not sure, ask or mark as "TBD"
+- Never put actual secrets in the docs

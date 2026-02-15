@@ -85,6 +85,67 @@ def run_audit(root: Path) -> str:
                 "items": [task.id],
             })
 
+    # Check 6: Documentation staleness and completeness
+    doc_files = {
+        "PROJECT.md": ["## Architecture", "## Key Decisions"],
+        "INFRASTRUCTURE.md": ["## Environments", "## CI/CD"],
+        "SECURITY.md": ["## Authentication", "## Authorization", "## Known Risks"],
+    }
+    for doc_name, required_sections in doc_files.items():
+        doc_path = store.project_dir / doc_name
+        if not doc_path.exists():
+            findings.append({
+                "severity": "error",
+                "check": "missing-documentation",
+                "message": f"{doc_name} is missing from .project/",
+                "items": [doc_name],
+            })
+            continue
+
+        content = doc_path.read_text()
+
+        # Check for unfilled template (only HTML comments, no real content)
+        lines = [l.strip() for l in content.splitlines()
+                 if l.strip() and not l.strip().startswith("#")
+                 and not l.strip().startswith("<!--")
+                 and not l.strip().startswith("-->")
+                 and not l.strip().startswith("*Last reviewed")
+                 and not l.strip().startswith("*Update this")
+                 and not l.strip().startswith("---")
+                 and not l.strip().startswith("|")
+                 and l.strip() != "|"]
+        if len(lines) < 3:
+            findings.append({
+                "severity": "warning",
+                "check": "unfilled-documentation",
+                "message": f"{doc_name} appears to be an unfilled template — needs real content",
+                "items": [doc_name],
+            })
+
+        # Check file age (>30 days since last modification)
+        import os
+        mtime = date.fromtimestamp(os.path.getmtime(doc_path))
+        age_days = (date.today() - mtime).days
+        if age_days > 30:
+            findings.append({
+                "severity": "info",
+                "check": "stale-documentation",
+                "message": f"{doc_name} hasn't been updated in {age_days} days",
+                "items": [doc_name],
+            })
+
+    # Check 7: Malformed files in quarantine
+    malformed_dir = store.project_dir / "malformed"
+    if malformed_dir.exists():
+        malformed_count = len(list(malformed_dir.glob("*.md")))
+        if malformed_count > 0:
+            findings.append({
+                "severity": "warning",
+                "check": "malformed-files",
+                "message": f"{malformed_count} file(s) quarantined in .project/malformed/ — run /pm-fix",
+                "items": [f.name for f in sorted(malformed_dir.glob("*.md"))[:5]],
+            })
+
     # Generate report
     report_lines = ["# Project Audit Report\n"]
 

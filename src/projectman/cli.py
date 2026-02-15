@@ -124,6 +124,7 @@ def setup_claude():
         ("pm-audit", "skill_pm_audit.md.j2"),
         ("pm-do", "skill_pm_do.md.j2"),
         ("pm-fix", "skill_pm_fix.md.j2"),
+        ("pm-init", "skill_pm_init.md.j2"),
     ]
     for skill_name, template_name in skills:
         skill_dir = root / ".claude" / "skills" / skill_name
