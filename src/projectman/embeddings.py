@@ -1,4 +1,4 @@
-"""Embedding-based semantic search using sentence-transformers + SQLite."""
+"""Embedding-based semantic search using fastembed + SQLite."""
 
 import hashlib
 import sqlite3
@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
-import frontmatter
+import numpy as np
 
 
 @dataclass
@@ -43,8 +43,8 @@ class EmbeddingStore:
     @property
     def model(self):
         if self._model is None:
-            from sentence_transformers import SentenceTransformer
-            self._model = SentenceTransformer("all-MiniLM-L6-v2")
+            from fastembed import TextEmbedding
+            self._model = TextEmbedding("sentence-transformers/all-MiniLM-L6-v2")
         return self._model
 
     def _content_hash(self, text: str) -> str:
@@ -71,7 +71,7 @@ class EmbeddingStore:
             conn.close()
             return  # No change
 
-        vector = self.model.encode(text, normalize_embeddings=True)
+        vector = next(self.model.embed([text]))
         blob = self._encode_vector(vector)
 
         conn.execute(
@@ -93,7 +93,7 @@ class EmbeddingStore:
 
     def search(self, query: str, top_k: int = 10) -> list[EmbeddingResult]:
         """Search by semantic similarity using cosine distance (normalized dot product)."""
-        query_vec = self.model.encode(query, normalize_embeddings=True)
+        query_vec = next(self.model.embed([query]))
 
         conn = sqlite3.connect(str(self.db_path))
         rows = conn.execute("SELECT id, title, type, vector FROM embeddings").fetchall()
@@ -103,7 +103,7 @@ class EmbeddingStore:
         for row_id, title, item_type, blob in rows:
             stored_vec = self._decode_vector(blob)
             # Cosine similarity via dot product (vectors are normalized)
-            score = sum(a * b for a, b in zip(query_vec, stored_vec))
+            score = np.dot(query_vec, stored_vec)
             results.append(EmbeddingResult(
                 id=row_id, title=title, type=item_type, score=float(score)
             ))

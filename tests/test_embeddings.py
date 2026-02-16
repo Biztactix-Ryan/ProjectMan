@@ -1,9 +1,9 @@
-"""Tests for embedding store -- skipped if sentence-transformers not available."""
+"""Tests for embedding store -- skipped if fastembed not available."""
 
 import pytest
 
 try:
-    from sentence_transformers import SentenceTransformer
+    from fastembed import TextEmbedding
     HAS_EMBEDDINGS = True
 except ImportError:
     HAS_EMBEDDINGS = False
@@ -11,7 +11,7 @@ except ImportError:
 from projectman.store import Store
 
 
-@pytest.mark.skipif(not HAS_EMBEDDINGS, reason="sentence-transformers not installed")
+@pytest.mark.skipif(not HAS_EMBEDDINGS, reason="fastembed not installed")
 class TestEmbeddingStore:
     def test_index_and_search(self, tmp_project):
         from projectman.embeddings import EmbeddingStore
