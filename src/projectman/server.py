@@ -241,7 +241,8 @@ def pm_search(query: str, project: Optional[str] = None) -> str:
             from .embeddings import EmbeddingStore
             emb_store = EmbeddingStore(proj_dir)
             results = emb_store.search(query, top_k=10)
-            return _yaml_dump([{"id": r.id, "title": r.title, "type": r.type, "score": round(r.score, 3)} for r in results])
+            if results:
+                return _yaml_dump([{"id": r.id, "title": r.title, "type": r.type, "score": round(r.score, 3)} for r in results])
         except (ImportError, Exception):
             pass
 

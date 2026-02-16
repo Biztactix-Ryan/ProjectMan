@@ -484,7 +484,8 @@ def api_search(
         from projectman.embeddings import EmbeddingStore
         emb_store = EmbeddingStore(proj_dir)
         results = emb_store.search(q, top_k=10)
-        return [{"id": r.id, "title": r.title, "type": r.type, "score": round(r.score, 3)} for r in results]
+        if results:
+            return [{"id": r.id, "title": r.title, "type": r.type, "score": round(r.score, 3)} for r in results]
     except (ImportError, Exception):
         pass
 
