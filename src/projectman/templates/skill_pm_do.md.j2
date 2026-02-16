@@ -42,7 +42,7 @@ args: "<task-id> [--complete]"
    - Check if all sibling tasks in the story are done:
      - If all done, call `pm_update(story_id, status="done")` automatically
    - Summarize what was done, files changed, tests run
-   - **Stop.** Do not suggest further actions.
+   - **End the session.** Do not suggest further actions.
 
    **Otherwise (default):**
    - Call `pm_update(task_id, status="review")` if the task needs human review,
