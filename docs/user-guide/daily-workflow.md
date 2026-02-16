@@ -19,6 +19,8 @@ The `/pm-do` command auto-grabs the task if it's available:
 - Loads parent story context and sibling tasks
 - If readiness fails, shows what needs fixing first
 
+**Tip:** In a Web UI environment, `/pm grab <task-id>` auto-spawns a focused task session — no need to manually run `/pm-do`.
+
 ## During Work
 
 - Update task status as you progress

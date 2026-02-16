@@ -40,7 +40,10 @@ Call `pm_status`, then `pm_active`. Based on project state, suggest the most use
 - `audit` → Call `pm_audit`, review DRIFT.md findings, suggest and execute approved fixes
 - `init [project]` → Set up project documentation (wizard mode for new, import mode for existing)
 - `fix` → Call `pm_malformed`, fix quarantined files one at a time via `pm_fix_malformed`
-- `grab <task-id> [assignee]` → Call `pm_grab(task_id, assignee)` to claim a task with readiness validation
+- `grab <task-id> [assignee]` → Call `pm_grab(task_id, assignee)` to claim a task with readiness validation. After a successful grab, detect the execution context:
+  - **Web UI** (`CLAUDE_WEB_PORT` env var is set): The PostToolUse activity hook auto-spawns a focused task session — tell the user: "Task grabbed — a focused task session is starting. Check the UI for the new task tab."
+  - **CLI-only** (no `CLAUDE_WEB_PORT`): Fall back to suggesting `/pm-do <id>`
+  - If auto-spawn fails for any reason, fall back to the `/pm-do` suggestion
 
 ### Web Dashboard
 - `web` / `web start` → `pm_web_start(host, port)` — launch the web dashboard (default 127.0.0.1:8000)
@@ -70,7 +73,10 @@ Also accept natural language and route intelligently:
 After every action, suggest the logical next step:
 - After creating a story → "Scope it with `/pm scope <id>`?"
 - After scoping → "Estimate with `/pm update <id> points=N`?"
-- After grabbing a task → "Start implementing with `/pm-do <id>`"
+- After grabbing a task → detect execution context:
+  - If `CLAUDE_WEB_PORT` is set: "Task grabbed — a focused task session is starting. Check the UI for the new task tab."
+  - If no `CLAUDE_WEB_PORT`: "Start implementing with `/pm-do <id>`. Complete the task, mark it done, then end the session." (For autonomous/spawned agents, use `/pm-do <id> --complete` which auto-closes and terminates.)
+  - If auto-spawn fails, fall back to the `/pm-do` suggestion
 - After completing a task → "Check the board for more work: `/pm board`"
 - After starting the web server → share the URL so the user can open it in their browser
 

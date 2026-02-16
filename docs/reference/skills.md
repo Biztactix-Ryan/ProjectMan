@@ -64,6 +64,8 @@ Pick up and execute a specific task. This is the "do the work" command.
 2. **Execute** — Implements the work described in the task. Follows implementation steps and verifies definition-of-done items as they are completed.
 3. **Complete** — Reviews task status, detects sibling task completion (whether all tasks under the parent story are now done), and updates status via `pm_update`.
 
+**Auto-spawn:** When using `/pm grab` in a Web UI environment (with `CLAUDE_WEB_PORT` set), a focused task session is automatically spawned via the PostToolUse activity hook — no need to manually run `/pm-do`. In CLI-only mode, `/pm-do` is suggested as a fallback.
+
 **Note:** This skill has `disable-model-invocation: true` — it only runs when you explicitly invoke it with `/pm-do`, never automatically. This is because it performs real code changes.
 
 ## /pm-autoscope
