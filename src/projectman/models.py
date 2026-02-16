@@ -132,6 +132,7 @@ class ProjectConfig(BaseModel):
     name: str
     prefix: str = "PRJ"
     description: str = ""
+    repo: str = ""
     hub: bool = False
     next_story_id: int = 1
     next_epic_id: int = 1

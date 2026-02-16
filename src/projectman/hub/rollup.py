@@ -3,9 +3,19 @@
 from pathlib import Path
 from typing import Optional
 
+import yaml
+
 from ..config import load_config
 from ..indexer import build_index
+from ..models import ProjectConfig
 from ..store import Store
+
+
+def load_config_from(pm_dir: Path) -> ProjectConfig:
+    """Load a ProjectConfig from an arbitrary .project-style directory."""
+    with open(pm_dir / "config.yaml") as f:
+        data = yaml.safe_load(f)
+    return ProjectConfig(**data)
 
 
 def rollup(root: Optional[Path] = None) -> dict:
@@ -34,11 +44,13 @@ def rollup(root: Optional[Path] = None) -> dict:
 
         try:
             store = Store(root, project_dir=pm_dir)
+            sub_config = load_config_from(pm_dir)
             index = build_index(store)
 
             project_data = {
                 "name": name,
                 "status": "active",
+                "repo": sub_config.repo,
                 "epics": index.epic_count,
                 "stories": index.story_count,
                 "tasks": index.task_count,

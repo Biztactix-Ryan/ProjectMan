@@ -1,5 +1,6 @@
 """Hub registry — manage subproject registration via git submodules."""
 
+import re
 import subprocess
 from pathlib import Path
 from typing import Optional
@@ -7,6 +8,25 @@ from typing import Optional
 import yaml
 
 from ..config import load_config, save_config
+
+
+def _parse_github_repo(url: str) -> str:
+    """Extract 'owner/repo' from a GitHub URL, or return '' for non-GitHub URLs.
+
+    Handles:
+      https://github.com/owner/repo.git  → owner/repo
+      https://github.com/owner/repo      → owner/repo
+      git@github.com:owner/repo.git      → owner/repo
+    """
+    # HTTPS style
+    m = re.match(r"https?://github\.com/([^/]+/[^/]+?)(?:\.git)?/?$", url)
+    if m:
+        return m.group(1)
+    # SSH style
+    m = re.match(r"git@github\.com:([^/]+/[^/]+?)(?:\.git)?$", url)
+    if m:
+        return m.group(1)
+    return ""
 
 
 def add_project(name: str, git_url: str, branch: Optional[str] = None, root: Optional[Path] = None) -> str:
@@ -44,9 +64,10 @@ def add_project(name: str, git_url: str, branch: Optional[str] = None, root: Opt
         return "error: git is not installed or not on PATH"
 
     # Initialize PM data in hub's .project/projects/{name}/
+    repo = _parse_github_repo(git_url)
     pm_dir = root / ".project" / "projects" / name
     if not (pm_dir / "config.yaml").exists():
-        _init_subproject(pm_dir, name)
+        _init_subproject(pm_dir, name, repo=repo)
 
     # Register in config
     if name not in config.projects:
@@ -60,7 +81,7 @@ def add_project(name: str, git_url: str, branch: Optional[str] = None, root: Opt
     return msg
 
 
-def _init_subproject(target: Path, name: str) -> None:
+def _init_subproject(target: Path, name: str, repo: str = "") -> None:
     """Initialize PM data directory for a subproject.
 
     ``target`` is the project dir itself (e.g. hub_root/.project/projects/{name}/).
@@ -83,7 +104,7 @@ def _init_subproject(target: Path, name: str) -> None:
         import importlib.resources
         tdir = str(importlib.resources.files("projectman") / "templates")
         env = Environment(loader=FileSystemLoader(tdir), keep_trailing_newline=True)
-        ctx = dict(name=name, prefix=prefix, description="", hub=False)
+        ctx = dict(name=name, prefix=prefix, description="", repo=repo, hub=False)
 
         (target / "config.yaml").write_text(env.get_template("config.yaml.j2").render(**ctx))
         (target / "PROJECT.md").write_text(env.get_template("project.md.j2").render(**ctx))
@@ -95,6 +116,7 @@ def _init_subproject(target: Path, name: str) -> None:
             "name": name,
             "prefix": prefix,
             "description": "",
+            "repo": repo,
             "hub": False,
             "next_story_id": 1,
             "projects": [],

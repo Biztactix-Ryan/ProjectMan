@@ -6,8 +6,9 @@ import pytest
 import yaml
 from pathlib import Path
 
-from projectman.hub.registry import list_projects, repair, _init_subproject
+from projectman.hub.registry import list_projects, repair, _init_subproject, _parse_github_repo
 from projectman.hub.rollup import rollup
+from projectman.indexer import _discover_badges, write_markdown_indexes
 from projectman.store import Store
 
 
@@ -221,3 +222,210 @@ def test_init_subproject_creates_structure(tmp_path):
     assert config["name"] == "myproj"
     assert config["hub"] is False
     assert config["next_story_id"] == 1
+
+
+def test_init_subproject_stores_repo(tmp_path):
+    """_init_subproject writes repo field to config.yaml when provided."""
+    target = tmp_path / "pm_data" / "api"
+    _init_subproject(target, "api", repo="acme/api")
+
+    with open(target / "config.yaml") as f:
+        config = yaml.safe_load(f)
+    assert config["repo"] == "acme/api"
+
+
+# ─── _parse_github_repo ──────────────────────────────────────────
+
+
+def test_parse_github_repo_https():
+    assert _parse_github_repo("https://github.com/acme/api.git") == "acme/api"
+
+
+def test_parse_github_repo_https_no_git():
+    assert _parse_github_repo("https://github.com/acme/api") == "acme/api"
+
+
+def test_parse_github_repo_https_trailing_slash():
+    assert _parse_github_repo("https://github.com/acme/api/") == "acme/api"
+
+
+def test_parse_github_repo_ssh():
+    assert _parse_github_repo("git@github.com:acme/api.git") == "acme/api"
+
+
+def test_parse_github_repo_ssh_no_git():
+    assert _parse_github_repo("git@github.com:acme/api") == "acme/api"
+
+
+def test_parse_github_repo_non_github():
+    assert _parse_github_repo("https://gitlab.com/acme/api.git") == ""
+
+
+def test_parse_github_repo_random_string():
+    assert _parse_github_repo("not-a-url") == ""
+
+
+# ─── rollup includes repo ────────────────────────────────────────
+
+
+def test_rollup_includes_repo(tmp_hub):
+    """rollup() per-project data includes the repo field from subproject config."""
+    pm_dir = _register_subproject(tmp_hub, "api", prefix="API")
+
+    # Write repo into the subproject config
+    with open(pm_dir / "config.yaml") as f:
+        cfg = yaml.safe_load(f)
+    cfg["repo"] = "acme/api"
+    with open(pm_dir / "config.yaml", "w") as f:
+        yaml.dump(cfg, f)
+
+    data = rollup(tmp_hub)
+    proj = next(p for p in data["projects"] if p["name"] == "api")
+    assert proj["repo"] == "acme/api"
+
+
+def test_rollup_repo_defaults_empty(tmp_hub):
+    """rollup() returns empty repo when subproject config has no repo field."""
+    _register_subproject(tmp_hub, "legacy", prefix="LEG")
+
+    data = rollup(tmp_hub)
+    proj = next(p for p in data["projects"] if p["name"] == "legacy")
+    assert proj["repo"] == ""
+
+
+# ─── _discover_badges ────────────────────────────────────────────
+
+
+def test_discover_badges_no_repo(tmp_hub):
+    """No badges when repo is empty."""
+    assert _discover_badges(tmp_hub, "api", "") == []
+
+
+def test_discover_badges_no_workflows_dir(tmp_hub):
+    """No badges when .github/workflows/ doesn't exist."""
+    (tmp_hub / "projects" / "api").mkdir(parents=True)
+    assert _discover_badges(tmp_hub, "api", "acme/api") == []
+
+
+def test_discover_badges_with_workflows(tmp_hub):
+    """Badges are generated from workflow YAML files."""
+    wf_dir = tmp_hub / "projects" / "api" / ".github" / "workflows"
+    wf_dir.mkdir(parents=True)
+    (wf_dir / "ci.yml").write_text("name: CI\non: push\njobs: {}\n")
+    (wf_dir / "deploy.yaml").write_text("name: Deploy\non: push\njobs: {}\n")
+
+    badges = _discover_badges(tmp_hub, "api", "acme/api")
+    assert len(badges) == 2
+    assert "[![CI]" in badges[0]
+    assert "acme/api" in badges[0]
+    assert "ci.yml" in badges[0]
+    assert "[![Deploy]" in badges[1]
+    assert "deploy.yaml" in badges[1]
+
+
+def test_discover_badges_falls_back_to_filename(tmp_hub):
+    """When YAML has no name field, badge uses the file stem."""
+    wf_dir = tmp_hub / "projects" / "api" / ".github" / "workflows"
+    wf_dir.mkdir(parents=True)
+    (wf_dir / "test.yml").write_text("on: push\njobs: {}\n")
+
+    badges = _discover_badges(tmp_hub, "api", "acme/api")
+    assert len(badges) == 1
+    assert "[![test]" in badges[0]
+
+
+def test_discover_badges_ignores_non_yaml(tmp_hub):
+    """Non-YAML files in workflows dir are ignored."""
+    wf_dir = tmp_hub / "projects" / "api" / ".github" / "workflows"
+    wf_dir.mkdir(parents=True)
+    (wf_dir / "ci.yml").write_text("name: CI\non: push\njobs: {}\n")
+    (wf_dir / "README.md").write_text("# Workflows\n")
+
+    badges = _discover_badges(tmp_hub, "api", "acme/api")
+    assert len(badges) == 1
+
+
+# ─── Hub README generation ───────────────────────────────────────
+
+
+def test_hub_readme_has_per_project_sections(tmp_hub):
+    """Hub README includes per-project stats tables."""
+    pm_dir = _register_subproject(tmp_hub, "api", prefix="API")
+
+    # Add a story with points
+    sub_store = Store(tmp_hub, project_dir=pm_dir)
+    sub_store.create_story("API Story", "Desc", points=5)
+
+    # Generate hub indexes
+    hub_store = Store(tmp_hub)
+    write_markdown_indexes(hub_store)
+
+    readme = (tmp_hub / "README.md").read_text()
+
+    assert "### api" in readme
+    assert "| Epics | Stories | Tasks | Points | Progress |" in readme
+    assert "| Projects |" in readme
+    assert "## Indexes" in readme
+
+
+def test_hub_readme_includes_badges(tmp_hub):
+    """Hub README includes GitHub Actions badges when workflows exist."""
+    pm_dir = _register_subproject(tmp_hub, "web", prefix="WEB")
+
+    # Set repo in subproject config
+    with open(pm_dir / "config.yaml") as f:
+        cfg = yaml.safe_load(f)
+    cfg["repo"] = "acme/web"
+    with open(pm_dir / "config.yaml", "w") as f:
+        yaml.dump(cfg, f)
+
+    # Create a workflow file in the subproject source dir
+    wf_dir = tmp_hub / "projects" / "web" / ".github" / "workflows"
+    wf_dir.mkdir(parents=True)
+    (wf_dir / "build.yml").write_text("name: build\non: push\njobs: {}\n")
+
+    hub_store = Store(tmp_hub)
+    write_markdown_indexes(hub_store)
+
+    readme = (tmp_hub / "README.md").read_text()
+
+    assert "[![build]" in readme
+    assert "acme/web" in readme
+
+
+def test_hub_readme_no_badges_without_repo(tmp_hub):
+    """Hub README has no badges when subproject has no repo configured."""
+    _register_subproject(tmp_hub, "cli", prefix="CLI")
+
+    hub_store = Store(tmp_hub)
+    write_markdown_indexes(hub_store)
+
+    readme = (tmp_hub / "README.md").read_text()
+
+    assert "### cli" in readme
+    assert "[![" not in readme
+
+
+def test_hub_readme_completion_percentage(tmp_hub):
+    """Hub README shows aggregate completion percentage."""
+    import frontmatter as fm
+
+    pm_dir = _register_subproject(tmp_hub, "svc", prefix="SVC")
+
+    sub_store = Store(tmp_hub, project_dir=pm_dir)
+    meta_done, _ = sub_store.create_story("Done Story", "Desc", points=3)
+    sub_store.create_story("Open Story", "Desc", points=5)
+
+    # Manually set the first story to done
+    story_path = pm_dir / "stories" / f"{meta_done.id}.md"
+    post = fm.load(str(story_path))
+    post.metadata["status"] = "done"
+    story_path.write_text(fm.dumps(post))
+
+    hub_store = Store(tmp_hub)
+    write_markdown_indexes(hub_store)
+
+    readme = (tmp_hub / "README.md").read_text()
+
+    # 3 out of 8 points = 38%
+    assert "| Completion | 38% |" in readme
