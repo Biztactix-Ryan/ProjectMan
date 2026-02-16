@@ -3,10 +3,14 @@ name: pm-do
 description: Execute a task — grab if needed, load context, implement, and complete
 user_invocable: true
 disable-model-invocation: true
-args: "<task-id>"
+args: "<task-id> [--complete]"
 ---
 
 # /pm-do — Execute Task
+
+## Flags
+
+- `--complete` — Auto-close mode: skip the review option, mark the task as `done` when all DoD criteria are met, and end the session. Designed for spawned agents that should finish without manual intervention.
 
 ## Phase 1: Claim & Context
 
@@ -33,8 +37,16 @@ args: "<task-id>"
 
 ## Phase 3: Complete
 
-9. Call `pm_update(task_id, status="review")` if the task needs human review,
-   OR call `pm_update(task_id, status="done")` if all DoD criteria are met
+9. **If `--complete` flag is set:**
+   - Call `pm_update(task_id, status="done")` — do NOT offer a review option
+   - Check if all sibling tasks in the story are done:
+     - If all done, call `pm_update(story_id, status="done")` automatically
+   - Summarize what was done, files changed, tests run
+   - **Stop.** Do not suggest further actions.
+
+   **Otherwise (default):**
+   - Call `pm_update(task_id, status="review")` if the task needs human review,
+     OR call `pm_update(task_id, status="done")` if all DoD criteria are met
 10. Check if all sibling tasks in the story are done:
     - Call `pm_active` or list tasks for the story
     - If all done, suggest: "All tasks for {story_id} are complete — update story to done?"
