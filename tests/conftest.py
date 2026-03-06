@@ -60,5 +60,61 @@ def tmp_hub(tmp_path):
 @pytest.fixture
 def store(tmp_project):
     """Create a Store instance for testing."""
-    from projectman.store import Store
+    from projectman.store import Store, _cache
+    _cache.clear()
     return Store(tmp_project)
+
+
+@pytest.fixture
+def tmp_git_project(tmp_project):
+    """Create a tmp_project inside a git repository with an initial commit."""
+    import subprocess
+
+    subprocess.run(["git", "init"], cwd=str(tmp_project), capture_output=True, check=True)
+    subprocess.run(["git", "config", "user.email", "test@test.com"], cwd=str(tmp_project), capture_output=True, check=True)
+    subprocess.run(["git", "config", "user.name", "Test"], cwd=str(tmp_project), capture_output=True, check=True)
+    subprocess.run(["git", "add", "."], cwd=str(tmp_project), capture_output=True, check=True)
+    subprocess.run(["git", "commit", "-m", "init"], cwd=str(tmp_project), capture_output=True, check=True)
+
+    return tmp_project
+
+
+@pytest.fixture
+def tmp_git_project_with_remote(tmp_git_project, tmp_path_factory):
+    """A tmp_git_project with a bare remote for push testing."""
+    import subprocess
+
+    bare = tmp_path_factory.mktemp("bare")
+    bare_repo = bare / "origin.git"
+    subprocess.run(["git", "init", "--bare", str(bare_repo)], capture_output=True, check=True)
+
+    subprocess.run(
+        ["git", "remote", "add", "origin", str(bare_repo)],
+        cwd=str(tmp_git_project), capture_output=True, check=True,
+    )
+    subprocess.run(
+        ["git", "push", "-u", "origin", "master"],
+        cwd=str(tmp_git_project), capture_output=True,
+        # Don't check — branch may be "main" instead
+    )
+    subprocess.run(
+        ["git", "push", "-u", "origin", "main"],
+        cwd=str(tmp_git_project), capture_output=True,
+        # Don't check — branch may be "master" instead
+    )
+
+    return tmp_git_project
+
+
+@pytest.fixture
+def tmp_git_hub(tmp_hub):
+    """Create a tmp_hub inside a git repository with an initial commit."""
+    import subprocess
+
+    subprocess.run(["git", "init"], cwd=str(tmp_hub), capture_output=True, check=True)
+    subprocess.run(["git", "config", "user.email", "test@test.com"], cwd=str(tmp_hub), capture_output=True, check=True)
+    subprocess.run(["git", "config", "user.name", "Test"], cwd=str(tmp_hub), capture_output=True, check=True)
+    subprocess.run(["git", "add", "."], cwd=str(tmp_hub), capture_output=True, check=True)
+    subprocess.run(["git", "commit", "-m", "init"], cwd=str(tmp_hub), capture_output=True, check=True)
+
+    return tmp_hub

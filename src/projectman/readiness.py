@@ -1,5 +1,6 @@
 """Task readiness checks — Definition of Ready enforcement."""
 
+from .deps import incomplete_dependencies
 from .models import TaskFrontmatter, TaskStatus
 from .store import Store
 
@@ -34,6 +35,14 @@ def check_readiness(
             )
     except FileNotFoundError:
         blockers.append(f"parent story {task_meta.story_id} not found")
+
+    # Dependency check
+    if task_meta.depends_on:
+        siblings = store.list_tasks(story_id=task_meta.story_id)
+        incomplete = incomplete_dependencies(task_meta, siblings)
+        if incomplete:
+            dep_list = ", ".join(incomplete)
+            blockers.append(f"incomplete dependencies: {dep_list}")
 
     # Soft gates (warnings only)
     if task_meta.points and task_meta.points > 5:

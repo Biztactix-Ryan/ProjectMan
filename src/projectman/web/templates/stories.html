@@ -25,6 +25,7 @@
       <label>Epic
         <select name="epic_id" id="story-epic-select"><option value="">— none —</option></select>
       </label>
+      <label>Tags <input type="text" name="tags" placeholder="comma-separated"></label>
       <footer>
         <button type="button" class="secondary outline" onclick="this.closest('dialog').close()">Cancel</button>
         <button type="submit">Create Story</button>
@@ -52,7 +53,7 @@ function renderStories(stories) {
     target.innerHTML = '<div class="section-card"><p>No stories found.</p></div>';
     return;
   }
-  var html = '<table role="grid"><thead><tr><th>ID</th><th>Title</th><th>Status</th><th>Priority</th><th>Points</th><th>Epic</th></tr></thead><tbody>';
+  var html = '<table role="grid"><thead><tr><th>ID</th><th>Title</th><th>Status</th><th>Priority</th><th>Points</th><th>Epic</th><th>Tags</th></tr></thead><tbody>';
   stories.forEach(function(s) {
     html += '<tr class="clickable-row" onclick="window.location=\'/stories/' + s.id + '\'">' +
       '<td><a href="/stories/' + s.id + '">' + s.id + '</a></td>' +
@@ -61,6 +62,7 @@ function renderStories(stories) {
       '<td>' + (s.priority ? '<span class="badge badge-' + s.priority + '">' + s.priority + '</span>' : '') + '</td>' +
       '<td>' + (s.points || '—') + '</td>' +
       '<td>' + (s.epic_id ? '<a href="/epics/' + s.epic_id + '" onclick="event.stopPropagation()">' + s.epic_id + '</a>' : '—') + '</td>' +
+      '<td>' + (s.tags || []).join(", ") + '</td>' +
       '</tr>';
   });
   html += '</tbody></table>';
@@ -92,6 +94,7 @@ function submitNewStory(evt) {
   if (fd.get("priority")) body.priority = fd.get("priority");
   if (fd.get("points")) body.points = parseInt(fd.get("points"));
   if (fd.get("epic_id")) body.epic_id = fd.get("epic_id");
+  if (fd.get("tags")) body.tags = fd.get("tags");
   fetch("/api/stories", {
     method: "POST",
     headers: {"Content-Type": "application/json"},

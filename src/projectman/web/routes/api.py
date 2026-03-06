@@ -206,6 +206,7 @@ def create_story(body: CreateStoryRequest, store: Store = Depends(get_store)) ->
         priority=body.priority,
         points=body.points,
         acceptance_criteria=body.acceptance_criteria,
+        tags=body.tags,
     )
     if body.epic_id:
         store.update(meta.id, epic_id=body.epic_id)
@@ -282,6 +283,8 @@ def create_task(body: CreateTaskRequest, store: Store = Depends(get_store)) -> d
             title=body.title,
             description=body.description,
             points=body.points,
+            tags=body.tags,
+            depends_on=body.depends_on,
         )
         write_index(store)
         return meta.model_dump(mode="json")
@@ -542,6 +545,40 @@ def get_doc(name: str, proj_dir: Path = Depends(get_project_dir)) -> dict:
     if not path.exists():
         raise HTTPException(status_code=404, detail=f"{filename} not found")
     return {"name": name, "file": filename, "content": path.read_text()}
+
+
+# ─── Activity ─────────────────────────────────────────────────
+
+
+@router.get("/activity")
+def api_activity(
+    limit: int = Query(20, ge=1, le=100),
+    offset: int = Query(0, ge=0),
+    project: Optional[str] = Query(None),
+) -> dict:
+    """Recent activity log entries (newest first)."""
+    import json
+
+    proj_dir = get_project_dir(project)
+    log_path = proj_dir / "activity.jsonl"
+
+    if not log_path.exists():
+        return {"entries": [], "total": 0}
+
+    entries = []
+    for line in log_path.read_text().splitlines():
+        line = line.strip()
+        if line:
+            try:
+                entries.append(json.loads(line))
+            except json.JSONDecodeError:
+                continue
+
+    total = len(entries)
+    entries = list(reversed(entries))
+    entries = entries[offset : offset + limit]
+
+    return {"entries": entries, "total": total}
 
 
 @router.put("/docs/{name}")

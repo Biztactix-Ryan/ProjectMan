@@ -85,11 +85,20 @@ class EmbeddingStore:
         """Reindex all stories and tasks from the store."""
         for story in store.list_stories():
             _, body = store.get_story(story.id)
-            self.index_item(story.id, story.title, "story", body)
+            content = self._build_content(body, story.tags)
+            self.index_item(story.id, story.title, "story", content)
 
         for task in store.list_tasks():
-            _, body = store.get_task(task.id)
-            self.index_item(task.id, task.title, "task", body)
+            meta, body = store.get_task(task.id)
+            content = self._build_content(body, meta.tags)
+            self.index_item(task.id, task.title, "task", content)
+
+    @staticmethod
+    def _build_content(body: str, tags: list[str]) -> str:
+        """Combine body text with tags for richer embedding content."""
+        if tags:
+            return f"{body} tags: {' '.join(tags)}"
+        return body
 
     def search(self, query: str, top_k: int = 10) -> list[EmbeddingResult]:
         """Search by semantic similarity using cosine distance (normalized dot product)."""

@@ -1,9 +1,9 @@
 """Pydantic models for ProjectMan data structures."""
 
 import re
-from datetime import date
+from datetime import date, datetime
 from enum import Enum
-from typing import Optional
+from typing import Any, Optional
 
 from pydantic import BaseModel, field_validator
 
@@ -106,6 +106,8 @@ class TaskFrontmatter(BaseModel):
     status: TaskStatus = TaskStatus.todo
     points: Optional[int] = None
     assignee: Optional[str] = None
+    tags: list[str] = []
+    depends_on: list[str] = []
     created: date
     updated: date
 
@@ -127,6 +129,50 @@ class TaskFrontmatter(BaseModel):
             )
         return v
 
+    @field_validator("depends_on")
+    @classmethod
+    def validate_depends_on(cls, v: list[str]) -> list[str]:
+        for dep in v:
+            if not re.match(r"^[A-Za-z][\w-]*$", dep):
+                raise ValueError(
+                    f"depends_on entries must be valid task IDs, got: {dep}"
+                )
+        return v
+
+
+class ChangesetStatus(str, Enum):
+    open = "open"
+    partial = "partial"
+    merged = "merged"
+    closed = "closed"
+
+
+class ChangesetEntry(BaseModel):
+    """A single project's participation in a changeset."""
+
+    project: str
+    ref: str = ""
+    pr_number: Optional[int] = None
+    status: str = "pending"
+
+
+class ChangesetFrontmatter(BaseModel):
+    id: str
+    title: str
+    status: ChangesetStatus = ChangesetStatus.open
+    entries: list[ChangesetEntry] = []
+    created: date
+    updated: date
+
+    @field_validator("id")
+    @classmethod
+    def validate_id(cls, v: str) -> str:
+        if not re.match(r"^[A-Za-z][\w-]*$", v):
+            raise ValueError(
+                f"Changeset ID must be alphanumeric with hyphens, got: {v}"
+            )
+        return v
+
 
 class ProjectConfig(BaseModel):
     name: str
@@ -134,8 +180,11 @@ class ProjectConfig(BaseModel):
     description: str = ""
     repo: str = ""
     hub: bool = False
+    auto_commit: bool = False
+    deploy_branch: Optional[str] = None
     next_story_id: int = 1
     next_epic_id: int = 1
+    next_changeset_id: int = 1
     projects: list[str] = []
 
     @field_validator("prefix")
@@ -154,6 +203,7 @@ class IndexEntry(BaseModel):
     points: Optional[int] = None
     story_id: Optional[str] = None
     epic_id: Optional[str] = None
+    tags: list[str] = []
 
 
 class ProjectIndex(BaseModel):
@@ -163,3 +213,35 @@ class ProjectIndex(BaseModel):
     story_count: int = 0
     task_count: int = 0
     epic_count: int = 0
+
+
+class EventType(str, Enum):
+    create = "create"
+    update = "update"
+    delete = "delete"
+    archive = "archive"
+
+
+class ItemType(str, Enum):
+    story = "story"
+    task = "task"
+    epic = "epic"
+    changeset = "changeset"
+
+
+class LogSource(str, Enum):
+    mcp = "mcp"
+    web = "web"
+    cli = "cli"
+
+
+class LogEntry(BaseModel):
+    """Activity log entry capturing a single project mutation."""
+
+    event_type: EventType
+    item_id: str
+    item_type: ItemType
+    changes: dict[str, Any] = {}
+    timestamp: datetime
+    actor: str
+    source: LogSource

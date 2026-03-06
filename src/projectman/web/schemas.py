@@ -26,6 +26,7 @@ class CreateStoryRequest(BaseModel):
     points: Optional[int] = None
     epic_id: Optional[str] = None
     acceptance_criteria: Optional[list[str]] = None
+    tags: Optional[list[str]] = None
 
 
 class CreateTaskRequest(BaseModel):
@@ -33,6 +34,8 @@ class CreateTaskRequest(BaseModel):
     title: str
     description: str
     points: Optional[int] = None
+    tags: Optional[list[str]] = None
+    depends_on: Optional[list[str]] = None
 
 
 class UpdateItemRequest(BaseModel):
@@ -44,6 +47,8 @@ class UpdateItemRequest(BaseModel):
     epic_id: Optional[str] = None
     body: Optional[str] = None
     acceptance_criteria: Optional[list[str]] = None
+    tags: Optional[list[str]] = None
+    depends_on: Optional[list[str]] = None
 
 
 class GrabTaskRequest(BaseModel):
@@ -92,6 +97,8 @@ class TaskResponse(BaseModel):
     status: str
     points: Optional[int] = None
     assignee: Optional[str] = None
+    tags: list[str] = []
+    depends_on: list[str] = []
     created: date
     updated: date
     body: Optional[str] = None

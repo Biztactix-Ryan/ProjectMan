@@ -91,6 +91,53 @@ This returns the hub's VISION.md, ARCHITECTURE.md, the project's own docs, and a
 pm_context("my-api", limit=5)
 ```
 
+## Git Configuration
+
+### Auto-commit
+
+Enable automatic commits whenever PM data changes (story/task/epic creates and updates):
+
+```yaml
+# .project/config.yaml
+auto_commit: true
+```
+
+When enabled, each `create` or `update` operation automatically stages and commits the affected `.project/` files with a descriptive message like `pm: create US-PRJ-5` or `pm: update US-PRJ-3-1 status=done`.
+
+### Deploy Branch per Subproject
+
+Each submodule tracks a branch configured in `.gitmodules`. Set the tracking branch when adding a project or update it later:
+
+```bash
+# Set on add
+projectman add-project my-api https://github.com/user/my-api.git --branch develop
+
+# Change later
+projectman set-branch my-api main
+```
+
+This branch is used for:
+- **Branch validation** — `projectman validate-branches` checks each submodule is on its tracked branch
+- **Push preflight** — coordinated push blocks if any submodule is misaligned or in detached HEAD
+- **Sync** — `projectman sync` pulls the tracked branch (fast-forward only)
+
+Verify branch alignment at any time:
+
+```bash
+projectman validate-branches
+```
+
+### Changeset Configuration
+
+Changesets use an auto-incrementing ID counter in your hub config:
+
+```yaml
+# .project/config.yaml
+next_changeset_id: 1
+```
+
+This increments automatically when you create changesets. No manual setup needed.
+
 ## Syncing and Repairing
 
 Pull the latest submodule changes before running audits or dashboards:

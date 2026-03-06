@@ -15,7 +15,7 @@ class SearchResult:
     snippet: str
 
 
-def keyword_search(query: str, project_dir: Path, top_k: int = 10) -> list[SearchResult]:
+def keyword_search(query: str, project_dir: Path, top_k: int = 10, tag: str | None = None) -> list[SearchResult]:
     """Scan all stories/tasks for substring matches in title + content."""
     results = []
     query_lower = query.lower()
@@ -27,6 +27,13 @@ def keyword_search(query: str, project_dir: Path, top_k: int = 10) -> list[Searc
         for path in search_dir.glob("*.md"):
             post = frontmatter.load(str(path))
             title = post.metadata.get("title", "")
+
+            # Tag filter: skip items that don't have the requested tag
+            if tag:
+                item_tags = post.metadata.get("tags", []) or []
+                if tag not in item_tags:
+                    continue
+
             content = post.content
             combined = f"{title} {content}".lower()
 

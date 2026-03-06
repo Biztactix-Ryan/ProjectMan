@@ -12,9 +12,10 @@ except ImportError:
 
 from projectman.store import Store
 
-pytestmark = pytest.mark.skipif(not HAS_EMBEDDINGS, reason="fastembed not installed")
+_skip_no_fastembed = pytest.mark.skipif(not HAS_EMBEDDINGS, reason="fastembed not installed")
 
 
+@_skip_no_fastembed
 class TestEmbeddingIndex:
     def test_index_creates_db(self, tmp_project):
         from projectman.embeddings import EmbeddingStore
@@ -82,6 +83,7 @@ class TestEmbeddingIndex:
         assert hash1 != hash2
 
 
+@_skip_no_fastembed
 class TestEmbeddingSearch:
     def test_search_returns_results(self, tmp_project):
         from projectman.embeddings import EmbeddingStore
@@ -140,6 +142,7 @@ class TestEmbeddingSearch:
         assert isinstance(results[0].score, float)
 
 
+@_skip_no_fastembed
 class TestReindexAll:
     def test_reindex_indexes_stories_and_tasks(self, tmp_project):
         from projectman.embeddings import EmbeddingStore
@@ -171,6 +174,72 @@ class TestReindexAll:
         assert "US-TST-1" in top_ids or "US-TST-1-1" in top_ids
 
 
+    def test_reindex_includes_tags_in_embedding_text(self, tmp_project):
+        """Tags should be included in the embedding content for semantic relevance."""
+        from projectman.embeddings import EmbeddingStore
+        store = Store(tmp_project)
+        store.create_story("API Gateway", "Route management", tags=["backend", "infrastructure"])
+
+        emb = EmbeddingStore(tmp_project / ".project")
+        emb.reindex_all(store)
+
+        # Verify the content hash reflects the tags — re-indexing without tags
+        # would produce a different hash
+        conn = sqlite3.connect(str(tmp_project / ".project" / "embeddings.db"))
+        row = conn.execute(
+            "SELECT content_hash FROM embeddings WHERE id = ?", ("US-TST-1",)
+        ).fetchone()
+        conn.close()
+        hash_with_tags = row[0]
+
+        # Index same item WITHOUT tags — hash should differ
+        emb.index_item("US-TST-1", "API Gateway", "story", "Route management")
+        conn = sqlite3.connect(str(tmp_project / ".project" / "embeddings.db"))
+        row = conn.execute(
+            "SELECT content_hash FROM embeddings WHERE id = ?", ("US-TST-1",)
+        ).fetchone()
+        conn.close()
+        hash_without_tags = row[0]
+
+        assert hash_with_tags != hash_without_tags, "Tags should change the embedding content"
+
+    def test_reindex_tags_improve_search_relevance(self, tmp_project):
+        """A story tagged with relevant terms should rank higher in search."""
+        from projectman.embeddings import EmbeddingStore
+        store = Store(tmp_project)
+        # Story with 'security' tag but generic title/body
+        store.create_story("Module A", "Generic module description", tags=["security", "auth"])
+        # Story without security tag
+        store.create_story("Module B", "Another generic module description")
+
+        emb = EmbeddingStore(tmp_project / ".project")
+        emb.reindex_all(store)
+
+        results = emb.search("security authentication")
+        # The tagged story should rank first
+        assert results[0].id == "US-TST-1"
+
+
+@_skip_no_fastembed
+class TestBuildContent:
+    """Tests for _build_content — skipped along with embeddings module."""
+
+    def test_build_content_with_tags(self):
+        from projectman.embeddings import EmbeddingStore
+        result = EmbeddingStore._build_content("body text", ["api", "backend"])
+        assert "tags:" in result
+        assert "api" in result
+        assert "backend" in result
+        assert "body text" in result
+
+    def test_build_content_without_tags(self):
+        from projectman.embeddings import EmbeddingStore
+        result = EmbeddingStore._build_content("body text", [])
+        assert result == "body text"
+        assert "tags:" not in result
+
+
+@_skip_no_fastembed
 class TestVectorRoundtrip:
     def test_encode_decode_preserves_values(self, tmp_project):
         """Vector encode/decode roundtrip should preserve values within float32 precision."""

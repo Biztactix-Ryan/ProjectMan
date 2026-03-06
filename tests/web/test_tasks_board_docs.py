@@ -109,6 +109,103 @@ def test_grab_ready_task(client):
     assert "story_context" in r.json()
 
 
+def test_create_task_with_depends_on(client):
+    story_id = _create_story(client)
+
+    # Create first task
+    r = client.post("/api/tasks", json={
+        "story_id": story_id,
+        "title": "Task A",
+        "description": "first task",
+        "points": 2,
+    })
+    assert r.status_code == 201
+    task_a_id = r.json()["id"]
+
+    # Create second task that depends on the first
+    r = client.post("/api/tasks", json={
+        "story_id": story_id,
+        "title": "Task B",
+        "description": "depends on A",
+        "points": 2,
+        "depends_on": [task_a_id],
+    })
+    assert r.status_code == 201
+    task_b = r.json()
+    assert task_b["depends_on"] == [task_a_id]
+
+    # Verify via GET
+    r = client.get(f"/api/tasks/{task_b['id']}")
+    assert r.status_code == 200
+    assert r.json()["depends_on"] == [task_a_id]
+
+
+def test_update_task_depends_on(client):
+    story_id = _create_story(client)
+
+    # Create two tasks
+    r1 = client.post("/api/tasks", json={
+        "story_id": story_id,
+        "title": "Task A",
+        "description": "first",
+        "points": 2,
+    })
+    task_a_id = r1.json()["id"]
+
+    r2 = client.post("/api/tasks", json={
+        "story_id": story_id,
+        "title": "Task B",
+        "description": "second",
+        "points": 2,
+    })
+    task_b_id = r2.json()["id"]
+
+    # Update Task B to depend on Task A
+    r = client.patch(f"/api/tasks/{task_b_id}", json={"depends_on": [task_a_id]})
+    assert r.status_code == 200
+    assert r.json()["depends_on"] == [task_a_id]
+
+
+def test_create_task_without_depends_on(client):
+    story_id = _create_story(client)
+    r = client.post("/api/tasks", json={
+        "story_id": story_id,
+        "title": "No deps",
+        "description": "no dependencies",
+        "points": 1,
+    })
+    assert r.status_code == 201
+    assert r.json()["depends_on"] == []
+
+
+def test_task_response_schema_includes_depends_on():
+    """TaskResponse schema must declare depends_on field."""
+    from projectman.web.schemas import TaskResponse
+
+    assert "depends_on" in TaskResponse.model_fields
+    # Verify the field has the correct default and type
+    field = TaskResponse.model_fields["depends_on"]
+    assert field.default == []
+
+
+def test_task_detail_response_includes_depends_on(client):
+    """GET /api/tasks/{id} response includes depends_on."""
+    story_id = _create_story(client)
+    r = client.post("/api/tasks", json={
+        "story_id": story_id,
+        "title": "Detail deps test",
+        "description": "check detail response",
+        "points": 1,
+    })
+    task_id = r.json()["id"]
+
+    r = client.get(f"/api/tasks/{task_id}")
+    assert r.status_code == 200
+    data = r.json()
+    assert "depends_on" in data
+    assert data["depends_on"] == []
+
+
 def test_grab_not_ready_task_returns_409(client):
     # Story in backlog = task not ready
     story_id = _create_story(client, status="backlog")

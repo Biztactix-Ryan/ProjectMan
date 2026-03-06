@@ -20,11 +20,13 @@ def scope(store: Store, story_id: str) -> str:
             "Include implementation + testing in each task",
             "First task should set up the foundation",
             "Last task should handle integration/cleanup",
+            "Use depends_on to declare ordering between tasks when one requires another's output",
         ],
         "task_template": {
             "title": "Verb phrase describing the deliverable",
             "description": "Include: what to implement, acceptance criteria, files to touch",
             "points": "Fibonacci: 1, 2, 3, 5 (avoid 8+ for single tasks)",
+            "depends_on": "List of sibling task IDs this task requires (optional)",
         },
     }
 
@@ -132,6 +134,7 @@ def _auto_scope_full(store: Store) -> str:
             "title": "Verb phrase describing the deliverable",
             "description": "What to implement, acceptance criteria, files to touch",
             "points": "Fibonacci: 1, 2, 3, 5 (avoid 8+ for single tasks)",
+            "depends_on": "List of sibling task IDs this task requires (optional)",
         },
         "rules": [
             "Group related stories under epics",
@@ -139,6 +142,7 @@ def _auto_scope_full(store: Store) -> str:
             "Each task should be completable in one session (1-5 points)",
             "Tasks should be independently testable",
             "Include implementation + testing in each task",
+            "Use depends_on to declare ordering between tasks when one requires another's output",
         ],
     }
 
@@ -201,11 +205,13 @@ def _auto_scope_incremental(store: Store, limit: int = 5, offset: int = 0) -> st
                 "Include implementation + testing in each task",
                 "First task should set up the foundation",
                 "Last task should handle integration/cleanup",
+                "Use depends_on to declare ordering between tasks when one requires another's output",
             ],
             "task_template": {
                 "title": "Verb phrase describing the deliverable",
                 "description": "Include: what to implement, acceptance criteria, files to touch",
                 "points": "Fibonacci: 1, 2, 3, 5 (avoid 8+ for single tasks)",
+                "depends_on": "List of sibling task IDs this task requires (optional)",
             },
         },
     }

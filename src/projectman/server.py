@@ -3,13 +3,14 @@
 from pathlib import Path
 from typing import Optional
 
+import frontmatter
 import yaml
 from mcp.server.fastmcp import FastMCP
 from mcp.types import ToolAnnotations
 
 from .config import find_project_root, load_config
 from .indexer import build_index, write_index
-from .models import ProjectIndex
+from .models import ChangesetStatus, ProjectIndex
 from .store import Store
 
 mcp = FastMCP("projectman")
@@ -28,6 +29,9 @@ def _resolve_project_dir(project: Optional[str] = None) -> Path:
     return root / ".project"
 
 
+_store_cache: dict[Path, Store] = {}
+
+
 def _store(project: Optional[str] = None) -> Store:
     root = find_project_root()
     if project:
@@ -35,9 +39,14 @@ def _store(project: Optional[str] = None) -> Store:
         if config.hub:
             project_dir = root / ".project" / "projects" / project
             if project_dir.exists() and (project_dir / "config.yaml").exists():
-                return Store(root, project_dir=project_dir)
+                if project_dir not in _store_cache:
+                    _store_cache[project_dir] = Store(root, project_dir=project_dir)
+                return _store_cache[project_dir]
             raise FileNotFoundError(f"Project '{project}' not found in hub")
-    return Store(root)
+    default_dir = root / ".project"
+    if default_dir not in _store_cache:
+        _store_cache[default_dir] = Store(root)
+    return _store_cache[default_dir]
 
 
 def _yaml_dump(data) -> str:
@@ -65,6 +74,13 @@ def pm_status(project: Optional[str] = None) -> str:
         for entry in index.entries:
             status_groups.setdefault(entry.status, []).append(entry)
 
+        # Changeset summary
+        changesets = store.list_changesets()
+        cs_by_status = {}
+        for cs in changesets:
+            cs_by_status.setdefault(cs.status.value, 0)
+            cs_by_status[cs.status.value] += 1
+
         result = {
             "project": store.config.name,
             "epics": index.epic_count,
@@ -74,6 +90,8 @@ def pm_status(project: Optional[str] = None) -> str:
             "completed_points": index.completed_points,
             "completion": f"{pct}%",
             "by_status": {k: len(v) for k, v in status_groups.items()},
+            "changesets": len(changesets),
+            "changesets_by_status": cs_by_status,
         }
         return _yaml_dump(result)
     except Exception as e:
@@ -193,6 +211,7 @@ def pm_update_doc(
 @mcp.tool(title="Active Work", annotations=ToolAnnotations(title="Active Work", readOnlyHint=True))
 def pm_active(
     project: Optional[str] = None,
+    tag: Optional[str] = None,
     limit: int = 20,
     offset: int = 0,
 ) -> str:
@@ -200,6 +219,7 @@ def pm_active(
 
     Args:
         project: Optional project name (hub mode only)
+        tag: Filter to show only items (or their parent stories) with this tag
         limit: Max items per list (default 20)
         offset: Starting index for pagination (default 0)
     """
@@ -207,6 +227,17 @@ def pm_active(
         store = _store(project)
         all_stories = store.list_stories(status="active")
         all_tasks = store.list_tasks(status="in-progress")
+
+        if tag:
+            all_stories = [s for s in all_stories if tag in s.tags]
+            story_cache = {s.id: s for s in store.list_stories()}
+            all_tasks = [
+                t for t in all_tasks
+                if tag in t.tags or (
+                    story_cache.get(t.story_id) is not None
+                    and tag in story_cache[t.story_id].tags
+                )
+            ]
 
         stories_page = all_stories[offset : offset + limit]
         tasks_page = all_tasks[offset : offset + limit]
@@ -226,12 +257,13 @@ def pm_active(
 
 
 @mcp.tool(title="Search Items", annotations=ToolAnnotations(title="Search Items", readOnlyHint=True))
-def pm_search(query: str, project: Optional[str] = None) -> str:
+def pm_search(query: str, project: Optional[str] = None, tag: Optional[str] = None) -> str:
     """Search stories and tasks by keyword or semantic similarity.
 
     Args:
         query: Search query string
         project: Optional project name (hub mode only)
+        tag: Optional tag to filter results (only items with this tag are returned)
     """
     try:
         proj_dir = _resolve_project_dir(project)
@@ -242,12 +274,24 @@ def pm_search(query: str, project: Optional[str] = None) -> str:
             emb_store = EmbeddingStore(proj_dir)
             results = emb_store.search(query, top_k=10)
             if results:
+                # Post-filter by tag if specified
+                if tag:
+                    store = Store(proj_dir)
+                    filtered = []
+                    for r in results:
+                        try:
+                            meta, _ = store.get(r.id)
+                            if tag in (meta.tags if hasattr(meta, "tags") else []):
+                                filtered.append(r)
+                        except Exception:
+                            pass
+                    results = filtered
                 return _yaml_dump([{"id": r.id, "title": r.title, "type": r.type, "score": round(r.score, 3)} for r in results])
         except (ImportError, Exception):
             pass
 
         from .search import keyword_search
-        results = keyword_search(query, proj_dir)
+        results = keyword_search(query, proj_dir, tag=tag)
         return _yaml_dump([{"id": r.id, "title": r.title, "type": r.type, "score": r.score, "snippet": r.snippet} for r in results])
     except Exception as e:
         return f"error: {e}"
@@ -257,6 +301,7 @@ def pm_search(query: str, project: Optional[str] = None) -> str:
 def pm_board(
     project: Optional[str] = None,
     assignee: Optional[str] = None,
+    tag: Optional[str] = None,
     limit: int = 10,
 ) -> str:
     """Show the task board — available tasks grouped by status and readiness.
@@ -264,10 +309,12 @@ def pm_board(
     Args:
         project: Optional project name (hub mode only)
         assignee: Filter to show only tasks for this assignee
+        tag: Filter to show only tasks (or their parent stories) with this tag
         limit: Max items per board group (default 10). Totals are always shown.
     """
     try:
         from .readiness import check_readiness, compute_hints
+        from .deps import topological_sort
 
         store = _store(project)
         all_tasks = store.list_tasks()
@@ -276,6 +323,19 @@ def pm_board(
         story_cache = {}
         for story in store.list_stories():
             story_cache[story.id] = story
+
+        # Build topological position map per story for dependency-aware ordering
+        story_tasks: dict[str, list] = {}
+        for task in all_tasks:
+            story_tasks.setdefault(task.story_id, []).append(task)
+        topo_position: dict[str, int] = {}
+        for sid, tasks_in_story in story_tasks.items():
+            try:
+                sorted_tasks = topological_sort(tasks_in_story)
+            except Exception:
+                sorted_tasks = tasks_in_story
+            for idx, t in enumerate(sorted_tasks):
+                topo_position[t.id] = idx
 
         available = []
         not_ready = []
@@ -290,6 +350,12 @@ def pm_board(
 
             if assignee and task.assignee != assignee:
                 continue
+
+            if tag:
+                task_has_tag = tag in task.tags
+                story_has_tag = story is not None and tag in story.tags
+                if not task_has_tag and not story_has_tag:
+                    continue
 
             if task.status.value == "in-progress":
                 in_progress.append({
@@ -329,7 +395,7 @@ def pm_board(
                         "points": task.points,
                         "story": story_label,
                         "hints": hints,
-                        "_sort": (story_priority, task.story_id, task.id, task.points or 99),
+                        "_sort": (story_priority, task.story_id, topo_position.get(task.id, 0), task.points or 99),
                     })
                 else:
                     not_ready.append({
@@ -340,7 +406,7 @@ def pm_board(
                         "blockers": readiness["blockers"],
                     })
 
-        # Sort available tasks by priority > story > task sequence > points
+        # Sort available tasks by priority > story > topological order > points
         available.sort(key=lambda t: t["_sort"])
         for t in available:
             del t["_sort"]
@@ -413,6 +479,7 @@ def pm_create_story(
     points: Optional[int] = None,
     epic_id: Optional[str] = None,
     acceptance_criteria: Optional[str] = None,
+    tags: Optional[str] = None,
     project: Optional[str] = None,
 ) -> str:
     """Create a new user story.
@@ -424,12 +491,14 @@ def pm_create_story(
         points: Story points (fibonacci: 1,2,3,5,8,13)
         epic_id: Optional parent epic ID (e.g. EPIC-PRJ-1)
         acceptance_criteria: Comma-separated acceptance criteria (e.g. "Users can log in,Error shown on invalid password")
+        tags: Comma-separated tags (e.g. "security,mvp")
         project: Optional project name (hub mode only)
     """
     try:
         store = _store(project)
         ac_list = [c.strip() for c in acceptance_criteria.split(",")] if acceptance_criteria else None
-        meta, test_tasks = store.create_story(title, description, priority, points, acceptance_criteria=ac_list)
+        tag_list = [t.strip() for t in tags.split(",")] if tags else None
+        meta, test_tasks = store.create_story(title, description, priority, points, tags=tag_list, acceptance_criteria=ac_list)
         if epic_id:
             store.update(meta.id, epic_id=epic_id)
             meta, _ = store.get_story(meta.id)
@@ -610,6 +679,8 @@ def pm_create_task(
     title: str,
     description: str,
     points: Optional[int] = None,
+    tags: Optional[str] = None,
+    depends_on: Optional[str] = None,
     project: Optional[str] = None,
 ) -> str:
     """Create a new task under a story.
@@ -619,11 +690,15 @@ def pm_create_task(
         title: Task title
         description: Task description with implementation details
         points: Task points (fibonacci: 1,2,3,5,8,13)
+        tags: Comma-separated tags (e.g. "backend,api")
+        depends_on: Comma-separated task IDs this task depends on (e.g. "US-PRJ-1-1,US-PRJ-1-2")
         project: Optional project name (hub mode only)
     """
     try:
         store = _store(project)
-        meta = store.create_task(story_id, title, description, points)
+        tag_list = [t.strip() for t in tags.split(",")] if tags else None
+        dep_list = [d.strip() for d in depends_on.split(",")] if depends_on else None
+        meta = store.create_task(story_id, title, description, points, tags=tag_list, depends_on=dep_list)
         write_index(store)
         return _yaml_dump({"created": meta.model_dump(mode="json")})
     except Exception as e:
@@ -640,7 +715,7 @@ def pm_create_tasks(
 
     Args:
         story_id: Parent story ID (e.g. US-PRJ-1)
-        tasks: List of task dicts, each with keys: title (str), description (str), points (int, optional)
+        tasks: List of task dicts, each with keys: title (str), description (str), points (int, optional), depends_on (list[str], optional)
         project: Optional project name (hub mode only)
     """
     try:
@@ -667,6 +742,8 @@ def pm_update(
     epic_id: Optional[str] = None,
     body: Optional[str] = None,
     acceptance_criteria: Optional[str] = None,
+    tags: Optional[str] = None,
+    depends_on: Optional[str] = None,
     project: Optional[str] = None,
 ) -> str:
     """Update an epic, story, or task.
@@ -680,6 +757,8 @@ def pm_update(
         epic_id: Link a story to an epic (stories only)
         body: New markdown body/description content
         acceptance_criteria: Comma-separated acceptance criteria (stories only, e.g. "Users can log in,Error shown on invalid password")
+        tags: Comma-separated tags (e.g. "security,mvp,backend")
+        depends_on: Comma-separated task IDs this task depends on (tasks only, e.g. "US-PRJ-1-1,US-PRJ-1-2")
         project: Optional project name (hub mode only)
     """
     try:
@@ -699,6 +778,10 @@ def pm_update(
             kwargs["body"] = body
         if acceptance_criteria is not None:
             kwargs["acceptance_criteria"] = [c.strip() for c in acceptance_criteria.split(",")]
+        if tags is not None:
+            kwargs["tags"] = [t.strip() for t in tags.split(",")]
+        if depends_on is not None:
+            kwargs["depends_on"] = [d.strip() for d in depends_on.split(",")]
 
         meta = store.update(id, **kwargs)
         write_index(store)
@@ -775,10 +858,23 @@ def pm_grab(
         # Load sibling tasks (cap at 20 to avoid bloat)
         siblings = store.list_tasks(story_id=task_meta.story_id)
         all_siblings = [s for s in siblings if s.id != task_id]
+        sibling_map = {s.id: s for s in siblings}
         sibling_list = [
             {"id": s.id, "title": s.title, "status": s.status.value, "assignee": s.assignee}
             for s in all_siblings[:20]
         ]
+
+        # Build dependency status
+        dependency_status = []
+        if task_meta.depends_on:
+            for dep_id in task_meta.depends_on:
+                dep = sibling_map.get(dep_id)
+                if dep:
+                    dependency_status.append({
+                        "id": dep.id,
+                        "title": dep.title,
+                        "status": dep.status.value,
+                    })
 
         result = {
             "grabbed": {
@@ -787,6 +883,7 @@ def pm_grab(
                 "story_context": story_context,
                 "sibling_tasks": sibling_list,
                 "sibling_tasks_total": len(all_siblings),
+                "dependency_status": dependency_status,
                 "warnings": readiness["warnings"],
             },
         }
@@ -863,6 +960,22 @@ def pm_repair() -> str:
             return "error: not a hub project"
         from .hub.registry import repair
         return repair()
+    except Exception as e:
+        return f"error: {e}"
+
+
+@mcp.tool(title="Validate Branches", annotations=ToolAnnotations(title="Validate Branches", readOnlyHint=True))
+def pm_validate_branches() -> str:
+    """Validate that each hub submodule is on its expected tracked branch.
+
+    Returns structured data with aligned, misaligned, detached, and missing
+    projects plus an overall ok flag and summary string.
+    """
+    try:
+        from .hub.registry import validate_branches
+        root = find_project_root()
+        result = validate_branches(root=root)
+        return _yaml_dump(result)
     except Exception as e:
         return f"error: {e}"
 
@@ -1119,6 +1232,315 @@ def pm_auto_scope(
         return f"error: {e}"
 
 
+# ─── Git Tools ───────────────────────────────────────────────────
+
+@mcp.tool(title="Git Status Dashboard", annotations=ToolAnnotations(title="Git Status Dashboard", readOnlyHint=True))
+def pm_git_status(project: Optional[str] = None) -> str:
+    """Show git status across all hub submodules — branch, dirty, ahead/behind, PRs.
+
+    Returns the structured list from git_status_all() including PR data.
+    Use this as the first thing to check before any coordinated operation.
+
+    Args:
+        project: Optional project name to check a single subproject instead of all
+    """
+    try:
+        from .hub.registry import git_status_all
+
+        root = find_project_root()
+        data = git_status_all(root=root)
+
+        if project:
+            # Filter to a single project
+            matched = [p for p in data.get("projects", []) if p["name"] == project]
+            if not matched:
+                return f"error: project '{project}' not found in hub status"
+            return _yaml_dump({
+                "projects": matched,
+                "total": 1,
+                "issues": 1 if matched[0].get("issues") else 0,
+                "ok": not matched[0].get("issues"),
+                "summary": f"Status for {project}",
+            })
+
+        return _yaml_dump(data)
+    except Exception as e:
+        return f"error: {e}"
+
+
+@mcp.tool(title="Commit PM Changes", annotations=ToolAnnotations(title="Commit PM Changes", readOnlyHint=False, destructiveHint=False))
+def pm_commit(
+    scope: str = "all",
+    message: Optional[str] = None,
+) -> str:
+    """Commit .project/ changes with an auto-generated message.
+
+    Stages changes under .project/ filtered by scope and commits them.
+    If no message is provided, one is generated from the changed files
+    (e.g. "pm: update US-PRJ-5, US-PRJ-3-1").
+
+    Args:
+        scope: Commit scope — "hub" (hub-level only, excludes subprojects), "project:<name>" (specific subproject), or "all" (everything under .project/)
+        message: Optional commit message (auto-generated if omitted)
+    """
+    try:
+        root = find_project_root()
+        config = load_config(root)
+
+        if config.hub:
+            from .hub.registry import pm_commit as _hub_commit
+            result = _hub_commit(scope=scope, message=message, root=root)
+        else:
+            # Non-hub: scope is ignored (single project)
+            store = Store(root)
+            result = store.commit_project_changes(message=message)
+            # Normalize key name to match hub format
+            if "files_changed" in result:
+                result["files_committed"] = result.pop("files_changed")
+
+        if isinstance(result, dict) and result.get("nothing_to_commit"):
+            return "error: No .project/ changes to commit"
+        return _yaml_dump({"committed": result})
+    except (RuntimeError, ValueError, FileNotFoundError) as e:
+        return f"error: {e}"
+    except Exception as e:
+        return f"error: {e}"
+
+
+@mcp.tool(title="Push PM Changes", annotations=ToolAnnotations(title="Push PM Changes", readOnlyHint=False, destructiveHint=False))
+def pm_push(
+    scope: str = "hub",
+) -> str:
+    """Push committed .project/ changes to the remote.
+
+    Validates branch alignment before pushing.  In hub mode, uses
+    scope-aware routing with auto-rebase on conflict.
+
+    Args:
+        scope: Push scope — "hub" (hub repo on main), "project:<name>" (specific subproject), or "all" (coordinated push)
+    """
+    try:
+        root = find_project_root()
+        config = load_config(root)
+
+        if config.hub:
+            from .hub.registry import pm_push as _hub_push
+            result = _hub_push(scope=scope, root=root)
+            return _yaml_dump({"pushed": result})
+        else:
+            # Non-hub: push normally
+            store = Store(root)
+            result = store.push_project_changes()
+            return _yaml_dump({"pushed": result})
+    except RuntimeError as e:
+        return f"error: {e}"
+    except Exception as e:
+        return f"error: {e}"
+
+
+@mcp.tool(title="Coordinated Push All", annotations=ToolAnnotations(title="Coordinated Push All", readOnlyHint=False, destructiveHint=False))
+def pm_push_all(
+    dry_run: bool = False,
+    projects: Optional[str] = None,
+) -> str:
+    """Coordinated push: preflight, push subprojects, then push hub.
+
+    Discovers dirty projects automatically (or uses explicit list),
+    runs preflight validation, pushes subprojects in order, then pushes
+    the hub with auto-rebase.
+
+    Args:
+        dry_run: If True, show what would be pushed without executing
+        projects: Optional comma-separated project names (e.g. "api,web"). Omit to auto-discover dirty projects.
+    """
+    try:
+        from .hub.registry import coordinated_push
+        root = find_project_root()
+
+        project_list = (
+            [p.strip() for p in projects.split(",") if p.strip()]
+            if projects
+            else None
+        )
+
+        result = coordinated_push(
+            projects=project_list,
+            dry_run=dry_run,
+            root=root,
+        )
+        return _yaml_dump(result)
+    except Exception as e:
+        return f"error: {e}"
+
+
+# ─── Changeset Tools ────────────────────────────────────────────
+
+@mcp.tool(title="Create Changeset", annotations=ToolAnnotations(title="Create Changeset", readOnlyHint=False, destructiveHint=False))
+def pm_changeset_create(
+    title: str,
+    projects: str,
+    description: str = "",
+    project: Optional[str] = None,
+) -> str:
+    """Create a changeset grouping related changes across multiple projects.
+
+    Args:
+        title: Changeset name (e.g. "add-auth")
+        projects: Comma-separated project names (e.g. "api,web,worker")
+        description: Optional description of the changeset
+        project: Optional project name (hub mode only)
+    """
+    try:
+        store = _store(project)
+        project_list = [p.strip() for p in projects.split(",") if p.strip()]
+        if not project_list:
+            return "error: at least one project is required"
+        meta = store.create_changeset(title, project_list, description)
+        write_index(store)
+        return _yaml_dump({"created": meta.model_dump(mode="json")})
+    except Exception as e:
+        return f"error: {e}"
+
+
+@mcp.tool(title="Changeset Status", annotations=ToolAnnotations(title="Changeset Status", readOnlyHint=True))
+def pm_changeset_status(
+    changeset_id: Optional[str] = None,
+    project: Optional[str] = None,
+) -> str:
+    """Get changeset status — one changeset by ID, or list all open changesets.
+
+    Args:
+        changeset_id: Optional changeset ID (e.g. CS-PRJ-1). Omit to list all.
+        project: Optional project name (hub mode only)
+    """
+    try:
+        store = _store(project)
+        if changeset_id:
+            meta, body = store.get_changeset(changeset_id)
+            result = meta.model_dump(mode="json")
+            result["body"] = body
+            return _yaml_dump(result)
+        else:
+            changesets = store.list_changesets()
+            return _yaml_dump({
+                "changesets": [cs.model_dump(mode="json") for cs in changesets],
+                "count": len(changesets),
+            })
+    except Exception as e:
+        return f"error: {e}"
+
+
+@mcp.tool(title="Add Project to Changeset", annotations=ToolAnnotations(title="Add Project to Changeset", readOnlyHint=False, destructiveHint=False))
+def pm_changeset_add_project(
+    changeset_id: str,
+    name: str,
+    ref: str = "",
+    project: Optional[str] = None,
+) -> str:
+    """Add a project entry to an existing changeset.
+
+    Args:
+        changeset_id: Changeset ID (e.g. CS-PRJ-1)
+        name: Project name to add
+        ref: Optional git ref/branch for this project
+        project: Optional project name (hub mode only)
+    """
+    try:
+        store = _store(project)
+        meta = store.add_changeset_entry(changeset_id, name, ref=ref)
+        return _yaml_dump({"updated": meta.model_dump(mode="json")})
+    except Exception as e:
+        return f"error: {e}"
+
+
+@mcp.tool(title="Changeset Create PRs", annotations=ToolAnnotations(title="Changeset Create PRs", readOnlyHint=True))
+def pm_changeset_create_prs(
+    changeset_id: str,
+    project: Optional[str] = None,
+) -> str:
+    """Generate PR creation commands for all projects in a changeset.
+
+    Returns the gh CLI commands to create cross-referenced PRs for each project
+    in the changeset. Does not execute them — the caller should review and run.
+
+    Args:
+        changeset_id: Changeset ID (e.g. CS-PRJ-1)
+        project: Optional project name (hub mode only)
+    """
+    try:
+        from .changesets import changeset_create_prs
+
+        store = _store(project)
+        result = changeset_create_prs(store, changeset_id)
+        return _yaml_dump(result)
+    except Exception as e:
+        return f"error: {e}"
+
+
+@mcp.tool(title="Changeset Push", annotations=ToolAnnotations(title="Changeset Push", readOnlyHint=False, destructiveHint=False))
+def pm_changeset_push(
+    changeset_id: str,
+    project: Optional[str] = None,
+) -> str:
+    """Mark a changeset as merged and report status for hub ref updates.
+
+    Checks all entries — if all are merged, marks the changeset as merged.
+    If some are still pending, marks as partial and reports what's outstanding.
+
+    Args:
+        changeset_id: Changeset ID (e.g. CS-PRJ-1)
+        project: Optional project name (hub mode only)
+    """
+    try:
+        store = _store(project)
+        meta, body = store.get_changeset(changeset_id)
+
+        from datetime import date as _date
+
+        merged = [e for e in meta.entries if e.status == "merged"]
+        pending = [e for e in meta.entries if e.status != "merged"]
+
+        if not pending:
+            # All merged — update changeset status
+            meta.status = ChangesetStatus.merged
+            meta.updated = _date.today()
+            post = frontmatter.Post(
+                content=body,
+                **meta.model_dump(mode="json"),
+            )
+            store._changeset_path(changeset_id).write_text(
+                frontmatter.dumps(post)
+            )
+            return _yaml_dump({
+                "changeset": meta.id,
+                "status": "merged",
+                "message": "All PRs merged — safe to update hub submodule refs.",
+                "projects": [e.project for e in meta.entries],
+            })
+        else:
+            # Partial — update status
+            if merged:
+                meta.status = ChangesetStatus.partial
+                meta.updated = _date.today()
+                post = frontmatter.Post(
+                    content=body,
+                    **meta.model_dump(mode="json"),
+                )
+                store._changeset_path(changeset_id).write_text(
+                    frontmatter.dumps(post)
+                )
+
+            return _yaml_dump({
+                "changeset": meta.id,
+                "status": "partial",
+                "merged": [e.project for e in merged],
+                "pending": [{"project": e.project, "ref": e.ref, "status": e.status} for e in pending],
+                "message": "Not all PRs merged — do NOT update hub refs yet.",
+            })
+    except Exception as e:
+        return f"error: {e}"
+
+
 # ─── Web Server Tools ───────────────────────────────────────────
 
 import subprocess
@@ -1258,3 +1680,103 @@ def pm_web_status() -> str:
         "host": _web_host,
         "port": _web_port,
     })
+
+
+# ─── Activity Log ───────────────────────────────────────────────
+
+
+@mcp.tool(title="Activity Log", annotations=ToolAnnotations(title="Activity Log", readOnlyHint=True))
+def pm_activity(
+    item_id: Optional[str] = None,
+    event_type: Optional[str] = None,
+    from_date: Optional[str] = None,
+    to_date: Optional[str] = None,
+    actor: Optional[str] = None,
+    limit: int = 20,
+    offset: int = 0,
+    project: Optional[str] = None,
+) -> str:
+    """Query the activity log for project mutations.
+
+    Args:
+        item_id: Filter by item ID (e.g. US-PRJ-1)
+        event_type: Filter by event type: create, update, delete, archive
+        from_date: Filter from date (ISO 8601, e.g. 2026-01-01)
+        to_date: Filter to date (ISO 8601, e.g. 2026-12-31)
+        actor: Filter by actor name
+        limit: Max entries to return (default 20)
+        offset: Starting index for pagination (default 0)
+        project: Optional project name (hub mode only)
+    """
+    import json
+    from datetime import datetime
+
+    try:
+        pm_dir = _resolve_project_dir(project)
+        log_path = pm_dir / "activity.jsonl"
+
+        if not log_path.exists():
+            return _yaml_dump({"entries": [], "total": 0, "message": "No activity log found"})
+
+        # Parse all entries
+        entries = []
+        for line in log_path.read_text().splitlines():
+            line = line.strip()
+            if line:
+                try:
+                    entries.append(json.loads(line))
+                except json.JSONDecodeError:
+                    continue
+
+        # Apply filters
+        if item_id:
+            entries = [e for e in entries if e.get("item_id") == item_id]
+        if event_type:
+            entries = [e for e in entries if e.get("event_type") == event_type]
+        if actor:
+            entries = [e for e in entries if e.get("actor") == actor]
+        if from_date:
+            from_dt = datetime.fromisoformat(from_date)
+            entries = [e for e in entries if datetime.fromisoformat(e["timestamp"]) >= from_dt]
+        if to_date:
+            to_dt = datetime.fromisoformat(to_date)
+            entries = [e for e in entries if datetime.fromisoformat(e["timestamp"]) <= to_dt]
+
+        total = len(entries)
+
+        # Most recent first, then paginate
+        entries = list(reversed(entries))
+        entries = entries[offset : offset + limit]
+
+        # Format human-readable output
+        formatted = []
+        for e in entries:
+            ts = e.get("timestamp", "?")
+            line_parts = [
+                f"[{ts}]",
+                e.get("event_type", "?").upper(),
+                e.get("item_type", "?"),
+                e.get("item_id", "?"),
+            ]
+            if e.get("actor"):
+                line_parts.append(f"by {e['actor']}")
+            changes = e.get("changes", {})
+            if changes:
+                change_strs = []
+                for field, val in changes.items():
+                    if isinstance(val, dict) and "before" in val and "after" in val:
+                        change_strs.append(f"{field}: {val['before']} → {val['after']}")
+                    else:
+                        change_strs.append(f"{field}: {val}")
+                if change_strs:
+                    line_parts.append(f"({', '.join(change_strs)})")
+            formatted.append(" ".join(line_parts))
+
+        result = {
+            "total": total,
+            "showing": f"{offset + 1}-{offset + len(entries)} of {total}" if entries else "0 of 0",
+            "entries": formatted,
+        }
+        return _yaml_dump(result)
+    except Exception as e:
+        return f"error: {e}"

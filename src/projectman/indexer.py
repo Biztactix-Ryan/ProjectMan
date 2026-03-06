@@ -28,13 +28,29 @@ def _status_label(status: str) -> str:
     return f"{emoji} {status}" if emoji else status
 
 
-def build_index(store: Store) -> ProjectIndex:
-    """Read all epics, stories, and tasks, produce a ProjectIndex."""
+def build_index(
+    store: Store,
+    *,
+    epics: Optional[list] = None,
+    stories: Optional[list] = None,
+    tasks: Optional[list] = None,
+) -> ProjectIndex:
+    """Read all epics, stories, and tasks, produce a ProjectIndex.
+
+    Accepts optional pre-loaded lists to avoid redundant cache lookups.
+    """
+    if epics is None:
+        epics = store.list_epics()
+    if stories is None:
+        stories = store.list_stories()
+    if tasks is None:
+        tasks = store.list_tasks()
+
     entries: list[IndexEntry] = []
     total_points = 0
     completed_points = 0
 
-    for epic in store.list_epics():
+    for epic in epics:
         entries.append(
             IndexEntry(
                 id=epic.id,
@@ -44,7 +60,7 @@ def build_index(store: Store) -> ProjectIndex:
             )
         )
 
-    for story in store.list_stories():
+    for story in stories:
         entries.append(
             IndexEntry(
                 id=story.id,
@@ -60,7 +76,7 @@ def build_index(store: Store) -> ProjectIndex:
             if story.status.value == "done":
                 completed_points += story.points
 
-    for task in store.list_tasks():
+    for task in tasks:
         entries.append(
             IndexEntry(
                 id=task.id,
@@ -90,11 +106,23 @@ def build_index(store: Store) -> ProjectIndex:
     )
 
 
-def write_markdown_indexes(store: Store) -> None:
-    """Generate the 4 markdown index files in .project/."""
-    epics = store.list_epics()
-    stories = store.list_stories()
-    tasks = store.list_tasks()
+def write_markdown_indexes(
+    store: Store,
+    *,
+    epics: Optional[list] = None,
+    stories: Optional[list] = None,
+    tasks: Optional[list] = None,
+) -> None:
+    """Generate the 4 markdown index files in .project/.
+
+    Accepts optional pre-loaded lists to avoid redundant cache lookups.
+    """
+    if epics is None:
+        epics = store.list_epics()
+    if stories is None:
+        stories = store.list_stories()
+    if tasks is None:
+        tasks = store.list_tasks()
 
     # Pre-compute counts
     stories_per_epic: Counter[str] = Counter()
@@ -151,15 +179,16 @@ def write_markdown_indexes(store: Store) -> None:
     # --- INDEX-EPICS.md ---
     lines = ["# Epics", ""]
     if epics:
-        lines.append("| ID | Title | Status | Priority | Stories | Points |")
-        lines.append("| -- | ----- | ------ | -------- | ------- | ------ |")
+        lines.append("| ID | Title | Status | Priority | Tags | Stories | Points |")
+        lines.append("| -- | ----- | ------ | -------- | ---- | ------- | ------ |")
         for e in sorted(epics, key=lambda x: x.id):
             link = f"[{e.id}](epics/{e.id}.md)"
             sc = stories_per_epic.get(e.id, 0)
             pts = points_per_epic.get(e.id, 0) or "—"
+            tags = ", ".join(e.tags) if e.tags else ""
             lines.append(
                 f"| {link} | {e.title} | {_status_label(e.status.value)} "
-                f"| {e.priority.value} | {sc} | {pts} |"
+                f"| {e.priority.value} | {tags} | {sc} | {pts} |"
             )
     else:
         lines.append("_No epics yet._")
@@ -170,14 +199,15 @@ def write_markdown_indexes(store: Store) -> None:
     lines = ["# Stories", ""]
     if stories:
         lines.append(
-            "| ID | Title | Status | Priority | Points | Epic | ACs | Tasks |"
+            "| ID | Title | Status | Priority | Points | Tags | Epic | ACs | Tasks |"
         )
         lines.append(
-            "| -- | ----- | ------ | -------- | ------ | ---- | --- | ----- |"
+            "| -- | ----- | ------ | -------- | ------ | ---- | ---- | --- | ----- |"
         )
         for s in sorted(stories, key=lambda x: x.id):
             link = f"[{s.id}](stories/{s.id}.md)"
             pts = s.points if s.points is not None else "—"
+            tags = ", ".join(s.tags) if s.tags else ""
             epic_link = (
                 f"[{s.epic_id}](epics/{s.epic_id}.md)" if s.epic_id else "—"
             )
@@ -185,7 +215,7 @@ def write_markdown_indexes(store: Store) -> None:
             tc = tasks_per_story.get(s.id, 0)
             lines.append(
                 f"| {link} | {s.title} | {_status_label(s.status.value)} "
-                f"| {s.priority.value} | {pts} | {epic_link} | {acs} | {tc} |"
+                f"| {s.priority.value} | {pts} | {tags} | {epic_link} | {acs} | {tc} |"
             )
     else:
         lines.append("_No stories yet._")
@@ -195,16 +225,18 @@ def write_markdown_indexes(store: Store) -> None:
     # --- INDEX-TASKS.md ---
     lines = ["# Tasks", ""]
     if tasks:
-        lines.append("| ID | Title | Status | Points | Assignee | Story |")
-        lines.append("| -- | ----- | ------ | ------ | -------- | ----- |")
+        lines.append("| ID | Title | Status | Points | Tags | Assignee | Depends On | Story |")
+        lines.append("| -- | ----- | ------ | ------ | ---- | -------- | ---------- | ----- |")
         for t in sorted(tasks, key=lambda x: x.id):
             link = f"[{t.id}](tasks/{t.id}.md)"
             pts = t.points if t.points is not None else "—"
+            tags = ", ".join(t.tags) if t.tags else ""
             assignee = t.assignee or "—"
+            deps = ", ".join(t.depends_on) if t.depends_on else "—"
             story_link = f"[{t.story_id}](stories/{t.story_id}.md)"
             lines.append(
                 f"| {link} | {t.title} | {_status_label(t.status.value)} "
-                f"| {pts} | {assignee} | {story_link} |"
+                f"| {pts} | {tags} | {assignee} | {deps} | {story_link} |"
             )
     else:
         lines.append("_No tasks yet._")
@@ -313,10 +345,18 @@ def _build_hub_readme(store: Store, epics: list, stories: list, tasks: list, lin
 
 
 def write_index(store: Store) -> None:
-    """Build index and write index.yaml and markdown indexes to disk."""
-    index = build_index(store)
+    """Build index and write index.yaml and markdown indexes to disk.
+
+    Fetches epics, stories, and tasks once and passes them to both
+    build_index and write_markdown_indexes to avoid redundant lookups.
+    """
+    epics = store.list_epics()
+    stories = store.list_stories()
+    tasks = store.list_tasks()
+
+    index = build_index(store, epics=epics, stories=stories, tasks=tasks)
     index_path = store.project_dir / "index.yaml"
     data = index.model_dump(mode="json")
     with open(index_path, "w") as f:
         yaml.dump(data, f, default_flow_style=False, sort_keys=False)
-    write_markdown_indexes(store)
+    write_markdown_indexes(store, epics=epics, stories=stories, tasks=tasks)

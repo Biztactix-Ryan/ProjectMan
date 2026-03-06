@@ -45,9 +45,22 @@ Call `pm_status`, then `pm_active`. Based on project state, suggest the most use
   - **CLI-only** (no `CLAUDE_WEB_PORT`): Fall back to suggesting `/pm-do <id>`
   - If auto-spawn fails for any reason, fall back to the `/pm-do` suggestion
 
+### Git Operations
+- `commit [scope] [--message "..."]` → `pm_commit(scope, message)` — commit .project/ changes
+- `push [scope]` → `pm_push(scope)` — push committed changes
+- Scope: `hub` (default for push), `project:<name>`, or `all` (default for commit)
+- `commit all` → `pm_commit` with scope=all (commits all .project/ changes)
+- `commit hub` → `pm_commit` with scope=hub (hub-level only, excludes subprojects)
+- `commit api` or `commit project:api` → `pm_commit` with scope=project:api
+- `push` → `pm_push` with scope=hub
+- `push all` → `pm_push` with scope=all (coordinated push)
+- `push api` → `pm_push` with scope=project:api
+
 ### Hub Operations
 - `repair` → `pm_repair` — scan, discover, init, rebuild
 - `sync` → pull latest across all hub submodules
+- `validate` or `check branches` → `pm_validate_branches` — verify submodule branch alignment
+- `git status` / `git-status` → `pm_git_status` — show git state across all submodules (branch, dirty, ahead/behind, PRs)
 - `docs [vision|architecture|decisions|project|infrastructure|security]` → `pm_docs`
 
 ### Natural Language
@@ -57,6 +70,10 @@ Also accept natural language and route intelligently:
 - "how are we doing?" → `pm_status` + `pm_burndown`
 - "scope this story" → ask which story, then `pm_scope`
 - "scope everything" / "autoscope" / "bulk scope" → redirect to `/pm-autoscope`
+- "what needs attention?" / "git status" / "check repos" → `pm_git_status` — after displaying, suggest next action based on issues:
+  - Misaligned branch → "Run `projectman create-branch` to fix"
+  - Behind remote → "Run `projectman sync` to pull latest"
+  - Open PRs → "Check PRs with `gh pr view`"
 
 ## Post-Action Chaining
 
@@ -68,6 +85,11 @@ After every action, suggest the logical next step:
   - If no `CLAUDE_WEB_PORT`: "Start implementing with `/pm-do <id>`. Complete the task, mark it done, then end the session." (For autonomous/spawned agents, use `/pm-do <id> --complete` which auto-closes and terminates.)
   - If auto-spawn fails, fall back to the `/pm-do` suggestion
 - After completing a task → "Check the board for more work: `/pm board`"
+- After git status → Suggest next action based on issues found:
+  - Misaligned branch → "Run `projectman create-branch` to fix"
+  - Behind remote → "Run `projectman sync` to pull latest"
+  - Open PRs → "Check PRs with `gh pr view`"
+  - All clean → "All repos clean — ready for coordinated operations"
 
 ## ID Conventions
 

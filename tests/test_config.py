@@ -41,3 +41,35 @@ def test_save_config(tmp_project):
 def test_project_dir(tmp_project):
     pdir = project_dir(tmp_project)
     assert pdir == tmp_project / ".project"
+
+
+def test_auto_commit_config_default(tmp_project):
+    """auto_commit defaults to False when not in config.yaml."""
+    config = load_config(tmp_project)
+    assert config.auto_commit is False
+
+
+def test_auto_commit_config_roundtrip(tmp_project):
+    """auto_commit can be enabled and persists through save/load."""
+    config = load_config(tmp_project)
+    assert config.auto_commit is False
+
+    config.auto_commit = True
+    save_config(config, tmp_project)
+
+    reloaded = load_config(tmp_project)
+    assert reloaded.auto_commit is True
+
+
+def test_auto_commit_config_disable_roundtrip(tmp_project):
+    """auto_commit can be toggled back to False."""
+    config = load_config(tmp_project)
+    config.auto_commit = True
+    save_config(config, tmp_project)
+
+    config = load_config(tmp_project)
+    config.auto_commit = False
+    save_config(config, tmp_project)
+
+    reloaded = load_config(tmp_project)
+    assert reloaded.auto_commit is False

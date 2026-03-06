@@ -41,7 +41,9 @@ document.addEventListener("htmx:afterRequest", function(evt) {
       (data.points ? '<strong>' + data.points + ' pts</strong>' : '') +
       '<code>' + data.id + '</code>' +
       (data.epic_id ? '<a href="/epics/' + data.epic_id + '">' + data.epic_id + '</a>' : '') +
-      '</div></div>';
+      '</div>' +
+      '<div class="detail-tags">' + (data.tags || []).map(function(t) { return '<span class="badge">' + t + '</span>'; }).join(' ') + '</div>' +
+      '</div>';
 
     // Body
     if (data.body) {
@@ -67,6 +69,14 @@ document.addEventListener("htmx:afterRequest", function(evt) {
       html += '<p class="muted">No tasks yet.</p>';
     }
     html += '</div>';
+
+    // Tags editing
+    html += '<div class="section-card"><h3>Tags</h3>' +
+      '<form onsubmit="return updateStoryTags(event)">' +
+      '<fieldset role="group">' +
+      '<input type="text" id="story-tags" name="tags" placeholder="comma-separated" value="' + (data.tags || []).join(", ") + '">' +
+      '<button type="submit">Update Tags</button>' +
+      '</fieldset></form></div>';
 
     // Actions
     html += '<div class="section-card"><h3>Actions</h3>' +
@@ -108,6 +118,22 @@ function submitNewTask(evt) {
     showToast("Task created: " + data.id);
     htmx.ajax("GET", "/api/stories/{{ story_id }}", "#story-detail");
   }).catch(function() { showToast("Failed to create task", "error"); });
+  return false;
+}
+
+function updateStoryTags(evt) {
+  evt.preventDefault();
+  var raw = document.getElementById("story-tags").value;
+  var tags = raw ? raw.split(",").map(function(t) { return t.trim(); }).filter(Boolean) : [];
+  fetch("/api/stories/{{ story_id }}", {
+    method: "PATCH",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({tags: tags}),
+  }).then(function(r) { return r.json(); })
+    .then(function(data) {
+      showToast("Tags updated");
+      htmx.ajax("GET", "/api/stories/{{ story_id }}", "#story-detail");
+    });
   return false;
 }
 

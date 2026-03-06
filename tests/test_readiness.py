@@ -113,6 +113,77 @@ class TestCheckReadiness:
         assert result["ready"] is True
         assert any("high points" in w for w in result["warnings"])
 
+    def test_incomplete_deps_blocker_lists_specific_ids(self, store):
+        """Readiness blocker message lists specific incomplete dep IDs."""
+        store.create_story("Story", "Description")
+        store.update("US-TST-1", status="active")
+        # Create two prerequisite tasks
+        store.create_task("US-TST-1", "Setup DB", GOOD_BODY, points=2)
+        store.create_task("US-TST-1", "Create schema", GOOD_BODY, points=2)
+        # Create a task that depends on both
+        store.create_task(
+            "US-TST-1",
+            "Run migrations",
+            GOOD_BODY,
+            points=2,
+            depends_on=["US-TST-1-1", "US-TST-1-2"],
+        )
+        task_meta, task_body = store.get_task("US-TST-1-3")
+
+        result = check_readiness(task_meta, task_body, store)
+        assert result["ready"] is False
+        dep_blocker = [b for b in result["blockers"] if "dependencies" in b]
+        assert len(dep_blocker) == 1
+        assert "US-TST-1-1" in dep_blocker[0]
+        assert "US-TST-1-2" in dep_blocker[0]
+
+    def test_incomplete_deps_lists_only_undone_ids(self, store):
+        """Only incomplete (non-done) dep IDs appear in the blocker."""
+        store.create_story("Story", "Description")
+        store.update("US-TST-1", status="active")
+        store.create_task("US-TST-1", "First task", GOOD_BODY, points=2)
+        store.create_task("US-TST-1", "Second task", GOOD_BODY, points=2)
+        # Mark first dep as done
+        store.update("US-TST-1-1", status="in-progress", assignee="alice")
+        store.update("US-TST-1-1", status="done")
+        # Create dependent task
+        store.create_task(
+            "US-TST-1",
+            "Third task",
+            GOOD_BODY,
+            points=2,
+            depends_on=["US-TST-1-1", "US-TST-1-2"],
+        )
+        task_meta, task_body = store.get_task("US-TST-1-3")
+
+        result = check_readiness(task_meta, task_body, store)
+        assert result["ready"] is False
+        dep_blocker = [b for b in result["blockers"] if "dependencies" in b]
+        assert len(dep_blocker) == 1
+        # Only the incomplete dep should be listed
+        assert "US-TST-1-2" in dep_blocker[0]
+        assert "US-TST-1-1" not in dep_blocker[0]
+
+    def test_all_deps_done_no_blocker(self, store):
+        """No dependency blocker when all deps are done."""
+        store.create_story("Story", "Description")
+        store.update("US-TST-1", status="active")
+        store.create_task("US-TST-1", "Dep task", GOOD_BODY, points=2)
+        store.update("US-TST-1-1", status="in-progress", assignee="alice")
+        store.update("US-TST-1-1", status="done")
+        store.create_task(
+            "US-TST-1",
+            "Main task",
+            GOOD_BODY,
+            points=2,
+            depends_on=["US-TST-1-1"],
+        )
+        task_meta, task_body = store.get_task("US-TST-1-2")
+
+        result = check_readiness(task_meta, task_body, store)
+        assert result["ready"] is True
+        assert not any("dependencies" in b for b in result["blockers"])
+
 
 class TestComputeHints:
     def test_well_scoped_task(self, store):

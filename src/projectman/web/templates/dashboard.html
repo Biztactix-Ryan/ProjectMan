@@ -36,6 +36,10 @@ document.addEventListener("htmx:afterRequest", function(evt) {
       '<a href="/audit">Run Audit</a>' +
       '</div>';
 
+    // Activity feed
+    html += '<div id="activity-feed" class="section-card"><h3>Recent Activity</h3>';
+    html += '<div id="activity-list" aria-busy="true"><p>Loading activity...</p></div></div>';
+
     // Status breakdown
     if (data.by_status && Object.keys(data.by_status).length > 0) {
       html += '<div class="section-card"><h3>Items by Status</h3>';
@@ -55,6 +59,57 @@ document.addEventListener("htmx:afterRequest", function(evt) {
     }
 
     target.innerHTML = html;
+
+    // Relative time helper
+    function relativeTime(isoStr) {
+      if (!isoStr) return '';
+      var d = new Date(isoStr);
+      if (isNaN(d.getTime())) return isoStr;
+      var diff = Math.floor((Date.now() - d.getTime()) / 1000);
+      if (diff < 0) return 'just now';
+      if (diff < 60) return 'just now';
+      if (diff < 3600) { var m = Math.floor(diff / 60); return m + (m === 1 ? ' minute ago' : ' minutes ago'); }
+      if (diff < 86400) { var h = Math.floor(diff / 3600); return h + (h === 1 ? ' hour ago' : ' hours ago'); }
+      if (diff < 2592000) { var dy = Math.floor(diff / 86400); return dy + (dy === 1 ? ' day ago' : ' days ago'); }
+      return d.toLocaleDateString();
+    }
+
+    // Load activity feed
+    fetch("/api/activity?limit=10")
+      .then(function(r) { return r.json(); })
+      .then(function(act) {
+        var listEl = document.getElementById("activity-list");
+        if (!listEl) return;
+        if (!act.entries || act.entries.length === 0) {
+          listEl.innerHTML = '<p class="muted">No activity yet.</p>';
+          return;
+        }
+        var rows = '';
+        var EVENT_ICONS = {create: '+', update: '~', delete: 'x', archive: '#'};
+        act.entries.forEach(function(e) {
+          var icon = EVENT_ICONS[e.event_type] || '?';
+          var ts = relativeTime(e.timestamp);
+          var itemUrl = '';
+          var itemId = e.item_id || '?';
+          if (e.item_type === 'story') itemUrl = '/stories/' + itemId;
+          else if (e.item_type === 'task') itemUrl = '/tasks/' + itemId;
+          else if (e.item_type === 'epic') itemUrl = '/epics/' + itemId;
+          var link = itemUrl ? '<a href="' + itemUrl + '">' + itemId + '</a>' : itemId;
+          var actor = e.actor ? ' by ' + e.actor : '';
+          rows += '<tr class="activity-entry">' +
+            '<td><span class="badge badge-' + e.event_type + '">' + icon + ' ' + e.event_type + '</span></td>' +
+            '<td>' + link + '</td>' +
+            '<td>' + (e.item_type || '') + '</td>' +
+            '<td class="muted relative-time" title="' + (e.timestamp || '') + '">' + ts + '</td>' +
+            '<td class="muted">' + (e.actor || '') + '</td>' +
+            '</tr>';
+        });
+        listEl.innerHTML = '<table role="grid"><thead><tr><th>Event</th><th>Item</th><th>Type</th><th>Time</th><th>Actor</th></tr></thead><tbody>' + rows + '</tbody></table>';
+      })
+      .catch(function() {
+        var listEl = document.getElementById("activity-list");
+        if (listEl) listEl.innerHTML = '<p class="muted">Could not load activity.</p>';
+      });
   }
 });
 </script>

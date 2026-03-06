@@ -7,6 +7,7 @@ from typing import Optional
 import yaml
 
 from .config import load_config
+from .deps import build_dep_graph, detect_cycle
 from .store import Store
 
 
@@ -265,6 +266,36 @@ def run_audit(root: Path, project_dir: Optional[Path] = None) -> str:
                 "message": f"{malformed_count} file(s) quarantined in .project/malformed/ — run /pm-fix",
                 "items": [f.name for f in sorted(malformed_dir.glob("*.md"))[:5]],
             })
+
+    # Check 14: Dependency cycles within stories
+    for story in store.list_stories():
+        tasks = store.list_tasks(story_id=story.id)
+        if tasks:
+            graph = build_dep_graph(tasks)
+            cycle = detect_cycle(graph)
+            if cycle is not None:
+                path = " -> ".join(cycle)
+                findings.append({
+                    "severity": "error",
+                    "check": "dependency-cycle",
+                    "message": f"Dependency cycle in story {story.id}: {path}",
+                    "items": cycle,
+                })
+
+    # Check 15: Orphaned dependency references
+    for story in store.list_stories():
+        tasks = store.list_tasks(story_id=story.id)
+        if tasks:
+            known_ids = {t.id for t in tasks}
+            for task in tasks:
+                orphans = [dep for dep in task.depends_on if dep not in known_ids]
+                for orphan in orphans:
+                    findings.append({
+                        "severity": "warning",
+                        "check": "orphaned-dependency",
+                        "message": f"Task {task.id} depends on {orphan} which does not exist",
+                        "items": [task.id, orphan],
+                    })
 
     # Generate report
     report_lines = ["# Project Audit Report\n"]

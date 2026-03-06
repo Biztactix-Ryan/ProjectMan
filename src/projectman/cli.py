@@ -218,6 +218,308 @@ def audit(audit_all):
     click.echo(report)
 
 
+@cli.group()
+def changeset():
+    """Manage cross-repo changesets."""
+    pass
+
+
+@changeset.command("create")
+@click.argument("name")
+@click.option("--projects", "-p", required=True, help="Comma-separated project names (e.g. api,web,worker)")
+@click.option("--description", "-d", default="", help="Changeset description")
+def changeset_create(name, projects, description):
+    """Create a changeset grouping changes across repos."""
+    from projectman.config import find_project_root
+    from projectman.store import Store
+
+    root = find_project_root()
+    store = Store(root)
+    project_list = [p.strip() for p in projects.split(",") if p.strip()]
+    if not project_list:
+        click.echo("Error: at least one project is required", err=True)
+        raise SystemExit(1)
+    meta = store.create_changeset(name, project_list, description)
+    click.echo(f"Created changeset {meta.id}: {meta.title}")
+    for entry in meta.entries:
+        click.echo(f"  - {entry.project}")
+
+
+@changeset.command("add-project")
+@click.argument("changeset_id")
+@click.argument("project_name")
+@click.option("--ref", default="", help="Git ref/branch for this project")
+def changeset_add_project(changeset_id, project_name, ref):
+    """Add a project to an existing changeset."""
+    from projectman.config import find_project_root
+    from projectman.store import Store
+
+    root = find_project_root()
+    store = Store(root)
+    meta = store.add_changeset_entry(changeset_id, project_name, ref=ref)
+    click.echo(f"Added {project_name} to {meta.id} ({len(meta.entries)} projects)")
+
+
+@changeset.command("status")
+@click.argument("changeset_id", required=False)
+def changeset_status(changeset_id):
+    """Show changeset status (one by ID, or list all)."""
+    from projectman.config import find_project_root
+    from projectman.store import Store
+
+    root = find_project_root()
+    store = Store(root)
+
+    if changeset_id:
+        meta, body = store.get_changeset(changeset_id)
+        click.echo(f"{meta.id}: {meta.title} [{meta.status.value}]")
+        for entry in meta.entries:
+            click.echo(f"  {entry.project}: {entry.status} (ref: {entry.ref or 'none'})")
+        if body:
+            click.echo(f"\n{body}")
+    else:
+        changesets = store.list_changesets()
+        if not changesets:
+            click.echo("No changesets found.")
+            return
+        for cs in changesets:
+            projects = ", ".join(e.project for e in cs.entries)
+            click.echo(f"{cs.id}: {cs.title} [{cs.status.value}] — {projects}")
+
+
+@changeset.command("create-prs")
+@click.argument("changeset_id")
+def changeset_create_prs(changeset_id):
+    """Generate PR creation commands for a changeset."""
+    from projectman.config import find_project_root
+    from projectman.store import Store
+
+    root = find_project_root()
+    store = Store(root)
+    meta, body = store.get_changeset(changeset_id)
+
+    if not meta.entries:
+        click.echo("Error: changeset has no project entries", err=True)
+        raise SystemExit(1)
+
+    cross_refs = [f"- {e.project} (ref: {e.ref or 'TBD'})" for e in meta.entries]
+    cross_ref_block = "\n".join(cross_refs)
+
+    click.echo(f"PR commands for changeset {meta.id}: {meta.title}\n")
+    for entry in meta.entries:
+        if not entry.ref:
+            click.echo(f"# {entry.project}: SKIPPED — no ref/branch set")
+            continue
+        pr_body = (
+            f"## Part of changeset: {meta.title} ({meta.id})\n\n"
+            f"### Cross-references\n{cross_ref_block}\n\n"
+            f"{body or ''}"
+        )
+        click.echo(f"# {entry.project}:")
+        click.echo(
+            f'cd {entry.project} && '
+            f'gh pr create --title "{meta.title}: {entry.project}" '
+            f'--body "{pr_body}" '
+            f'--head {entry.ref}'
+        )
+        click.echo()
+
+
+@changeset.command("push")
+@click.argument("changeset_id")
+def changeset_push(changeset_id):
+    """Check merge status and update hub refs when all PRs are merged."""
+    from projectman.config import find_project_root
+    from projectman.store import Store
+
+    root = find_project_root()
+    store = Store(root)
+    meta, body = store.get_changeset(changeset_id)
+
+    merged = [e for e in meta.entries if e.status == "merged"]
+    pending = [e for e in meta.entries if e.status != "merged"]
+
+    if not pending:
+        click.echo(f"All {len(merged)} PRs merged — safe to update hub submodule refs.")
+        for e in meta.entries:
+            click.echo(f"  {e.project}: merged")
+    else:
+        click.echo(f"NOT ready — {len(pending)} of {len(meta.entries)} still pending:")
+        for e in pending:
+            click.echo(f"  {e.project}: {e.status} (ref: {e.ref or 'none'})")
+        if merged:
+            click.echo(f"\nAlready merged ({len(merged)}):")
+            for e in merged:
+                click.echo(f"  {e.project}: merged")
+
+
+@cli.command("changeset-status")
+@click.argument("name", required=False)
+def changeset_status_cmd(name):
+    """Show changeset status dashboard — all active changesets or one by name."""
+    from projectman.config import find_project_root
+    from projectman.store import Store
+
+    root = find_project_root()
+    store = Store(root)
+    changesets = store.list_changesets()
+
+    if name:
+        matches = [cs for cs in changesets if cs.title == name or cs.id == name]
+        if not matches:
+            click.echo(f"No changeset found matching '{name}'")
+            return
+        changesets = matches
+
+    if not changesets:
+        click.echo("No changesets found.")
+        return
+
+    for cs in changesets:
+        merged = [e for e in cs.entries if e.status == "merged"]
+        not_merged = [e for e in cs.entries if e.status != "merged"]
+
+        click.echo(f"{cs.id}: {cs.title} [{cs.status.value}] ({len(merged)}/{len(cs.entries)} merged)")
+        for entry in cs.entries:
+            flag = ""
+            if entry.status == "merged" and not_merged:
+                flag = " (hub ref blocked)"
+            pr_info = f" PR #{entry.pr_number}" if entry.pr_number else ""
+            click.echo(f"  {entry.project}: {entry.status}{pr_info}{flag}")
+        click.echo()
+
+
+@cli.command()
+@click.option("--scope", default="all", help="Scope: hub, project:<name>, or all (default: all)")
+@click.option("--message", "-m", default=None, help="Commit message (auto-generated if omitted)")
+def commit(scope, message):
+    """Commit .project/ changes with auto-generated message."""
+    from projectman.config import find_project_root, load_config
+    from projectman.store import Store
+
+    root = find_project_root()
+    config = load_config(root)
+
+    if config.hub:
+        from projectman.hub.registry import pm_commit
+        try:
+            result = pm_commit(scope=scope, message=message, root=root)
+        except (ValueError, FileNotFoundError) as e:
+            click.echo(f"Error: {e}", err=True)
+            raise SystemExit(1)
+        except RuntimeError as e:
+            click.echo(f"Error: {e}", err=True)
+            raise SystemExit(1)
+
+        if result.get("nothing_to_commit"):
+            click.echo("Nothing to commit.")
+            return
+
+        click.echo(f"Committed: {result['commit_hash'][:8]}")
+        click.echo(f"Message: {result['message']}")
+        click.echo(f"Files ({len(result['files_committed'])}):")
+        for f in result["files_committed"]:
+            click.echo(f"  {f}")
+    else:
+        store = Store(root)
+        try:
+            result = store.commit_project_changes(message=message)
+        except RuntimeError as e:
+            click.echo(f"Error: {e}", err=True)
+            raise SystemExit(1)
+
+        click.echo(f"Committed: {result['commit_hash'][:8]}")
+        click.echo(f"Message: {result['message']}")
+        click.echo(f"Files ({len(result['files_changed'])}):")
+        for f in result["files_changed"]:
+            click.echo(f"  {f}")
+
+
+@cli.command()
+@click.option("--scope", default="hub", help="Scope: hub, project:<name>, or all (default: hub)")
+@click.option("--dry-run", is_flag=True, help="Show what would be pushed without executing")
+@click.option("--projects", default=None, help="Comma-separated project names to push (default: all dirty)")
+def push(scope, dry_run, projects):
+    """Push committed .project/ changes to remote."""
+    from projectman.config import find_project_root, load_config
+    from projectman.store import Store
+
+    root = find_project_root()
+    config = load_config(root)
+
+    if config.hub:
+        from projectman.hub.registry import pm_push, coordinated_push
+
+        # --projects or --dry-run imply coordinated push
+        if projects is not None or dry_run:
+            project_list = (
+                [p.strip() for p in projects.split(",") if p.strip()]
+                if projects
+                else None
+            )
+            result = coordinated_push(
+                projects=project_list,
+                dry_run=dry_run,
+                root=root,
+            )
+            if "report" in result:
+                click.echo(result["report"])
+            if not dry_run and not result.get("pushed"):
+                raise SystemExit(1)
+        else:
+            result = pm_push(scope=scope, root=root)
+            if result.get("pushed"):
+                click.echo(f"Pushed ({scope})")
+                if "branch" in result:
+                    click.echo(f"Branch: {result['branch']}")
+                if "report" in result:
+                    click.echo(result["report"])
+            else:
+                click.echo(f"Error: {result.get('error', 'push failed')}", err=True)
+                raise SystemExit(1)
+    else:
+        store = Store(root)
+        try:
+            result = store.push_project_changes()
+        except RuntimeError as e:
+            click.echo(f"Error: {e}", err=True)
+            raise SystemExit(1)
+
+        click.echo(f"Pushed {result['branch']} to {result['remote']}")
+
+
+@cli.command("git-status")
+@click.option("--verbose", "-v", is_flag=True, help="Show commit info, PR titles, and dirty file details")
+@click.option("--json", "as_json", is_flag=True, help="Output raw JSON (for MCP/script consumption)")
+def git_status_cmd(verbose, as_json):
+    """Show git state of all hub submodules in a compact table."""
+    from projectman.hub.registry import git_status_all, format_git_status
+
+    data = git_status_all()
+
+    if as_json:
+        click.echo(json.dumps(data, indent=2, default=str))
+    else:
+        click.echo(format_git_status(data, verbose=verbose))
+
+    raise SystemExit(0 if data.get("ok") else 1)
+
+
+@cli.command("validate-branches")
+def validate_branches_cmd():
+    """Check that each submodule is on its expected tracked branch."""
+    import os
+    from projectman.hub.registry import validate_branches, format_branch_validation
+
+    root = os.environ.get("PROJECTMAN_ROOT")
+    root = Path(root) if root else None
+
+    result = validate_branches(root=root)
+
+    click.echo(format_branch_validation(result))
+    raise SystemExit(0 if result["ok"] else 1)
+
+
 @cli.command()
 @click.option("--port", default=8000, help="Port to listen on")
 @click.option("--host", default="127.0.0.1", help="Host to bind to")

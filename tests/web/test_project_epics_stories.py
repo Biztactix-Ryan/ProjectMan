@@ -155,3 +155,155 @@ def test_invalid_points_returns_422(client):
         "points": 7,  # not fibonacci
     })
     assert r.status_code == 422
+
+
+# ─── Tag support in create schemas ──────────────────────────────
+
+
+def test_create_story_accepts_optional_tags(client):
+    """CreateStoryRequest schema includes optional tags field."""
+    # Without tags — should default gracefully
+    r = client.post("/api/stories", json={
+        "title": "No Tags",
+        "description": "story without tags",
+    })
+    assert r.status_code == 201
+
+    # With tags
+    r = client.post("/api/stories", json={
+        "title": "Tagged Story",
+        "description": "story with tags",
+        "tags": ["mvp", "backend"],
+    })
+    assert r.status_code == 201
+    data = r.json()
+    assert data["tags"] == ["mvp", "backend"]
+
+
+def test_create_task_accepts_optional_tags(client):
+    """CreateTaskRequest schema includes optional tags field."""
+    # Create a story first
+    r = client.post("/api/stories", json={
+        "title": "Parent Story",
+        "description": "parent",
+    })
+    story_id = r.json()["id"]
+
+    # Without tags
+    r = client.post("/api/tasks", json={
+        "story_id": story_id,
+        "title": "No Tags Task",
+        "description": "task without tags",
+    })
+    assert r.status_code == 201
+
+    # With tags
+    r = client.post("/api/tasks", json={
+        "story_id": story_id,
+        "title": "Tagged Task",
+        "description": "task with tags",
+        "tags": ["frontend", "urgent"],
+    })
+    assert r.status_code == 201
+
+
+def test_task_response_includes_tags(client):
+    """TaskResponse schema includes tags field."""
+    # Create a story first
+    r = client.post("/api/stories", json={
+        "title": "Story for Tags",
+        "description": "parent story",
+    })
+    story_id = r.json()["id"]
+
+    # Create task with tags — response should include tags
+    r = client.post("/api/tasks", json={
+        "story_id": story_id,
+        "title": "Tagged Task",
+        "description": "task with tags",
+        "tags": ["frontend", "urgent"],
+    })
+    assert r.status_code == 201
+    data = r.json()
+    assert "tags" in data
+    assert data["tags"] == ["frontend", "urgent"]
+
+    # Create task without tags — response should have empty tags list
+    r = client.post("/api/tasks", json={
+        "story_id": story_id,
+        "title": "Untagged Task",
+        "description": "task without tags",
+    })
+    assert r.status_code == 201
+    data = r.json()
+    assert "tags" in data
+    assert data["tags"] == []
+
+    # GET task detail should also include tags
+    task_id = data["id"]
+    r = client.get(f"/api/tasks/{task_id}")
+    assert r.status_code == 200
+    assert "tags" in r.json()
+
+    # GET task list should include tags on each task
+    r = client.get(f"/api/tasks?story_id={story_id}")
+    assert r.status_code == 200
+    tasks = r.json()
+    assert len(tasks) == 2
+    for task in tasks:
+        assert "tags" in task
+
+
+# ─── Web API routes pass tags through on create ──────────────
+
+
+def test_api_routes_pass_tags_through_on_create(client):
+    """Web API routes pass tags through on create for epics, stories, and tasks."""
+    # --- Epic create passes tags through ---
+    r = client.post("/api/epics", json={
+        "title": "Tagged Epic",
+        "description": "epic with tags",
+        "tags": ["mvp", "security"],
+    })
+    assert r.status_code == 201
+    epic = r.json()
+    assert epic["tags"] == ["mvp", "security"]
+    epic_id = epic["id"]
+
+    # Verify tags persisted via GET
+    r = client.get(f"/api/epics/{epic_id}")
+    assert r.status_code == 200
+    assert r.json()["epic"]["tags"] == ["mvp", "security"]
+
+    # --- Story create passes tags through ---
+    r = client.post("/api/stories", json={
+        "title": "Tagged Story",
+        "description": "story with tags",
+        "tags": ["backend", "api"],
+    })
+    assert r.status_code == 201
+    story = r.json()
+    assert story["tags"] == ["backend", "api"]
+    story_id = story["id"]
+
+    # Verify tags persisted via GET
+    r = client.get(f"/api/stories/{story_id}")
+    assert r.status_code == 200
+    assert r.json()["tags"] == ["backend", "api"]
+
+    # --- Task create passes tags through ---
+    r = client.post("/api/tasks", json={
+        "story_id": story_id,
+        "title": "Tagged Task",
+        "description": "task with tags",
+        "tags": ["frontend", "urgent"],
+    })
+    assert r.status_code == 201
+    task = r.json()
+    assert task["tags"] == ["frontend", "urgent"]
+    task_id = task["id"]
+
+    # Verify tags persisted via GET
+    r = client.get(f"/api/tasks/{task_id}")
+    assert r.status_code == 200
+    assert r.json()["tags"] == ["frontend", "urgent"]

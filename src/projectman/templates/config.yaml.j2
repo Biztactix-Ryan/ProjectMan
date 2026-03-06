@@ -3,6 +3,9 @@ prefix: {{ prefix }}
 description: "{{ description }}"
 repo: "{{ repo }}"
 hub: {{ hub | lower }}
+{% if deploy_branch -%}
+deploy_branch: "{{ deploy_branch }}"
+{% endif -%}
 next_story_id: 1
 next_epic_id: 1
 {% if hub %}

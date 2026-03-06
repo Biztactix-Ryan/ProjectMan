@@ -150,6 +150,158 @@ def test_hub_writes_readme_at_root(hub_store):
     assert "[Tasks](.project/INDEX-TASKS.md)" in readme
 
 
+def test_epic_tags_column_in_markdown(store):
+    store.create_epic("Tagged Epic", "Desc", tags=["security", "mvp"])
+    store.create_epic("No Tags", "Desc")
+    write_index(store)
+    epics_md = (store.project_dir / "INDEX-EPICS.md").read_text()
+    # Header row includes Tags column
+    assert "| Tags |" in epics_md
+    # Tagged epic renders comma-separated tags
+    for line in epics_md.splitlines():
+        if "Tagged Epic" in line:
+            assert "security, mvp" in line
+            break
+    else:
+        raise AssertionError("Tagged Epic row not found")
+    # Untagged epic has an empty tags cell (no crash)
+    for line in epics_md.splitlines():
+        if "No Tags" in line:
+            # Should not contain any tag text — just empty between pipes
+            assert "security" not in line
+            break
+    else:
+        raise AssertionError("No Tags row not found")
+
+
+def test_story_tags_column_in_markdown(store):
+    store.create_story("Tagged Story", "Desc", tags=["backend", "api"])
+    store.create_story("No Tags", "Desc")
+    write_index(store)
+    stories_md = (store.project_dir / "INDEX-STORIES.md").read_text()
+    # Header row includes Tags column
+    assert "| Tags |" in stories_md
+    # Tagged story renders comma-separated tags
+    for line in stories_md.splitlines():
+        if "Tagged Story" in line:
+            assert "backend, api" in line
+            break
+    else:
+        raise AssertionError("Tagged Story row not found")
+    # Untagged story has an empty tags cell (no crash)
+    for line in stories_md.splitlines():
+        if "No Tags" in line:
+            assert "backend" not in line
+            break
+    else:
+        raise AssertionError("No Tags row not found")
+
+
+def test_task_tags_column_in_markdown(store):
+    story, _ = store.create_story("Parent Story", "Desc")
+    store.create_task(story.id, "Tagged Task", "Desc", tags=["infra", "ci"])
+    store.create_task(story.id, "No Tags", "Desc")
+    write_index(store)
+    tasks_md = (store.project_dir / "INDEX-TASKS.md").read_text()
+    # Header row includes Tags column
+    assert "| Tags |" in tasks_md
+    # Tagged task renders comma-separated tags
+    for line in tasks_md.splitlines():
+        if "Tagged Task" in line:
+            assert "infra, ci" in line
+            break
+    else:
+        raise AssertionError("Tagged Task row not found")
+    # Untagged task has an empty tags cell (no crash)
+    for line in tasks_md.splitlines():
+        if "No Tags" in line:
+            assert "infra" not in line
+            break
+    else:
+        raise AssertionError("No Tags row not found")
+
+
+def test_tags_comma_separated_in_all_indexes(store):
+    """Tags with multiple values are rendered as comma-separated in all index tables."""
+    store.create_epic("Multi Tag Epic", "Desc", tags=["alpha", "beta", "gamma"])
+    store.create_epic("Single Tag Epic", "Desc", tags=["solo"])
+    story, _ = store.create_story("Multi Tag Story", "Desc", tags=["x", "y", "z"])
+    store.create_story("Single Tag Story", "Desc", tags=["only"])
+    store.create_task(story.id, "Multi Tag Task", "Desc", tags=["a", "b", "c"])
+    store.create_task(story.id, "Single Tag Task", "Desc", tags=["one"])
+    write_index(store)
+
+    epics_md = (store.project_dir / "INDEX-EPICS.md").read_text()
+    stories_md = (store.project_dir / "INDEX-STORIES.md").read_text()
+    tasks_md = (store.project_dir / "INDEX-TASKS.md").read_text()
+
+    # Multiple tags are comma-separated
+    for line in epics_md.splitlines():
+        if "Multi Tag Epic" in line:
+            assert "alpha, beta, gamma" in line
+            break
+    else:
+        raise AssertionError("Multi Tag Epic row not found")
+
+    for line in stories_md.splitlines():
+        if "Multi Tag Story" in line:
+            assert "x, y, z" in line
+            break
+    else:
+        raise AssertionError("Multi Tag Story row not found")
+
+    for line in tasks_md.splitlines():
+        if "Multi Tag Task" in line:
+            assert "a, b, c" in line
+            break
+    else:
+        raise AssertionError("Multi Tag Task row not found")
+
+    # Single tag renders without a comma
+    for line in epics_md.splitlines():
+        if "Single Tag Epic" in line:
+            assert "solo" in line
+            assert "," not in line.split("solo")[0].rsplit("|", 1)[-1]
+            break
+    else:
+        raise AssertionError("Single Tag Epic row not found")
+
+    for line in stories_md.splitlines():
+        if "Single Tag Story" in line:
+            assert "only" in line
+            break
+    else:
+        raise AssertionError("Single Tag Story row not found")
+
+    for line in tasks_md.splitlines():
+        if "Single Tag Task" in line:
+            assert "one" in line
+            break
+    else:
+        raise AssertionError("Single Tag Task row not found")
+
+
+def test_task_depends_on_column_in_markdown(store):
+    """INDEX-TASKS.md includes a Depends On column showing task dependencies."""
+    story, _ = store.create_story("Parent Story", "Desc")
+    task_a = store.create_task(story.id, "Task A", "Desc")
+    store.create_task(story.id, "Task B", "Desc", depends_on=[task_a.id])
+    write_index(store)
+    tasks_md = (store.project_dir / "INDEX-TASKS.md").read_text()
+    # Header includes the Depends On column
+    assert "| Depends On |" in tasks_md
+    # Parse rows by splitting on '|'
+    # Columns: empty | ID | Title | Status | Points | Tags | Assignee | Depends On | Story | empty
+    for line in tasks_md.splitlines():
+        cells = [c.strip() for c in line.split("|")]
+        if "Task A" in line:
+            # Depends On column (index 7) should be "—" for no deps
+            assert cells[7] == "—"
+        if "Task B" in line:
+            # Depends On column should contain task_a's ID
+            assert task_a.id in cells[7]
+
+
 def test_non_hub_does_not_write_root_readme(store):
     write_index(store)
     assert not (store.root / "README.md").exists()
