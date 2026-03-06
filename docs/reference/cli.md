@@ -167,6 +167,150 @@ projectman repair
 
 Use this after cloning a hub, adding projects manually, or whenever things seem out of sync.
 
+## projectman commit
+
+Commit `.project/` changes to git.
+
+```bash
+# Commit all .project/ changes (hub + all subprojects)
+projectman commit
+
+# Commit only hub-level changes
+projectman commit --scope hub
+
+# Commit a specific subproject's changes
+projectman commit --scope project:my-api
+
+# With a custom message
+projectman commit --message "Update sprint 3 tasks"
+```
+
+**Options:**
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--scope` | `all` | Scope: `hub`, `project:<name>`, or `all` |
+| `--message` | _(auto-generated)_ | Commit message |
+
+## projectman push
+
+Push committed changes to remote.
+
+```bash
+# Push hub changes
+projectman push
+
+# Push a specific subproject
+projectman push --scope project:my-api
+
+# Coordinated push (preflight → subprojects → hub)
+projectman push --projects my-api,my-frontend
+
+# Dry run to preview
+projectman push --dry-run
+```
+
+**Options:**
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--scope` | `hub` | Scope: `hub`, `project:<name>`, or `all` |
+| `--dry-run` | `false` | Preview what would be pushed without pushing |
+| `--projects` | _(auto-discover)_ | Comma-separated project names for coordinated push |
+
+When `--projects` or `--dry-run` is used, the push runs in coordinated mode: preflight checks run first, then subprojects are pushed, then the hub.
+
+## projectman git-status
+
+Show git status of all hub submodules in a table.
+
+```bash
+projectman git-status
+projectman git-status --verbose
+projectman git-status --json
+```
+
+**Options:**
+
+| Option | Description |
+|--------|-------------|
+| `--verbose` | Show additional detail |
+| `--json` | Output as JSON |
+
+**Output includes:** project name, branch, dirty state, ahead/behind counts, and open PRs.
+
+## projectman validate-branches
+
+Check that hub submodule branches match their configured tracking branches.
+
+```bash
+projectman validate-branches
+```
+
+## projectman changeset
+
+Manage changesets for coordinating multi-project changes. Hub mode only.
+
+### projectman changeset create
+
+```bash
+projectman changeset create "Auth across services" --projects my-api,my-frontend
+projectman changeset create "DB migration" --projects my-api --description "Schema v2 migration"
+```
+
+**Options:**
+
+| Option | Required | Description |
+|--------|----------|-------------|
+| `name` | yes | Changeset title (positional argument) |
+| `--projects` | yes | Comma-separated project names |
+| `--description` | no | Changeset description |
+
+### projectman changeset add-project
+
+```bash
+projectman changeset add-project CS-PRJ-1 my-worker --ref feature/auth-worker
+```
+
+**Arguments:**
+
+| Argument | Description |
+|----------|-------------|
+| `changeset_id` | Changeset ID (e.g. `CS-PRJ-1`) |
+| `project_name` | Project name to add |
+
+**Options:**
+
+| Option | Description |
+|--------|-------------|
+| `--ref` | Git branch/ref for this project's changes |
+
+### projectman changeset status
+
+```bash
+# List all changesets
+projectman changeset status
+
+# Show specific changeset
+projectman changeset status CS-PRJ-1
+```
+
+### projectman changeset create-prs
+
+Generate `gh` CLI commands for creating cross-referenced PRs.
+
+```bash
+projectman changeset create-prs CS-PRJ-1
+```
+
+### projectman changeset push
+
+Check PR merge status and update changeset status.
+
+```bash
+projectman changeset push CS-PRJ-1
+```
+
 ## projectman audit
 
 Run drift detection and generate a `DRIFT.md` report.

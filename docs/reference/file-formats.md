@@ -10,12 +10,15 @@
 ├── SECURITY.md          # Security posture and review notes
 ├── DRIFT.md             # Auto-generated drift report
 ├── index.yaml           # Compact project dashboard
+├── activity.jsonl       # Append-only activity log
 ├── epics/
 │   └── EPIC-PRJ-1.md   # Epic files
 ├── stories/
 │   └── US-PRJ-1.md     # User story files
-└── tasks/
-    └── US-PRJ-1-1.md   # Task files
+├── tasks/
+│   └── US-PRJ-1-1.md   # Task files
+└── changesets/
+    └── CS-PRJ-1.md      # Changeset files
 ```
 
 With `--hub`, also creates:
@@ -45,8 +48,11 @@ name: my-project
 prefix: PRJ              # Uppercase letters, used for epic/story/task IDs
 description: ""
 hub: false               # true for hub mode
+auto_commit: false       # Auto-commit .project/ changes after writes
+deploy_branch: null      # Default branch for push operations
 next_story_id: 1         # Auto-incremented
 next_epic_id: 1          # Auto-incremented
+next_changeset_id: 1     # Auto-incremented
 projects: []             # Hub mode: list of registered project names
 ```
 
@@ -56,8 +62,11 @@ projects: []             # Hub mode: list of registered project names
 | `prefix` | string | Uppercase letters, used as ID prefix for epics, stories, and tasks (e.g. `PRJ` → `EPIC-PRJ-1`, `US-PRJ-1`, `US-PRJ-1-1`) |
 | `description` | string | Project description |
 | `hub` | bool | Whether this is a hub (multi-repo) project |
+| `auto_commit` | bool | Whether to auto-commit `.project/` changes after write operations |
+| `deploy_branch` | string\|null | Default branch for push operations |
 | `next_story_id` | int | Next story number to assign (auto-incremented) |
 | `next_epic_id` | int | Next epic number to assign (auto-incremented) |
+| `next_changeset_id` | int | Next changeset number to assign (auto-incremented) |
 | `projects` | list[str] | Hub mode: names of registered subprojects |
 
 ## index.yaml
@@ -83,6 +92,7 @@ entries:
     status: in-progress
     points: 2
     story_id: US-PRJ-1
+    tags: [backend]
 total_points: 5
 completed_points: 0
 epic_count: 1
@@ -150,6 +160,8 @@ title: Implement JWT middleware
 status: todo
 points: 2
 assignee: null
+tags: [backend]
+depends_on: []
 created: '2026-02-15'
 updated: '2026-02-15'
 ---
@@ -184,6 +196,8 @@ Add JWT validation middleware to the Express app.
 | `status` | enum | yes | `todo`, `in-progress`, `review`, `done`, `blocked` |
 | `points` | int\|null | no | Fibonacci: 1, 2, 3, 5, 8, 13 |
 | `assignee` | string\|null | no | Who is working on this |
+| `tags` | list[str] | no | Free-form tags |
+| `depends_on` | list[str] | no | Task IDs this task depends on (must be siblings under the same story) |
 | `created` | date | yes | ISO date |
 | `updated` | date | yes | ISO date |
 
@@ -243,6 +257,86 @@ session management, and role-based access control.
 ```
 draft → active → done → archived
 ```
+
+## Changeset Format (changesets/CS-PRJ-1.md)
+
+Changesets coordinate multi-project changes across a hub. They use YAML frontmatter with a list of project entries.
+
+```markdown
+---
+id: CS-PRJ-1
+title: Add authentication across services
+status: open
+entries:
+  - project: my-api
+    ref: feature/auth
+    pr_number: null
+    status: pending
+  - project: my-frontend
+    ref: feature/auth-ui
+    pr_number: null
+    status: pending
+created: '2026-03-01'
+updated: '2026-03-01'
+---
+
+## Description
+
+Coordinated authentication changes across the API and frontend services.
+```
+
+### Changeset Frontmatter Fields
+
+| Field | Type | Required | Values |
+|-------|------|----------|--------|
+| `id` | string | yes | Pattern: `CS-PREFIX-N` (e.g. `CS-PRJ-1`) |
+| `title` | string | yes | Short descriptive title |
+| `status` | enum | yes | `open`, `partial`, `merged`, `closed` |
+| `entries` | list | yes | List of project entries (see below) |
+| `created` | date | yes | ISO date |
+| `updated` | date | yes | ISO date |
+
+### Changeset Entry Fields
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `project` | string | Registered project name |
+| `ref` | string | Git branch/ref for this project's changes |
+| `pr_number` | int\|null | PR number once created |
+| `status` | string | `pending`, `open`, `merged`, `closed`, `no-pr` |
+
+### Changeset Status Lifecycle
+
+```
+open → partial → merged
+         ↓
+       closed
+```
+
+Status is determined automatically: all entries merged → `merged`, some merged → `partial`, any closed → `closed`.
+
+## Activity Log Format (activity.jsonl)
+
+The activity log is an append-only JSONL file at `.project/activity.jsonl`. Each line is a JSON object recording a single event.
+
+```json
+{"event_type": "create", "item_id": "US-PRJ-1", "item_type": "story", "changes": {"title": "User authentication", "status": "backlog"}, "timestamp": "2026-03-01T14:30:45.123456", "actor": "claude", "source": "mcp"}
+{"event_type": "update", "item_id": "US-PRJ-1", "item_type": "story", "changes": {"status": ["backlog", "active"]}, "timestamp": "2026-03-01T15:00:00.000000", "actor": "claude", "source": "mcp"}
+```
+
+### Activity Log Entry Fields
+
+| Field | Type | Values |
+|-------|------|--------|
+| `event_type` | enum | `create`, `update`, `delete`, `archive` |
+| `item_id` | string | ID of the affected item |
+| `item_type` | enum | `story`, `task`, `epic`, `changeset` |
+| `changes` | dict | Field changes (for updates, values are `[old, new]` pairs) |
+| `timestamp` | datetime | ISO 8601 with microseconds |
+| `actor` | string | Who performed the action (e.g. `claude`, a human name) |
+| `source` | enum | `mcp`, `web`, `cli` |
+
+The log is never overwritten — new entries are always appended. Query it with `pm_activity`.
 
 ## DRIFT.md
 

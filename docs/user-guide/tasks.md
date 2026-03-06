@@ -12,6 +12,8 @@ title: "Implement login endpoint"
 status: todo
 points: 3
 assignee: claude
+tags: [backend, auth]
+depends_on: [US-APP-1-2]
 created: 2026-01-15
 updated: 2026-01-15
 ---
@@ -48,6 +50,7 @@ Tasks appear on the task board (`/pm board`) when they pass readiness checks enf
 - Has a point estimate
 - Description is at least 50 characters
 - Parent story is in `active` or `ready` status
+- All `depends_on` tasks are `done`
 
 **Suitability hints** (informational signals, not blockers):
 - `well-scoped` — task is clearly defined
@@ -66,3 +69,29 @@ Each task is a self-contained work order with:
 - **Definition of Done** — completion criteria
 
 Tasks must meet the readiness hard gates above before they can be picked up from the board. Well-formed work orders that include all three sections will score higher on suitability hints.
+
+## Dependencies
+
+Tasks can declare dependencies on sibling tasks (tasks under the same story) using the `depends_on` field:
+
+```yaml
+depends_on: [US-APP-1-2, US-APP-1-3]
+```
+
+**Rules:**
+- Dependencies must be siblings (same `story_id`)
+- Self-references are rejected
+- Circular dependencies are detected and rejected (cycle detection uses DFS)
+- The task board uses topological sorting to order tasks by dependency chain
+
+**Readiness impact:** A task with incomplete dependencies will not appear as "available" on the board. It moves to the `not_ready` group until all `depends_on` tasks reach `done` status.
+
+## Tags
+
+Tasks support free-form tags for categorization and filtering:
+
+```yaml
+tags: [backend, auth, quick-win]
+```
+
+Tags are filterable in `pm_board`, `pm_active`, and `pm_search` via the `tag` parameter.

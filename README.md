@@ -50,8 +50,14 @@ projectman setup-claude
 - **Fibonacci Estimation** — calibrated point system (1, 2, 3, 5, 8, 13)
 - **Sprint Planning** — guided workflow via `/pm-plan`
 - **Drift Detection** — `pm_audit` catches inconsistencies
-- **Semantic Search** — find items by meaning (optional, requires sentence-transformers)
+- **Semantic Search** — find items by meaning (optional, requires fastembed)
 - **Hub Mode** — multi-repo management via git submodules
+- **Tags** — free-form labels on stories, epics, and tasks; filterable in search, board, and active views
+- **Task Dependencies** — `depends_on` links between sibling tasks with cycle detection and topological ordering
+- **Changesets** — coordinate multi-project changes with cross-referenced PRs
+- **Activity Log** — append-only JSONL audit trail of every create, update, delete, and archive
+- **Auto-Commit & Push** — `pm_commit`, `pm_push`, and coordinated `pm_push_all` for hub workflows
+- **Git Status Dashboard** — `pm_git_status` shows branch, dirty state, ahead/behind, and open PRs across all submodules
 - **Burndown Tracking** — points completed vs remaining
 
 ## Architecture
@@ -61,7 +67,8 @@ User → Claude Code Skills (/pm, /pm-status, /pm-plan, /pm-do)
          → PM Agent (.claude/agents/pm.md)
            → MCP Server (projectman serve, stdio)
              → Store (.project/ markdown files, hub-managed per project)
-             → Embeddings (SQLite + sentence-transformers)
+             → Embeddings (SQLite + fastembed)
+             → Activity Log (JSONL append-only audit trail)
              → Web Dashboard (FastAPI + HTMX, launched via pm_web_start)
 ```
 
@@ -91,6 +98,7 @@ Extras: `[mcp]` for Claude Code integration, `[web]` for the web dashboard, `[em
 - [Getting Started](docs/getting-started.md)
 - [User Guide](docs/user-guide/stories.md)
 - [Hub Mode](docs/hub-mode/setup.md)
+- [Hub Git Workflow](docs/hub-mode/git-workflow.md)
 - [Reference](docs/reference/cli.md)
 
 ## License

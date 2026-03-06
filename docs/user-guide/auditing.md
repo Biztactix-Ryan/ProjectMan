@@ -35,3 +35,48 @@ Or via CLI: `projectman audit` (use `--all` for all hub projects)
 ## DRIFT.md
 
 Audit results are written to `.project/DRIFT.md`. Review this file to track project health over time.
+
+## Activity Log
+
+Every create, update, delete, and archive operation is recorded in `.project/activity.jsonl` as an append-only audit trail.
+
+### Viewing the Log
+
+```
+/pm activity
+```
+
+Or via MCP: `pm_activity()`
+
+### Query Parameters
+
+| Parameter | Description |
+|-----------|-------------|
+| `item_id` | Filter by item ID (e.g. `US-PRJ-1`) |
+| `event_type` | Filter by event type: `create`, `update`, `delete`, `archive` |
+| `from_date` | Start date (ISO format, e.g. `2026-03-01`) |
+| `to_date` | End date (ISO format) |
+| `actor` | Filter by who performed the action (e.g. `claude`) |
+| `limit` | Max entries to return (default 20) |
+| `offset` | Pagination offset |
+
+### Log Entry Format
+
+Each line in `activity.jsonl` is a JSON object:
+
+```json
+{
+  "event_type": "update",
+  "item_id": "US-PRJ-1",
+  "item_type": "story",
+  "changes": {"status": ["backlog", "active"]},
+  "timestamp": "2026-03-01T15:00:00.000000",
+  "actor": "claude",
+  "source": "mcp"
+}
+```
+
+- **event_type**: `create`, `update`, `delete`, `archive`
+- **item_type**: `story`, `task`, `epic`, `changeset`
+- **changes**: For creates, the initial field values. For updates, `[old, new]` pairs.
+- **source**: Where the action originated — `mcp`, `web`, or `cli`

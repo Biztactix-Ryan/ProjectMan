@@ -36,6 +36,19 @@ Stories can be linked to epics via the `epic_id` field. Use `/pm update US-APP-1
 
 `backlog` → `ready` → `active` → `done` → `archived`
 
+## Tags
+
+Stories support free-form tags for categorization and filtering:
+
+```yaml
+tags: [backend, security, mvp]
+```
+
+Tags can be set during creation (`pm_create_story ... tags="backend,security"`) or added later with `pm_update`. They are used for:
+- **Filtering** — `pm_board`, `pm_active`, and `pm_search` accept a `tag` parameter to narrow results
+- **Semantic search** — tags are included in the embedding index, improving search relevance
+- **Organization** — group related work across stories and epics
+
 ## Best Practices
 
 - Write clear "As a [user], I want [goal] so that [benefit]" descriptions
