@@ -56,6 +56,14 @@ Triggered when stories exist but some have no tasks. This is the primary use cas
 - Last task handles integration/cleanup
 - Don't over-decompose — 2-6 tasks per story is the sweet spot
 
+## CRITICAL: Task ordering via depends_on
+
+- **Create implementation tasks BEFORE test tasks** — implementation tasks get lower IDs
+- **Test tasks MUST set `depends_on`** pointing to the implementation task(s) they verify
+- This ensures the board shows implementation tasks first, and `pm_grab` picks them in the right order
+- Example: if task -8 is "Add new table to schema" and task -1 is "Test: table created", then -1 must have `depends_on: ["US-PRJ-X-8"]`
+- Use `pm_create_tasks` (batch) to create all tasks at once — list implementation tasks first in the array, test tasks last, with `depends_on` set on test tasks
+
 ## Forcing a mode
 
 Users can force a specific mode:

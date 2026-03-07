@@ -17,16 +17,17 @@ def scope(store: Store, story_id: str) -> str:
         "rules": [
             "Each task should be completable in one session (1-5 points)",
             "Tasks should be independently testable",
-            "Include implementation + testing in each task",
-            "First task should set up the foundation",
-            "Last task should handle integration/cleanup",
+            "Create implementation tasks FIRST, then test/verification tasks AFTER",
+            "Test tasks MUST set depends_on to the implementation task(s) they verify",
+            "First task should set up the foundation (schema, infrastructure, etc.)",
+            "Last task should handle integration/cleanup or final verification",
             "Use depends_on to declare ordering between tasks when one requires another's output",
         ],
         "task_template": {
             "title": "Verb phrase describing the deliverable",
             "description": "Include: what to implement, acceptance criteria, files to touch",
             "points": "Fibonacci: 1, 2, 3, 5 (avoid 8+ for single tasks)",
-            "depends_on": "List of sibling task IDs this task requires (optional)",
+            "depends_on": "List of sibling task IDs this task requires — test tasks MUST depend on their implementation task",
         },
     }
 
@@ -134,14 +135,15 @@ def _auto_scope_full(store: Store) -> str:
             "title": "Verb phrase describing the deliverable",
             "description": "What to implement, acceptance criteria, files to touch",
             "points": "Fibonacci: 1, 2, 3, 5 (avoid 8+ for single tasks)",
-            "depends_on": "List of sibling task IDs this task requires (optional)",
+            "depends_on": "List of sibling task IDs this task requires — test tasks MUST depend on their implementation task",
         },
         "rules": [
             "Group related stories under epics",
             "Each story should represent user-visible value",
             "Each task should be completable in one session (1-5 points)",
             "Tasks should be independently testable",
-            "Include implementation + testing in each task",
+            "Create implementation tasks FIRST, then test/verification tasks AFTER",
+            "Test tasks MUST set depends_on to the implementation task(s) they verify",
             "Use depends_on to declare ordering between tasks when one requires another's output",
         ],
     }
@@ -202,16 +204,17 @@ def _auto_scope_incremental(store: Store, limit: int = 5, offset: int = 0) -> st
             "rules": [
                 "Each task should be completable in one session (1-5 points)",
                 "Tasks should be independently testable",
-                "Include implementation + testing in each task",
-                "First task should set up the foundation",
-                "Last task should handle integration/cleanup",
+                "Create implementation tasks FIRST, then test/verification tasks AFTER",
+                "Test tasks MUST set depends_on to the implementation task(s) they verify",
+                "First task should set up the foundation (schema, infrastructure, etc.)",
+                "Last task should handle integration/cleanup or final verification",
                 "Use depends_on to declare ordering between tasks when one requires another's output",
             ],
             "task_template": {
                 "title": "Verb phrase describing the deliverable",
                 "description": "Include: what to implement, acceptance criteria, files to touch",
                 "points": "Fibonacci: 1, 2, 3, 5 (avoid 8+ for single tasks)",
-                "depends_on": "List of sibling task IDs this task requires (optional)",
+                "depends_on": "List of sibling task IDs this task requires — test tasks MUST depend on their implementation task",
             },
         },
     }
