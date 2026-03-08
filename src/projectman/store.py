@@ -738,6 +738,36 @@ class Store:
             result = [(m, b) for m, b in result if m.status.value == status]
         return copy.deepcopy([m for m, _ in result])
 
+    def list_all(
+        self,
+        item_type: str,
+    ) -> list[dict]:
+        """Return all items of a type with full data (frontmatter + body).
+
+        Args:
+            item_type: One of "epics", "stories", or "tasks".
+
+        Returns a list of dicts, each containing model_dump + body.
+        """
+        if item_type == "epics":
+            # Populate cache via list_epics
+            self.list_epics()
+        elif item_type == "stories":
+            self.list_stories()
+        elif item_type == "tasks":
+            self.list_tasks()
+        else:
+            raise ValueError(f"Unknown item type: {item_type}. Use: epics, stories, tasks")
+
+        key = self._cache_key(item_type)
+        entries = _cache.get(key, [])
+        results = []
+        for meta, body in entries:
+            item = meta.model_dump(mode="json")
+            item["body"] = body
+            results.append(item)
+        return results
+
     def update(self, item_id: str, **kwargs) -> EpicFrontmatter | StoryFrontmatter | TaskFrontmatter:
         """Update fields on an epic, story, or task.
 

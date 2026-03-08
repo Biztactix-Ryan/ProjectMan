@@ -116,6 +116,25 @@ def pm_get(id: str, project: Optional[str] = None) -> str:
         return f"error: {e}"
 
 
+@mcp.tool(title="Batch Get Items", annotations=ToolAnnotations(title="Batch Get Items", readOnlyHint=True))
+def pm_batch_get(type: str, project: Optional[str] = None) -> str:
+    """Get all items of a type with full data in a single call.
+
+    Returns all epics, stories, or tasks with frontmatter and body content.
+    Much faster than calling pm_get for each item individually.
+
+    Args:
+        type: Item type to fetch: "epics", "stories", or "tasks"
+        project: Optional project name (hub mode only)
+    """
+    try:
+        store = _store(project)
+        items = store.list_all(type)
+        return _yaml_dump(items)
+    except Exception as e:
+        return f"error: {e}"
+
+
 @mcp.tool(title="Read Documentation", annotations=ToolAnnotations(title="Read Documentation", readOnlyHint=True))
 def pm_docs(doc: Optional[str] = None, project: Optional[str] = None) -> str:
     """Read project documentation files.

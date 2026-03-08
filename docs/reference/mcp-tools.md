@@ -12,6 +12,12 @@ Get full details of an epic, story, or task.
 - **id**: Epic ID (e.g. `EPIC-PRJ-1`), story ID (e.g. `US-PRJ-1`), or task ID (e.g. `US-PRJ-1-1`)
 - **Returns**: Full frontmatter + body content
 
+### pm_batch_get(type, project?)
+Get all items of a type with full data in a single call.
+- **type**: Item type to fetch: `"epics"`, `"stories"`, or `"tasks"`
+- **project** (optional): Project name for hub mode
+- **Returns**: All items of the specified type with frontmatter and body content. Much faster than calling `pm_get` for each item individually.
+
 ### pm_docs(doc?, project?)
 Read project documentation files.
 - **doc** (optional): Specific doc to read — `project`, `infrastructure`, `security`, `vision`, `architecture`, `decisions`
