@@ -504,7 +504,7 @@ class TestCreateTasksBatchDependsOn:
 
         # Batch with a mutual dependency cycle:
         # US-TST-1-1 (X) depends on US-TST-1-2 (Y), Y depends on X
-        with pytest.raises(ValueError, match="cycle"):
+        with pytest.raises(ValueError, match=r"US-TST-1-1 -> US-TST-1-2 -> US-TST-1-1"):
             store.create_tasks("US-TST-1", [
                 {"title": "X", "description": "X", "depends_on": ["US-TST-1-2"]},
                 {"title": "Y", "description": "Y", "depends_on": ["US-TST-1-1"]},
@@ -648,7 +648,7 @@ class TestDependsOnEdgeCases:
     def test_transitive_cycle_in_batch_raises(self, store):
         """3-node cycle (A→B→C→A) in a batch is detected and rolled back."""
         store.create_story("Story", "Desc")
-        with pytest.raises(ValueError, match="cycle"):
+        with pytest.raises(ValueError, match=r"US-TST-1-1 -> US-TST-1-3 -> US-TST-1-2 -> US-TST-1-1"):
             store.create_tasks("US-TST-1", [
                 {"title": "A", "description": "A", "depends_on": ["US-TST-1-3"]},
                 {"title": "B", "description": "B", "depends_on": ["US-TST-1-1"]},
@@ -666,7 +666,7 @@ class TestDependsOnEdgeCases:
             {"title": "C", "description": "C", "depends_on": ["US-TST-1-2"]},
         ])
         # C→B→A; making A depend on C creates A→C→B→A
-        with pytest.raises(ValueError, match="cycle"):
+        with pytest.raises(ValueError, match=r"US-TST-1-1 -> US-TST-1-3 -> US-TST-1-2 -> US-TST-1-1"):
             store.update("US-TST-1-1", depends_on=["US-TST-1-3"])
         # Rolled back: A should still have no deps
         meta, _ = store.get_task("US-TST-1-1")
@@ -678,7 +678,7 @@ class TestDependsOnEdgeCases:
         store.create_task("US-TST-1", "Task A", "Original body A")
         store.create_task("US-TST-1", "Task B", "Desc", depends_on=["US-TST-1-1"])
         # Try to create A→B cycle by updating A
-        with pytest.raises(ValueError, match="cycle"):
+        with pytest.raises(ValueError, match=r"US-TST-1-1 -> US-TST-1-2 -> US-TST-1-1"):
             store.update("US-TST-1-1", depends_on=["US-TST-1-2"])
         # Body and title should be preserved
         meta, body = store.get_task("US-TST-1-1")
@@ -733,6 +733,38 @@ class TestDependsOnEdgeCases:
             store.create_tasks("US-TST-999", [
                 {"title": "A", "description": "A"},
             ])
+
+
+class TestCheckDependencyCyclesUsesDetectCycle:
+    """Verify store._check_dependency_cycles delegates to deps.detect_cycle."""
+
+    def test_delegates_to_deps_detect_cycle(self, store):
+        """_check_dependency_cycles calls deps.detect_cycle with the task graph."""
+        from unittest.mock import patch
+
+        store.create_story("Story", "Desc")
+        store.create_task("US-TST-1", "Task A", "Desc")
+        store.create_task("US-TST-1", "Task B", "Desc")
+
+        with patch("projectman.store.detect_cycle", return_value=None) as mock_dc:
+            store._check_dependency_cycles("US-TST-1")
+            mock_dc.assert_called_once()
+            graph_arg = mock_dc.call_args[0][0]
+            assert "US-TST-1-1" in graph_arg
+            assert "US-TST-1-2" in graph_arg
+
+    def test_raises_when_detect_cycle_finds_cycle(self, store):
+        """_check_dependency_cycles raises ValueError when detect_cycle returns a cycle."""
+        from unittest.mock import patch
+
+        store.create_story("Story", "Desc")
+        store.create_task("US-TST-1", "Task A", "Desc")
+        store.create_task("US-TST-1", "Task B", "Desc")
+
+        fake_cycle = ["US-TST-1-1", "US-TST-1-2", "US-TST-1-1"]
+        with patch("projectman.store.detect_cycle", return_value=fake_cycle):
+            with pytest.raises(ValueError, match="US-TST-1-1 -> US-TST-1-2 -> US-TST-1-1"):
+                store._check_dependency_cycles("US-TST-1")
 
 
 class TestStoreCustomProjectDir:

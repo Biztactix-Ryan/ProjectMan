@@ -215,6 +215,24 @@ class ProjectIndex(BaseModel):
     epic_count: int = 0
 
 
+class Outcome(str, Enum):
+    success = "success"
+    partial = "partial"
+    blocked = "blocked"
+    failed = "failed"
+    info = "info"
+
+
+class RunLogEntry(BaseModel):
+    """A single run-log entry recording an attempt or note on an item."""
+
+    timestamp: datetime
+    outcome: Outcome
+    status: Optional[str] = None
+    note: str
+    actor: str
+
+
 class EventType(str, Enum):
     create = "create"
     update = "update"

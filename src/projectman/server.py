@@ -111,6 +111,9 @@ def pm_get(id: str, project: Optional[str] = None) -> str:
         meta, body = store.get(id)
         result = meta.model_dump(mode="json")
         result["body"] = body
+        recent_log = store.get_run_log(id, limit=3)
+        if recent_log:
+            result["recent_run_log"] = [e.model_dump(mode="json") for e in recent_log]
         return _yaml_dump(result)
     except Exception as e:
         return f"error: {e}"
@@ -763,6 +766,8 @@ def pm_update(
     acceptance_criteria: Optional[str] = None,
     tags: Optional[str] = None,
     depends_on: Optional[str] = None,
+    outcome: Optional[str] = None,
+    note: Optional[str] = None,
     project: Optional[str] = None,
 ) -> str:
     """Update an epic, story, or task.
@@ -778,6 +783,8 @@ def pm_update(
         acceptance_criteria: Comma-separated acceptance criteria (stories only, e.g. "Users can log in,Error shown on invalid password")
         tags: Comma-separated tags (e.g. "security,mvp,backend")
         depends_on: Comma-separated task IDs this task depends on (tasks only, e.g. "US-PRJ-1-1,US-PRJ-1-2")
+        outcome: Run-log outcome (success/partial/blocked/failed/info). When provided with note, appends a run-log entry for tracking work attempts.
+        note: Run-log note describing what was accomplished or what blocked progress (max 1024 chars). Requires outcome.
         project: Optional project name (hub mode only)
     """
     try:
@@ -801,6 +808,10 @@ def pm_update(
             kwargs["tags"] = [t.strip() for t in tags.split(",")]
         if depends_on is not None:
             kwargs["depends_on"] = [d.strip() for d in depends_on.split(",")]
+        if outcome is not None:
+            kwargs["outcome"] = outcome
+        if note is not None:
+            kwargs["note"] = note
 
         meta = store.update(id, **kwargs)
         write_index(store)
@@ -1797,5 +1808,32 @@ def pm_activity(
             "entries": formatted,
         }
         return _yaml_dump(result)
+    except Exception as e:
+        return f"error: {e}"
+
+
+@mcp.tool(title="Run Log", annotations=ToolAnnotations(title="Run Log", readOnlyHint=True))
+def pm_run_log(
+    id: str,
+    limit: int = 20,
+    offset: int = 0,
+    project: Optional[str] = None,
+) -> str:
+    """Read the run log for an epic, story, or task. Returns a JSON array of log entries
+    showing previous work attempts, outcomes, and notes.
+
+    Args:
+        id: Epic, story, or task ID
+        limit: Max entries to return (default 20, most recent first)
+        offset: Number of entries to skip
+        project: Optional project name (hub mode only)
+    """
+    try:
+        import json
+
+        store = _store(project)
+        entries = store.get_run_log(id, limit=limit, offset=offset)
+        result = [e.model_dump(mode="json") for e in entries]
+        return json.dumps(result, indent=2, default=str)
     except Exception as e:
         return f"error: {e}"

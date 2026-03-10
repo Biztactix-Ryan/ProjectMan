@@ -86,6 +86,24 @@ depends_on: [US-APP-1-2, US-APP-1-3]
 
 **Readiness impact:** A task with incomplete dependencies will not appear as "available" on the board. It moves to the `not_ready` group until all `depends_on` tasks reach `done` status.
 
+## Run Log
+
+Tasks (and stories/epics) maintain a run log that tracks work attempts. Each entry records what happened and whether it succeeded, partially worked, or failed.
+
+Log entries are created by passing `outcome` and `note` to `pm_update`:
+
+```
+pm_update("US-APP-1-1", status="in-progress", outcome="partial", note="Built endpoint, auth tests failing")
+pm_update("US-APP-1-1", outcome="blocked", note="Need DB migration from US-APP-1-2 first")
+pm_update("US-APP-1-1", status="done", outcome="success", note="All tests green")
+```
+
+**Outcome values:** `success`, `partial`, `blocked`, `failed`, `info`
+
+**Reading the log:** Use `pm_run_log("US-APP-1-1")` to see all entries (most recent first). `pm_get` also shows the 3 most recent entries.
+
+**Storage:** `.project/logs/{item_id}.jsonl` — one JSONL file per item, append-only.
+
 ## Tags
 
 Tasks support free-form tags for categorization and filtering:

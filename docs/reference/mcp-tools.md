@@ -89,12 +89,14 @@ Create multiple tasks under a story in a single call.
 - **project** (optional): Project name for hub mode
 - **Returns**: List of created task metadata, count, and total points
 
-### pm_update(id, status?, points?, title?, assignee?, epic_id?, body?, acceptance_criteria?, tags?, depends_on?, project?)
+### pm_update(id, status?, points?, title?, assignee?, epic_id?, body?, acceptance_criteria?, tags?, depends_on?, outcome?, note?, project?)
 Update an epic, story, or task.
 - **body** (optional): New markdown body/description content
 - **acceptance_criteria** (optional): Comma-separated acceptance criteria (stories only)
 - **tags** (optional): Comma-separated tags
 - **depends_on** (optional): Comma-separated sibling task IDs (tasks only)
+- **outcome** (optional): Run-log outcome — `success`, `partial`, `blocked`, `failed`, or `info`. When provided, appends a run-log entry for tracking work attempts.
+- **note** (optional): Run-log note describing what was accomplished or blocked (max 1024 chars). Defaults outcome to `info` if outcome is omitted.
 - Epic status values: `draft`, `active`, `done`, `archived`
 - Story status values: `backlog`, `ready`, `active`, `done`, `archived`
 - Task status values: `todo`, `in-progress`, `review`, `done`, `blocked`
@@ -240,6 +242,17 @@ Generate `gh` CLI commands for creating cross-referenced PRs.
 Check PR merge status and update changeset status.
 - **changeset_id**: Changeset ID
 - **Returns**: Per-entry merge status, overall changeset status, `needs_review` flag
+
+## Run Log
+
+### pm_run_log(id, limit?, offset?, project?)
+Read the run log for an epic, story, or task — shows previous work attempts, outcomes, and notes.
+- **id**: Epic, story, or task ID
+- **limit** (optional, default `20`): Max entries to return (most recent first)
+- **offset** (optional, default `0`): Starting index for pagination
+- **Returns**: JSON array of log entries, each with `timestamp`, `outcome`, `status`, `note`, `actor`
+
+Run-log entries are created by passing `outcome` and/or `note` to `pm_update`. Stored as JSONL in `.project/logs/{item_id}.jsonl`.
 
 ## Activity Log
 

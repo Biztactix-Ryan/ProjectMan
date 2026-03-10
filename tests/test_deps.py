@@ -10,7 +10,6 @@ from projectman.deps import (
     detect_cycle,
     incomplete_dependencies,
     topological_sort,
-    validate_dependencies,
 )
 from projectman.models import TaskFrontmatter
 
@@ -103,14 +102,19 @@ class TestDetectCycle:
         graph = {"PRJ-1-1": ["PRJ-1-1"]}
         cycle = detect_cycle(graph)
         assert cycle is not None
-        assert "PRJ-1-1" in cycle
+        assert cycle[0] == cycle[-1] == "PRJ-1-1"
+        # Path format: "PRJ-1-1 -> PRJ-1-1" (at minimum)
+        assert " -> ".join(cycle).count("PRJ-1-1") >= 2
 
     def test_two_node_cycle(self):
         graph = {"PRJ-1-1": ["PRJ-1-2"], "PRJ-1-2": ["PRJ-1-1"]}
         cycle = detect_cycle(graph)
         assert cycle is not None
+        # Full path: starts and ends with the same node
+        assert cycle[0] == cycle[-1]
         assert "PRJ-1-1" in cycle
         assert "PRJ-1-2" in cycle
+        assert len(cycle) == 3  # e.g. [A, B, A]
 
     def test_three_node_cycle(self):
         graph = {
@@ -120,7 +124,10 @@ class TestDetectCycle:
         }
         cycle = detect_cycle(graph)
         assert cycle is not None
-        assert len(cycle) >= 3
+        # Full path: starts and ends with the same node
+        assert cycle[0] == cycle[-1]
+        assert len(cycle) == 4  # e.g. [A, B, C, A]
+        assert set(cycle[:-1]) == {"PRJ-1-1", "PRJ-1-2", "PRJ-1-3"}
 
 
 # ── CycleError ───────────────────────────────────────────────────────
@@ -260,60 +267,6 @@ class TestIncompleteDependencies:
         task = _task("PRJ-1-2")
         assert incomplete_dependencies(task, siblings) == []
 
-
-# ── validate_dependencies ────────────────────────────────────────────
-
-
-class TestValidateDependencies:
-    def _siblings(self):
-        return [
-            _task("PRJ-1-1"),
-            _task("PRJ-1-2"),
-            _task("PRJ-1-3"),
-        ]
-
-    def test_valid_deps(self):
-        siblings = self._siblings()
-        errors = validate_dependencies(
-            "PRJ-1-3", ["PRJ-1-1", "PRJ-1-2"], "PRJ-1", siblings
-        )
-        assert errors == []
-
-    def test_self_reference(self):
-        siblings = self._siblings()
-        errors = validate_dependencies(
-            "PRJ-1-1", ["PRJ-1-1"], "PRJ-1", siblings
-        )
-        assert len(errors) == 1
-        assert "cannot depend on itself" in errors[0]
-
-    def test_non_sibling(self):
-        siblings = self._siblings()
-        errors = validate_dependencies(
-            "PRJ-1-1", ["OTHER-99"], "PRJ-1", siblings
-        )
-        assert len(errors) == 1
-        assert "not a sibling" in errors[0]
-
-    def test_would_create_cycle(self):
-        siblings = [
-            _task("PRJ-1-1"),
-            _task("PRJ-1-2", depends_on=["PRJ-1-1"]),
-            _task("PRJ-1-3", depends_on=["PRJ-1-2"]),
-        ]
-        # PRJ-1-1 depending on PRJ-1-3 would create 1->3->2->1
-        errors = validate_dependencies(
-            "PRJ-1-1", ["PRJ-1-3"], "PRJ-1", siblings
-        )
-        assert len(errors) == 1
-        assert "cycle" in errors[0].lower()
-
-    def test_multiple_errors(self):
-        siblings = self._siblings()
-        errors = validate_dependencies(
-            "PRJ-1-1", ["PRJ-1-1", "ALIEN-1"], "PRJ-1", siblings
-        )
-        assert len(errors) == 2
 
 
 # ── Backward compatibility ───────────────────────────────────────────

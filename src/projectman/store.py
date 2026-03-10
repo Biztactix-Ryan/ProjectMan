@@ -1,6 +1,5 @@
 """CRUD operations for stories and tasks via python-frontmatter."""
 
-import copy
 import logging
 import os
 import subprocess
@@ -11,6 +10,8 @@ from typing import Optional
 import frontmatter
 
 import yaml
+
+from projectman.deps import detect_cycle
 
 logger = logging.getLogger(__name__)
 
@@ -45,10 +46,12 @@ from .models import (
     ItemType,
     LogEntry,
     LogSource,
+    Outcome,
     ProjectConfig,
     EpicFrontmatter,
     EpicStatus,
     Priority,
+    RunLogEntry,
     StoryFrontmatter,
     StoryStatus,
     TaskFrontmatter,
@@ -217,6 +220,57 @@ class Store:
         except Exception:
             logger.debug("activity log: failed to emit %s for %s", event_type, item_id)
 
+    def _append_run_log(
+        self,
+        item_id: str,
+        outcome: str | Outcome,
+        note: str,
+        status: str | None = None,
+    ) -> None:
+        """Append a run-log entry for an item. Failures are silently swallowed."""
+        import json as _json
+
+        try:
+            logs_dir = self.project_dir / "logs"
+            logs_dir.mkdir(exist_ok=True)
+            entry = RunLogEntry(
+                timestamp=datetime.now(timezone.utc),
+                outcome=Outcome(outcome),
+                status=status,
+                note=note,
+                actor=self._resolve_actor(),
+            )
+            log_path = logs_dir / f"{item_id}.jsonl"
+            with open(log_path, "a") as f:
+                f.write(entry.model_dump_json() + "\n")
+                f.flush()
+        except Exception:
+            logger.debug("run log: failed to append for %s", item_id)
+
+    def get_run_log(
+        self,
+        item_id: str,
+        limit: int = 20,
+        offset: int = 0,
+    ) -> list[RunLogEntry]:
+        """Read run-log entries for an item, most recent first."""
+        import json as _json
+
+        log_path = self.project_dir / "logs" / f"{item_id}.jsonl"
+        if not log_path.exists():
+            return []
+        entries: list[RunLogEntry] = []
+        for line in log_path.read_text().splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                entries.append(RunLogEntry.model_validate_json(line))
+            except Exception:
+                logger.debug("run log: skipping malformed line in %s", item_id)
+        entries.reverse()
+        return entries[offset : offset + limit]
+
     def create_story(
         self,
         title: str,
@@ -282,7 +336,7 @@ class Store:
                 if meta.id == story_id:
                     if _cache_debug:
                         _cache_stats["hits"] += 1
-                    return copy.deepcopy(meta), body
+                    return meta, body
         path = self._story_path(story_id)
         if not path.exists():
             raise FileNotFoundError(f"Story not found: {story_id}")
@@ -368,7 +422,7 @@ class Store:
         # Archived items bypass cache — read directly from disk
         if status == StoryStatus.archived.value:
             entries = self._read_stories_from_disk(status_filter=status)
-            return copy.deepcopy([m for m, _ in entries])
+            return [m for m, _ in entries]
 
         key = self._cache_key("stories")
         if key not in _cache:
@@ -391,8 +445,8 @@ class Store:
                 _cache_stats["hits"] += 1
         all_entries = _cache[key]
         if status is None:
-            return copy.deepcopy([m for m, _ in all_entries])
-        return copy.deepcopy([m for m, _ in all_entries if m.status.value == status])
+            return [m for m, _ in all_entries]
+        return [m for m, _ in all_entries if m.status.value == status]
 
     def create_epic(
         self,
@@ -441,7 +495,7 @@ class Store:
                 if meta.id == epic_id:
                     if _cache_debug:
                         _cache_stats["hits"] += 1
-                    return copy.deepcopy(meta), body
+                    return meta, body
         path = self._epic_path(epic_id)
         if not path.exists():
             raise FileNotFoundError(f"Epic not found: {epic_id}")
@@ -481,7 +535,7 @@ class Store:
         # Archived items bypass cache — read directly from disk
         if status == EpicStatus.archived.value:
             entries = self._read_epics_from_disk(status_filter=status)
-            return copy.deepcopy([m for m, _ in entries])
+            return [m for m, _ in entries]
 
         key = self._cache_key("epics")
         if key not in _cache:
@@ -504,8 +558,8 @@ class Store:
                 _cache_stats["hits"] += 1
         all_entries = _cache[key]
         if status is None:
-            return copy.deepcopy([m for m, _ in all_entries])
-        return copy.deepcopy([m for m, _ in all_entries if m.status.value == status])
+            return [m for m, _ in all_entries]
+        return [m for m, _ in all_entries if m.status.value == status]
 
     def _validate_depends_on(
         self, task_id: str, story_id: str, depends_on: list[str]
@@ -671,24 +725,10 @@ class Store:
         all_tasks = self.list_tasks(story_id=story_id)
         graph: dict[str, list[str]] = {t.id: list(t.depends_on) for t in all_tasks}
 
-        visited: set[str] = set()
-        in_stack: set[str] = set()
-
-        def dfs(node: str) -> None:
-            visited.add(node)
-            in_stack.add(node)
-            for dep in graph.get(node, []):
-                if dep in in_stack:
-                    raise ValueError(
-                        f"Dependency cycle detected: {node} -> {dep}"
-                    )
-                if dep not in visited:
-                    dfs(dep)
-            in_stack.discard(node)
-
-        for node in graph:
-            if node not in visited:
-                dfs(node)
+        cycle = detect_cycle(graph)
+        if cycle is not None:
+            path = " -> ".join(cycle)
+            raise ValueError(f"Dependency cycle detected: {path}")
 
     def get_task(self, task_id: str) -> tuple[TaskFrontmatter, str]:
         """Read a task, returning (frontmatter, body). Uses cache if populated."""
@@ -698,7 +738,7 @@ class Store:
                 if meta.id == task_id:
                     if _cache_debug:
                         _cache_stats["hits"] += 1
-                    return copy.deepcopy(meta), body
+                    return meta, body
         path = self._task_path(task_id)
         if not path.exists():
             raise FileNotFoundError(f"Task not found: {task_id}")
@@ -736,7 +776,7 @@ class Store:
             result = [(m, b) for m, b in result if m.story_id == story_id]
         if status:
             result = [(m, b) for m, b in result if m.status.value == status]
-        return copy.deepcopy([m for m, _ in result])
+        return [m for m, _ in result]
 
     def list_all(
         self,
@@ -799,6 +839,15 @@ class Store:
             if v is not None:
                 commit_parts.append(f"{k}={v}" if k != "body" else "body")
 
+        # Pop run-log fields — they don't go into frontmatter
+        outcome = kwargs.pop("outcome", None)
+        note = kwargs.pop("note", None)
+
+        if note is not None and len(note) > 1024:
+            raise ValueError("Run-log note must be 1024 characters or fewer")
+        if outcome is not None:
+            Outcome(outcome)  # validate enum value
+
         # Handle body separately — it replaces markdown content, not metadata
         new_body = kwargs.pop("body", None)
         if new_body is not None:
@@ -860,6 +909,15 @@ class Store:
 
         item_type = ItemType.epic if is_epic else (ItemType.task if is_task else ItemType.story)
         self._emit_log(EventType.update, item_id, item_type, changes=changes)
+
+        # Append run-log entry if outcome or note provided
+        if outcome is not None or note is not None:
+            self._append_run_log(
+                item_id,
+                outcome=outcome or Outcome.info,
+                note=note or "",
+                status=str(meta.status.value) if hasattr(meta.status, "value") else str(meta.status),
+            )
 
         suffix = " ".join(commit_parts)
         msg = f"pm: update {item_id}" + (f" {suffix}" if suffix else "")

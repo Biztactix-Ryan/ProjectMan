@@ -85,6 +85,6 @@ projectman --help
 |-------|----------|---------|
 | `mcp` | mcp[cli] | MCP server for Claude Code integration |
 | `web` | fastapi, uvicorn | Web dashboard with kanban board, burndown charts, and project overview |
-| `embeddings` | sentence-transformers, numpy | Semantic search via embeddings |
+| `embeddings` | fastembed, numpy | Semantic search via embeddings |
 | `all` | all of the above | Everything |
 | `dev` | pytest, pytest-tmp-files, httpx | Testing |

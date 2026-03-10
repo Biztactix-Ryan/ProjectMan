@@ -48,7 +48,7 @@ pm_create_epic → pm_create_story(epic_id) → pm_scope → pm_create_tasks (ba
 
 ### Task Board
 ```
-pm_board → pm_grab → implement → pm_update (done)
+pm_board → pm_grab → implement → pm_update (done, outcome="success", note="summary")
 ```
 
 ### Sprint Planning
@@ -58,7 +58,12 @@ pm_status → pm_audit → pm_active → pm_burndown → prioritize → scope �
 
 ### Task Execution
 ```
-pm_grab (validates readiness) → implement → pm_update (review or done)
+pm_grab (validates readiness) → implement → pm_update (review or done, outcome="success|partial|failed", note="what happened")
+```
+
+### Run Log
+```
+pm_run_log(id) → review prior attempts → informed retry or escalation
 ```
 
 ### Drift Detection

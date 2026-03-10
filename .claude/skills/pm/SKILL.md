@@ -21,12 +21,13 @@ Call `pm_status`, then `pm_active`. Based on project state, suggest the most use
 
 ### Status & Queries
 - `status` → `pm_status` + `pm_active` dashboard
-- `get <id>` → `pm_get(id)` — works for epics, stories, and tasks
+- `get <id>` → `pm_get(id)` — works for epics, stories, and tasks (includes recent run-log entries if any)
 - `get all <type>` → `pm_batch_get(type)` — bulk fetch all epics, stories, or tasks with full data
 - `search <query>` → `pm_search(query)`
 - `board` → `pm_board` — show task board with available/in-progress/blocked work
 - `context [project]` → `pm_context(project)` — full hub + project context for starting work
 - `burndown` → `pm_burndown`
+- `log <id>` → `pm_run_log(id)` — show run log for an item (work attempts, outcomes, notes)
 
 ### Create & Update
 - `create epic "<title>" "<description>"` → `pm_create_epic`
