@@ -10,6 +10,7 @@ from mcp.server.fastmcp import FastMCP
 from mcp.types import ToolAnnotations
 
 from .config import find_project_root, load_config
+from .event_bus import EventBus, NoOpEventBus
 from .indexer import build_index, write_index
 from .models import ChangesetStatus, ProjectIndex
 from .store import Store
@@ -18,6 +19,18 @@ mcp = FastMCP("projectman")
 
 # Lock for write operations in SSE (multi-client) mode
 _write_lock = asyncio.Lock()
+
+# Event bus — replaced with a real EventBus in SSE mode
+_event_bus: EventBus | NoOpEventBus = NoOpEventBus()
+
+
+def _emit(event_type: str, data: dict) -> None:
+    """Fire-and-forget event emission (safe from sync tool handlers)."""
+    try:
+        loop = asyncio.get_running_loop()
+        loop.create_task(_event_bus.publish(event_type, data))
+    except RuntimeError:
+        pass  # no event loop — stdio mode or tests
 
 
 def _resolve_project_dir(project: Optional[str] = None) -> Path:
@@ -51,6 +64,41 @@ def _store(project: Optional[str] = None) -> Store:
     if default_dir not in _store_cache:
         _store_cache[default_dir] = Store(root)
     return _store_cache[default_dir]
+
+
+def _emit_status_change(store: Store, item_id: str, old_status: str, new_status: str, meta: object) -> None:
+    """Emit the appropriate event(s) for a status change."""
+    from .models import TaskFrontmatter, StoryFrontmatter
+
+    if isinstance(meta, TaskFrontmatter):
+        _emit("task.status_update", {
+            "taskId": item_id,
+            "oldStatus": old_status,
+            "newStatus": new_status,
+            "storyId": meta.story_id,
+        })
+        # Check if all tasks in the story are now done
+        if new_status == "done":
+            siblings = store.list_tasks(story_id=meta.story_id)
+            if siblings and all(t.status.value == "done" for t in siblings):
+                try:
+                    story_meta, _ = store.get_story(meta.story_id)
+                    _emit("story.completed", {
+                        "storyId": meta.story_id,
+                        "epicId": story_meta.epic_id or "",
+                        "title": story_meta.title,
+                    })
+                except FileNotFoundError:
+                    pass
+    elif isinstance(meta, StoryFrontmatter):
+        _emit("story.advanced", {
+            "storyId": item_id,
+            "oldStatus": old_status,
+            "newStatus": new_status,
+            "epicId": meta.epic_id or "",
+        })
+    else:
+        _emit("project.updated", {"summary": f"Epic {item_id} status: {old_status} -> {new_status}"})
 
 
 def _yaml_dump(data) -> str:
@@ -532,6 +580,7 @@ def pm_create_story(
         result = {"created": meta.model_dump(mode="json")}
         if test_tasks:
             result["test_tasks"] = [t.model_dump(mode="json") for t in test_tasks]
+        _emit("project.updated", {"summary": f"Story {meta.id} created"})
         return _yaml_dump(result)
     except Exception as e:
         return f"error: {e}"
@@ -561,6 +610,7 @@ def pm_create_epic(
         tag_list = [t.strip() for t in tags.split(",")] if tags else None
         meta = store.create_epic(title, description, priority, target_date, tag_list)
         write_index(store)
+        _emit("project.updated", {"summary": f"Epic {meta.id} created"})
         return _yaml_dump({"created": meta.model_dump(mode="json")})
     except Exception as e:
         return f"error: {e}"
@@ -726,6 +776,7 @@ def pm_create_task(
         dep_list = [d.strip() for d in depends_on.split(",")] if depends_on else None
         meta = store.create_task(story_id, title, description, points, tags=tag_list, depends_on=dep_list)
         write_index(store)
+        _emit("task.created", {"taskId": meta.id, "storyId": story_id, "title": title})
         return _yaml_dump({"created": meta.model_dump(mode="json")})
     except Exception as e:
         return f"error: {e}"
@@ -748,6 +799,8 @@ def pm_create_tasks(
         store = _store(project)
         created = store.create_tasks(story_id, tasks)
         write_index(store)
+        for t in created:
+            _emit("task.created", {"taskId": t.id, "storyId": story_id, "title": t.title})
         total_points = sum(t.points or 0 for t in created)
         return _yaml_dump({
             "created": [t.model_dump(mode="json") for t in created],
@@ -793,6 +846,15 @@ def pm_update(
     """
     try:
         store = _store(project)
+        # Capture old status before update for event emission
+        old_status_val = None
+        if status is not None:
+            try:
+                old_meta, _ = store.get(id)
+                old_status_val = old_meta.status.value if hasattr(old_meta.status, "value") else str(old_meta.status)
+            except Exception:
+                pass
+
         kwargs = {}
         if status is not None:
             kwargs["status"] = status
@@ -819,6 +881,11 @@ def pm_update(
 
         meta = store.update(id, **kwargs)
         write_index(store)
+
+        # Emit events for status changes
+        if status is not None and old_status_val is not None and old_status_val != status:
+            _emit_status_change(store, id, old_status_val, status, meta)
+
         return _yaml_dump({"updated": meta.model_dump(mode="json")})
     except Exception as e:
         return f"error: {e}"
@@ -869,8 +936,15 @@ def pm_grab(
             })
 
         # Claim: set assignee and status
+        old_status = task_meta.status.value
         store.update(task_id, assignee=assignee, status="in-progress")
         write_index(store)
+        _emit("task.status_update", {
+            "taskId": task_id,
+            "oldStatus": old_status,
+            "newStatus": "in-progress",
+            "storyId": task_meta.story_id,
+        })
 
         # Re-read updated task
         task_meta, task_body = store.get_task(task_id)
@@ -1851,7 +1925,15 @@ def run_server(transport: str = "stdio", host: str = "127.0.0.1", port: int = 22
         host: Host to bind to (SSE mode only)
         port: Port to bind to (SSE mode only)
     """
+    global _event_bus
+
     if transport == "sse":
         mcp.settings.host = host
         mcp.settings.port = port
+
+        # Activate real event bus and register orchestrator REST/SSE routes
+        _event_bus = EventBus()
+        from .orchestrator_api import register_routes
+        register_routes(mcp, _event_bus, _store)
+
     mcp.run(transport=transport)
