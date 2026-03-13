@@ -92,20 +92,33 @@ def init(name, prefix, description, hub):
 
 
 @cli.command("setup-claude")
-def setup_claude():
+@click.option("--transport", type=click.Choice(["stdio", "sse"]), default="stdio", help="MCP transport mode (default: stdio)")
+@click.option("--host", default="127.0.0.1", help="Host for SSE mode")
+@click.option("--port", default=22001, type=int, help="Port for SSE mode")
+def setup_claude(transport, host, port):
     """Install Claude Code integration (agent, skills, MCP config)."""
     root = Path.cwd()
 
     # Write .mcp.json
-    mcp_config = {
-        "mcpServers": {
-            "projectman": {
-                "command": "projectman",
-                "args": ["serve"],
-                "type": "stdio",
+    if transport == "sse":
+        mcp_config = {
+            "mcpServers": {
+                "projectman": {
+                    "type": "sse",
+                    "url": f"http://{host}:{port}/sse",
+                }
             }
         }
-    }
+    else:
+        mcp_config = {
+            "mcpServers": {
+                "projectman": {
+                    "command": "projectman",
+                    "args": ["serve"],
+                    "type": "stdio",
+                }
+            }
+        }
     mcp_path = root / ".mcp.json"
     # Merge with existing if present
     if mcp_path.exists():
@@ -149,11 +162,14 @@ def setup_claude():
 
 
 @cli.command()
-def serve():
+@click.option("--transport", type=click.Choice(["stdio", "sse"]), default="stdio", help="Transport mode (default: stdio)")
+@click.option("--host", default="127.0.0.1", help="Host to bind to (SSE mode only)")
+@click.option("--port", default=22001, type=int, help="Port to bind to (SSE mode only)")
+def serve(transport, host, port):
     """Start the MCP server."""
     try:
-        from projectman.server import mcp
-        mcp.run()
+        from projectman.server import run_server
+        run_server(transport=transport, host=host, port=port)
     except ImportError:
         click.echo("Error: MCP extras not installed. Run: pip install projectman[mcp]", err=True)
         raise SystemExit(1)

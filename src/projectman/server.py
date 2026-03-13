@@ -1,5 +1,6 @@
-"""ProjectMan MCP server — FastMCP-based with stdio transport."""
+"""ProjectMan MCP server — FastMCP-based with stdio/SSE transport."""
 
+import asyncio
 from pathlib import Path
 from typing import Optional
 
@@ -14,6 +15,9 @@ from .models import ChangesetStatus, ProjectIndex
 from .store import Store
 
 mcp = FastMCP("projectman")
+
+# Lock for write operations in SSE (multi-client) mode
+_write_lock = asyncio.Lock()
 
 
 def _resolve_project_dir(project: Optional[str] = None) -> Path:
@@ -1837,3 +1841,17 @@ def pm_run_log(
         return json.dumps(result, indent=2, default=str)
     except Exception as e:
         return f"error: {e}"
+
+
+def run_server(transport: str = "stdio", host: str = "127.0.0.1", port: int = 22001) -> None:
+    """Run the MCP server with the specified transport.
+
+    Args:
+        transport: "stdio" or "sse"
+        host: Host to bind to (SSE mode only)
+        port: Port to bind to (SSE mode only)
+    """
+    if transport == "sse":
+        mcp.settings.host = host
+        mcp.settings.port = port
+    mcp.run(transport=transport)
