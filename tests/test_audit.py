@@ -5,7 +5,7 @@ import pytest
 from datetime import date, timedelta
 
 from projectman.audit import run_audit
-from projectman.store import Store
+from projectman.store import Store, clear_all_caches
 
 
 def test_clean_project(tmp_project):
@@ -69,6 +69,7 @@ def test_orphaned_dependency_detected_as_warning(tmp_project):
     post = frontmatter.load(str(path))
     post["depends_on"] = ["US-TST-1-99"]  # non-existent sibling
     path.write_text(frontmatter.dumps(post))
+    clear_all_caches()  # file was modified outside Store — flush stale cache
     report = run_audit(tmp_project)
     assert "[WARN]" in report
     assert "does not exist" in report.lower()
@@ -87,6 +88,7 @@ def test_dependency_cycle_detected_as_error(tmp_project):
         post = frontmatter.load(str(path))
         post["depends_on"] = deps
         path.write_text(frontmatter.dumps(post))
+    clear_all_caches()  # files were modified outside Store — flush stale cache
     report = run_audit(tmp_project)
     assert "[ERROR]" in report
     assert "dependency cycle" in report.lower()
