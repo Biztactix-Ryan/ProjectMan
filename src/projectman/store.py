@@ -52,6 +52,8 @@ from .models import (
     EpicStatus,
     Priority,
     RunLogEntry,
+    SprintFrontmatter,
+    SprintStatus,
     StoryFrontmatter,
     StoryStatus,
     TaskFrontmatter,
@@ -934,10 +936,12 @@ class Store:
         else:
             self.update(item_id, status=StoryStatus.archived.value)
 
-    def get(self, item_id: str) -> tuple[EpicFrontmatter | StoryFrontmatter | TaskFrontmatter, str]:
-        """Unified lookup by ID — dispatches to get_epic, get_story, or get_task."""
+    def get(self, item_id: str) -> tuple[EpicFrontmatter | StoryFrontmatter | TaskFrontmatter | SprintFrontmatter, str]:
+        """Unified lookup by ID — dispatches to get_epic, get_story, get_task, or get_sprint."""
         if self._is_epic_id(item_id):
             return self.get_epic(item_id)
+        if self._is_sprint_id(item_id):
+            return self.get_sprint(item_id)
         if self._is_task_id(item_id):
             return self.get_task(item_id)
         return self.get_story(item_id)
@@ -1026,6 +1030,147 @@ class Store:
             **meta.model_dump(mode="json"),
         )
         self._changeset_path(changeset_id).write_text(frontmatter.dumps(post))
+        return meta
+
+    # ─── Sprints ─────────────────────────────────────────────────
+
+    @property
+    def sprints_dir(self) -> Path:
+        return self.project_dir / "sprints"
+
+    def _next_sprint_id(self) -> str:
+        sid = f"SPRINT-{self.config.prefix}-{self.config.next_sprint_id}"
+        self.config.next_sprint_id += 1
+        self._save_config()
+        return sid
+
+    def _sprint_path(self, sprint_id: str) -> Path:
+        return self.sprints_dir / f"{sprint_id}.md"
+
+    def _is_sprint_id(self, item_id: str) -> bool:
+        return item_id.startswith("SPRINT-")
+
+    def create_sprint(
+        self,
+        name: str,
+        goal: str = "",
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+        planned_stories: Optional[list[str]] = None,
+    ) -> SprintFrontmatter:
+        """Create a sprint with optional planned stories."""
+        self.sprints_dir.mkdir(parents=True, exist_ok=True)
+        sprint_id = self._next_sprint_id()
+        today = date.today()
+        stories = planned_stories or []
+
+        # Calculate planned points from stories
+        planned_points = 0
+        for sid in stories:
+            try:
+                story_meta, _ = self.get_story(sid)
+                planned_points += story_meta.points or 0
+            except Exception:
+                pass
+
+        meta = SprintFrontmatter(
+            id=sprint_id,
+            name=name,
+            goal=goal,
+            start_date=date.fromisoformat(start_date) if start_date else None,
+            end_date=date.fromisoformat(end_date) if end_date else None,
+            planned_stories=stories,
+            planned_points=planned_points,
+            completed_points=0,
+            created=today,
+            updated=today,
+        )
+
+        post = frontmatter.Post(
+            content=goal,
+            **meta.model_dump(mode="json"),
+        )
+        self._sprint_path(sprint_id).write_text(frontmatter.dumps(post))
+        self._emit_log(EventType.create, sprint_id, ItemType.sprint)
+        return meta
+
+    def get_sprint(self, sprint_id: str) -> tuple[SprintFrontmatter, str]:
+        """Read a sprint, returning (frontmatter, body)."""
+        path = self._sprint_path(sprint_id)
+        if not path.exists():
+            raise FileNotFoundError(f"Sprint not found: {sprint_id}")
+        post = frontmatter.load(str(path))
+        meta = SprintFrontmatter(**post.metadata)
+        return meta, post.content
+
+    def list_sprints(
+        self, status: Optional[str] = None
+    ) -> list[SprintFrontmatter]:
+        """List all sprints, optionally filtered by status."""
+        if not self.sprints_dir.exists():
+            return []
+        sprints = []
+        for path in sorted(self.sprints_dir.glob("*.md")):
+            try:
+                post = frontmatter.load(str(path))
+                meta = SprintFrontmatter(**post.metadata)
+                if status is None or meta.status.value == status:
+                    sprints.append(meta)
+            except Exception:
+                continue
+        return sprints
+
+    def update_sprint(self, sprint_id: str, **kwargs) -> SprintFrontmatter:
+        """Update sprint fields. Auto-computes completed_points when completing."""
+        meta, body = self.get_sprint(sprint_id)
+        changes = {}
+
+        for key, value in kwargs.items():
+            if value is not None and hasattr(meta, key):
+                old_val = getattr(meta, key)
+                if key == "status":
+                    value = SprintStatus(value)
+                elif key in ("start_date", "end_date") and isinstance(value, str):
+                    value = date.fromisoformat(value)
+                elif key == "planned_stories" and isinstance(value, str):
+                    value = [s.strip() for s in value.split(",") if s.strip()]
+                old_str = str(old_val) if old_val is not None else None
+                new_str = str(value)
+                if old_str != new_str:
+                    changes[key] = {"before": old_val, "after": value}
+                setattr(meta, key, value)
+
+        # Auto-compute completed_points when status set to completed
+        if meta.status == SprintStatus.completed:
+            completed_pts = 0
+            for sid in meta.planned_stories:
+                try:
+                    story_meta, _ = self.get_story(sid)
+                    if story_meta.status.value in ("done", "archived"):
+                        completed_pts += story_meta.points or 0
+                except Exception:
+                    pass
+            meta.completed_points = completed_pts
+
+        # Recalculate planned_points if stories changed
+        if "planned_stories" in kwargs:
+            planned_pts = 0
+            for sid in meta.planned_stories:
+                try:
+                    story_meta, _ = self.get_story(sid)
+                    planned_pts += story_meta.points or 0
+                except Exception:
+                    pass
+            meta.planned_points = planned_pts
+
+        meta.updated = date.today()
+
+        post = frontmatter.Post(
+            content=body,
+            **meta.model_dump(mode="json"),
+        )
+        self._sprint_path(sprint_id).write_text(frontmatter.dumps(post))
+        self._emit_log(EventType.update, sprint_id, ItemType.sprint, changes=changes)
         return meta
 
     # ─── Git Operations ──────────────────────────────────────────

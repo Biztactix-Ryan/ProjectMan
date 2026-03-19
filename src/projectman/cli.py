@@ -143,6 +143,7 @@ def setup_claude(transport, host, port):
         ("pm-plan", "skill_pm_plan.md.j2"),
         ("pm-do", "skill_pm_do.md.j2"),
         ("pm-autoscope", "skill_pm_autoscope.md.j2"),
+        ("pm-cleanup", "skill_pm_cleanup.md.j2"),
     ]
     # Remove stale skills that were folded into /pm
     stale_skills = ["pm-scope", "pm-audit", "pm-fix", "pm-init"]

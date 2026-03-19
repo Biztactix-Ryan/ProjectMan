@@ -297,6 +297,18 @@ def run_audit(root: Path, project_dir: Optional[Path] = None) -> str:
                         "items": [task.id, orphan],
                     })
 
+    # Check 16: Missing implementation tasks (only test tasks, no impl tasks)
+    for story in store.list_stories():
+        if story.status.value in ("active", "ready"):
+            tasks = store.list_tasks(story_id=story.id)
+            if tasks and all(t.title.startswith("Test: ") for t in tasks):
+                findings.append({
+                    "severity": "warning",
+                    "check": "missing-implementation-tasks",
+                    "message": f"Story {story.id} has {len(tasks)} test task(s) but no implementation tasks — needs scoping before sprint",
+                    "items": [story.id],
+                })
+
     # Generate report
     report_lines = ["# Project Audit Report\n"]
 

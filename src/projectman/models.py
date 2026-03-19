@@ -140,6 +140,36 @@ class TaskFrontmatter(BaseModel):
         return v
 
 
+class SprintStatus(str, Enum):
+    planning = "planning"
+    active = "active"
+    completed = "completed"
+    cancelled = "cancelled"
+
+
+class SprintFrontmatter(BaseModel):
+    id: str
+    name: str
+    status: SprintStatus = SprintStatus.planning
+    start_date: Optional[date] = None
+    end_date: Optional[date] = None
+    planned_stories: list[str] = []
+    planned_points: int = 0
+    completed_points: int = 0
+    goal: str = ""
+    created: date
+    updated: date
+
+    @field_validator("id")
+    @classmethod
+    def validate_id(cls, v: str) -> str:
+        if not re.match(r"^[A-Za-z][\w-]*$", v):
+            raise ValueError(
+                f"Sprint ID must be alphanumeric with hyphens, got: {v}"
+            )
+        return v
+
+
 class ChangesetStatus(str, Enum):
     open = "open"
     partial = "partial"
@@ -185,6 +215,7 @@ class ProjectConfig(BaseModel):
     next_story_id: int = 1
     next_epic_id: int = 1
     next_changeset_id: int = 1
+    next_sprint_id: int = 1
     projects: list[str] = []
 
     @field_validator("prefix")
@@ -245,6 +276,7 @@ class ItemType(str, Enum):
     task = "task"
     epic = "epic"
     changeset = "changeset"
+    sprint = "sprint"
 
 
 class LogSource(str, Enum):

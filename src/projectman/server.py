@@ -1649,6 +1649,164 @@ def pm_changeset_push(
         return f"error: {e}"
 
 
+# ─── Sprint Tools ────────────────────────────────────────────────
+
+@mcp.tool(title="Create Sprint", annotations=ToolAnnotations(title="Create Sprint", readOnlyHint=False, destructiveHint=False))
+def pm_create_sprint(
+    name: str,
+    goal: str = "",
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    planned_stories: Optional[str] = None,
+    project: Optional[str] = None,
+) -> str:
+    """Create a sprint with a name, goal, dates, and planned stories.
+
+    Args:
+        name: Sprint name (e.g. "Sprint 1 — Auth & Onboarding")
+        goal: Sprint goal summary
+        start_date: Optional start date (YYYY-MM-DD)
+        end_date: Optional end date (YYYY-MM-DD)
+        planned_stories: Comma-separated story IDs (e.g. "US-PRJ-1,US-PRJ-2")
+        project: Optional project name (hub mode only)
+    """
+    try:
+        store = _store(project)
+        story_list = (
+            [s.strip() for s in planned_stories.split(",") if s.strip()]
+            if planned_stories
+            else []
+        )
+        meta = store.create_sprint(
+            name=name,
+            goal=goal,
+            start_date=start_date,
+            end_date=end_date,
+            planned_stories=story_list,
+        )
+        return _yaml_dump({"created": meta.model_dump(mode="json")})
+    except Exception as e:
+        return f"error: {e}"
+
+
+@mcp.tool(title="Get Sprint", annotations=ToolAnnotations(title="Get Sprint", readOnlyHint=True))
+def pm_get_sprint(
+    sprint_id: str,
+    project: Optional[str] = None,
+) -> str:
+    """View sprint details with live progress per story.
+
+    Shows each planned story's status and task completion ratio.
+
+    Args:
+        sprint_id: Sprint ID (e.g. SPRINT-PRJ-1)
+        project: Optional project name (hub mode only)
+    """
+    try:
+        store = _store(project)
+        meta, body = store.get_sprint(sprint_id)
+        result = meta.model_dump(mode="json")
+
+        # Compute live progress per story
+        story_progress = []
+        for sid in meta.planned_stories:
+            try:
+                story_meta, _ = store.get_story(sid)
+                tasks = store.list_tasks(story_id=sid)
+                done_tasks = [t for t in tasks if t.status.value == "done"]
+                story_progress.append({
+                    "story_id": sid,
+                    "title": story_meta.title,
+                    "status": story_meta.status.value,
+                    "tasks_done": len(done_tasks),
+                    "tasks_total": len(tasks),
+                    "points": story_meta.points,
+                })
+            except Exception:
+                story_progress.append({
+                    "story_id": sid,
+                    "status": "removed",
+                    "tasks_done": 0,
+                    "tasks_total": 0,
+                })
+
+        result["story_progress"] = story_progress
+        result["body"] = body
+        return _yaml_dump(result)
+    except Exception as e:
+        return f"error: {e}"
+
+
+@mcp.tool(title="List Sprints", annotations=ToolAnnotations(title="List Sprints", readOnlyHint=True))
+def pm_list_sprints(
+    status: Optional[str] = None,
+    project: Optional[str] = None,
+) -> str:
+    """List sprints, optionally filtered by status.
+
+    Args:
+        status: Optional filter: planning, active, completed, cancelled
+        project: Optional project name (hub mode only)
+    """
+    try:
+        store = _store(project)
+        sprints = store.list_sprints(status=status)
+        return _yaml_dump({
+            "sprints": [s.model_dump(mode="json") for s in sprints],
+            "count": len(sprints),
+        })
+    except Exception as e:
+        return f"error: {e}"
+
+
+@mcp.tool(title="Update Sprint", annotations=ToolAnnotations(title="Update Sprint", readOnlyHint=False, destructiveHint=False))
+def pm_update_sprint(
+    sprint_id: str,
+    name: Optional[str] = None,
+    status: Optional[str] = None,
+    goal: Optional[str] = None,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    planned_stories: Optional[str] = None,
+    project: Optional[str] = None,
+) -> str:
+    """Update sprint fields (status, stories, dates, etc.).
+
+    When status is set to 'completed', completed_points is auto-computed from done stories.
+
+    Args:
+        sprint_id: Sprint ID (e.g. SPRINT-PRJ-1)
+        name: New sprint name
+        status: New status: planning, active, completed, cancelled
+        goal: Updated sprint goal
+        start_date: Start date (YYYY-MM-DD)
+        end_date: End date (YYYY-MM-DD)
+        planned_stories: Comma-separated story IDs (replaces current list)
+        project: Optional project name (hub mode only)
+    """
+    try:
+        store = _store(project)
+        kwargs = {}
+        if name is not None:
+            kwargs["name"] = name
+        if status is not None:
+            kwargs["status"] = status
+        if goal is not None:
+            kwargs["goal"] = goal
+        if start_date is not None:
+            kwargs["start_date"] = start_date
+        if end_date is not None:
+            kwargs["end_date"] = end_date
+        if planned_stories is not None:
+            kwargs["planned_stories"] = [
+                s.strip() for s in planned_stories.split(",") if s.strip()
+            ]
+        meta = store.update_sprint(sprint_id, **kwargs)
+        return _yaml_dump({"updated": meta.model_dump(mode="json")})
+    except Exception as e:
+        return f"error: {e}"
+
+
 # ─── Web Server Tools ───────────────────────────────────────────
 
 import subprocess
