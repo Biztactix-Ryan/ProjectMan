@@ -21,20 +21,32 @@ Call `pm_status`, then `pm_active`. Based on project state, suggest the most use
 
 ### Status & Queries
 - `status` → `pm_status` + `pm_active` dashboard
-- `get <id>` → `pm_get(id)` — works for epics, stories, and tasks (includes recent run-log entries if any)
-- `get all <type>` → `pm_batch_get(type)` — bulk fetch all epics, stories, or tasks with full data
+- `get <id>` → `pm_get(id)` — works for epics, stories, and tasks
 - `search <query>` → `pm_search(query)`
 - `board` → `pm_board` — show task board with available/in-progress/blocked work
 - `context [project]` → `pm_context(project)` — full hub + project context for starting work
 - `burndown` → `pm_burndown`
-- `log <id>` → `pm_run_log(id)` — show run log for an item (work attempts, outcomes, notes)
+- `deps [id]` → Show dependency graph for an item or the whole project
 
 ### Create & Update
 - `create epic "<title>" "<description>"` → `pm_create_epic`
-- `create story "<title>" "<description>"` → `pm_create_story` (optionally with `epic <epic-id>`)
-- `create task <story-id> "<title>" "<description>"` → `pm_create_task`
+- `create story "<title>" "<description>"` → `pm_create_story` (optionally with `epic <epic-id>`, `depends_on <ids>`)
+- `create task <story-id> "<title>" "<description>"` → `pm_create_task` (optionally with `depends_on <ids>`)
 - `update <id> <field>=<value>` → `pm_update`
 - `archive <id>` → `pm_archive`
+
+### Dependencies
+Stories and tasks support cross-item dependencies via `depends_on`:
+
+- **Cross-story task deps**: A task can depend on tasks from other stories
+- **Story-to-story deps**: A story can depend on other stories being done first
+- **Task-to-story deps**: A task can depend on a whole story being complete
+- **Story-to-task deps**: A story can depend on a specific task from another story
+
+Examples:
+- `create story "Frontend" "..." depends_on US-PRJ-1` — story depends on another story
+- `create task US-PRJ-2 "Integrate API" "..." depends_on US-PRJ-1-3` — task depends on task from different story
+- `update US-PRJ-2 depends_on=US-PRJ-1,US-PRJ-1-5` — story depends on story and specific task
 
 ### Workflows (absorbed from former standalone skills)
 - `scope <story-id>` → Call `pm_scope(id)`, propose task breakdown, create approved tasks, estimate each
@@ -49,7 +61,7 @@ Call `pm_status`, then `pm_active`. Based on project state, suggest the most use
 
 ### Git Operations
 - `commit [scope] [--message "..."]` → `pm_commit(scope, message)` — commit .project/ changes
-- `push [scope] [--dry-run]` → `pm_push(scope)` — push committed changes
+- `push [scope]` → `pm_push(scope)` — push committed changes
 - Scope: `hub` (default for push), `project:<name>`, or `all` (default for commit)
 - `commit all` → `pm_commit` with scope=all (commits all .project/ changes)
 - `commit hub` → `pm_commit` with scope=hub (hub-level only, excludes subprojects)
@@ -57,22 +69,12 @@ Call `pm_status`, then `pm_active`. Based on project state, suggest the most use
 - `push` → `pm_push` with scope=hub
 - `push all` → `pm_push` with scope=all (coordinated push)
 - `push api` → `pm_push` with scope=project:api
-- `git-status` or `git status` → `pm_git_status` — show git status across all submodules
-- `check conventions` → `validate_conventions` — verify branch naming and deploy protection rules
-- `create-branch <task-id>` → `create_feature_branch(task_id)` — create a feature branch for a task
-- `create-pr` → `create_pr` — create a pull request for the current branch
-
-### Changesets (cross-repo grouping)
-- `changeset create "<name>" --projects api,web,worker` → `pm_changeset_create(title, projects)`
-- `changeset status [CS-ID]` → `pm_changeset_status(changeset_id)` — one by ID or list all
-- `changeset add-project <CS-ID> <project>` → `pm_changeset_add_project(changeset_id, name)`
-- `changeset create-prs <CS-ID>` → `pm_changeset_create_prs(changeset_id)` — generate PR commands
-- `changeset push <CS-ID>` → `pm_changeset_push(changeset_id)` — check merge status, update hub refs
 
 ### Hub Operations
 - `repair` → `pm_repair` — scan, discover, init, rebuild
 - `sync` → pull latest across all hub submodules
 - `validate` or `check branches` → `pm_validate_branches` — verify submodule branch alignment
+- `git status` / `git-status` → `pm_git_status` — show git state across all submodules (branch, dirty, ahead/behind, PRs)
 - `docs [vision|architecture|decisions|project|infrastructure|security]` → `pm_docs`
 
 ### Natural Language
@@ -82,12 +84,12 @@ Also accept natural language and route intelligently:
 - "how are we doing?" → `pm_status` + `pm_burndown`
 - "scope this story" → ask which story, then `pm_scope`
 - "scope everything" / "autoscope" / "bulk scope" → redirect to `/pm-autoscope`
-- "commit my changes" → `pm_commit`
-- "push everything" → `pm_push` with scope=all (coordinated push)
-- "am I on the right branch?" → `pm_validate_branches`
-- "what branches are wrong?" → `pm_git_status` filtered to issues
-- "group these changes" / "create a changeset" / "bundle changes" → `pm_changeset_create`
-- "changeset status" / "how's the changeset?" → `pm_changeset_status`
+- "what needs attention?" / "git status" / "check repos" → `pm_git_status` — after displaying, suggest next action based on issues:
+  - Misaligned branch → "Run `projectman create-branch` to fix"
+  - Behind remote → "Run `projectman sync` to pull latest"
+  - Open PRs → "Check PRs with `gh pr view`"
+- "what depends on X?" → Show reverse dependencies for item X
+- "what blocks X?" → Show what X depends on that isn't done
 
 ## Post-Action Chaining
 
@@ -99,12 +101,25 @@ After every action, suggest the logical next step:
   - If no `CLAUDE_WEB_PORT`: "Start implementing with `/pm-do <id>`. Complete the task, mark it done, then end the session." (For autonomous/spawned agents, use `/pm-do <id> --complete` which auto-closes and terminates.)
   - If auto-spawn fails, fall back to the `/pm-do` suggestion
 - After completing a task → "Check the board for more work: `/pm board`"
+- After git status → Suggest next action based on issues found:
+  - Misaligned branch → "Run `projectman create-branch` to fix"
+  - Behind remote → "Run `projectman sync` to pull latest"
+  - Open PRs → "Check PRs with `gh pr view`"
+  - All clean → "All repos clean — ready for coordinated operations"
 
 ## ID Conventions
 
 - **Epics**: `EPIC-PREFIX-N` (e.g. `EPIC-CEO-1`)
 - **User Stories**: `US-PREFIX-N` (e.g. `US-CEO-1`)
 - **Tasks**: `US-PREFIX-N-N` (e.g. `US-CEO-1-1`)
+
+## Dependency Graph
+
+Dependencies form a DAG (directed acyclic graph) across the project:
+- Cycles are detected and rejected at creation/update time
+- `pm_audit` checks for orphaned dependencies and cycles project-wide
+- Task readiness (`pm_grab`) validates all dependencies are done before allowing work
+- Cross-story dependencies enable proper sequencing of related work
 
 ## Hub Mode
 

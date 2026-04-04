@@ -281,6 +281,7 @@ class Store:
         points: Optional[int] = None,
         tags: Optional[list[str]] = None,
         acceptance_criteria: Optional[list[str]] = None,
+        depends_on: Optional[list[str]] = None,
     ) -> tuple[StoryFrontmatter, list["TaskFrontmatter"]]:
         """Create a new story and write it to disk.
 
@@ -289,6 +290,10 @@ class Store:
         """
         self.stories_dir.mkdir(parents=True, exist_ok=True)
         story_id = self._next_story_id()
+        deps = depends_on or []
+
+        self._validate_story_depends_on(story_id, deps)
+
         today = date.today()
 
         meta = StoryFrontmatter(
@@ -299,6 +304,7 @@ class Store:
             points=points,
             tags=tags or [],
             acceptance_criteria=acceptance_criteria or [],
+            depends_on=deps,
             created=today,
             updated=today,
         )
@@ -563,27 +569,45 @@ class Store:
             return [m for m, _ in all_entries]
         return [m for m, _ in all_entries if m.status.value == status]
 
-    def _validate_depends_on(
-        self, task_id: str, story_id: str, depends_on: list[str]
+    def _validate_task_depends_on(
+        self, task_id: str, depends_on: list[str]
     ) -> None:
-        """Validate depends_on entries: no self-ref, all must be siblings."""
+        """Validate task depends_on entries: no self-ref, all must exist.
+
+        Cross-story task dependencies are allowed to support dependency graphs
+        that span multiple stories.
+        """
         if not depends_on:
             return
         for dep in depends_on:
             if dep == task_id:
                 raise ValueError(f"Task cannot depend on itself: {dep}")
-            # Sibling check: dep must be a task under the same story
-            dep_path = self._task_path(dep)
-            if not dep_path.exists():
+            # Check that the dependency exists (task or story)
+            dep_task_path = self._task_path(dep)
+            dep_story_path = self._story_path(dep)
+            if not dep_task_path.exists() and not dep_story_path.exists():
                 raise ValueError(
-                    f"Dependency {dep} does not exist"
+                    f"Dependency {dep} does not exist (not a task or story)"
                 )
-            dep_post = frontmatter.load(str(dep_path))
-            dep_meta = TaskFrontmatter(**dep_post.metadata)
-            if dep_meta.story_id != story_id:
+
+    def _validate_story_depends_on(
+        self, story_id: str, depends_on: list[str]
+    ) -> None:
+        """Validate story depends_on entries: no self-ref, all must exist.
+
+        Stories can depend on other stories or tasks.
+        """
+        if not depends_on:
+            return
+        for dep in depends_on:
+            if dep == story_id:
+                raise ValueError(f"Story cannot depend on itself: {dep}")
+            # Check that the dependency exists (story or task)
+            dep_story_path = self._story_path(dep)
+            dep_task_path = self._task_path(dep)
+            if not dep_story_path.exists() and not dep_task_path.exists():
                 raise ValueError(
-                    f"Dependency {dep} belongs to story {dep_meta.story_id}, "
-                    f"not {story_id} — dependencies must be siblings"
+                    f"Dependency {dep} does not exist (not a story or task)"
                 )
 
     def create_task(
@@ -606,7 +630,7 @@ class Store:
         task_id = self._next_task_id(story_id)
         deps = depends_on or []
 
-        self._validate_depends_on(task_id, story_id, deps)
+        self._validate_task_depends_on(task_id, deps)
 
         today = date.today()
 
@@ -685,7 +709,7 @@ class Store:
                     raise ValueError(f"Task cannot depend on itself: {dep}")
                 if dep not in batch_id_set:
                     # Delegate to the standard validator for the single dep.
-                    self._validate_depends_on(task_id, story_id, [dep])
+                    self._validate_task_depends_on(task_id, [dep])
 
             meta = TaskFrontmatter(
                 id=task_id,
@@ -818,6 +842,7 @@ class Store:
         """
         is_epic = self._is_epic_id(item_id)
         is_task = not is_epic and self._is_task_id(item_id)
+        is_story = not is_epic and not is_task
 
         if is_epic:
             path = self._epic_path(item_id)
@@ -855,11 +880,13 @@ class Store:
         if new_body is not None:
             post.content = new_body
 
-        # Validate depends_on before applying to task
+        # Validate depends_on before applying to task or story
         new_depends_on = kwargs.get("depends_on")
-        if new_depends_on is not None and is_task:
-            story_id = post.metadata.get("story_id", "")
-            self._validate_depends_on(item_id, story_id, new_depends_on)
+        if new_depends_on is not None:
+            if is_task:
+                self._validate_task_depends_on(item_id, new_depends_on)
+            elif is_story:
+                self._validate_story_depends_on(item_id, new_depends_on)
 
         for key, value in kwargs.items():
             if value is not None:

@@ -13,5 +13,9 @@ user_invocable: true
    - Story/task counts by status
    - Points completed vs remaining
    - Active work items with assignees
-   - Any blockers (blocked tasks)
-4. Highlight items needing attention
+   - Any blockers (blocked tasks or incomplete dependencies)
+4. **Dependency status**:
+   - Show tasks blocked by cross-story dependencies
+   - Highlight stories waiting on other stories
+   - Flag any dependency cycles detected
+5. Highlight items needing attention

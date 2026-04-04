@@ -49,6 +49,7 @@ class StoryFrontmatter(BaseModel):
     epic_id: Optional[str] = None
     tags: list[str] = []
     acceptance_criteria: list[str] = []
+    depends_on: list[str] = []
     created: date
     updated: date
 
@@ -66,6 +67,16 @@ class StoryFrontmatter(BaseModel):
     def validate_id(cls, v: str) -> str:
         if not re.match(r"^[A-Za-z][\w-]*$", v):
             raise ValueError(f"Story ID must be alphanumeric with hyphens, got: {v}")
+        return v
+
+    @field_validator("depends_on")
+    @classmethod
+    def validate_depends_on(cls, v: list[str]) -> list[str]:
+        for dep in v:
+            if not re.match(r"^[A-Za-z][\w-]*$", dep):
+                raise ValueError(
+                    f"depends_on entries must be valid IDs, got: {dep}"
+                )
         return v
 
 

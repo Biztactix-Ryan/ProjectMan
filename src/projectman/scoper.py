@@ -21,13 +21,14 @@ def scope(store: Store, story_id: str) -> str:
             "Test tasks MUST set depends_on to the implementation task(s) they verify",
             "First task should set up the foundation (schema, infrastructure, etc.)",
             "Last task should handle integration/cleanup or final verification",
-            "Use depends_on to declare ordering between tasks when one requires another's output",
+            "Use depends_on to declare ordering — can reference tasks from OTHER stories too",
+            "Cross-story deps: if this task needs output from another story's task, add it to depends_on",
         ],
         "task_template": {
             "title": "Verb phrase describing the deliverable",
             "description": "Include: what to implement, acceptance criteria, files to touch",
             "points": "Fibonacci: 1, 2, 3, 5 (avoid 8+ for single tasks)",
-            "depends_on": "List of sibling task IDs this task requires — test tasks MUST depend on their implementation task",
+            "depends_on": "Task IDs this requires (same story or cross-story) — test tasks MUST depend on impl tasks",
         },
     }
 
@@ -135,16 +136,17 @@ def _auto_scope_full(store: Store) -> str:
             "title": "Verb phrase describing the deliverable",
             "description": "What to implement, acceptance criteria, files to touch",
             "points": "Fibonacci: 1, 2, 3, 5 (avoid 8+ for single tasks)",
-            "depends_on": "List of sibling task IDs this task requires — test tasks MUST depend on their implementation task",
+            "depends_on": "Task IDs this requires (same story or cross-story) — test tasks MUST depend on impl tasks",
         },
         "rules": [
             "Group related stories under epics",
             "Each story should represent user-visible value",
+            "Stories can depend on other stories via depends_on",
             "Each task should be completable in one session (1-5 points)",
             "Tasks should be independently testable",
             "Create implementation tasks FIRST, then test/verification tasks AFTER",
             "Test tasks MUST set depends_on to the implementation task(s) they verify",
-            "Use depends_on to declare ordering between tasks when one requires another's output",
+            "Use depends_on for ordering — can reference tasks from OTHER stories too",
         ],
     }
 
@@ -208,13 +210,14 @@ def _auto_scope_incremental(store: Store, limit: int = 5, offset: int = 0) -> st
                 "Test tasks MUST set depends_on to the implementation task(s) they verify",
                 "First task should set up the foundation (schema, infrastructure, etc.)",
                 "Last task should handle integration/cleanup or final verification",
-                "Use depends_on to declare ordering between tasks when one requires another's output",
+                "Use depends_on for ordering — can reference tasks from OTHER stories too",
+                "Cross-story deps: if this task needs output from another story's task, add it",
             ],
             "task_template": {
                 "title": "Verb phrase describing the deliverable",
                 "description": "Include: what to implement, acceptance criteria, files to touch",
                 "points": "Fibonacci: 1, 2, 3, 5 (avoid 8+ for single tasks)",
-                "depends_on": "List of sibling task IDs this task requires — test tasks MUST depend on their implementation task",
+                "depends_on": "Task IDs this requires (same story or cross-story) — test tasks MUST depend on impl tasks",
             },
         },
     }
@@ -262,6 +265,8 @@ def scope_epic(store: Store, epic_id: str) -> str:
             "Group related tasks under the same story",
             "A story should be completable in 1-2 sprints (5-13 points)",
             "Cover the epic's success criteria across the stories",
+            "Use depends_on when one story must complete before another can start",
+            "Cross-story task deps: tasks can depend on tasks from other stories",
         ],
         "story_template": {
             "title": "As a [user], I want [goal] so that [benefit]",
@@ -269,6 +274,7 @@ def scope_epic(store: Store, epic_id: str) -> str:
             "acceptance_criteria": "List of verifiable criteria — each auto-generates a test task",
             "priority": "must / should / could / wont",
             "points": "Fibonacci: 1, 2, 3, 5, 8, 13",
+            "depends_on": "Story or task IDs this story requires to be done first",
         },
     }
 

@@ -7,7 +7,7 @@ from typing import Optional
 import yaml
 
 from .config import load_config
-from .deps import build_dep_graph, detect_cycle
+from .deps import build_combined_dep_graph, detect_cycle
 from .store import Store
 
 
@@ -267,35 +267,47 @@ def run_audit(root: Path, project_dir: Optional[Path] = None) -> str:
                 "items": [f.name for f in sorted(malformed_dir.glob("*.md"))[:5]],
             })
 
-    # Check 14: Dependency cycles within stories
-    for story in store.list_stories():
-        tasks = store.list_tasks(story_id=story.id)
-        if tasks:
-            graph = build_dep_graph(tasks)
-            cycle = detect_cycle(graph)
-            if cycle is not None:
-                path = " -> ".join(cycle)
-                findings.append({
-                    "severity": "error",
-                    "check": "dependency-cycle",
-                    "message": f"Dependency cycle in story {story.id}: {path}",
-                    "items": cycle,
-                })
+    # Check 14: Dependency cycles (project-wide, across tasks and stories)
+    all_tasks = store.list_tasks()
+    all_stories = store.list_stories()
+    if all_tasks or all_stories:
+        graph = build_combined_dep_graph(all_tasks, all_stories)
+        cycle = detect_cycle(graph)
+        if cycle is not None:
+            path = " -> ".join(cycle)
+            findings.append({
+                "severity": "error",
+                "check": "dependency-cycle",
+                "message": f"Dependency cycle detected: {path}",
+                "items": cycle,
+            })
 
-    # Check 15: Orphaned dependency references
-    for story in store.list_stories():
-        tasks = store.list_tasks(story_id=story.id)
-        if tasks:
-            known_ids = {t.id for t in tasks}
-            for task in tasks:
-                orphans = [dep for dep in task.depends_on if dep not in known_ids]
-                for orphan in orphans:
-                    findings.append({
-                        "severity": "warning",
-                        "check": "orphaned-dependency",
-                        "message": f"Task {task.id} depends on {orphan} which does not exist",
-                        "items": [task.id, orphan],
-                    })
+    # Check 15: Orphaned dependency references (project-wide)
+    all_task_ids = {t.id for t in all_tasks}
+    all_story_ids = {s.id for s in all_stories}
+    all_known_ids = all_task_ids | all_story_ids
+
+    # Check task dependencies
+    for task in all_tasks:
+        orphans = [dep for dep in task.depends_on if dep not in all_known_ids]
+        for orphan in orphans:
+            findings.append({
+                "severity": "warning",
+                "check": "orphaned-dependency",
+                "message": f"Task {task.id} depends on {orphan} which does not exist",
+                "items": [task.id, orphan],
+            })
+
+    # Check story dependencies
+    for story in all_stories:
+        orphans = [dep for dep in story.depends_on if dep not in all_known_ids]
+        for orphan in orphans:
+            findings.append({
+                "severity": "warning",
+                "check": "orphaned-dependency",
+                "message": f"Story {story.id} depends on {orphan} which does not exist",
+                "items": [story.id, orphan],
+            })
 
     # Check 16: Missing implementation tasks (only test tasks, no impl tasks)
     for story in store.list_stories():

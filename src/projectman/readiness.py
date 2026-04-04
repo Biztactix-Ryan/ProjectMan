@@ -1,6 +1,6 @@
 """Task readiness checks — Definition of Ready enforcement."""
 
-from .deps import incomplete_dependencies
+from .deps import incomplete_task_dependencies
 from .models import TaskFrontmatter, TaskStatus
 from .store import Store
 
@@ -36,10 +36,11 @@ def check_readiness(
     except FileNotFoundError:
         blockers.append(f"parent story {task_meta.story_id} not found")
 
-    # Dependency check
+    # Dependency check (cross-story aware)
     if task_meta.depends_on:
-        siblings = store.list_tasks(story_id=task_meta.story_id)
-        incomplete = incomplete_dependencies(task_meta, siblings)
+        all_tasks = store.list_tasks()
+        all_stories = store.list_stories()
+        incomplete = incomplete_task_dependencies(task_meta, all_tasks, all_stories)
         if incomplete:
             dep_list = ", ".join(incomplete)
             blockers.append(f"incomplete dependencies: {dep_list}")

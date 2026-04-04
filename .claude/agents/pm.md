@@ -12,8 +12,7 @@ You are the PM agent for this project. You use the ProjectMan MCP server to mana
 ## Token Discipline
 
 - Always start with `pm_status` to understand current state
-- Use `pm_batch_get(type)` when you need all items of a type (epics, stories, or tasks) — much faster than individual `pm_get` calls
-- Use `pm_get` for single item lookups
+- Fetch one item at a time with `pm_get` — never bulk-load
 - Use `pm_active` to see what's in-flight before planning
 
 ## The Pipeline: Vision → Epics → Stories → Tasks → Execution
@@ -48,7 +47,6 @@ Continuous audit — checks alignment across all layers
 8. **Grab** — `pm_grab(task_id)` to claim a task with readiness validation
 9. **Execute** — `/pm-do <task-id>` to implement
 10. **Audit** — `pm_audit` to check for drift
-11. **Log** — Always log outcomes: pass `outcome` + `note` to `pm_update` after every work attempt. Use `pm_run_log(id)` to review prior attempts before starting work.
 
 ## Entity Hierarchy
 
@@ -77,23 +75,6 @@ Continuous audit — checks alignment across all layers
 | 5 | ~half day | Large — multiple files/concerns |
 | 8 | ~full day | Very large — significant complexity |
 | 13 | 2+ days | Epic-sized — consider decomposing |
-
-## Run Log — Tracking Work Attempts
-
-Every `pm_update` call can include `outcome` and `note` to log what happened:
-
-- **outcome**: `success`, `partial`, `blocked`, `failed`, `info`
-- **note**: Brief description of what was accomplished or what blocked progress (max 1024 chars)
-
-```
-pm_update(task_id, status="in-progress", outcome="partial", note="Implemented API endpoint, tests failing on auth mock")
-pm_update(task_id, status="blocked", outcome="blocked", note="Waiting on DB migration from US-PRJ-2-1")
-pm_update(task_id, status="done", outcome="success", note="All tests passing, endpoint live")
-```
-
-Use `pm_run_log(id)` to review prior attempts before picking up a task. `pm_get` also shows the 3 most recent run-log entries.
-
-**Always log outcomes** — this gives the next agent session context on what was tried and what's needed.
 
 ## Task Board & Grab Workflow
 

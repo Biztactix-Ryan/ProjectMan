@@ -453,13 +453,14 @@ class TestCreateTaskDependsOn:
         with pytest.raises(ValueError, match="does not exist"):
             store.create_task("US-TST-1", "Task 1", "Desc", depends_on=["US-TST-1-99"])
 
-    def test_create_task_non_sibling_dep_raises(self, store):
-        """create_task rejects depends_on referencing a task from a different story."""
+    def test_create_task_cross_story_dep_allowed(self, store):
+        """create_task accepts depends_on referencing a task from a different story."""
         store.create_story("Story 1", "Desc")
         store.create_story("Story 2", "Desc")
         store.create_task("US-TST-2", "Other task", "Desc")
-        with pytest.raises(ValueError, match="not US-TST-1"):
-            store.create_task("US-TST-1", "Task 1", "Desc", depends_on=["US-TST-2-1"])
+        # Cross-story dependencies are now allowed
+        task = store.create_task("US-TST-1", "Task 1", "Desc", depends_on=["US-TST-2-1"])
+        assert task.depends_on == ["US-TST-2-1"]
 
     def test_create_task_empty_depends_on(self, store):
         """create_task with empty depends_on list works fine."""
@@ -561,15 +562,16 @@ class TestCreateTasksBatchDependsOn:
                 {"title": "A", "description": "A", "depends_on": ["US-TST-1-99"]},
             ])
 
-    def test_create_tasks_non_sibling_dep_in_batch_raises(self, store):
-        """depends_on referencing a task from a different story is rejected."""
+    def test_create_tasks_cross_story_dep_allowed(self, store):
+        """depends_on referencing a task from a different story is allowed."""
         store.create_story("Story 1", "Desc")
         store.create_story("Story 2", "Desc")
         store.create_task("US-TST-2", "Other task", "Desc")
-        with pytest.raises(ValueError, match="not US-TST-1"):
-            store.create_tasks("US-TST-1", [
-                {"title": "A", "description": "A", "depends_on": ["US-TST-2-1"]},
-            ])
+        # Cross-story dependencies are now allowed
+        results = store.create_tasks("US-TST-1", [
+            {"title": "A", "description": "A", "depends_on": ["US-TST-2-1"]},
+        ])
+        assert results[0].depends_on == ["US-TST-2-1"]
 
     def test_create_tasks_chain_no_cycle(self, store):
         """Linear chain A->B->C is valid (no cycle)."""
@@ -612,14 +614,15 @@ class TestUpdateDependsOn:
         with pytest.raises(ValueError, match="does not exist"):
             store.update("US-TST-1-1", depends_on=["US-TST-1-99"])
 
-    def test_update_depends_on_non_sibling_raises(self, store):
-        """update() rejects depends_on referencing a task from a different story."""
+    def test_update_depends_on_cross_story_allowed(self, store):
+        """update() accepts depends_on referencing a task from a different story."""
         store.create_story("Story 1", "Desc")
         store.create_story("Story 2", "Desc")
         store.create_task("US-TST-1", "Task in S1", "Desc")
         store.create_task("US-TST-2", "Task in S2", "Desc")
-        with pytest.raises(ValueError, match="not US-TST-1"):
-            store.update("US-TST-1-1", depends_on=["US-TST-2-1"])
+        # Cross-story dependencies are now allowed
+        meta = store.update("US-TST-1-1", depends_on=["US-TST-2-1"])
+        assert meta.depends_on == ["US-TST-2-1"]
 
     def test_update_depends_on_cycle_raises_and_rolls_back(self, store):
         """update() rejects depends_on that would create a cycle and rolls back."""
@@ -1133,3 +1136,70 @@ class TestCachePerInstanceSharedDict:
         # store_b should see no tasks (isolated)
         tasks_b = store_b.list_tasks()
         assert len(tasks_b) == 0
+
+
+class TestStoryDependsOn:
+    """Tests for story depends_on parameter and validation."""
+
+    def test_create_story_with_depends_on(self, store):
+        """create_story accepts depends_on and persists it to frontmatter."""
+        store.create_story("Story 1", "Desc")
+        meta, _ = store.create_story("Story 2", "Desc", depends_on=["US-TST-1"])
+        assert meta.depends_on == ["US-TST-1"]
+        reloaded, _ = store.get_story("US-TST-2")
+        assert reloaded.depends_on == ["US-TST-1"]
+
+    def test_create_story_without_depends_on(self, store):
+        """create_story without depends_on defaults to empty list."""
+        meta, _ = store.create_story("Story", "Desc")
+        assert meta.depends_on == []
+
+    def test_create_story_depends_on_task(self, store):
+        """A story can depend on a specific task."""
+        store.create_story("Story 1", "Desc")
+        store.create_task("US-TST-1", "Task 1", "Desc")
+        meta, _ = store.create_story("Story 2", "Desc", depends_on=["US-TST-1-1"])
+        assert meta.depends_on == ["US-TST-1-1"]
+
+    def test_create_story_self_dep_raises(self, store):
+        """create_story rejects self-referencing depends_on.
+
+        Note: Since story IDs are auto-generated, self-reference check happens
+        after ID generation but before writing to disk.
+        """
+        # Create first story to establish what the next ID will be
+        store.create_story("Story 1", "Desc")
+        # The next story will be US-TST-2, so trying to depend on it is self-ref
+        with pytest.raises(ValueError, match="cannot depend on itself"):
+            store.create_story("Story 2", "Desc", depends_on=["US-TST-2"])
+
+    def test_create_story_nonexistent_dep_raises(self, store):
+        """create_story rejects depends_on referencing a non-existent item."""
+        with pytest.raises(ValueError, match="does not exist"):
+            store.create_story("Story", "Desc", depends_on=["US-TST-999"])
+
+    def test_update_story_depends_on(self, store):
+        """update() accepts depends_on for a story."""
+        store.create_story("Story 1", "Desc")
+        store.create_story("Story 2", "Desc")
+        meta = store.update("US-TST-2", depends_on=["US-TST-1"])
+        assert meta.depends_on == ["US-TST-1"]
+
+    def test_update_story_depends_on_self_raises(self, store):
+        """update() rejects self-referencing depends_on for a story."""
+        store.create_story("Story 1", "Desc")
+        with pytest.raises(ValueError, match="cannot depend on itself"):
+            store.update("US-TST-1", depends_on=["US-TST-1"])
+
+    def test_update_story_depends_on_nonexistent_raises(self, store):
+        """update() rejects depends_on referencing a non-existent item."""
+        store.create_story("Story", "Desc")
+        with pytest.raises(ValueError, match="does not exist"):
+            store.update("US-TST-1", depends_on=["US-TST-999"])
+
+    def test_task_depends_on_story(self, store):
+        """A task can depend on a story being done."""
+        store.create_story("Story 1", "Desc")
+        store.create_story("Story 2", "Desc")
+        task = store.create_task("US-TST-2", "Task", "Desc", depends_on=["US-TST-1"])
+        assert task.depends_on == ["US-TST-1"]

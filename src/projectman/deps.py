@@ -1,10 +1,11 @@
-"""Dependency graph utilities for task ordering."""
+"""Dependency graph utilities for task and story ordering."""
 
 from __future__ import annotations
 
 from collections import defaultdict, deque
+from typing import Union
 
-from projectman.models import TaskFrontmatter
+from projectman.models import StoryFrontmatter, TaskFrontmatter
 
 
 class CycleError(ValueError):
@@ -33,6 +34,25 @@ def build_dep_graph(
     graph: dict[str, list[str]] = {}
     for task in tasks:
         graph[task.id] = [dep for dep in task.depends_on if dep in known]
+    return graph
+
+
+def build_combined_dep_graph(
+    tasks: list[TaskFrontmatter],
+    stories: list[StoryFrontmatter],
+) -> dict[str, list[str]]:
+    """Build an adjacency list from both tasks and stories.
+
+    Returns a dict mapping each item ID to the list of IDs it depends on.
+    Supports cross-story task dependencies and story-to-story dependencies.
+    Unknown IDs are silently dropped.
+    """
+    known = {t.id for t in tasks} | {s.id for s in stories}
+    graph: dict[str, list[str]] = {}
+    for task in tasks:
+        graph[task.id] = [dep for dep in task.depends_on if dep in known]
+    for story in stories:
+        graph[story.id] = [dep for dep in story.depends_on if dep in known]
     return graph
 
 
@@ -125,10 +145,62 @@ def incomplete_dependencies(
     task: TaskFrontmatter,
     siblings: list[TaskFrontmatter],
 ) -> list[str]:
-    """Return depends_on IDs whose sibling tasks are not done."""
+    """Return depends_on IDs whose sibling tasks are not done.
+
+    Legacy function for backward compatibility - only checks siblings.
+    For cross-story dependencies, use incomplete_task_dependencies.
+    """
     status_map = {t.id: t.status for t in siblings}
     return [
         dep
         for dep in task.depends_on
+        if dep in status_map and status_map[dep] != "done"
+    ]
+
+
+def incomplete_task_dependencies(
+    task: TaskFrontmatter,
+    all_tasks: list[TaskFrontmatter],
+    all_stories: list[StoryFrontmatter],
+) -> list[str]:
+    """Return depends_on IDs that are not done (cross-story aware).
+
+    A task dependency is incomplete if:
+    - It references a task that is not done
+    - It references a story that is not done
+    """
+    status_map: dict[str, str] = {}
+    for t in all_tasks:
+        status_map[t.id] = t.status.value
+    for s in all_stories:
+        status_map[s.id] = s.status.value
+
+    return [
+        dep
+        for dep in task.depends_on
+        if dep in status_map and status_map[dep] != "done"
+    ]
+
+
+def incomplete_story_dependencies(
+    story: StoryFrontmatter,
+    all_tasks: list[TaskFrontmatter],
+    all_stories: list[StoryFrontmatter],
+) -> list[str]:
+    """Return depends_on IDs for a story that are not done.
+
+    A story dependency is incomplete if:
+    - It references a story that is not done
+    - It references a task that is not done
+    """
+    status_map: dict[str, str] = {}
+    for t in all_tasks:
+        status_map[t.id] = t.status.value
+    for s in all_stories:
+        status_map[s.id] = s.status.value
+
+    return [
+        dep
+        for dep in story.depends_on
         if dep in status_map and status_map[dep] != "done"
     ]

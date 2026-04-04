@@ -554,6 +554,7 @@ def pm_create_story(
     epic_id: Optional[str] = None,
     acceptance_criteria: Optional[str] = None,
     tags: Optional[str] = None,
+    depends_on: Optional[str] = None,
     project: Optional[str] = None,
 ) -> str:
     """Create a new user story.
@@ -566,13 +567,15 @@ def pm_create_story(
         epic_id: Optional parent epic ID (e.g. EPIC-PRJ-1)
         acceptance_criteria: Comma-separated acceptance criteria (e.g. "Users can log in,Error shown on invalid password")
         tags: Comma-separated tags (e.g. "security,mvp")
+        depends_on: Comma-separated dependency IDs (stories or tasks this story depends on)
         project: Optional project name (hub mode only)
     """
     try:
         store = _store(project)
         ac_list = [c.strip() for c in acceptance_criteria.split(",")] if acceptance_criteria else None
         tag_list = [t.strip() for t in tags.split(",")] if tags else None
-        meta, test_tasks = store.create_story(title, description, priority, points, tags=tag_list, acceptance_criteria=ac_list)
+        dep_list = [d.strip() for d in depends_on.split(",")] if depends_on else None
+        meta, test_tasks = store.create_story(title, description, priority, points, tags=tag_list, acceptance_criteria=ac_list, depends_on=dep_list)
         if epic_id:
             store.update(meta.id, epic_id=epic_id)
             meta, _ = store.get_story(meta.id)
@@ -966,22 +969,36 @@ def pm_grab(
         # Load sibling tasks (cap at 20 to avoid bloat)
         siblings = store.list_tasks(story_id=task_meta.story_id)
         all_siblings = [s for s in siblings if s.id != task_id]
-        sibling_map = {s.id: s for s in siblings}
         sibling_list = [
             {"id": s.id, "title": s.title, "status": s.status.value, "assignee": s.assignee}
             for s in all_siblings[:20]
         ]
 
-        # Build dependency status
+        # Build dependency status (cross-story aware)
         dependency_status = []
         if task_meta.depends_on:
+            # Build lookup maps for all tasks and stories
+            all_tasks = store.list_tasks()
+            all_stories = store.list_stories()
+            task_map = {t.id: t for t in all_tasks}
+            story_map = {s.id: s for s in all_stories}
+
             for dep_id in task_meta.depends_on:
-                dep = sibling_map.get(dep_id)
-                if dep:
+                if dep_id in task_map:
+                    dep = task_map[dep_id]
                     dependency_status.append({
                         "id": dep.id,
                         "title": dep.title,
                         "status": dep.status.value,
+                        "type": "task",
+                    })
+                elif dep_id in story_map:
+                    dep = story_map[dep_id]
+                    dependency_status.append({
+                        "id": dep.id,
+                        "title": dep.title,
+                        "status": dep.status.value,
+                        "type": "story",
                     })
 
         result = {
@@ -1669,6 +1686,8 @@ def pm_create_sprint(
         end_date: Optional end date (YYYY-MM-DD)
         planned_stories: Comma-separated story IDs (e.g. "US-PRJ-1,US-PRJ-2")
         project: Optional project name (hub mode only)
+
+    Returns dependency warnings if planned stories have unmet external dependencies.
     """
     try:
         store = _store(project)
@@ -1677,6 +1696,26 @@ def pm_create_sprint(
             if planned_stories
             else []
         )
+
+        # Check for dependency issues
+        warnings = []
+        if story_list:
+            from .deps import incomplete_story_dependencies
+            all_tasks = store.list_tasks()
+            all_stories = store.list_stories()
+            planned_set = set(story_list)
+
+            for sid in story_list:
+                try:
+                    story_meta, _ = store.get_story(sid)
+                    incomplete = incomplete_story_dependencies(story_meta, all_tasks, all_stories)
+                    # Filter to external dependencies (not in this sprint)
+                    external_deps = [d for d in incomplete if d not in planned_set]
+                    if external_deps:
+                        warnings.append(f"{sid} has unmet dependencies: {', '.join(external_deps)}")
+                except FileNotFoundError:
+                    warnings.append(f"{sid} not found")
+
         meta = store.create_sprint(
             name=name,
             goal=goal,
@@ -1684,7 +1723,10 @@ def pm_create_sprint(
             end_date=end_date,
             planned_stories=story_list,
         )
-        return _yaml_dump({"created": meta.model_dump(mode="json")})
+        result = {"created": meta.model_dump(mode="json")}
+        if warnings:
+            result["dependency_warnings"] = warnings
+        return _yaml_dump(result)
     except Exception as e:
         return f"error: {e}"
 
@@ -1696,7 +1738,7 @@ def pm_get_sprint(
 ) -> str:
     """View sprint details with live progress per story.
 
-    Shows each planned story's status and task completion ratio.
+    Shows each planned story's status, task completion ratio, and dependency status.
 
     Args:
         sprint_id: Sprint ID (e.g. SPRINT-PRJ-1)
@@ -1707,21 +1749,42 @@ def pm_get_sprint(
         meta, body = store.get_sprint(sprint_id)
         result = meta.model_dump(mode="json")
 
-        # Compute live progress per story
+        # Load all data for dependency checks
+        from .deps import incomplete_story_dependencies
+        all_tasks = store.list_tasks()
+        all_stories = store.list_stories()
+        planned_set = set(meta.planned_stories)
+
+        # Compute live progress per story with dependency status
         story_progress = []
         for sid in meta.planned_stories:
             try:
                 story_meta, _ = store.get_story(sid)
                 tasks = store.list_tasks(story_id=sid)
                 done_tasks = [t for t in tasks if t.status.value == "done"]
-                story_progress.append({
+
+                # Check dependencies
+                incomplete = incomplete_story_dependencies(story_meta, all_tasks, all_stories)
+                # Split into internal (in sprint) and external (outside sprint)
+                internal_deps = [d for d in incomplete if d in planned_set]
+                external_deps = [d for d in incomplete if d not in planned_set]
+
+                entry = {
                     "story_id": sid,
                     "title": story_meta.title,
                     "status": story_meta.status.value,
                     "tasks_done": len(done_tasks),
                     "tasks_total": len(tasks),
                     "points": story_meta.points,
-                })
+                }
+                if story_meta.depends_on:
+                    entry["depends_on"] = story_meta.depends_on
+                if internal_deps:
+                    entry["blocked_by_in_sprint"] = internal_deps
+                if external_deps:
+                    entry["blocked_by_external"] = external_deps
+
+                story_progress.append(entry)
             except Exception:
                 story_progress.append({
                     "story_id": sid,
@@ -1730,7 +1793,19 @@ def pm_get_sprint(
                     "tasks_total": 0,
                 })
 
+        # Compute suggested execution order based on dependencies
+        # Stories with no incomplete deps come first
+        ready_stories = [s for s in story_progress if not s.get("blocked_by_in_sprint") and s.get("status") != "done"]
+        blocked_stories = [s for s in story_progress if s.get("blocked_by_in_sprint")]
+
         result["story_progress"] = story_progress
+        if ready_stories:
+            result["ready_to_work"] = [s["story_id"] for s in ready_stories]
+        if blocked_stories:
+            result["blocked_in_sprint"] = [
+                {"story_id": s["story_id"], "waiting_on": s["blocked_by_in_sprint"]}
+                for s in blocked_stories
+            ]
         result["body"] = body
         return _yaml_dump(result)
     except Exception as e:
@@ -1783,6 +1858,8 @@ def pm_update_sprint(
         end_date: End date (YYYY-MM-DD)
         planned_stories: Comma-separated story IDs (replaces current list)
         project: Optional project name (hub mode only)
+
+    Returns dependency warnings if new planned stories have unmet dependencies.
     """
     try:
         store = _store(project)
@@ -1797,12 +1874,37 @@ def pm_update_sprint(
             kwargs["start_date"] = start_date
         if end_date is not None:
             kwargs["end_date"] = end_date
+
+        story_list = None
         if planned_stories is not None:
-            kwargs["planned_stories"] = [
-                s.strip() for s in planned_stories.split(",") if s.strip()
-            ]
+            story_list = [s.strip() for s in planned_stories.split(",") if s.strip()]
+            kwargs["planned_stories"] = story_list
+
         meta = store.update_sprint(sprint_id, **kwargs)
-        return _yaml_dump({"updated": meta.model_dump(mode="json")})
+        result = {"updated": meta.model_dump(mode="json")}
+
+        # Check for dependency issues if stories were updated
+        if story_list:
+            from .deps import incomplete_story_dependencies
+            all_tasks = store.list_tasks()
+            all_stories = store.list_stories()
+            planned_set = set(story_list)
+            warnings = []
+
+            for sid in story_list:
+                try:
+                    story_meta, _ = store.get_story(sid)
+                    incomplete = incomplete_story_dependencies(story_meta, all_tasks, all_stories)
+                    external_deps = [d for d in incomplete if d not in planned_set]
+                    if external_deps:
+                        warnings.append(f"{sid} has unmet dependencies: {', '.join(external_deps)}")
+                except FileNotFoundError:
+                    pass
+
+            if warnings:
+                result["dependency_warnings"] = warnings
+
+        return _yaml_dump(result)
     except Exception as e:
         return f"error: {e}"
 
