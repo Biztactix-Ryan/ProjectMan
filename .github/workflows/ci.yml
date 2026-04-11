@@ -79,6 +79,26 @@ jobs:
       - name: Run SSE integration tests
         run: python -m pytest tests/integration/test_sse.py -v
 
+  integration-full:
+    name: "Integration: Full Suite"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[all]"
+          pip install pytest pytest-tmp-files httpx
+
+      - name: Run full integration test suite
+        run: python -m pytest tests/integration/test_full.py tests/integration/test_cache_staleness.py -v
+
   integration-web:
     name: "Integration: Web UI"
     runs-on: ubuntu-latest
