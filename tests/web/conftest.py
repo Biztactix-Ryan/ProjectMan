@@ -44,14 +44,14 @@ def tmp_project(tmp_path):
 def client(tmp_project):
     """TestClient that uses the tmp_project as its project root."""
     # Patch at both import sites so all code paths resolve to tmp_project
-    with patch(
-        "projectman.web.routes.api.find_project_root", return_value=tmp_project
-    ), patch(
-        "projectman.config.find_project_root", return_value=tmp_project
+    with (
+        patch("projectman.web.routes.api.find_project_root", return_value=tmp_project),
+        patch("projectman.config.find_project_root", return_value=tmp_project),
     ):
         from projectman.web.app import app
+        from projectman.store import Store
 
         app.state.root = tmp_project
-        app.state.store = None
+        app.state.store = Store(tmp_project)
 
         yield TestClient(app)
