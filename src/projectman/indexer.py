@@ -10,16 +10,16 @@ from .models import IndexEntry, ProjectIndex
 from .store import Store
 
 _STATUS_EMOJI = {
-    "backlog": "\U0001F4CB",   # clipboard
-    "draft": "\U0001F4DD",     # memo
-    "ready": "\U0001F7E2",     # green circle
-    "active": "\U0001F3C3",    # runner
-    "in-progress": "\U0001F3C3",
-    "todo": "\u26AA",          # white circle
-    "review": "\U0001F50D",    # magnifying glass
-    "done": "\u2705",          # check mark
-    "blocked": "\U0001F6D1",   # stop sign
-    "archived": "\U0001F4E6",  # package
+    "backlog": "\U0001f4cb",  # clipboard
+    "draft": "\U0001f4dd",  # memo
+    "ready": "\U0001f7e2",  # green circle
+    "active": "\U0001f3c3",  # runner
+    "in-progress": "\U0001f3c3",
+    "todo": "\u26aa",  # white circle
+    "review": "\U0001f50d",  # magnifying glass
+    "done": "\u2705",  # check mark
+    "blocked": "\U0001f6d1",  # stop sign
+    "archived": "\U0001f4e6",  # package
 }
 
 
@@ -134,9 +134,7 @@ def write_markdown_indexes(
     for t in tasks:
         tasks_per_story[t.story_id] += 1
 
-    ac_per_story: dict[str, int] = {
-        s.id: len(s.acceptance_criteria) for s in stories
-    }
+    ac_per_story: dict[str, int] = {s.id: len(s.acceptance_criteria) for s in stories}
 
     points_per_epic: Counter[str] = Counter()
     for s in stories:
@@ -208,9 +206,7 @@ def write_markdown_indexes(
             link = f"[{s.id}](stories/{s.id}.md)"
             pts = s.points if s.points is not None else "—"
             tags = ", ".join(s.tags) if s.tags else ""
-            epic_link = (
-                f"[{s.epic_id}](epics/{s.epic_id}.md)" if s.epic_id else "—"
-            )
+            epic_link = f"[{s.epic_id}](epics/{s.epic_id}.md)" if s.epic_id else "—"
             acs = ac_per_story.get(s.id, 0)
             tc = tasks_per_story.get(s.id, 0)
             lines.append(
@@ -225,8 +221,12 @@ def write_markdown_indexes(
     # --- INDEX-TASKS.md ---
     lines = ["# Tasks", ""]
     if tasks:
-        lines.append("| ID | Title | Status | Points | Tags | Assignee | Depends On | Story |")
-        lines.append("| -- | ----- | ------ | ------ | ---- | -------- | ---------- | ----- |")
+        lines.append(
+            "| ID | Title | Status | Points | Tags | Assignee | Depends On | Story |"
+        )
+        lines.append(
+            "| -- | ----- | ------ | ------ | ---- | -------- | ---------- | ----- |"
+        )
         for t in sorted(tasks, key=lambda x: x.id):
             link = f"[{t.id}](tasks/{t.id}.md)"
             pts = t.points if t.points is not None else "—"
@@ -279,7 +279,9 @@ def _discover_badges(root: Path, name: str, repo: str) -> list[str]:
     return badges
 
 
-def _build_hub_readme(store: Store, epics: list, stories: list, tasks: list, link_prefix: str) -> str:
+def _build_hub_readme(
+    store: Store, epics: list, stories: list, tasks: list, link_prefix: str
+) -> str:
     """Build an enhanced hub README with per-project stats, badges, and progress bars."""
     from .hub.rollup import rollup
 
@@ -347,12 +349,16 @@ def _build_hub_readme(store: Store, epics: list, stories: list, tasks: list, lin
 def write_index(store: Store) -> None:
     """Build index and write index.yaml and markdown indexes to disk.
 
-    Fetches epics, stories, and tasks once and passes them to both
-    build_index and write_markdown_indexes to avoid redundant lookups.
+    Always reads directly from disk to guarantee index reflects current state,
+    bypassing the cache which may be stale due to external changes (e.g., git pull).
     """
-    epics = store.list_epics()
-    stories = store.list_stories()
-    tasks = store.list_tasks()
+    epic_entries = store._read_epics_from_disk()
+    story_entries = store._read_stories_from_disk()
+    task_entries = store._read_tasks_from_disk()
+
+    epics = [meta for meta, _ in epic_entries]
+    stories = [meta for meta, _ in story_entries]
+    tasks = [meta for meta, _ in task_entries]
 
     index = build_index(store, epics=epics, stories=stories, tasks=tasks)
     index_path = store.project_dir / "index.yaml"

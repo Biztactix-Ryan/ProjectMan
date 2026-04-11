@@ -20,6 +20,9 @@ logger = logging.getLogger(__name__)
 # tuples.  Populated on first list call; get methods extract from here first.
 _cache: dict[tuple[str, str], list[tuple]] = {}
 
+# Track when each cache entry was last populated (mtime of newest file at populate time)
+_cache_mtimes: dict[tuple[str, str], float] = {}
+
 # Cache statistics — only tracked when PROJECTMAN_CACHE_DEBUG is set.
 _cache_stats: dict[str, int] = {"hits": 0, "misses": 0, "invalidations": 0}
 _cache_debug: bool = bool(os.environ.get("PROJECTMAN_CACHE_DEBUG"))
@@ -28,6 +31,7 @@ _cache_debug: bool = bool(os.environ.get("PROJECTMAN_CACHE_DEBUG"))
 def clear_all_caches() -> None:
     """Clear the entire module-level cache and reset stats."""
     _cache.clear()
+    _cache_mtimes.clear()
     _cache_stats["hits"] = 0
     _cache_stats["misses"] = 0
     _cache_stats["invalidations"] = 0
@@ -36,6 +40,7 @@ def clear_all_caches() -> None:
 def get_cache_stats() -> dict[str, int]:
     """Return a copy of the current cache statistics."""
     return dict(_cache_stats)
+
 
 from .config import load_config
 from .models import (
@@ -66,7 +71,9 @@ class Store:
 
     def __init__(self, root: Path, project_dir: Path | None = None):
         self.root = root
-        self.project_dir = project_dir if project_dir is not None else (root / ".project")
+        self.project_dir = (
+            project_dir if project_dir is not None else (root / ".project")
+        )
         self.stories_dir = self.project_dir / "stories"
         self.tasks_dir = self.project_dir / "tasks"
         self.epics_dir = self.project_dir / "epics"
@@ -249,6 +256,24 @@ class Store:
         except Exception:
             logger.debug("run log: failed to append for %s", item_id)
 
+    def _index_embedding(
+        self, item_id: str, title: str, item_type: str, body: str
+    ) -> None:
+        """Index or re-index an item in the embedding store.
+
+        Silently skips if embeddings are not available (fastembed not installed).
+        Only indexes stories and tasks (epics are not indexed).
+        """
+        if item_type not in ("story", "task"):
+            return
+        try:
+            from .embeddings import EmbeddingStore
+
+            emb_store = EmbeddingStore(self.project_dir)
+            emb_store.index_item(item_id, title, item_type, body)
+        except (ImportError, Exception):
+            pass
+
     def get_run_log(
         self,
         item_id: str,
@@ -316,16 +341,16 @@ class Store:
         self._story_path(story_id).write_text(frontmatter.dumps(post))
         self._cache_append("stories", meta, description)
         self._emit_log(EventType.create, story_id, ItemType.story)
+        self._index_embedding(story_id, title, "story", description)
 
         # Auto-create test tasks for each acceptance criterion
         test_tasks: list[TaskFrontmatter] = []
-        for criterion in (acceptance_criteria or []):
+        for criterion in acceptance_criteria or []:
             task_title = f"Test: {criterion}"
             if len(task_title) > 120:
                 task_title = task_title[:117] + "..."
             task_desc = (
-                f"Verify acceptance criterion for story {story_id}:\n\n"
-                f"> {criterion}"
+                f"Verify acceptance criterion for story {story_id}:\n\n> {criterion}"
             )
             task_meta = self.create_task(story_id, task_title, task_desc, _batch=True)
             test_tasks.append(task_meta)
@@ -337,9 +362,9 @@ class Store:
         return meta, test_tasks
 
     def get_story(self, story_id: str) -> tuple[StoryFrontmatter, str]:
-        """Read a story, returning (frontmatter, body). Uses cache if populated."""
+        """Read a story, returning (frontmatter, body). Uses cache if populated and fresh."""
         key = self._cache_key("stories")
-        if key in _cache:
+        if key in _cache and not self._is_cache_stale("stories"):
             for meta, body in _cache[key]:
                 if meta.id == story_id:
                     if _cache_debug:
@@ -356,20 +381,63 @@ class Store:
         """Return the cache key for a given item type."""
         return (str(self.project_dir), item_type)
 
+    def _get_dir_mtime(self, dir_path: Path) -> float:
+        """Return mtime of the most recently modified file in dir_path.
+
+        Returns 0 if dir_path does not exist or is empty.
+        """
+        if not dir_path.exists():
+            return 0.0
+        files = list(dir_path.glob("*.md"))
+        if not files:
+            return 0.0
+        return max(f.stat().st_mtime for f in files)
+
+    def _is_cache_stale(self, item_type: str) -> bool:
+        """Check if cached data for item_type is potentially stale.
+
+        Compares the stored mtime against current file mtimes to detect
+        external changes (e.g., git pull, direct edits).
+        """
+        key = self._cache_key(item_type)
+        if key not in _cache:
+            return True
+
+        stored_mtime = _cache_mtimes.get(key, 0.0)
+        if stored_mtime == 0.0:
+            return True
+
+        dir_map = {
+            "stories": self.stories_dir,
+            "tasks": self.tasks_dir,
+            "epics": self.epics_dir,
+        }
+        dir_path = dir_map.get(item_type)
+        if not dir_path:
+            return True
+
+        current_mtime = self._get_dir_mtime(dir_path)
+        return current_mtime > stored_mtime
+
     def _invalidate_cache(self, item_type: str) -> None:
         """Remove cached entries for the given item type."""
         if _cache.pop(self._cache_key(item_type), None) is not None and _cache_debug:
             _cache_stats["invalidations"] += 1
 
     def _cache_append(self, item_type: str, meta, body: str) -> None:
-        """Append a new entry to the cache if it is populated."""
-        key = self._cache_key(item_type)
-        if key in _cache:
-            _cache[key].append((meta, body))
-            if _cache_debug:
-                _cache_stats["invalidations"] += 1
+        """Append a new entry to the cache.
 
-    def _cache_update_entry(self, item_type: str, item_id: str, meta, body: str) -> None:
+        If cache is not yet populated, this is a no-op — the next list_* call
+        will repopulate from disk which will include this item.
+        """
+        key = self._cache_key(item_type)
+        if key not in _cache:
+            return
+        _cache[key].append((meta, body))
+
+    def _cache_update_entry(
+        self, item_type: str, item_id: str, meta, body: str
+    ) -> None:
         """Replace a single entry in the cache if it is populated.
 
         If the item has transitioned to archived status, evict it from the
@@ -380,17 +448,22 @@ class Store:
         if key in _cache:
             # Check if item should be evicted (archived status)
             should_evict = (
-                (item_type == "stories" and hasattr(meta, "status") and meta.status == StoryStatus.archived)
-                or (item_type == "epics" and hasattr(meta, "status") and meta.status == EpicStatus.archived)
+                item_type == "stories"
+                and hasattr(meta, "status")
+                and meta.status == StoryStatus.archived
+            ) or (
+                item_type == "epics"
+                and hasattr(meta, "status")
+                and meta.status == EpicStatus.archived
             )
             for i, (m, _) in enumerate(_cache[key]):
                 if m.id == item_id:
                     if should_evict:
                         _cache[key].pop(i)
+                        if _cache_debug:
+                            _cache_stats["invalidations"] += 1
                     else:
                         _cache[key][i] = (meta, body)
-                    if _cache_debug:
-                        _cache_stats["invalidations"] += 1
                     return
 
     def clear_cache(self) -> None:
@@ -416,24 +489,23 @@ class Store:
                 continue
         return entries
 
-    def list_stories(
-        self, status: Optional[str] = None
-    ) -> list[StoryFrontmatter]:
+    def list_stories(self, status: Optional[str] = None) -> list[StoryFrontmatter]:
         """List all stories, optionally filtered by status. Skips malformed files.
 
         Archived stories are excluded from the cache to bound memory usage.
         Requests for archived stories bypass the cache and read from disk.
+
+        Cache is automatically invalidated if external file changes are detected.
         """
         if not self.stories_dir.exists():
             return []
 
-        # Archived items bypass cache — read directly from disk
         if status == StoryStatus.archived.value:
             entries = self._read_stories_from_disk(status_filter=status)
             return [m for m, _ in entries]
 
         key = self._cache_key("stories")
-        if key not in _cache:
+        if key not in _cache or self._is_cache_stale("stories"):
             if _cache_debug:
                 _cache_stats["misses"] += 1
             entries = []
@@ -441,13 +513,13 @@ class Store:
                 try:
                     post = frontmatter.load(str(path))
                     meta = StoryFrontmatter(**post.metadata)
-                    # Exclude archived items from cache to bound memory
                     if meta.status == StoryStatus.archived:
                         continue
                     entries.append((meta, post.content))
                 except Exception:
                     continue
             _cache[key] = entries
+            _cache_mtimes[key] = self._get_dir_mtime(self.stories_dir)
         else:
             if _cache_debug:
                 _cache_stats["hits"] += 1
@@ -496,9 +568,9 @@ class Store:
         return meta
 
     def get_epic(self, epic_id: str) -> tuple[EpicFrontmatter, str]:
-        """Read an epic, returning (frontmatter, body). Uses cache if populated."""
+        """Read an epic, returning (frontmatter, body). Uses cache if populated and fresh."""
         key = self._cache_key("epics")
-        if key in _cache:
+        if key in _cache and not self._is_cache_stale("epics"):
             for meta, body in _cache[key]:
                 if meta.id == epic_id:
                     if _cache_debug:
@@ -529,24 +601,23 @@ class Store:
                 continue
         return entries
 
-    def list_epics(
-        self, status: Optional[str] = None
-    ) -> list[EpicFrontmatter]:
+    def list_epics(self, status: Optional[str] = None) -> list[EpicFrontmatter]:
         """List all epics, optionally filtered by status. Skips malformed files.
 
         Archived epics are excluded from the cache to bound memory usage.
         Requests for archived epics bypass the cache and read from disk.
+
+        Cache is automatically invalidated if external file changes are detected.
         """
         if not self.epics_dir.exists():
             return []
 
-        # Archived items bypass cache — read directly from disk
         if status == EpicStatus.archived.value:
             entries = self._read_epics_from_disk(status_filter=status)
             return [m for m, _ in entries]
 
         key = self._cache_key("epics")
-        if key not in _cache:
+        if key not in _cache or self._is_cache_stale("epics"):
             if _cache_debug:
                 _cache_stats["misses"] += 1
             entries = []
@@ -554,13 +625,13 @@ class Store:
                 try:
                     post = frontmatter.load(str(path))
                     meta = EpicFrontmatter(**post.metadata)
-                    # Exclude archived items from cache to bound memory
                     if meta.status == EpicStatus.archived:
                         continue
                     entries.append((meta, post.content))
                 except Exception:
                     continue
             _cache[key] = entries
+            _cache_mtimes[key] = self._get_dir_mtime(self.epics_dir)
         else:
             if _cache_debug:
                 _cache_stats["hits"] += 1
@@ -569,9 +640,7 @@ class Store:
             return [m for m, _ in all_entries]
         return [m for m, _ in all_entries if m.status.value == status]
 
-    def _validate_task_depends_on(
-        self, task_id: str, depends_on: list[str]
-    ) -> None:
+    def _validate_task_depends_on(self, task_id: str, depends_on: list[str]) -> None:
         """Validate task depends_on entries: no self-ref, all must exist.
 
         Cross-story task dependencies are allowed to support dependency graphs
@@ -590,9 +659,7 @@ class Store:
                     f"Dependency {dep} does not exist (not a task or story)"
                 )
 
-    def _validate_story_depends_on(
-        self, story_id: str, depends_on: list[str]
-    ) -> None:
+    def _validate_story_depends_on(self, story_id: str, depends_on: list[str]) -> None:
         """Validate story depends_on entries: no self-ref, all must exist.
 
         Stories can depend on other stories or tasks.
@@ -653,6 +720,7 @@ class Store:
         self._task_path(task_id).write_text(frontmatter.dumps(post))
         self._cache_append("tasks", meta, description)
         self._emit_log(EventType.create, task_id, ItemType.task)
+        self._index_embedding(task_id, title, "task", description)
 
         if not _batch:
             self._auto_commit([self._task_path(task_id)], f"pm: create {task_id}")
@@ -742,7 +810,9 @@ class Store:
                 raise
 
             files = [self._task_path(t.id) for t in created]
-            self._auto_commit(files, f"pm: create {len(created)} tasks under {story_id}")
+            self._auto_commit(
+                files, f"pm: create {len(created)} tasks under {story_id}"
+            )
 
         return created
 
@@ -757,9 +827,9 @@ class Store:
             raise ValueError(f"Dependency cycle detected: {path}")
 
     def get_task(self, task_id: str) -> tuple[TaskFrontmatter, str]:
-        """Read a task, returning (frontmatter, body). Uses cache if populated."""
+        """Read a task, returning (frontmatter, body). Uses cache if populated and fresh."""
         key = self._cache_key("tasks")
-        if key in _cache:
+        if key in _cache and not self._is_cache_stale("tasks"):
             for meta, body in _cache[key]:
                 if meta.id == task_id:
                     if _cache_debug:
@@ -777,11 +847,14 @@ class Store:
         story_id: Optional[str] = None,
         status: Optional[str] = None,
     ) -> list[TaskFrontmatter]:
-        """List tasks, optionally filtered by story and/or status. Skips malformed files."""
+        """List tasks, optionally filtered by story and/or status. Skips malformed files.
+
+        Cache is automatically invalidated if external file changes are detected.
+        """
         if not self.tasks_dir.exists():
             return []
         key = self._cache_key("tasks")
-        if key not in _cache:
+        if key not in _cache or self._is_cache_stale("tasks"):
             if _cache_debug:
                 _cache_stats["misses"] += 1
             entries = []
@@ -793,6 +866,7 @@ class Store:
                 except Exception:
                     continue
             _cache[key] = entries
+            _cache_mtimes[key] = self._get_dir_mtime(self.tasks_dir)
         else:
             if _cache_debug:
                 _cache_stats["hits"] += 1
@@ -823,7 +897,9 @@ class Store:
         elif item_type == "tasks":
             self.list_tasks()
         else:
-            raise ValueError(f"Unknown item type: {item_type}. Use: epics, stories, tasks")
+            raise ValueError(
+                f"Unknown item type: {item_type}. Use: epics, stories, tasks"
+            )
 
         key = self._cache_key(item_type)
         entries = _cache.get(key, [])
@@ -834,7 +910,34 @@ class Store:
             results.append(item)
         return results
 
-    def update(self, item_id: str, **kwargs) -> EpicFrontmatter | StoryFrontmatter | TaskFrontmatter:
+    def _read_tasks_from_disk(
+        self,
+        story_id: Optional[str] = None,
+        status_filter: Optional[str] = None,
+    ) -> list[tuple[TaskFrontmatter, str]]:
+        """Read tasks from disk, optionally filtered by story and/or status.
+
+        Always reads from disk, bypassing cache entirely.
+        """
+        if not self.tasks_dir.exists():
+            return []
+        entries = []
+        for path in sorted(self.tasks_dir.glob("*.md")):
+            try:
+                post = frontmatter.load(str(path))
+                meta = TaskFrontmatter(**post.metadata)
+                if story_id and meta.story_id != story_id:
+                    continue
+                if status_filter and meta.status.value != status_filter:
+                    continue
+                entries.append((meta, post.content))
+            except Exception:
+                continue
+        return entries
+
+    def update(
+        self, item_id: str, **kwargs
+    ) -> EpicFrontmatter | StoryFrontmatter | TaskFrontmatter:
         """Update fields on an epic, story, or task.
 
         Accepts frontmatter fields as keyword arguments.  The special
@@ -936,7 +1039,9 @@ class Store:
         if new_body is not None and new_body != old_body:
             changes["body"] = {"before": old_body, "after": new_body}
 
-        item_type = ItemType.epic if is_epic else (ItemType.task if is_task else ItemType.story)
+        item_type = (
+            ItemType.epic if is_epic else (ItemType.task if is_task else ItemType.story)
+        )
         self._emit_log(EventType.update, item_id, item_type, changes=changes)
 
         # Append run-log entry if outcome or note provided
@@ -945,12 +1050,19 @@ class Store:
                 item_id,
                 outcome=outcome or Outcome.info,
                 note=note or "",
-                status=str(meta.status.value) if hasattr(meta.status, "value") else str(meta.status),
+                status=str(meta.status.value)
+                if hasattr(meta.status, "value")
+                else str(meta.status),
             )
 
         suffix = " ".join(commit_parts)
         msg = f"pm: update {item_id}" + (f" {suffix}" if suffix else "")
         self._auto_commit([path], msg)
+
+        if is_task:
+            self._index_embedding(item_id, meta.title, "task", post.content)
+        elif is_story:
+            self._index_embedding(item_id, meta.title, "story", post.content)
 
         return meta
 
@@ -963,7 +1075,11 @@ class Store:
         else:
             self.update(item_id, status=StoryStatus.archived.value)
 
-    def get(self, item_id: str) -> tuple[EpicFrontmatter | StoryFrontmatter | TaskFrontmatter | SprintFrontmatter, str]:
+    def get(
+        self, item_id: str
+    ) -> tuple[
+        EpicFrontmatter | StoryFrontmatter | TaskFrontmatter | SprintFrontmatter, str
+    ]:
         """Unified lookup by ID — dispatches to get_epic, get_story, get_task, or get_sprint."""
         if self._is_epic_id(item_id):
             return self.get_epic(item_id)
@@ -1130,9 +1246,7 @@ class Store:
         meta = SprintFrontmatter(**post.metadata)
         return meta, post.content
 
-    def list_sprints(
-        self, status: Optional[str] = None
-    ) -> list[SprintFrontmatter]:
+    def list_sprints(self, status: Optional[str] = None) -> list[SprintFrontmatter]:
         """List all sprints, optionally filtered by status."""
         if not self.sprints_dir.exists():
             return []
@@ -1293,7 +1407,9 @@ class Store:
 
         parts = []
         if stories_updated:
-            parts.append(f"{stories_updated} {'story' if stories_updated == 1 else 'stories'}")
+            parts.append(
+                f"{stories_updated} {'story' if stories_updated == 1 else 'stories'}"
+            )
         if tasks_updated:
             parts.append(f"{tasks_updated} {'task' if tasks_updated == 1 else 'tasks'}")
         if epics_updated:
@@ -1327,7 +1443,9 @@ class Store:
             text=True,
         )
         if branch_result.returncode != 0:
-            raise RuntimeError("Cannot push from a detached HEAD state — checkout a branch first")
+            raise RuntimeError(
+                "Cannot push from a detached HEAD state — checkout a branch first"
+            )
 
         branch = branch_result.stdout.strip()
 
@@ -1339,9 +1457,13 @@ class Store:
             text=True,
             check=True,
         )
-        remotes = [r.strip() for r in remote_result.stdout.strip().splitlines() if r.strip()]
+        remotes = [
+            r.strip() for r in remote_result.stdout.strip().splitlines() if r.strip()
+        ]
         if remote not in remotes:
-            raise RuntimeError(f"Remote '{remote}' not configured (available: {', '.join(remotes) or 'none'})")
+            raise RuntimeError(
+                f"Remote '{remote}' not configured (available: {', '.join(remotes) or 'none'})"
+            )
 
         # Push
         push_result = subprocess.run(

@@ -37,21 +37,42 @@ def get_project_dir(project: Optional[str] = Query(None)) -> Path:
             proj_dir = root / ".project" / "projects" / project
             if proj_dir.exists() and (proj_dir / "config.yaml").exists():
                 return proj_dir
-            raise HTTPException(status_code=404, detail=f"Project '{project}' not found in hub")
+            raise HTTPException(
+                status_code=404, detail=f"Project '{project}' not found in hub"
+            )
     return root / ".project"
 
 
+_hub_store_cache: dict[str, Store] = {}
+
+
 def get_store(project: Optional[str] = Query(None)) -> Store:
-    """Provide a Store instance, routing hub subprojects to .project/projects/{name}/."""
-    root = find_project_root()
+    """Provide a Store instance, routing hub subprojects to .project/projects/{name}/.
+
+    For the main project, returns the cached store from app.state.
+    For hub subprojects, uses a module-level cache to avoid creating new instances.
+    """
     if project:
+        if project in _hub_store_cache:
+            return _hub_store_cache[project]
+        root = find_project_root()
         config = load_config(root)
         if config.hub:
             project_dir = root / ".project" / "projects" / project
             if project_dir.exists() and (project_dir / "config.yaml").exists():
-                return Store(root, project_dir=project_dir)
-            raise HTTPException(status_code=404, detail=f"Project '{project}' not found in hub")
-    return Store(root)
+                store = Store(root, project_dir=project_dir)
+                _hub_store_cache[project] = store
+                return store
+            raise HTTPException(
+                status_code=404, detail=f"Project '{project}' not found in hub"
+            )
+        raise HTTPException(
+            status_code=404, detail=f"Project '{project}' not found (not in hub mode)"
+        )
+
+    from .app import app
+
+    return app.state.store
 
 
 # ─── Project ─────────────────────────────────────────────────────
@@ -134,14 +155,16 @@ def get_epic(epic_id: str, store: Store = Depends(get_store)) -> dict:
         done_points = sum(t.points or 0 for t in tasks if t.status.value == "done")
         total_points += task_points
         completed_points += done_points
-        story_data.append({
-            "id": story.id,
-            "title": story.title,
-            "status": story.status.value,
-            "points": story.points,
-            "task_points": task_points,
-            "done_points": done_points,
-        })
+        story_data.append(
+            {
+                "id": story.id,
+                "title": story.title,
+                "status": story.status.value,
+                "points": story.points,
+                "task_points": task_points,
+                "done_points": done_points,
+            }
+        )
 
     pct = round(completed_points / max(total_points, 1) * 100)
     return {
@@ -469,6 +492,7 @@ def api_audit(root: Path = Depends(get_root)) -> dict:
     from projectman.audit import run_audit
 
     import yaml
+
     result_str = run_audit(root)
     # run_audit returns YAML string; parse it back to dict
     try:
@@ -485,16 +509,35 @@ def api_search(
     """Search stories and tasks by keyword."""
     try:
         from projectman.embeddings import EmbeddingStore
+
         emb_store = EmbeddingStore(proj_dir)
         results = emb_store.search(q, top_k=10)
         if results:
-            return [{"id": r.id, "title": r.title, "type": r.type, "score": round(r.score, 3)} for r in results]
+            return [
+                {
+                    "id": r.id,
+                    "title": r.title,
+                    "type": r.type,
+                    "score": round(r.score, 3),
+                }
+                for r in results
+            ]
     except (ImportError, Exception):
         pass
 
     from projectman.search import keyword_search
+
     results = keyword_search(q, proj_dir)
-    return [{"id": r.id, "title": r.title, "type": r.type, "score": r.score, "snippet": r.snippet} for r in results]
+    return [
+        {
+            "id": r.id,
+            "title": r.title,
+            "type": r.type,
+            "score": r.score,
+            "snippet": r.snippet,
+        }
+        for r in results
+    ]
 
 
 # ─── Documentation ───────────────────────────────────────────────
@@ -522,7 +565,11 @@ def list_docs(proj_dir: Path = Depends(get_project_dir)) -> dict:
             mtime = _date.fromtimestamp(os.path.getmtime(path))
             age = (_date.today() - mtime).days
             content = path.read_text()
-            lines = [l for l in content.splitlines() if l.strip() and not l.strip().startswith("<!--")]
+            lines = [
+                l
+                for l in content.splitlines()
+                if l.strip() and not l.strip().startswith("<!--")
+            ]
             summary[key] = {
                 "file": filename,
                 "last_modified": str(mtime),
@@ -540,7 +587,9 @@ def get_doc(name: str, proj_dir: Path = Depends(get_project_dir)) -> dict:
     """Get full content of a specific project doc."""
     filename = _DOC_MAP.get(name.lower())
     if not filename:
-        raise HTTPException(status_code=404, detail=f"Unknown doc: {name}. Use: {', '.join(_DOC_MAP)}")
+        raise HTTPException(
+            status_code=404, detail=f"Unknown doc: {name}. Use: {', '.join(_DOC_MAP)}"
+        )
     path = proj_dir / filename
     if not path.exists():
         raise HTTPException(status_code=404, detail=f"{filename} not found")
@@ -590,7 +639,9 @@ def update_doc(
     """Update a project doc's content."""
     filename = _DOC_MAP.get(name.lower())
     if not filename:
-        raise HTTPException(status_code=404, detail=f"Unknown doc: {name}. Use: {', '.join(_DOC_MAP)}")
+        raise HTTPException(
+            status_code=404, detail=f"Unknown doc: {name}. Use: {', '.join(_DOC_MAP)}"
+        )
     path = proj_dir / filename
     path.write_text(body.content)
     return {"updated": filename}
