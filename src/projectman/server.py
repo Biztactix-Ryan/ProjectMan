@@ -66,39 +66,53 @@ def _store(project: Optional[str] = None) -> Store:
     return _store_cache[default_dir]
 
 
-def _emit_status_change(store: Store, item_id: str, old_status: str, new_status: str, meta: object) -> None:
+def _emit_status_change(
+    store: Store, item_id: str, old_status: str, new_status: str, meta: object
+) -> None:
     """Emit the appropriate event(s) for a status change."""
     from .models import TaskFrontmatter, StoryFrontmatter
 
     if isinstance(meta, TaskFrontmatter):
-        _emit("task.status_update", {
-            "taskId": item_id,
-            "oldStatus": old_status,
-            "newStatus": new_status,
-            "storyId": meta.story_id,
-        })
+        _emit(
+            "task.status_update",
+            {
+                "taskId": item_id,
+                "oldStatus": old_status,
+                "newStatus": new_status,
+                "storyId": meta.story_id,
+            },
+        )
         # Check if all tasks in the story are now done
         if new_status == "done":
             siblings = store.list_tasks(story_id=meta.story_id)
             if siblings and all(t.status.value == "done" for t in siblings):
                 try:
                     story_meta, _ = store.get_story(meta.story_id)
-                    _emit("story.completed", {
-                        "storyId": meta.story_id,
-                        "epicId": story_meta.epic_id or "",
-                        "title": story_meta.title,
-                    })
+                    _emit(
+                        "story.completed",
+                        {
+                            "storyId": meta.story_id,
+                            "epicId": story_meta.epic_id or "",
+                            "title": story_meta.title,
+                        },
+                    )
                 except FileNotFoundError:
                     pass
     elif isinstance(meta, StoryFrontmatter):
-        _emit("story.advanced", {
-            "storyId": item_id,
-            "oldStatus": old_status,
-            "newStatus": new_status,
-            "epicId": meta.epic_id or "",
-        })
+        _emit(
+            "story.advanced",
+            {
+                "storyId": item_id,
+                "oldStatus": old_status,
+                "newStatus": new_status,
+                "epicId": meta.epic_id or "",
+            },
+        )
     else:
-        _emit("project.updated", {"summary": f"Epic {item_id} status: {old_status} -> {new_status}"})
+        _emit(
+            "project.updated",
+            {"summary": f"Epic {item_id} status: {old_status} -> {new_status}"},
+        )
 
 
 def _yaml_dump(data) -> str:
@@ -107,7 +121,11 @@ def _yaml_dump(data) -> str:
 
 # ─── Query Tools ────────────────────────────────────────────────
 
-@mcp.tool(title="Project Status", annotations=ToolAnnotations(title="Project Status", readOnlyHint=True))
+
+@mcp.tool(
+    title="Project Status",
+    annotations=ToolAnnotations(title="Project Status", readOnlyHint=True),
+)
 def pm_status(project: Optional[str] = None) -> str:
     """Get project status summary: story/task counts, points, completion percentage.
 
@@ -150,7 +168,9 @@ def pm_status(project: Optional[str] = None) -> str:
         return f"error: {e}"
 
 
-@mcp.tool(title="Get Item", annotations=ToolAnnotations(title="Get Item", readOnlyHint=True))
+@mcp.tool(
+    title="Get Item", annotations=ToolAnnotations(title="Get Item", readOnlyHint=True)
+)
 def pm_get(id: str, project: Optional[str] = None) -> str:
     """Get full details of an epic, story, or task by ID.
 
@@ -171,7 +191,10 @@ def pm_get(id: str, project: Optional[str] = None) -> str:
         return f"error: {e}"
 
 
-@mcp.tool(title="Batch Get Items", annotations=ToolAnnotations(title="Batch Get Items", readOnlyHint=True))
+@mcp.tool(
+    title="Batch Get Items",
+    annotations=ToolAnnotations(title="Batch Get Items", readOnlyHint=True),
+)
 def pm_batch_get(type: str, project: Optional[str] = None) -> str:
     """Get all items of a type with full data in a single call.
 
@@ -190,7 +213,10 @@ def pm_batch_get(type: str, project: Optional[str] = None) -> str:
         return f"error: {e}"
 
 
-@mcp.tool(title="Read Documentation", annotations=ToolAnnotations(title="Read Documentation", readOnlyHint=True))
+@mcp.tool(
+    title="Read Documentation",
+    annotations=ToolAnnotations(title="Read Documentation", readOnlyHint=True),
+)
 def pm_docs(doc: Optional[str] = None, project: Optional[str] = None) -> str:
     """Read project documentation files.
 
@@ -222,6 +248,7 @@ def pm_docs(doc: Optional[str] = None, project: Optional[str] = None) -> str:
         # Summary mode: return all docs with their status
         import os
         from datetime import date as _date
+
         summary = {}
         for key, filename in doc_map.items():
             path = proj_dir / filename
@@ -229,9 +256,13 @@ def pm_docs(doc: Optional[str] = None, project: Optional[str] = None) -> str:
                 content = path.read_text()
                 mtime = _date.fromtimestamp(os.path.getmtime(path))
                 age = (_date.today() - mtime).days
-                lines = [l for l in content.splitlines() if l.strip()
-                         and not l.strip().startswith("<!--")
-                         and not l.strip().startswith("-->")]
+                lines = [
+                    l
+                    for l in content.splitlines()
+                    if l.strip()
+                    and not l.strip().startswith("<!--")
+                    and not l.strip().startswith("-->")
+                ]
                 summary[key] = {
                     "file": filename,
                     "last_modified": str(mtime),
@@ -246,7 +277,12 @@ def pm_docs(doc: Optional[str] = None, project: Optional[str] = None) -> str:
         return f"error: {e}"
 
 
-@mcp.tool(title="Update Documentation", annotations=ToolAnnotations(title="Update Documentation", readOnlyHint=False, destructiveHint=False))
+@mcp.tool(
+    title="Update Documentation",
+    annotations=ToolAnnotations(
+        title="Update Documentation", readOnlyHint=False, destructiveHint=False
+    ),
+)
 def pm_update_doc(
     doc: str,
     content: str,
@@ -282,7 +318,10 @@ def pm_update_doc(
         return f"error: {e}"
 
 
-@mcp.tool(title="Active Work", annotations=ToolAnnotations(title="Active Work", readOnlyHint=True))
+@mcp.tool(
+    title="Active Work",
+    annotations=ToolAnnotations(title="Active Work", readOnlyHint=True),
+)
 def pm_active(
     project: Optional[str] = None,
     tag: Optional[str] = None,
@@ -306,8 +345,10 @@ def pm_active(
             all_stories = [s for s in all_stories if tag in s.tags]
             story_cache = {s.id: s for s in store.list_stories()}
             all_tasks = [
-                t for t in all_tasks
-                if tag in t.tags or (
+                t
+                for t in all_tasks
+                if tag in t.tags
+                or (
                     story_cache.get(t.story_id) is not None
                     and tag in story_cache[t.story_id].tags
                 )
@@ -323,15 +364,21 @@ def pm_active(
             "active_tasks_total": len(all_tasks),
             "limit": limit,
             "offset": offset,
-            "has_more": (offset + limit) < len(all_stories) or (offset + limit) < len(all_tasks),
+            "has_more": (offset + limit) < len(all_stories)
+            or (offset + limit) < len(all_tasks),
         }
         return _yaml_dump(result)
     except Exception as e:
         return f"error: {e}"
 
 
-@mcp.tool(title="Search Items", annotations=ToolAnnotations(title="Search Items", readOnlyHint=True))
-def pm_search(query: str, project: Optional[str] = None, tag: Optional[str] = None) -> str:
+@mcp.tool(
+    title="Search Items",
+    annotations=ToolAnnotations(title="Search Items", readOnlyHint=True),
+)
+def pm_search(
+    query: str, project: Optional[str] = None, tag: Optional[str] = None
+) -> str:
     """Search stories and tasks by keyword or semantic similarity.
 
     Args:
@@ -345,6 +392,7 @@ def pm_search(query: str, project: Optional[str] = None, tag: Optional[str] = No
         # Try embeddings first, fall back to keyword
         try:
             from .embeddings import EmbeddingStore
+
             emb_store = EmbeddingStore(proj_dir)
             results = emb_store.search(query, top_k=10)
             if results:
@@ -360,18 +408,43 @@ def pm_search(query: str, project: Optional[str] = None, tag: Optional[str] = No
                         except Exception:
                             pass
                     results = filtered
-                return _yaml_dump([{"id": r.id, "title": r.title, "type": r.type, "score": round(r.score, 3)} for r in results])
+                return _yaml_dump(
+                    [
+                        {
+                            "id": r.id,
+                            "title": r.title,
+                            "type": r.type,
+                            "score": round(r.score, 3),
+                        }
+                        for r in results
+                    ]
+                )
         except (ImportError, Exception):
             pass
 
         from .search import keyword_search
+
         results = keyword_search(query, proj_dir, tag=tag)
-        return _yaml_dump([{"id": r.id, "title": r.title, "type": r.type, "score": r.score, "snippet": r.snippet} for r in results])
+        return _yaml_dump(
+            [
+                {
+                    "id": r.id,
+                    "title": r.title,
+                    "type": r.type,
+                    "score": r.score,
+                    "snippet": r.snippet,
+                }
+                for r in results
+            ]
+        )
     except Exception as e:
         return f"error: {e}"
 
 
-@mcp.tool(title="Task Board", annotations=ToolAnnotations(title="Task Board", readOnlyHint=True))
+@mcp.tool(
+    title="Task Board",
+    annotations=ToolAnnotations(title="Task Board", readOnlyHint=True),
+)
 def pm_board(
     project: Optional[str] = None,
     assignee: Optional[str] = None,
@@ -432,29 +505,35 @@ def pm_board(
                     continue
 
             if task.status.value == "in-progress":
-                in_progress.append({
-                    "id": task.id,
-                    "title": task.title,
-                    "points": task.points,
-                    "assignee": task.assignee,
-                    "story": story_label,
-                })
+                in_progress.append(
+                    {
+                        "id": task.id,
+                        "title": task.title,
+                        "points": task.points,
+                        "assignee": task.assignee,
+                        "story": story_label,
+                    }
+                )
             elif task.status.value == "review":
-                in_review.append({
-                    "id": task.id,
-                    "title": task.title,
-                    "points": task.points,
-                    "assignee": task.assignee,
-                    "story": story_label,
-                })
+                in_review.append(
+                    {
+                        "id": task.id,
+                        "title": task.title,
+                        "points": task.points,
+                        "assignee": task.assignee,
+                        "story": story_label,
+                    }
+                )
             elif task.status.value == "blocked":
-                blocked.append({
-                    "id": task.id,
-                    "title": task.title,
-                    "points": task.points,
-                    "assignee": task.assignee,
-                    "story": story_label,
-                })
+                blocked.append(
+                    {
+                        "id": task.id,
+                        "title": task.title,
+                        "points": task.points,
+                        "assignee": task.assignee,
+                        "story": story_label,
+                    }
+                )
             elif task.status.value == "todo" and not assignee:
                 readiness = check_readiness(task, task_body, store)
                 if readiness["ready"]:
@@ -463,22 +542,31 @@ def pm_board(
                     story_priority = priority_order.get(
                         story.priority.value if story else "should", 1
                     )
-                    available.append({
-                        "id": task.id,
-                        "title": task.title,
-                        "points": task.points,
-                        "story": story_label,
-                        "hints": hints,
-                        "_sort": (story_priority, task.story_id, topo_position.get(task.id, 0), task.points or 99),
-                    })
+                    available.append(
+                        {
+                            "id": task.id,
+                            "title": task.title,
+                            "points": task.points,
+                            "story": story_label,
+                            "hints": hints,
+                            "_sort": (
+                                story_priority,
+                                task.story_id,
+                                topo_position.get(task.id, 0),
+                                task.points or 99,
+                            ),
+                        }
+                    )
                 else:
-                    not_ready.append({
-                        "id": task.id,
-                        "title": task.title,
-                        "points": task.points,
-                        "story": story_label,
-                        "blockers": readiness["blockers"],
-                    })
+                    not_ready.append(
+                        {
+                            "id": task.id,
+                            "title": task.title,
+                            "points": task.points,
+                            "story": story_label,
+                            "blockers": readiness["blockers"],
+                        }
+                    )
 
         # Sort available tasks by priority > story > topological order > points
         available.sort(key=lambda t: t["_sort"])
@@ -507,7 +595,10 @@ def pm_board(
         return f"error: {e}"
 
 
-@mcp.tool(title="Burndown Data", annotations=ToolAnnotations(title="Burndown Data", readOnlyHint=True))
+@mcp.tool(
+    title="Burndown Data",
+    annotations=ToolAnnotations(title="Burndown Data", readOnlyHint=True),
+)
 def pm_burndown(project: Optional[str] = None) -> str:
     """Get burndown data: total vs completed points.
 
@@ -522,6 +613,7 @@ def pm_burndown(project: Optional[str] = None) -> str:
         if config.hub and not project:
             try:
                 from .hub.rollup import rollup
+
                 data = rollup(root)
                 return _yaml_dump(data)
             except (ImportError, Exception):
@@ -545,7 +637,13 @@ def pm_burndown(project: Optional[str] = None) -> str:
 
 # ─── Write Tools ────────────────────────────────────────────────
 
-@mcp.tool(title="Create Story", annotations=ToolAnnotations(title="Create Story", readOnlyHint=False, destructiveHint=False))
+
+@mcp.tool(
+    title="Create Story",
+    annotations=ToolAnnotations(
+        title="Create Story", readOnlyHint=False, destructiveHint=False
+    ),
+)
 def pm_create_story(
     title: str,
     description: str,
@@ -572,24 +670,40 @@ def pm_create_story(
     """
     try:
         store = _store(project)
-        ac_list = [c.strip() for c in acceptance_criteria.split(",")] if acceptance_criteria else None
+        ac_list = (
+            [c.strip() for c in acceptance_criteria.split(",")]
+            if acceptance_criteria
+            else None
+        )
         tag_list = [t.strip() for t in tags.split(",")] if tags else None
         dep_list = [d.strip() for d in depends_on.split(",")] if depends_on else None
-        meta, test_tasks = store.create_story(title, description, priority, points, tags=tag_list, acceptance_criteria=ac_list, depends_on=dep_list)
+        meta, test_tasks = store.create_story(
+            title,
+            description,
+            priority,
+            points,
+            tags=tag_list,
+            acceptance_criteria=ac_list,
+            depends_on=dep_list,
+        )
         if epic_id:
             store.update(meta.id, epic_id=epic_id)
             meta, _ = store.get_story(meta.id)
         write_index(store)
         result = {"created": meta.model_dump(mode="json")}
-        if test_tasks:
-            result["test_tasks"] = [t.model_dump(mode="json") for t in test_tasks]
+        result["test_tasks"] = [t.model_dump(mode="json") for t in (test_tasks or [])]
         _emit("project.updated", {"summary": f"Story {meta.id} created"})
         return _yaml_dump(result)
     except Exception as e:
         return f"error: {e}"
 
 
-@mcp.tool(title="Create Epic", annotations=ToolAnnotations(title="Create Epic", readOnlyHint=False, destructiveHint=False))
+@mcp.tool(
+    title="Create Epic",
+    annotations=ToolAnnotations(
+        title="Create Epic", readOnlyHint=False, destructiveHint=False
+    ),
+)
 def pm_create_epic(
     title: str,
     description: str,
@@ -619,7 +733,10 @@ def pm_create_epic(
         return f"error: {e}"
 
 
-@mcp.tool(title="Epic Details", annotations=ToolAnnotations(title="Epic Details", readOnlyHint=True))
+@mcp.tool(
+    title="Epic Details",
+    annotations=ToolAnnotations(title="Epic Details", readOnlyHint=True),
+)
 def pm_epic(
     id: str,
     project: Optional[str] = None,
@@ -654,18 +771,25 @@ def pm_epic(
             # Only include full detail for the current page
             if offset <= i < offset + limit:
                 task_summary = [
-                    {"id": t.id, "title": t.title, "status": t.status.value, "points": t.points}
+                    {
+                        "id": t.id,
+                        "title": t.title,
+                        "status": t.status.value,
+                        "points": t.points,
+                    }
                     for t in tasks
                 ]
-                story_data.append({
-                    "id": story.id,
-                    "title": story.title,
-                    "status": story.status.value,
-                    "points": story.points,
-                    "tasks": task_summary,
-                    "task_points": story_points,
-                    "done_points": done_points,
-                })
+                story_data.append(
+                    {
+                        "id": story.id,
+                        "title": story.title,
+                        "status": story.status.value,
+                        "points": story.points,
+                        "tasks": task_summary,
+                        "task_points": story_points,
+                        "done_points": done_points,
+                    }
+                )
 
         total_stories = len(linked_stories)
         has_more = (offset + limit) < total_stories
@@ -691,7 +815,10 @@ def pm_epic(
         return f"error: {e}"
 
 
-@mcp.tool(title="Project Context", annotations=ToolAnnotations(title="Project Context", readOnlyHint=True))
+@mcp.tool(
+    title="Project Context",
+    annotations=ToolAnnotations(title="Project Context", readOnlyHint=True),
+)
 def pm_context(
     project: Optional[str] = None,
     limit: int = 20,
@@ -716,14 +843,21 @@ def pm_context(
         # Hub-level context (if hub mode)
         if hub_config.hub:
             hub_dir = hub_root / ".project"
-            for doc_key, filename in [("vision", "VISION.md"), ("architecture", "ARCHITECTURE.md")]:
+            for doc_key, filename in [
+                ("vision", "VISION.md"),
+                ("architecture", "ARCHITECTURE.md"),
+            ]:
                 path = hub_dir / filename
                 if path.exists():
                     result[f"hub_{doc_key}"] = path.read_text()
 
         # Project-level context
         project_docs = {}
-        for doc_key, filename in [("project", "PROJECT.md"), ("infrastructure", "INFRASTRUCTURE.md"), ("security", "SECURITY.md")]:
+        for doc_key, filename in [
+            ("project", "PROJECT.md"),
+            ("infrastructure", "INFRASTRUCTURE.md"),
+            ("security", "SECURITY.md"),
+        ]:
             path = proj_dir / filename
             if path.exists():
                 project_docs[doc_key] = path.read_text()
@@ -743,7 +877,12 @@ def pm_context(
         result["active_stories_total"] = len(active_stories)
         if active_stories:
             result["active_stories"] = [
-                {"id": s.id, "title": s.title, "epic_id": s.epic_id, "priority": s.priority.value}
+                {
+                    "id": s.id,
+                    "title": s.title,
+                    "epic_id": s.epic_id,
+                    "priority": s.priority.value,
+                }
                 for s in active_stories[:limit]
             ]
 
@@ -752,7 +891,12 @@ def pm_context(
         return f"error: {e}"
 
 
-@mcp.tool(title="Create Task", annotations=ToolAnnotations(title="Create Task", readOnlyHint=False, destructiveHint=False))
+@mcp.tool(
+    title="Create Task",
+    annotations=ToolAnnotations(
+        title="Create Task", readOnlyHint=False, destructiveHint=False
+    ),
+)
 def pm_create_task(
     story_id: str,
     title: str,
@@ -777,7 +921,9 @@ def pm_create_task(
         store = _store(project)
         tag_list = [t.strip() for t in tags.split(",")] if tags else None
         dep_list = [d.strip() for d in depends_on.split(",")] if depends_on else None
-        meta = store.create_task(story_id, title, description, points, tags=tag_list, depends_on=dep_list)
+        meta = store.create_task(
+            story_id, title, description, points, tags=tag_list, depends_on=dep_list
+        )
         write_index(store)
         _emit("task.created", {"taskId": meta.id, "storyId": story_id, "title": title})
         return _yaml_dump({"created": meta.model_dump(mode="json")})
@@ -785,7 +931,12 @@ def pm_create_task(
         return f"error: {e}"
 
 
-@mcp.tool(title="Batch Create Tasks", annotations=ToolAnnotations(title="Batch Create Tasks", readOnlyHint=False, destructiveHint=False))
+@mcp.tool(
+    title="Batch Create Tasks",
+    annotations=ToolAnnotations(
+        title="Batch Create Tasks", readOnlyHint=False, destructiveHint=False
+    ),
+)
 def pm_create_tasks(
     story_id: str,
     tasks: list[dict],
@@ -803,18 +954,27 @@ def pm_create_tasks(
         created = store.create_tasks(story_id, tasks)
         write_index(store)
         for t in created:
-            _emit("task.created", {"taskId": t.id, "storyId": story_id, "title": t.title})
+            _emit(
+                "task.created", {"taskId": t.id, "storyId": story_id, "title": t.title}
+            )
         total_points = sum(t.points or 0 for t in created)
-        return _yaml_dump({
-            "created": [t.model_dump(mode="json") for t in created],
-            "count": len(created),
-            "total_points": total_points,
-        })
+        return _yaml_dump(
+            {
+                "created": [t.model_dump(mode="json") for t in created],
+                "count": len(created),
+                "total_points": total_points,
+            }
+        )
     except Exception as e:
         return f"error: {e}"
 
 
-@mcp.tool(title="Update Item", annotations=ToolAnnotations(title="Update Item", readOnlyHint=False, destructiveHint=False))
+@mcp.tool(
+    title="Update Item",
+    annotations=ToolAnnotations(
+        title="Update Item", readOnlyHint=False, destructiveHint=False
+    ),
+)
 def pm_update(
     id: str,
     status: Optional[str] = None,
@@ -854,7 +1014,11 @@ def pm_update(
         if status is not None:
             try:
                 old_meta, _ = store.get(id)
-                old_status_val = old_meta.status.value if hasattr(old_meta.status, "value") else str(old_meta.status)
+                old_status_val = (
+                    old_meta.status.value
+                    if hasattr(old_meta.status, "value")
+                    else str(old_meta.status)
+                )
             except Exception:
                 pass
 
@@ -872,7 +1036,9 @@ def pm_update(
         if body is not None:
             kwargs["body"] = body
         if acceptance_criteria is not None:
-            kwargs["acceptance_criteria"] = [c.strip() for c in acceptance_criteria.split(",")]
+            kwargs["acceptance_criteria"] = [
+                c.strip() for c in acceptance_criteria.split(",")
+            ]
         if tags is not None:
             kwargs["tags"] = [t.strip() for t in tags.split(",")]
         if depends_on is not None:
@@ -886,7 +1052,11 @@ def pm_update(
         write_index(store)
 
         # Emit events for status changes
-        if status is not None and old_status_val is not None and old_status_val != status:
+        if (
+            status is not None
+            and old_status_val is not None
+            and old_status_val != status
+        ):
             _emit_status_change(store, id, old_status_val, status, meta)
 
         return _yaml_dump({"updated": meta.model_dump(mode="json")})
@@ -894,7 +1064,12 @@ def pm_update(
         return f"error: {e}"
 
 
-@mcp.tool(title="Archive Item", annotations=ToolAnnotations(title="Archive Item", readOnlyHint=False, destructiveHint=True))
+@mcp.tool(
+    title="Archive Item",
+    annotations=ToolAnnotations(
+        title="Archive Item", readOnlyHint=False, destructiveHint=True
+    ),
+)
 def pm_archive(id: str, project: Optional[str] = None) -> str:
     """Archive an epic, story, or task.
 
@@ -911,7 +1086,12 @@ def pm_archive(id: str, project: Optional[str] = None) -> str:
         return f"error: {e}"
 
 
-@mcp.tool(title="Grab Task", annotations=ToolAnnotations(title="Grab Task", readOnlyHint=False, destructiveHint=False))
+@mcp.tool(
+    title="Grab Task",
+    annotations=ToolAnnotations(
+        title="Grab Task", readOnlyHint=False, destructiveHint=False
+    ),
+)
 def pm_grab(
     task_id: str,
     assignee: str = "claude",
@@ -933,21 +1113,26 @@ def pm_grab(
         # Validate readiness
         readiness = check_readiness(task_meta, task_body, store)
         if not readiness["ready"]:
-            return _yaml_dump({
-                "error": "task is not ready to grab",
-                "blockers": readiness["blockers"],
-            })
+            return _yaml_dump(
+                {
+                    "error": "task is not ready to grab",
+                    "blockers": readiness["blockers"],
+                }
+            )
 
         # Claim: set assignee and status
         old_status = task_meta.status.value
         store.update(task_id, assignee=assignee, status="in-progress")
         write_index(store)
-        _emit("task.status_update", {
-            "taskId": task_id,
-            "oldStatus": old_status,
-            "newStatus": "in-progress",
-            "storyId": task_meta.story_id,
-        })
+        _emit(
+            "task.status_update",
+            {
+                "taskId": task_id,
+                "oldStatus": old_status,
+                "newStatus": "in-progress",
+                "storyId": task_meta.story_id,
+            },
+        )
 
         # Re-read updated task
         task_meta, task_body = store.get_task(task_id)
@@ -970,7 +1155,12 @@ def pm_grab(
         siblings = store.list_tasks(story_id=task_meta.story_id)
         all_siblings = [s for s in siblings if s.id != task_id]
         sibling_list = [
-            {"id": s.id, "title": s.title, "status": s.status.value, "assignee": s.assignee}
+            {
+                "id": s.id,
+                "title": s.title,
+                "status": s.status.value,
+                "assignee": s.assignee,
+            }
             for s in all_siblings[:20]
         ]
 
@@ -986,20 +1176,24 @@ def pm_grab(
             for dep_id in task_meta.depends_on:
                 if dep_id in task_map:
                     dep = task_map[dep_id]
-                    dependency_status.append({
-                        "id": dep.id,
-                        "title": dep.title,
-                        "status": dep.status.value,
-                        "type": "task",
-                    })
+                    dependency_status.append(
+                        {
+                            "id": dep.id,
+                            "title": dep.title,
+                            "status": dep.status.value,
+                            "type": "task",
+                        }
+                    )
                 elif dep_id in story_map:
                     dep = story_map[dep_id]
-                    dependency_status.append({
-                        "id": dep.id,
-                        "title": dep.title,
-                        "status": dep.status.value,
-                        "type": "story",
-                    })
+                    dependency_status.append(
+                        {
+                            "id": dep.id,
+                            "title": dep.title,
+                            "status": dep.status.value,
+                            "type": "story",
+                        }
+                    )
 
         result = {
             "grabbed": {
@@ -1019,7 +1213,11 @@ def pm_grab(
 
 # ─── Intelligence Tools ─────────────────────────────────────────
 
-@mcp.tool(title="Estimation Context", annotations=ToolAnnotations(title="Estimation Context", readOnlyHint=True))
+
+@mcp.tool(
+    title="Estimation Context",
+    annotations=ToolAnnotations(title="Estimation Context", readOnlyHint=True),
+)
 def pm_estimate(id: str, project: Optional[str] = None) -> str:
     """Get estimation context for a story or task — returns content + calibration guidelines.
 
@@ -1029,13 +1227,17 @@ def pm_estimate(id: str, project: Optional[str] = None) -> str:
     """
     try:
         from .estimator import estimate
+
         store = _store(project)
         return estimate(store, id)
     except Exception as e:
         return f"error: {e}"
 
 
-@mcp.tool(title="Scoping Context", annotations=ToolAnnotations(title="Scoping Context", readOnlyHint=True))
+@mcp.tool(
+    title="Scoping Context",
+    annotations=ToolAnnotations(title="Scoping Context", readOnlyHint=True),
+)
 def pm_scope(id: str, project: Optional[str] = None) -> str:
     """Get scoping context for a story — returns story + existing tasks + decomposition guidance.
 
@@ -1045,13 +1247,17 @@ def pm_scope(id: str, project: Optional[str] = None) -> str:
     """
     try:
         from .scoper import scope
+
         store = _store(project)
         return scope(store, id)
     except Exception as e:
         return f"error: {e}"
 
 
-@mcp.tool(title="Project Audit", annotations=ToolAnnotations(title="Project Audit", readOnlyHint=True))
+@mcp.tool(
+    title="Project Audit",
+    annotations=ToolAnnotations(title="Project Audit", readOnlyHint=True),
+)
 def pm_audit(project: Optional[str] = None) -> str:
     """Run project audit — checks for drift, inconsistencies, stale items.
 
@@ -1060,6 +1266,7 @@ def pm_audit(project: Optional[str] = None) -> str:
     """
     try:
         from .audit import run_audit
+
         root = find_project_root()
         if project:
             config = load_config(root)
@@ -1073,7 +1280,12 @@ def pm_audit(project: Optional[str] = None) -> str:
         return f"error: {e}"
 
 
-@mcp.tool(title="Hub Repair", annotations=ToolAnnotations(title="Hub Repair", readOnlyHint=False, destructiveHint=False))
+@mcp.tool(
+    title="Hub Repair",
+    annotations=ToolAnnotations(
+        title="Hub Repair", readOnlyHint=False, destructiveHint=False
+    ),
+)
 def pm_repair() -> str:
     """Scan the hub for unregistered projects, initialize missing PM data
     directories (hub_root/.project/projects/{name}/), rebuild all indexes
@@ -1084,12 +1296,16 @@ def pm_repair() -> str:
         if not config.hub:
             return "error: not a hub project"
         from .hub.registry import repair
+
         return repair()
     except Exception as e:
         return f"error: {e}"
 
 
-@mcp.tool(title="Validate Branches", annotations=ToolAnnotations(title="Validate Branches", readOnlyHint=True))
+@mcp.tool(
+    title="Validate Branches",
+    annotations=ToolAnnotations(title="Validate Branches", readOnlyHint=True),
+)
 def pm_validate_branches() -> str:
     """Validate that each hub submodule is on its expected tracked branch.
 
@@ -1098,6 +1314,7 @@ def pm_validate_branches() -> str:
     """
     try:
         from .hub.registry import validate_branches
+
         root = find_project_root()
         result = validate_branches(root=root)
         return _yaml_dump(result)
@@ -1105,7 +1322,10 @@ def pm_validate_branches() -> str:
         return f"error: {e}"
 
 
-@mcp.tool(title="Next Malformed File", annotations=ToolAnnotations(title="Next Malformed File", readOnlyHint=True))
+@mcp.tool(
+    title="Next Malformed File",
+    annotations=ToolAnnotations(title="Next Malformed File", readOnlyHint=True),
+)
 def pm_malformed(project: Optional[str] = None) -> str:
     """Get the next malformed file to fix. Returns one file at a time with its full
     content. Call pm_fix_malformed to fix it (which removes it from the queue),
@@ -1169,7 +1389,12 @@ def pm_malformed(project: Optional[str] = None) -> str:
         return f"error: {e}"
 
 
-@mcp.tool(title="Fix Malformed File", annotations=ToolAnnotations(title="Fix Malformed File", readOnlyHint=False, destructiveHint=False))
+@mcp.tool(
+    title="Fix Malformed File",
+    annotations=ToolAnnotations(
+        title="Fix Malformed File", readOnlyHint=False, destructiveHint=False
+    ),
+)
 def pm_fix_malformed(
     filename: str,
     id: str,
@@ -1257,12 +1482,19 @@ def pm_fix_malformed(
 
         store = _store(project)
         write_index(store)
-        return _yaml_dump({"fixed": meta.model_dump(mode="json"), "restored_to": str(dest)})
+        return _yaml_dump(
+            {"fixed": meta.model_dump(mode="json"), "restored_to": str(dest)}
+        )
     except Exception as e:
         return f"error: {e}"
 
 
-@mcp.tool(title="Restore File", annotations=ToolAnnotations(title="Restore File", readOnlyHint=False, destructiveHint=False))
+@mcp.tool(
+    title="Restore File",
+    annotations=ToolAnnotations(
+        title="Restore File", readOnlyHint=False, destructiveHint=False
+    ),
+)
 def pm_restore(filename: str, project: Optional[str] = None) -> str:
     """Restore a fixed file from the malformed quarantine back to stories/ or tasks/.
 
@@ -1295,6 +1527,7 @@ def pm_restore(filename: str, project: Optional[str] = None) -> str:
             dest = proj_dir / "stories" / filename
 
         import shutil
+
         shutil.move(str(source), str(dest))
 
         # Clean up empty malformed dir
@@ -1308,7 +1541,12 @@ def pm_restore(filename: str, project: Optional[str] = None) -> str:
         return f"error: {e}"
 
 
-@mcp.tool(title="Rebuild Index", annotations=ToolAnnotations(title="Rebuild Index", readOnlyHint=False, destructiveHint=False))
+@mcp.tool(
+    title="Rebuild Index",
+    annotations=ToolAnnotations(
+        title="Rebuild Index", readOnlyHint=False, destructiveHint=False
+    ),
+)
 def pm_reindex(project: Optional[str] = None) -> str:
     """Rebuild the project index and optionally reindex embeddings.
 
@@ -1322,6 +1560,7 @@ def pm_reindex(project: Optional[str] = None) -> str:
         # Try to reindex embeddings too
         try:
             from .embeddings import EmbeddingStore
+
             emb = EmbeddingStore(store.project_dir)
             emb.reindex_all(store)
             return "reindexed: index.yaml + embeddings"
@@ -1331,7 +1570,10 @@ def pm_reindex(project: Optional[str] = None) -> str:
         return f"error: {e}"
 
 
-@mcp.tool(title="Auto-Scope Discovery", annotations=ToolAnnotations(title="Auto-Scope Discovery", readOnlyHint=True))
+@mcp.tool(
+    title="Auto-Scope Discovery",
+    annotations=ToolAnnotations(title="Auto-Scope Discovery", readOnlyHint=True),
+)
 def pm_auto_scope(
     mode: Optional[str] = None,
     project: Optional[str] = None,
@@ -1351,6 +1593,7 @@ def pm_auto_scope(
     """
     try:
         from .scoper import auto_scope
+
         store = _store(project)
         return auto_scope(store, mode=mode, limit=limit, offset=offset)
     except Exception as e:
@@ -1359,7 +1602,11 @@ def pm_auto_scope(
 
 # ─── Git Tools ───────────────────────────────────────────────────
 
-@mcp.tool(title="Git Status Dashboard", annotations=ToolAnnotations(title="Git Status Dashboard", readOnlyHint=True))
+
+@mcp.tool(
+    title="Git Status Dashboard",
+    annotations=ToolAnnotations(title="Git Status Dashboard", readOnlyHint=True),
+)
 def pm_git_status(project: Optional[str] = None) -> str:
     """Show git status across all hub submodules — branch, dirty, ahead/behind, PRs.
 
@@ -1380,20 +1627,27 @@ def pm_git_status(project: Optional[str] = None) -> str:
             matched = [p for p in data.get("projects", []) if p["name"] == project]
             if not matched:
                 return f"error: project '{project}' not found in hub status"
-            return _yaml_dump({
-                "projects": matched,
-                "total": 1,
-                "issues": 1 if matched[0].get("issues") else 0,
-                "ok": not matched[0].get("issues"),
-                "summary": f"Status for {project}",
-            })
+            return _yaml_dump(
+                {
+                    "projects": matched,
+                    "total": 1,
+                    "issues": 1 if matched[0].get("issues") else 0,
+                    "ok": not matched[0].get("issues"),
+                    "summary": f"Status for {project}",
+                }
+            )
 
         return _yaml_dump(data)
     except Exception as e:
         return f"error: {e}"
 
 
-@mcp.tool(title="Commit PM Changes", annotations=ToolAnnotations(title="Commit PM Changes", readOnlyHint=False, destructiveHint=False))
+@mcp.tool(
+    title="Commit PM Changes",
+    annotations=ToolAnnotations(
+        title="Commit PM Changes", readOnlyHint=False, destructiveHint=False
+    ),
+)
 def pm_commit(
     scope: str = "all",
     message: Optional[str] = None,
@@ -1414,6 +1668,7 @@ def pm_commit(
 
         if config.hub:
             from .hub.registry import pm_commit as _hub_commit
+
             result = _hub_commit(scope=scope, message=message, root=root)
         else:
             # Non-hub: scope is ignored (single project)
@@ -1432,7 +1687,12 @@ def pm_commit(
         return f"error: {e}"
 
 
-@mcp.tool(title="Push PM Changes", annotations=ToolAnnotations(title="Push PM Changes", readOnlyHint=False, destructiveHint=False))
+@mcp.tool(
+    title="Push PM Changes",
+    annotations=ToolAnnotations(
+        title="Push PM Changes", readOnlyHint=False, destructiveHint=False
+    ),
+)
 def pm_push(
     scope: str = "hub",
 ) -> str:
@@ -1450,6 +1710,7 @@ def pm_push(
 
         if config.hub:
             from .hub.registry import pm_push as _hub_push
+
             result = _hub_push(scope=scope, root=root)
             return _yaml_dump({"pushed": result})
         else:
@@ -1463,7 +1724,12 @@ def pm_push(
         return f"error: {e}"
 
 
-@mcp.tool(title="Coordinated Push All", annotations=ToolAnnotations(title="Coordinated Push All", readOnlyHint=False, destructiveHint=False))
+@mcp.tool(
+    title="Coordinated Push All",
+    annotations=ToolAnnotations(
+        title="Coordinated Push All", readOnlyHint=False, destructiveHint=False
+    ),
+)
 def pm_push_all(
     dry_run: bool = False,
     projects: Optional[str] = None,
@@ -1480,12 +1746,11 @@ def pm_push_all(
     """
     try:
         from .hub.registry import coordinated_push
+
         root = find_project_root()
 
         project_list = (
-            [p.strip() for p in projects.split(",") if p.strip()]
-            if projects
-            else None
+            [p.strip() for p in projects.split(",") if p.strip()] if projects else None
         )
 
         result = coordinated_push(
@@ -1500,7 +1765,13 @@ def pm_push_all(
 
 # ─── Changeset Tools ────────────────────────────────────────────
 
-@mcp.tool(title="Create Changeset", annotations=ToolAnnotations(title="Create Changeset", readOnlyHint=False, destructiveHint=False))
+
+@mcp.tool(
+    title="Create Changeset",
+    annotations=ToolAnnotations(
+        title="Create Changeset", readOnlyHint=False, destructiveHint=False
+    ),
+)
 def pm_changeset_create(
     title: str,
     projects: str,
@@ -1527,7 +1798,10 @@ def pm_changeset_create(
         return f"error: {e}"
 
 
-@mcp.tool(title="Changeset Status", annotations=ToolAnnotations(title="Changeset Status", readOnlyHint=True))
+@mcp.tool(
+    title="Changeset Status",
+    annotations=ToolAnnotations(title="Changeset Status", readOnlyHint=True),
+)
 def pm_changeset_status(
     changeset_id: Optional[str] = None,
     project: Optional[str] = None,
@@ -1547,15 +1821,22 @@ def pm_changeset_status(
             return _yaml_dump(result)
         else:
             changesets = store.list_changesets()
-            return _yaml_dump({
-                "changesets": [cs.model_dump(mode="json") for cs in changesets],
-                "count": len(changesets),
-            })
+            return _yaml_dump(
+                {
+                    "changesets": [cs.model_dump(mode="json") for cs in changesets],
+                    "count": len(changesets),
+                }
+            )
     except Exception as e:
         return f"error: {e}"
 
 
-@mcp.tool(title="Add Project to Changeset", annotations=ToolAnnotations(title="Add Project to Changeset", readOnlyHint=False, destructiveHint=False))
+@mcp.tool(
+    title="Add Project to Changeset",
+    annotations=ToolAnnotations(
+        title="Add Project to Changeset", readOnlyHint=False, destructiveHint=False
+    ),
+)
 def pm_changeset_add_project(
     changeset_id: str,
     name: str,
@@ -1578,7 +1859,10 @@ def pm_changeset_add_project(
         return f"error: {e}"
 
 
-@mcp.tool(title="Changeset Create PRs", annotations=ToolAnnotations(title="Changeset Create PRs", readOnlyHint=True))
+@mcp.tool(
+    title="Changeset Create PRs",
+    annotations=ToolAnnotations(title="Changeset Create PRs", readOnlyHint=True),
+)
 def pm_changeset_create_prs(
     changeset_id: str,
     project: Optional[str] = None,
@@ -1602,7 +1886,12 @@ def pm_changeset_create_prs(
         return f"error: {e}"
 
 
-@mcp.tool(title="Changeset Push", annotations=ToolAnnotations(title="Changeset Push", readOnlyHint=False, destructiveHint=False))
+@mcp.tool(
+    title="Changeset Push",
+    annotations=ToolAnnotations(
+        title="Changeset Push", readOnlyHint=False, destructiveHint=False
+    ),
+)
 def pm_changeset_push(
     changeset_id: str,
     project: Optional[str] = None,
@@ -1633,15 +1922,15 @@ def pm_changeset_push(
                 content=body,
                 **meta.model_dump(mode="json"),
             )
-            store._changeset_path(changeset_id).write_text(
-                frontmatter.dumps(post)
+            store._changeset_path(changeset_id).write_text(frontmatter.dumps(post))
+            return _yaml_dump(
+                {
+                    "changeset": meta.id,
+                    "status": "merged",
+                    "message": "All PRs merged — safe to update hub submodule refs.",
+                    "projects": [e.project for e in meta.entries],
+                }
             )
-            return _yaml_dump({
-                "changeset": meta.id,
-                "status": "merged",
-                "message": "All PRs merged — safe to update hub submodule refs.",
-                "projects": [e.project for e in meta.entries],
-            })
         else:
             # Partial — update status
             if merged:
@@ -1651,24 +1940,33 @@ def pm_changeset_push(
                     content=body,
                     **meta.model_dump(mode="json"),
                 )
-                store._changeset_path(changeset_id).write_text(
-                    frontmatter.dumps(post)
-                )
+                store._changeset_path(changeset_id).write_text(frontmatter.dumps(post))
 
-            return _yaml_dump({
-                "changeset": meta.id,
-                "status": "partial",
-                "merged": [e.project for e in merged],
-                "pending": [{"project": e.project, "ref": e.ref, "status": e.status} for e in pending],
-                "message": "Not all PRs merged — do NOT update hub refs yet.",
-            })
+            return _yaml_dump(
+                {
+                    "changeset": meta.id,
+                    "status": "partial",
+                    "merged": [e.project for e in merged],
+                    "pending": [
+                        {"project": e.project, "ref": e.ref, "status": e.status}
+                        for e in pending
+                    ],
+                    "message": "Not all PRs merged — do NOT update hub refs yet.",
+                }
+            )
     except Exception as e:
         return f"error: {e}"
 
 
 # ─── Sprint Tools ────────────────────────────────────────────────
 
-@mcp.tool(title="Create Sprint", annotations=ToolAnnotations(title="Create Sprint", readOnlyHint=False, destructiveHint=False))
+
+@mcp.tool(
+    title="Create Sprint",
+    annotations=ToolAnnotations(
+        title="Create Sprint", readOnlyHint=False, destructiveHint=False
+    ),
+)
 def pm_create_sprint(
     name: str,
     goal: str = "",
@@ -1701,6 +1999,7 @@ def pm_create_sprint(
         warnings = []
         if story_list:
             from .deps import incomplete_story_dependencies
+
             all_tasks = store.list_tasks()
             all_stories = store.list_stories()
             planned_set = set(story_list)
@@ -1708,11 +2007,15 @@ def pm_create_sprint(
             for sid in story_list:
                 try:
                     story_meta, _ = store.get_story(sid)
-                    incomplete = incomplete_story_dependencies(story_meta, all_tasks, all_stories)
+                    incomplete = incomplete_story_dependencies(
+                        story_meta, all_tasks, all_stories
+                    )
                     # Filter to external dependencies (not in this sprint)
                     external_deps = [d for d in incomplete if d not in planned_set]
                     if external_deps:
-                        warnings.append(f"{sid} has unmet dependencies: {', '.join(external_deps)}")
+                        warnings.append(
+                            f"{sid} has unmet dependencies: {', '.join(external_deps)}"
+                        )
                 except FileNotFoundError:
                     warnings.append(f"{sid} not found")
 
@@ -1731,7 +2034,10 @@ def pm_create_sprint(
         return f"error: {e}"
 
 
-@mcp.tool(title="Get Sprint", annotations=ToolAnnotations(title="Get Sprint", readOnlyHint=True))
+@mcp.tool(
+    title="Get Sprint",
+    annotations=ToolAnnotations(title="Get Sprint", readOnlyHint=True),
+)
 def pm_get_sprint(
     sprint_id: str,
     project: Optional[str] = None,
@@ -1751,6 +2057,7 @@ def pm_get_sprint(
 
         # Load all data for dependency checks
         from .deps import incomplete_story_dependencies
+
         all_tasks = store.list_tasks()
         all_stories = store.list_stories()
         planned_set = set(meta.planned_stories)
@@ -1764,7 +2071,9 @@ def pm_get_sprint(
                 done_tasks = [t for t in tasks if t.status.value == "done"]
 
                 # Check dependencies
-                incomplete = incomplete_story_dependencies(story_meta, all_tasks, all_stories)
+                incomplete = incomplete_story_dependencies(
+                    story_meta, all_tasks, all_stories
+                )
                 # Split into internal (in sprint) and external (outside sprint)
                 internal_deps = [d for d in incomplete if d in planned_set]
                 external_deps = [d for d in incomplete if d not in planned_set]
@@ -1786,16 +2095,22 @@ def pm_get_sprint(
 
                 story_progress.append(entry)
             except Exception:
-                story_progress.append({
-                    "story_id": sid,
-                    "status": "removed",
-                    "tasks_done": 0,
-                    "tasks_total": 0,
-                })
+                story_progress.append(
+                    {
+                        "story_id": sid,
+                        "status": "removed",
+                        "tasks_done": 0,
+                        "tasks_total": 0,
+                    }
+                )
 
         # Compute suggested execution order based on dependencies
         # Stories with no incomplete deps come first
-        ready_stories = [s for s in story_progress if not s.get("blocked_by_in_sprint") and s.get("status") != "done"]
+        ready_stories = [
+            s
+            for s in story_progress
+            if not s.get("blocked_by_in_sprint") and s.get("status") != "done"
+        ]
         blocked_stories = [s for s in story_progress if s.get("blocked_by_in_sprint")]
 
         result["story_progress"] = story_progress
@@ -1812,7 +2127,10 @@ def pm_get_sprint(
         return f"error: {e}"
 
 
-@mcp.tool(title="List Sprints", annotations=ToolAnnotations(title="List Sprints", readOnlyHint=True))
+@mcp.tool(
+    title="List Sprints",
+    annotations=ToolAnnotations(title="List Sprints", readOnlyHint=True),
+)
 def pm_list_sprints(
     status: Optional[str] = None,
     project: Optional[str] = None,
@@ -1826,15 +2144,22 @@ def pm_list_sprints(
     try:
         store = _store(project)
         sprints = store.list_sprints(status=status)
-        return _yaml_dump({
-            "sprints": [s.model_dump(mode="json") for s in sprints],
-            "count": len(sprints),
-        })
+        return _yaml_dump(
+            {
+                "sprints": [s.model_dump(mode="json") for s in sprints],
+                "count": len(sprints),
+            }
+        )
     except Exception as e:
         return f"error: {e}"
 
 
-@mcp.tool(title="Update Sprint", annotations=ToolAnnotations(title="Update Sprint", readOnlyHint=False, destructiveHint=False))
+@mcp.tool(
+    title="Update Sprint",
+    annotations=ToolAnnotations(
+        title="Update Sprint", readOnlyHint=False, destructiveHint=False
+    ),
+)
 def pm_update_sprint(
     sprint_id: str,
     name: Optional[str] = None,
@@ -1886,6 +2211,7 @@ def pm_update_sprint(
         # Check for dependency issues if stories were updated
         if story_list:
             from .deps import incomplete_story_dependencies
+
             all_tasks = store.list_tasks()
             all_stories = store.list_stories()
             planned_set = set(story_list)
@@ -1894,10 +2220,14 @@ def pm_update_sprint(
             for sid in story_list:
                 try:
                     story_meta, _ = store.get_story(sid)
-                    incomplete = incomplete_story_dependencies(story_meta, all_tasks, all_stories)
+                    incomplete = incomplete_story_dependencies(
+                        story_meta, all_tasks, all_stories
+                    )
                     external_deps = [d for d in incomplete if d not in planned_set]
                     if external_deps:
-                        warnings.append(f"{sid} has unmet dependencies: {', '.join(external_deps)}")
+                        warnings.append(
+                            f"{sid} has unmet dependencies: {', '.join(external_deps)}"
+                        )
                 except FileNotFoundError:
                     pass
 
@@ -1929,7 +2259,12 @@ def _port_available(host: str, port: int) -> bool:
             return False
 
 
-@mcp.tool(title="Start Web UI", annotations=ToolAnnotations(title="Start Web UI", readOnlyHint=False, destructiveHint=False))
+@mcp.tool(
+    title="Start Web UI",
+    annotations=ToolAnnotations(
+        title="Start Web UI", readOnlyHint=False, destructiveHint=False
+    ),
+)
 def pm_web_start(host: str = "127.0.0.1", port: int = 8000) -> str:
     """Start the ProjectMan web dashboard as a background server.
 
@@ -1943,29 +2278,35 @@ def pm_web_start(host: str = "127.0.0.1", port: int = 8000) -> str:
 
     # Already running?
     if _web_process is not None and _web_process.poll() is None:
-        return _yaml_dump({
-            "status": "already_running",
-            "url": f"http://{_web_host}:{_web_port}",
-            "pid": _web_process.pid,
-        })
+        return _yaml_dump(
+            {
+                "status": "already_running",
+                "url": f"http://{_web_host}:{_web_port}",
+                "pid": _web_process.pid,
+            }
+        )
 
     # Check port availability
     if not _port_available(host, port):
-        return _yaml_dump({
-            "status": "error",
-            "error": f"Port {port} is already in use",
-            "suggestion": f"Try port {port + 1} or another available port",
-        })
+        return _yaml_dump(
+            {
+                "status": "error",
+                "error": f"Port {port} is already in use",
+                "suggestion": f"Try port {port + 1} or another available port",
+            }
+        )
 
     # Check web dependencies
     try:
         import uvicorn  # noqa: F401
         import fastapi  # noqa: F401
     except ImportError:
-        return _yaml_dump({
-            "status": "error",
-            "error": "Web dependencies not installed. Install with: pip install projectman[web]",
-        })
+        return _yaml_dump(
+            {
+                "status": "error",
+                "error": "Web dependencies not installed. Install with: pip install projectman[web]",
+            }
+        )
 
     # Find project root for the working directory
     try:
@@ -1976,9 +2317,18 @@ def pm_web_start(host: str = "127.0.0.1", port: int = 8000) -> str:
     # Start uvicorn as a subprocess
     try:
         import sys
+
         _web_process = subprocess.Popen(
-            [sys.executable, "-m", "uvicorn", "projectman.web.app:app",
-             "--host", host, "--port", str(port)],
+            [
+                sys.executable,
+                "-m",
+                "uvicorn",
+                "projectman.web.app:app",
+                "--host",
+                host,
+                "--port",
+                str(port),
+            ],
             cwd=str(root),
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
@@ -1986,17 +2336,24 @@ def pm_web_start(host: str = "127.0.0.1", port: int = 8000) -> str:
         _web_host = host
         _web_port = port
 
-        return _yaml_dump({
-            "status": "started",
-            "url": f"http://{host}:{port}",
-            "pid": _web_process.pid,
-        })
+        return _yaml_dump(
+            {
+                "status": "started",
+                "url": f"http://{host}:{port}",
+                "pid": _web_process.pid,
+            }
+        )
     except Exception as e:
         _web_process = None
         return _yaml_dump({"status": "error", "error": str(e)})
 
 
-@mcp.tool(title="Stop Web UI", annotations=ToolAnnotations(title="Stop Web UI", readOnlyHint=False, destructiveHint=False))
+@mcp.tool(
+    title="Stop Web UI",
+    annotations=ToolAnnotations(
+        title="Stop Web UI", readOnlyHint=False, destructiveHint=False
+    ),
+)
 def pm_web_stop() -> str:
     """Stop the running ProjectMan web server."""
     global _web_process, _web_host, _web_port
@@ -2025,7 +2382,10 @@ def pm_web_stop() -> str:
     return _yaml_dump({"status": "stopped", "pid": pid})
 
 
-@mcp.tool(title="Web UI Status", annotations=ToolAnnotations(title="Web UI Status", readOnlyHint=True))
+@mcp.tool(
+    title="Web UI Status",
+    annotations=ToolAnnotations(title="Web UI Status", readOnlyHint=True),
+)
 def pm_web_status() -> str:
     """Check if the ProjectMan web server is running and on what host/port."""
     global _web_process, _web_host, _web_port
@@ -2041,19 +2401,24 @@ def pm_web_status() -> str:
         _web_port = None
         return _yaml_dump({"running": False, "exited_with": exit_code})
 
-    return _yaml_dump({
-        "running": True,
-        "url": f"http://{_web_host}:{_web_port}",
-        "pid": _web_process.pid,
-        "host": _web_host,
-        "port": _web_port,
-    })
+    return _yaml_dump(
+        {
+            "running": True,
+            "url": f"http://{_web_host}:{_web_port}",
+            "pid": _web_process.pid,
+            "host": _web_host,
+            "port": _web_port,
+        }
+    )
 
 
 # ─── Activity Log ───────────────────────────────────────────────
 
 
-@mcp.tool(title="Activity Log", annotations=ToolAnnotations(title="Activity Log", readOnlyHint=True))
+@mcp.tool(
+    title="Activity Log",
+    annotations=ToolAnnotations(title="Activity Log", readOnlyHint=True),
+)
 def pm_activity(
     item_id: Optional[str] = None,
     event_type: Optional[str] = None,
@@ -2084,7 +2449,9 @@ def pm_activity(
         log_path = pm_dir / "activity.jsonl"
 
         if not log_path.exists():
-            return _yaml_dump({"entries": [], "total": 0, "message": "No activity log found"})
+            return _yaml_dump(
+                {"entries": [], "total": 0, "message": "No activity log found"}
+            )
 
         # Parse all entries
         entries = []
@@ -2105,10 +2472,14 @@ def pm_activity(
             entries = [e for e in entries if e.get("actor") == actor]
         if from_date:
             from_dt = datetime.fromisoformat(from_date)
-            entries = [e for e in entries if datetime.fromisoformat(e["timestamp"]) >= from_dt]
+            entries = [
+                e for e in entries if datetime.fromisoformat(e["timestamp"]) >= from_dt
+            ]
         if to_date:
             to_dt = datetime.fromisoformat(to_date)
-            entries = [e for e in entries if datetime.fromisoformat(e["timestamp"]) <= to_dt]
+            entries = [
+                e for e in entries if datetime.fromisoformat(e["timestamp"]) <= to_dt
+            ]
 
         total = len(entries)
 
@@ -2142,7 +2513,9 @@ def pm_activity(
 
         result = {
             "total": total,
-            "showing": f"{offset + 1}-{offset + len(entries)} of {total}" if entries else "0 of 0",
+            "showing": f"{offset + 1}-{offset + len(entries)} of {total}"
+            if entries
+            else "0 of 0",
             "entries": formatted,
         }
         return _yaml_dump(result)
@@ -2150,7 +2523,9 @@ def pm_activity(
         return f"error: {e}"
 
 
-@mcp.tool(title="Run Log", annotations=ToolAnnotations(title="Run Log", readOnlyHint=True))
+@mcp.tool(
+    title="Run Log", annotations=ToolAnnotations(title="Run Log", readOnlyHint=True)
+)
 def pm_run_log(
     id: str,
     limit: int = 20,
@@ -2177,7 +2552,9 @@ def pm_run_log(
         return f"error: {e}"
 
 
-def run_server(transport: str = "stdio", host: str = "127.0.0.1", port: int = 22001) -> None:
+def run_server(
+    transport: str = "stdio", host: str = "127.0.0.1", port: int = 22001
+) -> None:
     """Run the MCP server with the specified transport.
 
     Args:
@@ -2194,6 +2571,7 @@ def run_server(transport: str = "stdio", host: str = "127.0.0.1", port: int = 22
         # Activate real event bus and register orchestrator REST/SSE routes
         _event_bus = EventBus()
         from .orchestrator_api import register_routes
+
         register_routes(mcp, _event_bus, _store)
 
     mcp.run(transport=transport)

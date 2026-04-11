@@ -64,6 +64,12 @@ class StdioClient:
 
     def start(self):
         """Start the MCP server process."""
+        from pathlib import Path
+
+        local_venv = Path(__file__).resolve().parents[2] / ".venv" / "bin"
+        env = {**__import__("os").environ, "PROJECTMAN_ROOT": str(self.project_dir)}
+        if local_venv.exists():
+            env["PATH"] = f"{local_venv}:{env.get('PATH', '')}"
         self.proc = subprocess.Popen(
             ["projectman", "serve", "--transport", "stdio"],
             cwd=str(self.project_dir),
@@ -71,7 +77,7 @@ class StdioClient:
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
-            env={**__import__("os").environ, "PROJECTMAN_ROOT": str(self.project_dir)},
+            env=env,
         )
         self._output_thread = threading.Thread(target=self._read_output, daemon=True)
         self._output_thread.start()

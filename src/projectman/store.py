@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 _cache: dict[tuple[str, str], list[tuple]] = {}
 
 # Track when each cache entry was last populated (mtime of newest file at populate time)
-_cache_mtimes: dict[tuple[str, str], float] = {}
+_cache_mtimes: dict[tuple[str, str], tuple[float, int]] = {}
 
 # Cache statistics — only tracked when PROJECTMAN_CACHE_DEBUG is set.
 _cache_stats: dict[str, int] = {"hits": 0, "misses": 0, "invalidations": 0}
@@ -381,30 +381,30 @@ class Store:
         """Return the cache key for a given item type."""
         return (str(self.project_dir), item_type)
 
-    def _get_dir_mtime(self, dir_path: Path) -> float:
-        """Return mtime of the most recently modified file in dir_path.
+    def _get_dir_mtime(self, dir_path: Path) -> tuple[float, int]:
+        """Return (mtime, file_count) of the most recently modified file in dir_path.
 
-        Returns 0 if dir_path does not exist or is empty.
+        Returns (0.0, 0) if dir_path does not exist or is empty.
         """
         if not dir_path.exists():
-            return 0.0
+            return (0.0, 0)
         files = list(dir_path.glob("*.md"))
         if not files:
-            return 0.0
-        return max(f.stat().st_mtime for f in files)
+            return (0.0, 0)
+        return (max(f.stat().st_mtime for f in files), len(files))
 
     def _is_cache_stale(self, item_type: str) -> bool:
         """Check if cached data for item_type is potentially stale.
 
-        Compares the stored mtime against current file mtimes to detect
-        external changes (e.g., git pull, direct edits).
+        Compares stored (mtime, file_count) against current to detect
+        external changes (e.g., git pull, direct edits, file deletions).
         """
         key = self._cache_key(item_type)
         if key not in _cache:
             return True
 
-        stored_mtime = _cache_mtimes.get(key, 0.0)
-        if stored_mtime == 0.0:
+        stored = _cache_mtimes.get(key, (0.0, 0))
+        if stored == (0.0, 0):
             return True
 
         dir_map = {
@@ -416,8 +416,9 @@ class Store:
         if not dir_path:
             return True
 
-        current_mtime = self._get_dir_mtime(dir_path)
-        return current_mtime > stored_mtime
+        current_mtime, current_count = self._get_dir_mtime(dir_path)
+        stored_mtime, stored_count = stored
+        return current_mtime > stored_mtime or current_count != stored_count
 
     def _invalidate_cache(self, item_type: str) -> None:
         """Remove cached entries for the given item type."""

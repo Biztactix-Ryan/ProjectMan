@@ -73,6 +73,12 @@ class SseClient:
 @pytest.fixture
 def sse_server(project_dir):
     """Start the MCP server in SSE mode and return an HTTP client."""
+    from pathlib import Path
+
+    local_venv = Path(__file__).resolve().parents[2] / ".venv" / "bin"
+    env = {**__import__("os").environ, "PROJECTMAN_ROOT": str(project_dir)}
+    if local_venv.exists():
+        env["PATH"] = f"{local_venv}:{env.get('PATH', '')}"
     proc = subprocess.Popen(
         [
             "projectman",
@@ -88,7 +94,7 @@ def sse_server(project_dir):
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
-        env={**__import__("os").environ, "PROJECTMAN_ROOT": str(project_dir)},
+        env=env,
     )
 
     # Wait for server to be ready
