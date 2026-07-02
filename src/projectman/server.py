@@ -2574,4 +2574,17 @@ def run_server(
 
         register_routes(mcp, _event_bus, _store)
 
+        # Also serve the full Web UI + REST API on the same port. The web app
+        # is mounted with lowest precedence, so the MCP transport routes
+        # (/sse, /messages/) and the orchestrator routes registered above win
+        # for their exact paths; the web app handles everything else.
+        from starlette.routing import Mount
+
+        from .web.app import app as web_app
+
+        root = find_project_root()
+        web_app.state.root = root
+        web_app.state.store = Store(root)
+        mcp._custom_starlette_routes.append(Mount("/", app=web_app))
+
     mcp.run(transport=transport)

@@ -69,7 +69,51 @@ class StdioClient:
         )
         self._output_thread = threading.Thread(target=self._read_output, daemon=True)
         self._output_thread.start()
-        time.sleep(0.5)
+        time.sleep(0.3)
+        self._initialize()
+
+    def _initialize(self):
+        """Send the required MCP initialize handshake."""
+        if not self.proc:
+            raise RuntimeError("Server not started")
+
+        init_msg = {
+            "jsonrpc": "2.0",
+            "id": 0,
+            "method": "initialize",
+            "params": {
+                "protocolVersion": "2024-11-05",
+                "capabilities": {},
+                "clientInfo": {"name": "test-client", "version": "1.0"},
+            },
+        }
+        with self.lock:
+            self.proc.stdin.write(json.dumps(init_msg) + "\n")
+            self.proc.stdin.flush()
+
+        init_resp = self._wait_for_response(0, timeout=10)
+        if not init_resp or "error" in init_resp:
+            raise RuntimeError(f"MCP initialize failed: {init_resp}")
+
+        initialized_msg = {
+            "jsonrpc": "2.0",
+            "method": "notifications/initialized",
+            "params": {},
+        }
+        with self.lock:
+            self.proc.stdin.write(json.dumps(initialized_msg) + "\n")
+            self.proc.stdin.flush()
+        time.sleep(0.2)
+
+    def _wait_for_response(self, req_id: int, timeout: float = 10) -> dict | None:
+        """Wait for a response with the given request ID."""
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            with self.lock:
+                if req_id in self._responses:
+                    return self._responses.pop(req_id)
+            time.sleep(0.05)
+        return None
 
     def _read_output(self):
         while self.proc and self.proc.stdout:

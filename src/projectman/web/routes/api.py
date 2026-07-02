@@ -70,7 +70,7 @@ def get_store(project: Optional[str] = Query(None)) -> Store:
             status_code=404, detail=f"Project '{project}' not found (not in hub mode)"
         )
 
-    from .app import app
+    from ..app import app
 
     return app.state.store
 
