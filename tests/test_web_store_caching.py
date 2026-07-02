@@ -14,9 +14,12 @@ class TestWebStoreCaching:
         from projectman.web.routes.api import get_store
         from projectman.web.app import app
 
-        # The app already has a store from startup
+        # Startup normally populates app.state.store; set it explicitly here so
+        # the test does not depend on a running app / project-root discovery.
+        app.state.store = store
         result = get_store(project=None)
         assert result is app.state.store
+        assert result is store
 
     def test_hub_store_cache_isolated_per_hub_project(self, tmp_path):
         """Hub subproject stores are cached separately by project name."""

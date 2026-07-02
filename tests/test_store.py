@@ -901,10 +901,15 @@ class TestClearCache:
         store.list_stories()
         assert get_cache_stats()["hits"] >= 1
 
-        # create_story invalidates stories cache
+        # create_story appends to the stories cache rather than invalidating it,
+        # so the invalidation counter is unchanged. The new file changes the
+        # directory signature, so the next list_stories re-reads from disk and
+        # includes the new story.
         before_inv = get_cache_stats()["invalidations"]
         store.create_story("Story 2", "Desc")
-        assert get_cache_stats()["invalidations"] > before_inv
+        assert get_cache_stats()["invalidations"] == before_inv
+        stories = store.list_stories()
+        assert any(s.title == "Story 2" for s in stories)
 
     def test_cache_stats_no_track_without_debug(self, store, monkeypatch):
         """Without PROJECTMAN_CACHE_DEBUG, stats stay at zero."""

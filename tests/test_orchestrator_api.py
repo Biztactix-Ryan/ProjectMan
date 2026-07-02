@@ -11,66 +11,78 @@ from projectman.event_bus import EventBus, NoOpEventBus
 # ── EventBus tests ──────────────────────────────────────────────
 
 
-@pytest.mark.asyncio
-async def test_event_bus_publish_subscribe():
-    bus = EventBus()
-    queue = bus.subscribe()
-    await bus.publish("task.created", {"taskId": "T-1"})
-    event = queue.get_nowait()
-    assert event.type == "task.created"
-    assert event.data == {"taskId": "T-1"}
-    assert event.id == 1
+def test_event_bus_publish_subscribe():
+    async def scenario():
+        bus = EventBus()
+        queue = bus.subscribe()
+        await bus.publish("task.created", {"taskId": "T-1"})
+        event = queue.get_nowait()
+        assert event.type == "task.created"
+        assert event.data == {"taskId": "T-1"}
+        assert event.id == 1
+
+    asyncio.run(scenario())
 
 
-@pytest.mark.asyncio
-async def test_event_bus_increments_ids():
-    bus = EventBus()
-    queue = bus.subscribe()
-    await bus.publish("a", {})
-    await bus.publish("b", {})
-    e1 = queue.get_nowait()
-    e2 = queue.get_nowait()
-    assert e1.id == 1
-    assert e2.id == 2
+def test_event_bus_increments_ids():
+    async def scenario():
+        bus = EventBus()
+        queue = bus.subscribe()
+        await bus.publish("a", {})
+        await bus.publish("b", {})
+        e1 = queue.get_nowait()
+        e2 = queue.get_nowait()
+        assert e1.id == 1
+        assert e2.id == 2
+
+    asyncio.run(scenario())
 
 
-@pytest.mark.asyncio
-async def test_event_bus_multiple_subscribers():
-    bus = EventBus()
-    q1 = bus.subscribe()
-    q2 = bus.subscribe()
-    await bus.publish("x", {"v": 1})
-    assert q1.get_nowait().type == "x"
-    assert q2.get_nowait().type == "x"
+def test_event_bus_multiple_subscribers():
+    async def scenario():
+        bus = EventBus()
+        q1 = bus.subscribe()
+        q2 = bus.subscribe()
+        await bus.publish("x", {"v": 1})
+        assert q1.get_nowait().type == "x"
+        assert q2.get_nowait().type == "x"
+
+    asyncio.run(scenario())
 
 
-@pytest.mark.asyncio
-async def test_event_bus_unsubscribe():
-    bus = EventBus()
-    queue = bus.subscribe()
-    bus.unsubscribe(queue)
-    await bus.publish("x", {})
-    assert queue.empty()
+def test_event_bus_unsubscribe():
+    async def scenario():
+        bus = EventBus()
+        queue = bus.subscribe()
+        bus.unsubscribe(queue)
+        await bus.publish("x", {})
+        assert queue.empty()
+
+    asyncio.run(scenario())
 
 
-@pytest.mark.asyncio
-async def test_noop_event_bus():
-    bus = NoOpEventBus()
-    await bus.publish("x", {"a": 1})  # should not raise
-    assert bus.subscribe() is None
-    bus.unsubscribe(None)  # should not raise
+def test_noop_event_bus():
+    async def scenario():
+        bus = NoOpEventBus()
+        await bus.publish("x", {"a": 1})  # should not raise
+        assert bus.subscribe() is None
+        bus.unsubscribe(None)  # should not raise
+
+    asyncio.run(scenario())
 
 
-@pytest.mark.asyncio
-async def test_event_bus_drops_on_full_queue():
-    bus = EventBus()
-    queue = bus.subscribe()
-    # Fill the queue (maxsize=256)
-    for i in range(256):
-        await bus.publish("fill", {"i": i})
-    # This should not raise — event is silently dropped
-    await bus.publish("overflow", {})
-    assert queue.qsize() == 256
+def test_event_bus_drops_on_full_queue():
+    async def scenario():
+        bus = EventBus()
+        queue = bus.subscribe()
+        # Fill the queue (maxsize=256)
+        for i in range(256):
+            await bus.publish("fill", {"i": i})
+        # This should not raise — event is silently dropped
+        await bus.publish("overflow", {})
+        assert queue.qsize() == 256
+
+    asyncio.run(scenario())
 
 
 # ── Orchestrator API endpoint tests ────────────────────────────
@@ -178,14 +190,19 @@ def test_events_endpoint_registered(api_client):
     assert "/events" in route_paths
 
 
-@pytest.mark.asyncio
-async def test_event_bus_event_format():
+def test_event_bus_event_format():
     """Verify event fields match what SSE endpoint would serialize."""
-    bus = EventBus()
-    queue = bus.subscribe()
-    await bus.publish("task.created", {"taskId": "T-1", "storyId": "S-1", "title": "Test"})
-    event = queue.get_nowait()
-    assert event.id == 1
-    assert event.type == "task.created"
-    assert event.data["taskId"] == "T-1"
-    assert event.timestamp > 0
+
+    async def scenario():
+        bus = EventBus()
+        queue = bus.subscribe()
+        await bus.publish(
+            "task.created", {"taskId": "T-1", "storyId": "S-1", "title": "Test"}
+        )
+        event = queue.get_nowait()
+        assert event.id == 1
+        assert event.type == "task.created"
+        assert event.data["taskId"] == "T-1"
+        assert event.timestamp > 0
+
+    asyncio.run(scenario())

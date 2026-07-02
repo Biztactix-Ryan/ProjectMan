@@ -42,9 +42,9 @@ class TestWriteIndexReadsFromDisk:
         store.create_task("US-TST-1", "Task 1", "Desc", points=2)
         store.list_tasks()  # populate cache
 
-        # Externally add Task 2
+        # Externally add Task 2 (points must be a valid Fibonacci value)
         (store.tasks_dir / "US-TST-1-2.md").write_text(
-            "---\nid: US-TST-1-2\nstory_id: US-TST-1\ntitle: External Task\nstatus: todo\npoints: 7\ntags: []\ncreated: 2026-01-01\nupdated: 2026-01-01\n---\nBody\n"
+            "---\nid: US-TST-1-2\nstory_id: US-TST-1\ntitle: External Task\nstatus: todo\npoints: 8\ntags: []\ncreated: 2026-01-01\nupdated: 2026-01-01\n---\nBody\n"
         )
 
         write_index(store)
@@ -57,8 +57,8 @@ class TestWriteIndexReadsFromDisk:
         entry_ids = [e["id"] for e in index_data["entries"]]
         assert "US-TST-1-1" in entry_ids
         assert "US-TST-1-2" in entry_ids
-        # Points: task1=2, task2=7, story=0
-        assert index_data["total_points"] == 9
+        # Points: task1=2, task2=8, story=0
+        assert index_data["total_points"] == 10
 
     def test_write_index_ignores_stale_cache_for_epics(self, store):
         """write_index includes externally-added epics even when cache is stale."""

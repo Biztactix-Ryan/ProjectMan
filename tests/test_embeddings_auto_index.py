@@ -69,10 +69,23 @@ class TestIndexEmbedding:
 
     def test_index_embedding_silently_skips_on_embed_store_error(self, store):
         """If EmbeddingStore raises, _index_embedding catches and ignores it."""
+        import sys
+        import types
+
         store.create_story("Story", "Desc")
-        with patch(
-            "projectman.store.EmbeddingStore", side_effect=Exception("DB error")
-        ):
+
+        # Inject a fake embeddings module whose EmbeddingStore raises. This keeps
+        # the test independent of the optional embedding deps (numpy/fastembed),
+        # which are not installed in CI. _index_embedding does a lazy
+        # ``from .embeddings import EmbeddingStore``, so it picks up the fake.
+        fake_embeddings = types.ModuleType("projectman.embeddings")
+
+        def _raise(*args, **kwargs):
+            raise Exception("DB error")
+
+        fake_embeddings.EmbeddingStore = _raise
+
+        with patch.dict(sys.modules, {"projectman.embeddings": fake_embeddings}):
             # Should not raise
             store._index_embedding("US-TST-1", "Title", "story", "body")
 

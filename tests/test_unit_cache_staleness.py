@@ -50,18 +50,19 @@ class TestCacheStaleness:
         assert store._is_cache_stale("unknown") is True
 
     def test_get_dir_mtime_returns_zero_for_missing_dir(self, store):
-        """_get_dir_mtime returns 0.0 for non-existent directory."""
+        """_get_dir_mtime returns (0.0, 0) for non-existent directory."""
         # Create store without creating the stories dir via create_story
-        assert store._get_dir_mtime(store.stories_dir) == 0.0
+        assert store._get_dir_mtime(store.stories_dir) == (0.0, 0)
 
     def test_get_dir_mtime_returns_max_of_files(self, store):
-        """_get_dir_mtime returns the newest file's mtime."""
+        """_get_dir_mtime returns the newest file's mtime and file count."""
         store.create_story("Story 1", "Desc")
         time.sleep(0.01)
         store.create_story("Story 2", "Desc")
-        mtime = store._get_dir_mtime(store.stories_dir)
+        mtime, count = store._get_dir_mtime(store.stories_dir)
         newest = max(f.stat().st_mtime for f in store.stories_dir.glob("*.md"))
         assert mtime == newest
+        assert count == 2
 
     def test_cache_mtimes_updated_on_list_stories(self, store):
         """_cache_mtimes is populated when list_stories populates cache."""
@@ -69,7 +70,7 @@ class TestCacheStaleness:
         store.list_stories()
         key = store._cache_key("stories")
         assert key in _cache_mtimes
-        assert _cache_mtimes[key] > 0
+        assert _cache_mtimes[key][0] > 0
 
     def test_cache_mtimes_updated_on_list_epics(self, store):
         """_cache_mtimes is populated when list_epics populates cache."""
@@ -77,7 +78,7 @@ class TestCacheStaleness:
         store.list_epics()
         key = store._cache_key("epics")
         assert key in _cache_mtimes
-        assert _cache_mtimes[key] > 0
+        assert _cache_mtimes[key][0] > 0
 
     def test_cache_mtimes_updated_on_list_tasks(self, store):
         """_cache_mtimes is populated when list_tasks populates cache."""
@@ -86,7 +87,7 @@ class TestCacheStaleness:
         store.list_tasks()
         key = store._cache_key("tasks")
         assert key in _cache_mtimes
-        assert _cache_mtimes[key] > 0
+        assert _cache_mtimes[key][0] > 0
 
 
 class TestCacheStalenessIntegration:
@@ -141,7 +142,7 @@ class TestCacheStalenessIntegration:
 
         # get_story should return the modified content
         _, body = store.get_story("US-TST-1")
-        assert body == "Modified Exterally\n"
+        assert body == "Modified Exterally"
 
     def test_get_task_re_reads_from_disk_when_stale(self, store):
         """get_task bypasses stale cache and reads from disk."""
@@ -159,7 +160,7 @@ class TestCacheStalenessIntegration:
         assert store._is_cache_stale("tasks") is True
 
         _, body = store.get_task("US-TST-1-1")
-        assert body == "Modified externally\n"
+        assert body == "Modified externally"
 
     def test_get_epic_re_reads_from_disk_when_stale(self, store):
         """get_epic bypasses stale cache and reads from disk."""
@@ -176,7 +177,7 @@ class TestCacheStalenessIntegration:
         assert store._is_cache_stale("epics") is True
 
         _, body = store.get_epic("EPIC-TST-1")
-        assert body == "Modified externally\n"
+        assert body == "Modified externally"
 
 
 class TestClearAllCachesClearsMtimes:
