@@ -91,15 +91,85 @@ def init(name, prefix, description, hub):
         click.echo("Hub mode enabled — use 'projectman add-project' to register repos")
 
 
+# Skills distributed by setup-claude. /pm is the smart router; the rest are
+# focused workflows. Keep this list in sync with the skill_*.md.j2 templates.
+CLAUDE_SKILLS = [
+    ("pm", "skill_pm.md.j2"),
+    ("pm-status", "skill_pm_status.md.j2"),
+    ("pm-plan", "skill_pm_plan.md.j2"),
+    ("pm-do", "skill_pm_do.md.j2"),
+    ("pm-orchestrate", "skill_pm_orchestrate.md.j2"),
+    ("pm-autoscope", "skill_pm_autoscope.md.j2"),
+    ("pm-cleanup", "skill_pm_cleanup.md.j2"),
+]
+
+# Skills from older versions that were folded into /pm — removed on install.
+STALE_SKILLS = ["pm-scope", "pm-audit", "pm-fix", "pm-init"]
+
+
+def _write_claude_assets(claude_dir: Path) -> None:
+    """Write the pm agent and skills into a .claude/ directory."""
+    agents_dir = claude_dir / "agents"
+    agents_dir.mkdir(parents=True, exist_ok=True)
+    (agents_dir / "pm.md").write_text(_render_template("agent_pm.md.j2"))
+    click.echo(f"Wrote {agents_dir / 'pm.md'}")
+
+    for stale in STALE_SKILLS:
+        stale_dir = claude_dir / "skills" / stale
+        if stale_dir.exists():
+            shutil.rmtree(stale_dir)
+            click.echo(f"Removed stale {stale_dir}/")
+
+    for skill_name, template_name in CLAUDE_SKILLS:
+        skill_dir = claude_dir / "skills" / skill_name
+        skill_dir.mkdir(parents=True, exist_ok=True)
+        (skill_dir / "SKILL.md").write_text(_render_template(template_name))
+        click.echo(f"Wrote {skill_dir / 'SKILL.md'}")
+
+
 @cli.command("setup-claude")
 @click.option("--transport", type=click.Choice(["stdio", "sse"]), default="stdio", help="MCP transport mode (default: stdio)")
 @click.option("--host", default="127.0.0.1", help="Host for SSE mode")
 @click.option("--port", default=22001, type=int, help="Port for SSE mode")
-def setup_claude(transport, host, port):
-    """Install Claude Code integration (agent, skills, MCP config)."""
+@click.option("--global", "global_", is_flag=True, help="Install agent + skills to ~/.claude for all projects (registers MCP at user scope via the claude CLI)")
+@click.option("--local-skills", is_flag=True, help="With --global: also write skill copies into the current project's .claude/")
+def setup_claude(transport, host, port, global_, local_skills):
+    """Install Claude Code integration (agent, skills, MCP config).
+
+    Default: project-level install — writes .mcp.json and .claude/ in the
+    current directory. With --global: installs to ~/.claude so every project
+    gets the skills, and registers the MCP server at user scope.
+    """
     root = Path.cwd()
 
-    # Write .mcp.json
+    if global_:
+        import subprocess
+
+        _write_claude_assets(Path.home() / ".claude")
+
+        # Register the MCP server at user scope via the claude CLI.
+        if transport == "sse":
+            mcp_cmd = ["claude", "mcp", "add", "--scope", "user", "--transport", "sse", "projectman", f"http://{host}:{port}/sse"]
+        else:
+            mcp_cmd = ["claude", "mcp", "add", "--scope", "user", "projectman", "--", "projectman", "serve"]
+
+        if shutil.which("claude"):
+            result = subprocess.run(mcp_cmd, capture_output=True, text=True)
+            if result.returncode == 0:
+                click.echo("Registered projectman MCP server at user scope.")
+            else:
+                click.echo(f"claude mcp add failed: {result.stderr.strip()}", err=True)
+                click.echo(f"Register manually with: {' '.join(mcp_cmd)}")
+        else:
+            click.echo(f"claude CLI not found — register the MCP server manually with: {' '.join(mcp_cmd)}")
+
+        if local_skills:
+            _write_claude_assets(root / ".claude")
+
+        click.echo("Global Claude Code integration installed. Restart Claude Code to activate.")
+        return
+
+    # Project-level install: .mcp.json + .claude/ in the current directory.
     if transport == "sse":
         mcp_config = {
             "mcpServers": {
@@ -130,36 +200,64 @@ def setup_claude(transport, host, port):
         json.dump(mcp_config, f, indent=2)
     click.echo("Wrote .mcp.json")
 
-    # Write agent
-    agents_dir = root / ".claude" / "agents"
-    agents_dir.mkdir(parents=True, exist_ok=True)
-    (agents_dir / "pm.md").write_text(_render_template("agent_pm.md.j2"))
-    click.echo("Wrote .claude/agents/pm.md")
-
-    # Write skills (consolidated: /pm is the smart router, 3 power-user shortcuts)
-    skills = [
-        ("pm", "skill_pm.md.j2"),
-        ("pm-status", "skill_pm_status.md.j2"),
-        ("pm-plan", "skill_pm_plan.md.j2"),
-        ("pm-do", "skill_pm_do.md.j2"),
-        ("pm-autoscope", "skill_pm_autoscope.md.j2"),
-        ("pm-cleanup", "skill_pm_cleanup.md.j2"),
-    ]
-    # Remove stale skills that were folded into /pm
-    stale_skills = ["pm-scope", "pm-audit", "pm-fix", "pm-init"]
-    for stale in stale_skills:
-        stale_dir = root / ".claude" / "skills" / stale
-        if stale_dir.exists():
-            shutil.rmtree(stale_dir)
-            click.echo(f"Removed stale .claude/skills/{stale}/")
-
-    for skill_name, template_name in skills:
-        skill_dir = root / ".claude" / "skills" / skill_name
-        skill_dir.mkdir(parents=True, exist_ok=True)
-        (skill_dir / "SKILL.md").write_text(_render_template(template_name))
-        click.echo(f"Wrote .claude/skills/{skill_name}/SKILL.md")
+    _write_claude_assets(root / ".claude")
 
     click.echo("Claude Code integration installed. Restart Claude Code to activate.")
+
+
+PROJECTMAN_REPO = "git+https://github.com/Biztactix-Ryan/ProjectMan"
+
+
+@cli.command()
+@click.option("--check", is_flag=True, help="Show the installed version and pipx source without upgrading")
+def upgrade(check):
+    """Upgrade projectman via pipx (or check the installed version)."""
+    import subprocess
+    from importlib.metadata import PackageNotFoundError
+    from importlib.metadata import version as _pkg_version
+
+    try:
+        current = _pkg_version("projectman")
+    except PackageNotFoundError:
+        current = "unknown"
+    click.echo(f"Installed version: {current}")
+
+    pipx = shutil.which("pipx")
+    if not pipx:
+        click.echo(f"pipx not found — install/upgrade with: pipx install --force '{PROJECTMAN_REPO}' (or your original install method)", err=True)
+        raise SystemExit(1)
+
+    def _pipx_metadata():
+        result = subprocess.run([pipx, "list", "--json"], capture_output=True, text=True)
+        if result.returncode != 0:
+            return None
+        try:
+            venvs = json.loads(result.stdout).get("venvs", {})
+            return venvs.get("projectman", {}).get("metadata", {}).get("main_package", {})
+        except (json.JSONDecodeError, AttributeError):
+            return None
+
+    meta = _pipx_metadata()
+    if not meta:
+        click.echo(f"projectman is not managed by pipx — reinstall with: pipx install '{PROJECTMAN_REPO}', or upgrade with your original install method.", err=True)
+        raise SystemExit(1)
+
+    click.echo(f"pipx source: {meta.get('package_or_url', 'unknown')}")
+    if check:
+        click.echo("Run 'projectman upgrade' to upgrade from that source.")
+        return
+
+    result = subprocess.run([pipx, "upgrade", "projectman"], text=True)
+    if result.returncode != 0:
+        click.echo("pipx upgrade failed.", err=True)
+        raise SystemExit(1)
+
+    meta = _pipx_metadata() or {}
+    new_version = meta.get("package_version", "unknown")
+    if new_version == current:
+        click.echo(f"Already up to date ({current}).")
+    else:
+        click.echo(f"Upgraded {current} → {new_version}. Restart any running MCP servers to pick up the new version.")
 
 
 @cli.command()
@@ -555,3 +653,8 @@ def web(port, host):
 
     click.echo(f"Starting ProjectMan Web on http://{host}:{port}")
     uvicorn.run(app, host=host, port=port)
+
+
+# Aliases: `projectman install` == `setup-claude`, `projectman update` == `upgrade`
+cli.add_command(setup_claude, name="install")
+cli.add_command(upgrade, name="update")

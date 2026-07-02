@@ -1,5 +1,6 @@
 """Project configuration discovery and loading."""
 
+import os
 from pathlib import Path
 from typing import Optional
 
@@ -9,7 +10,21 @@ from .models import ProjectConfig
 
 
 def find_project_root(start: Optional[Path] = None) -> Path:
-    """Walk up from start to find directory containing .project/config.yaml."""
+    """Find the directory containing .project/config.yaml.
+
+    Resolution order: explicit start > PROJECTMAN_ROOT env var > walk up
+    from cwd. The env var pins the root for long-lived processes (e.g. a
+    globally-registered MCP server) regardless of where they were spawned.
+    """
+    if start is None:
+        env_root = os.environ.get("PROJECTMAN_ROOT")
+        if env_root:
+            candidate = Path(env_root).resolve()
+            if (candidate / ".project" / "config.yaml").exists():
+                return candidate
+            raise FileNotFoundError(
+                f"PROJECTMAN_ROOT is set to {env_root} but no .project/config.yaml exists there"
+            )
     current = (start or Path.cwd()).resolve()
     while True:
         if (current / ".project" / "config.yaml").exists():

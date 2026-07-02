@@ -123,14 +123,16 @@ Each project then specializes with its own PROJECT.md, INFRASTRUCTURE.md, SECURI
 
 Use `pm_context(project)` at the start of any work session to get the full picture.
 
-## Sprint Planning Process
+## Sprints
 
-1. Run `pm_status` and `pm_audit`
-2. Review `pm_active` for in-flight work
-3. Check `pm_burndown` for velocity
-4. Prioritize backlog stories (link to epics as needed)
-5. Scope and estimate top candidates
-6. Tasks enter the board automatically once ready
+Sprints are the unit of orchestrated execution — `/pm-orchestrate` drives the active sprint. Statuses: planning → active → completed | cancelled (`pm_create_sprint`, `pm_update_sprint`, `pm_list_sprints`, `pm_get_sprint`).
+
+1. Run `pm_status` and `pm_audit`; close out any expired active sprint first
+2. Review `pm_active` for in-flight work; check `pm_burndown` + completed sprints for velocity
+3. Prioritize backlog stories by value and dependency order
+4. Scope and estimate candidates until they fit velocity — use `/pm-plan` for the full workflow
+5. Persist with `pm_create_sprint` (goal, dates, story IDs) and activate
+6. Execute via `/pm-orchestrate`; complete the sprint with `pm_update_sprint(status="completed")`
 
 ## Documentation
 

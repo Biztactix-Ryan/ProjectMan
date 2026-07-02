@@ -1,7 +1,6 @@
 ---
 name: pm-do
-description: Execute a task — grab if needed, load context, implement, and complete
-user_invocable: true
+description: Execute a single ProjectMan task end-to-end — claim it, load story context, implement, verify the DoD with evidence, record the outcome, and complete. Use when the user names a task to implement or says "do task X".
 disable-model-invocation: true
 args: "<task-id> [--complete]"
 ---
@@ -10,56 +9,38 @@ args: "<task-id> [--complete]"
 
 ## Flags
 
-- `--complete` — Auto-close mode: skip the review option, mark the task as `done` when all DoD criteria are met, and end the session. Designed for spawned agents that should finish without manual intervention.
+- `--complete` — Autonomous mode for spawned agents: no human is watching. Mark the task `done` only when every DoD item is verified with evidence; otherwise mark it `review` with a note. Then end the session without suggesting further actions.
 
 ## Phase 1: Claim & Context
 
-1. Call `pm_get(task_id)` to read the task
-2. If the task is `todo` with no assignee:
-   - Call `pm_grab(task_id)` to claim it (validates readiness including cross-story dependencies)
-   - If grab fails, stop and show the blockers
-3. If the task is `in-progress` with a different assignee:
-   - Warn: "This task is assigned to {assignee}. Proceed anyway?"
-   - Only continue if explicitly confirmed
-4. Read the parent story for broader context:
-   - Call `pm_get(story_id)` to understand acceptance criteria
-5. **Check cross-story dependencies**: If the task depends on tasks from other stories, verify those are done
-6. Review the task's Implementation section and DoD
+1. Call `pm_get(task_id)` to read the task.
+2. If the task is `todo` with no assignee: call `pm_grab(task_id)` to claim it (validates readiness including cross-story dependencies). If grab fails, log it — `pm_update(task_id, outcome="blocked", note="<blockers>")` — then stop and show the blockers.
+3. If the task is `in-progress` with a different assignee: warn ("assigned to {assignee} — proceed anyway?") and only continue if explicitly confirmed. In `--complete` mode, stop instead: another agent may be working on it.
+4. Read the parent story with `pm_get(story_id)` for acceptance criteria and context.
+5. Review the task's Implementation section and DoD checklist. Check `pm_run_log` history on the task — a previous failed attempt tells you what to avoid.
 
 ## Phase 2: Execute
 
-6. Read project documentation if touching new areas:
-   - Call `pm_docs("project")` for architecture context
-7. Implement the work described in the task:
-   - Follow the implementation instructions
-   - Write/modify the specified files
-   - Run tests as described
-8. Verify ALL DoD criteria are met — check off each item
+6. Read project documentation if touching unfamiliar areas: `pm_docs("project")`.
+7. Implement the work described in the task — follow its implementation notes, write/modify the specified files.
+8. **Verify with evidence, not assertion**: run the tests the task or story names (or the project's standard test command for the files you touched) and make them pass. For each DoD item, identify the concrete artifact that satisfies it — a file, a passing test, a command output.
 
-## Phase 3: Complete
+## Phase 3: Record & Complete
 
-9. **If `--complete` flag is set:**
-   - Call `pm_update(task_id, status="done")` — do NOT offer a review option
-   - Check if all sibling tasks in the story are done:
-     - If all done, call `pm_update(story_id, status="done")` automatically
-   - Summarize what was done, files changed, tests run
-   - **End the session.** Do not suggest further actions.
-
-   **Otherwise (default):**
-   - Call `pm_update(task_id, status="review")` if the task needs human review,
-     OR call `pm_update(task_id, status="done")` if all DoD criteria are met
-10. Check if all sibling tasks in the story are done:
-    - Call `pm_active` or list tasks for the story
-    - If all done, suggest: "All tasks for {story_id} are complete — update story to done?"
-11. **Check downstream dependencies**: After completing, notify about tasks that were waiting on this one
-    - "Task US-PRJ-2-1 is now unblocked and ready to work"
-12. Summarize what was done, files changed, tests run
-13. Suggest next action: "Check the board for more work: `/pm board`"
+9. Set the status and log the outcome in **one** `pm_update` call — `outcome` + `note` append a run-log entry alongside the status change:
+   - All DoD items evidenced → `pm_update(task_id, status="done", outcome="success", note="<tests run + result, files changed>")`
+   - Partially done / needs human judgment → `status="review"`, `outcome="partial"`, note what's unmet
+   - Couldn't proceed → keep/restore an accurate status and log `outcome="blocked"` or `outcome="failed"` with why
+10. **`--complete` mode rule**: `status="done"` only if step 8 produced evidence for every DoD item — anything less is `review`. Never mark done on unverified claims; the orchestrator independently validates and a false "done" becomes a failed retry.
+11. Story rollup: if all sibling tasks are now `done` — in `--complete` mode set the story `done` automatically; interactively, suggest it.
+12. Note downstream effects: tasks that were waiting on this one are now unblocked — name them.
+13. Summarize: what was done, files changed, tests run and their results.
+    - **`--complete` mode**: end the session here. Include status, files, and test evidence in your final report — it will be independently verified.
+    - **Default**: suggest the next action ("Check the board: `/pm board`").
 
 ## Cross-Story Dependency Awareness
 
 When a task has `depends_on` entries from other stories:
-- The dependency status is shown in `pm_grab` and `pm_context` responses
-- Each dependency shows: id, title, status, and type (task/story)
-- If any dependency is not done, the task cannot be grabbed
-- After completing a task, downstream tasks in other stories may become unblocked
+- Dependency status is shown in `pm_grab` and `pm_context` responses (id, title, status, type).
+- If any dependency is not done, the task cannot be grabbed.
+- Completing a task may unblock tasks in other stories — mention them in your summary.

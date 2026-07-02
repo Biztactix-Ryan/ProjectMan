@@ -64,6 +64,21 @@ Continuous audit — checks alignment across all layers
 - Implementation units under stories, 1-5 points each
 - Statuses: todo → in-progress → review → done | blocked
 - Must pass Definition of Ready before being grabbable
+- Can have `depends_on` referencing tasks from same OR other stories
+
+## Dependency Graph
+
+Stories and tasks support cross-item dependencies via `depends_on`:
+
+- **Cross-story task deps**: A task can depend on tasks from other stories
+- **Story-to-story deps**: A story can depend on other stories being done first
+- **Task-to-story deps**: A task can depend on a whole story being complete
+
+The system enforces:
+- No cycles (detected at creation/update time)
+- Readiness checks validate all dependencies are done before grabbing
+- `pm_audit` checks for orphaned dependencies project-wide
+- Sprint planning shows dependency warnings for unmet external deps
 
 ## Story Point Calibration (Claude-speed)
 
@@ -92,8 +107,10 @@ Tasks are only grabbable when they pass readiness checks:
 - Status is `todo`, no assignee
 - Has point estimate (1-5), description >= 50 chars
 - Parent story is `active` or `ready`
+- All dependencies (including cross-story) are done
 
 The board shows suitability hints (well-scoped, has-test-plan, quick-win, needs-design) to help devs self-select.
+Tasks with incomplete dependencies show up in the "not_ready" board section with their blockers listed.
 
 ## Context Hierarchy (Hub → Project)
 
@@ -106,14 +123,16 @@ Each project then specializes with its own PROJECT.md, INFRASTRUCTURE.md, SECURI
 
 Use `pm_context(project)` at the start of any work session to get the full picture.
 
-## Sprint Planning Process
+## Sprints
 
-1. Run `pm_status` and `pm_audit`
-2. Review `pm_active` for in-flight work
-3. Check `pm_burndown` for velocity
-4. Prioritize backlog stories (link to epics as needed)
-5. Scope and estimate top candidates
-6. Tasks enter the board automatically once ready
+Sprints are the unit of orchestrated execution — `/pm-orchestrate` drives the active sprint. Statuses: planning → active → completed | cancelled (`pm_create_sprint`, `pm_update_sprint`, `pm_list_sprints`, `pm_get_sprint`).
+
+1. Run `pm_status` and `pm_audit`; close out any expired active sprint first
+2. Review `pm_active` for in-flight work; check `pm_burndown` + completed sprints for velocity
+3. Prioritize backlog stories by value and dependency order
+4. Scope and estimate candidates until they fit velocity — use `/pm-plan` for the full workflow
+5. Persist with `pm_create_sprint` (goal, dates, story IDs) and activate
+6. Execute via `/pm-orchestrate`; complete the sprint with `pm_update_sprint(status="completed")`
 
 ## Documentation
 
@@ -141,7 +160,7 @@ Use `pm_context(project)` at the start of any work session to get the full pictu
 - Use `pm_repair` to discover and initialize projects
 - Use `pm_context(project)` to get combined hub + project context
 
-## Audit Checks (12 total)
+## Audit Checks (16 total)
 
 1. Done story with incomplete tasks [ERROR]
 2. Undecomposed story [WARNING]
@@ -155,3 +174,7 @@ Use `pm_context(project)` at the start of any work session to get the full pictu
 10. Stale draft epic [INFO]
 11. Missing/stale hub docs [WARNING/INFO]
 12. Stale task assignment [WARNING]
+13. Malformed files in quarantine [WARNING]
+14. Dependency cycles (project-wide) [ERROR]
+15. Orphaned dependency references [WARNING]
+16. Missing implementation tasks [WARNING]

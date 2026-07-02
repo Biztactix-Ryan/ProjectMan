@@ -1,102 +1,101 @@
 ---
 name: pm
-description: General project management entry point — smart router for all PM operations
-user_invocable: true
+description: Project management entry point — status, boards, creating/updating epics/stories/tasks, sprints, dependencies, git ops. Use for any ProjectMan request that doesn't match a more specific pm-* skill ("what should I work on", "create a story", "how are we doing", "commit project state").
 ---
 
 # /pm — Project Management
 
-Smart router for all ProjectMan operations. Users only need to remember `/pm`.
+Smart router for all ProjectMan operations. Users only need to remember `/pm`. Tool parameters are documented on the MCP tools themselves — this skill covers routing and judgment, not signatures.
 
 ## Routing
 
-Parse the user's intent and route to the appropriate action:
-
 ### No args → Smart status
-Call `pm_status`, then `pm_active`. Based on project state, suggest the most useful next action:
-- If undecomposed stories exist → "Consider running `/pm scope <id>`"
-- If tasks are available on the board → "Run `/pm board` to see available work"
-- If audit hasn't run recently → "Run `/pm audit` to check for drift"
-- If no stories exist → "Create your first story with `/pm create story`"
+Call `pm_status`, then `pm_active`, then `pm_list_sprints(status="active")`. Suggest the most useful next action:
+- Active sprint with ready tasks → "Run the sprint: `/pm-orchestrate`, or grab a task: `/pm-do <id>`"
+- Active sprint past its end date → "Sprint ended — close it out and plan the next: `/pm-plan`"
+- No active sprint but scoped backlog → "Plan a sprint: `/pm-plan`"
+- Undecomposed stories → "Scope them: `/pm scope <id>` or `/pm-autoscope`"
+- No stories at all → "Create your first story with `/pm create story`"
+- Audit not run recently → "Check for drift: `/pm audit`"
 
 ### Status & Queries
-- `status` → `pm_status` + `pm_active` dashboard
-- `get <id>` → `pm_get(id)` — works for epics, stories, and tasks
+- `status` / "how are we doing?" → run the `/pm-status` skill (full dashboard: sprint progress, blockers, recent failures) — don't rebuild it here
+- `get <id>` → `pm_get(id)` — epics, stories, tasks
 - `search <query>` → `pm_search(query)`
-- `board` → `pm_board` — show task board with available/in-progress/blocked work
+- `board` → `pm_board` — available/in-progress/blocked work
 - `context [project]` → `pm_context(project)` — full hub + project context for starting work
 - `burndown` → `pm_burndown`
+- `deps [id]` → show what an item depends on and what depends on it (from `pm_get` `depends_on` fields; `pm_audit` for graph-wide checks)
+- `history <id>` / `runs <id>` → `pm_run_log(id)` — attempt history: which agents worked it, outcomes, failures
+
+### Sprints
+- `sprints` → `pm_list_sprints` — all sprints with status
+- `sprint` → `pm_list_sprints(status="active")` + progress of the active sprint
+- `sprint <id>` → `pm_get_sprint(id)`
+- `sprint complete [id]` → `pm_update_sprint(id, status="completed")` — show completed vs. planned points first
+- "plan a sprint" → redirect to `/pm-plan`
+- "run the sprint" → redirect to `/pm-orchestrate`
 
 ### Create & Update
 - `create epic "<title>" "<description>"` → `pm_create_epic`
-- `create story "<title>" "<description>"` → `pm_create_story` (optionally with `epic <epic-id>`)
-- `create task <story-id> "<title>" "<description>"` → `pm_create_task`
+- `create story "<title>" "<description>"` → `pm_create_story` (optionally `epic <epic-id>`, `depends_on <ids>`)
+- `create task <story-id> "<title>" "<description>"` → `pm_create_task` (optionally `depends_on <ids>`)
 - `update <id> <field>=<value>` → `pm_update`
 - `archive <id>` → `pm_archive`
 
-### Workflows (absorbed from former standalone skills)
-- `scope <story-id>` → Call `pm_scope(id)`, propose task breakdown, create approved tasks, estimate each
-- `autoscope [full|incremental]` → Call `pm_auto_scope(mode)`, bulk-create epics/stories/tasks. Redirect to `/pm-autoscope`
-- `audit` → Call `pm_audit`, review DRIFT.md findings, suggest and execute approved fixes
-- `init [project]` → Set up project documentation (wizard mode for new, import mode for existing)
-- `fix` → Call `pm_malformed`, fix quarantined files one at a time via `pm_fix_malformed`
-- `grab <task-id> [assignee]` → Call `pm_grab(task_id, assignee)` to claim a task with readiness validation. After a successful grab, detect the execution context:
-  - **Web UI** (`CLAUDE_WEB_PORT` env var is set): The PostToolUse activity hook auto-spawns a focused task session — tell the user: "Task grabbed — a focused task session is starting. Check the UI for the new task tab."
-  - **CLI-only** (no `CLAUDE_WEB_PORT`): Fall back to suggesting `/pm-do <id>`
-  - If auto-spawn fails for any reason, fall back to the `/pm-do` suggestion
+Note: sprints are updated via `pm_update_sprint` (statuses: planning/active/completed/cancelled), not `pm_update`.
+
+### Dependencies
+Stories and tasks support cross-item dependencies via `depends_on` — task→task (any story), story→story, task→story, story→task. Cycles are rejected at creation/update; `pm_audit` checks for orphans and cycles project-wide; `pm_grab` requires all dependencies done.
+
+Examples:
+- `create story "Frontend" "..." depends_on US-PRJ-1`
+- `create task US-PRJ-2 "Integrate API" "..." depends_on US-PRJ-1-3`
+- `update US-PRJ-2 depends_on=US-PRJ-1,US-PRJ-1-5`
+
+### Workflows
+- `scope <story-id>` → `pm_scope(id)`, propose task breakdown, create approved tasks, estimate each
+- `autoscope` → redirect to `/pm-autoscope`
+- `audit` → `pm_audit`, review findings, suggest and execute approved fixes
+- `init [project]` → set up project documentation (wizard for new, import for existing)
+- `fix` → `pm_malformed`, then fix quarantined files one at a time via `pm_fix_malformed`
+- `grab <task-id> [assignee]` → `pm_grab(task_id, assignee)` — claim with readiness validation. On success, suggest `/pm-do <id>` to execute (spawned agents use `/pm-do <id> --complete`).
 
 ### Git Operations
-- `commit [scope] [--message "..."]` → `pm_commit(scope, message)` — commit .project/ changes
-- `push [scope]` → `pm_push(scope)` — push committed changes
-- Scope: `hub` (default for push), `project:<name>`, or `all` (default for commit)
-- `commit all` → `pm_commit` with scope=all (commits all .project/ changes)
-- `commit hub` → `pm_commit` with scope=hub (hub-level only, excludes subprojects)
-- `commit api` or `commit project:api` → `pm_commit` with scope=project:api
-- `push` → `pm_push` with scope=hub
-- `push all` → `pm_push` with scope=all (coordinated push)
-- `push api` → `pm_push` with scope=project:api
+- `commit [scope] [--message "..."]` → `pm_commit(scope, message)` — commit .project/ changes. Scope: `all` (default), `hub`, `project:<name>`
+- `push [scope]` → `pm_push(scope)` — scope: `hub` (default), `all` (coordinated), `project:<name>`
 
 ### Hub Operations
 - `repair` → `pm_repair` — scan, discover, init, rebuild
 - `sync` → pull latest across all hub submodules
-- `validate` or `check branches` → `pm_validate_branches` — verify submodule branch alignment
-- `git status` / `git-status` → `pm_git_status` — show git state across all submodules (branch, dirty, ahead/behind, PRs)
+- `validate` / `check branches` → `pm_validate_branches`
+- `git status` → `pm_git_status` — branch, dirty, ahead/behind, PRs across submodules
 - `docs [vision|architecture|decisions|project|infrastructure|security]` → `pm_docs`
 
 ### Natural Language
-Also accept natural language and route intelligently:
+Route intent, not keywords:
 - "what should I work on?" → `pm_board` → suggest top available task
-- "plan the sprint" → redirect to `/pm-plan`
-- "how are we doing?" → `pm_status` + `pm_burndown`
-- "scope this story" → ask which story, then `pm_scope`
-- "scope everything" / "autoscope" / "bulk scope" → redirect to `/pm-autoscope`
-- "what needs attention?" / "git status" / "check repos" → `pm_git_status` — after displaying, suggest next action based on issues:
-  - Misaligned branch → "Run `projectman create-branch` to fix"
-  - Behind remote → "Run `projectman sync` to pull latest"
-  - Open PRs → "Check PRs with `gh pr view`"
+- "what's failing?" / "what went wrong?" → `pm_run_log` on recent items + `pm_activity`
+- "what depends on X?" / "what blocks X?" → dependency queries via `pm_get`
+- "what needs attention?" → `pm_git_status`, then suggest per issue:
+  - Misaligned branch → "Fix with `projectman set-branch <project> <branch>`"
+  - Behind remote → "Pull latest with `projectman sync`"
+  - Open PRs → "Check with `gh pr view`"
 
 ## Post-Action Chaining
 
 After every action, suggest the logical next step:
-- After creating a story → "Scope it with `/pm scope <id>`?"
-- After scoping → "Estimate with `/pm update <id> points=N`?"
-- After grabbing a task → detect execution context:
-  - If `CLAUDE_WEB_PORT` is set: "Task grabbed — a focused task session is starting. Check the UI for the new task tab."
-  - If no `CLAUDE_WEB_PORT`: "Start implementing with `/pm-do <id>`. Complete the task, mark it done, then end the session." (For autonomous/spawned agents, use `/pm-do <id> --complete` which auto-closes and terminates.)
-  - If auto-spawn fails, fall back to the `/pm-do` suggestion
-- After completing a task → "Check the board for more work: `/pm board`"
-- After git status → Suggest next action based on issues found:
-  - Misaligned branch → "Run `projectman create-branch` to fix"
-  - Behind remote → "Run `projectman sync` to pull latest"
-  - Open PRs → "Check PRs with `gh pr view`"
-  - All clean → "All repos clean — ready for coordinated operations"
+- Created a story → "Scope it: `/pm scope <id>`"
+- Scoped a story → "Plan it into a sprint: `/pm-plan`"
+- Grabbed a task → "Execute it: `/pm-do <id>`"
+- Completed a task → "Board for more work: `/pm board`"
+- Sprint fully planned → "Run it: `/pm-orchestrate`"
+- All repos clean → "Ready for coordinated operations"
 
 ## ID Conventions
 
-- **Epics**: `EPIC-PREFIX-N` (e.g. `EPIC-CEO-1`)
-- **User Stories**: `US-PREFIX-N` (e.g. `US-CEO-1`)
-- **Tasks**: `US-PREFIX-N-N` (e.g. `US-CEO-1-1`)
+- **Epics**: `EPIC-PREFIX-N` · **Stories**: `US-PREFIX-N` · **Tasks**: `US-PREFIX-N-N`
 
 ## Hub Mode
 
-When in hub mode, many tools accept an optional `project` parameter to target a specific subproject.
+In hub mode, most tools accept an optional `project` parameter to target a specific subproject.

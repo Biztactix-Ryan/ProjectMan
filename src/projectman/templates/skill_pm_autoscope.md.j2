@@ -1,7 +1,6 @@
 ---
 name: pm-autoscope
-description: Automated scoping — discover and create epics, stories, and tasks in bulk
-user_invocable: true
+description: Automated scoping — analyze the codebase or backlog and bulk-create epics, stories, and tasks with dependencies. Use when the user says "scope everything", "autoscope", "break down the backlog", or a new project needs its initial structure.
 ---
 
 # /pm-autoscope — Automated Scoping
