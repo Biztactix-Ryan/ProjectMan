@@ -130,6 +130,33 @@ Update a project documentation file.
 - **content**: New document content
 - **project** (optional): Project name for hub mode
 
+## Sprint Tools
+
+### pm_create_sprint(name, goal?, start_date?, end_date?, planned_stories?, project?)
+Create a sprint with a name, goal, dates, and planned stories.
+- **name**: Sprint name (e.g. `Sprint 1 — Auth & Onboarding`)
+- **goal** (optional): Sprint goal summary
+- **start_date** / **end_date** (optional): Dates in `YYYY-MM-DD` format
+- **planned_stories** (optional): Comma-separated story IDs (e.g. `US-PRJ-1,US-PRJ-2`)
+- **Returns**: Created sprint metadata, plus `dependency_warnings` if any planned story has unmet dependencies external to the sprint
+
+### pm_get_sprint(sprint_id, project?)
+View sprint details with live progress per story.
+- **sprint_id**: Sprint ID (e.g. `SPRINT-PRJ-1`)
+- **Returns**: Sprint metadata plus per-story rollup (task counts, points completed vs. remaining)
+
+### pm_list_sprints(status?, project?)
+List sprints, optionally filtered by status.
+- **status** (optional): Filter by `planning`, `active`, `completed`, or `cancelled`
+- **Returns**: Sprints with name, status, goal, and dates
+
+### pm_update_sprint(sprint_id, name?, status?, goal?, start_date?, end_date?, planned_stories?, project?)
+Update sprint fields (status, stories, dates, etc.).
+- **sprint_id**: Sprint ID
+- **status** (optional): New status — `planning`, `active`, `completed`, or `cancelled`
+- **planned_stories** (optional): Comma-separated story IDs (replaces the planned set)
+- **Returns**: Updated sprint metadata, plus `dependency_warnings` if newly planned stories have unmet dependencies
+
 ## Intelligence Tools
 
 ### pm_estimate(id)
@@ -147,7 +174,7 @@ Discover what needs scoping — returns codebase signals or undecomposed stories
 - **Returns**: Full scan returns documentation, build files, source tree, and creation guidance. Incremental returns a paginated batch of undecomposed story IDs/titles with `has_more` and `next_offset` for pagination.
 
 ### pm_audit(include_info?, project?)
-Run project audit for drift detection. Performs 13 checks covering stories, tasks, epics, documentation, hub docs, assignments, and malformed files.
+Run project audit for drift detection. Performs 17 checks covering stories, tasks, epics, documentation, hub docs, assignments, dependencies, and malformed files.
 - **include_info** (optional, default `false`): Include info-level findings in the response. By default only errors and warnings are returned, with omitted info findings summarized as a count. The full report is always written to `DRIFT.md`.
 
 ### pm_reindex(project?)

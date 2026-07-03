@@ -60,6 +60,9 @@ projectman setup-claude
 | `.claude/skills/pm-status/SKILL.md` | `/pm-status` skill |
 | `.claude/skills/pm-plan/SKILL.md` | `/pm-plan` skill |
 | `.claude/skills/pm-do/SKILL.md` | `/pm-do` skill |
+| `.claude/skills/pm-orchestrate/SKILL.md` | `/pm-orchestrate` skill (drive a sprint via subagents) |
+| `.claude/skills/pm-autoscope/SKILL.md` | `/pm-autoscope` skill (bulk epic/story/task creation) |
+| `.claude/skills/pm-cleanup/SKILL.md` | `/pm-cleanup` skill (archive completed work) |
 
 If `.mcp.json` already exists, ProjectMan merges its server config into the existing file without overwriting other MCP servers.
 
@@ -113,11 +116,23 @@ The web dashboard can also be started via MCP tools (`pm_web_start` / `pm_web_st
 
 ## projectman serve
 
-Start the MCP server in stdio transport mode. This is called automatically by Claude Code via the `.mcp.json` configuration — you typically don't need to run this manually.
+Start the MCP server. In the default stdio transport this is called automatically by Claude Code via the `.mcp.json` configuration — you typically don't need to run it manually. The SSE transport is for connecting remote clients or the orchestrator over HTTP.
 
 ```bash
+# stdio (default) — used by Claude Code
 projectman serve
+
+# SSE over HTTP — for remote clients / the orchestrator
+projectman serve --transport sse --host 0.0.0.0 --port 22001
 ```
+
+**Options:**
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--transport` | `stdio` | Transport mode: `stdio` or `sse` |
+| `--host` | `127.0.0.1` | Host to bind to (SSE mode only) |
+| `--port` | `22001` | Port to bind to (SSE mode only) |
 
 Requires the `mcp` extra: `pip install "projectman[mcp] @ git+https://github.com/Biztactix-Ryan/ProjectMan.git"`
 
@@ -352,7 +367,7 @@ projectman audit --all
 |--------|-------------|
 | `--all` | Audit all projects in the hub (hub mode only) |
 
-**Checks performed (13 total):**
+**Checks performed (17 total):**
 
 | # | Check | Severity | Description |
 |---|-------|----------|-------------|
@@ -361,13 +376,17 @@ projectman audit --all
 | 3 | Stale in-progress | WARNING | Items in-progress for >14 days without update |
 | 4 | Point mismatch | INFO | Story points don't match sum of task points |
 | 5 | Thin description | INFO | Story or task body has fewer than 20 characters |
-| 6 | Documentation staleness/missing | ERROR/WARNING/INFO | Missing docs (error), unfilled templates (warning), stale docs (info) |
-| 7 | Empty active epic | WARNING | Active epic with no linked stories |
-| 8 | Done epic with open stories | ERROR | Epic marked done but has stories not done/archived |
-| 9 | Orphaned epic reference | WARNING | Story references a non-existent epic ID |
-| 10 | Stale draft epic | INFO | Draft epic with no stories for >30 days |
-| 11 | Hub documentation checks | WARNING/INFO | Missing or unfilled hub docs (VISION.md, ARCHITECTURE.md, DECISIONS.md) |
-| 12 | Stale task assignment | WARNING | Task assigned to someone with no updates for >14 days |
-| 13 | Malformed files in quarantine | WARNING | Files quarantined in `.project/malformed/` needing repair |
+| 6 | Missing acceptance criteria | WARNING | Active/ready story with no acceptance criteria |
+| 7 | Documentation staleness/missing | ERROR/WARNING/INFO | Missing docs (error), unfilled templates (warning), stale docs (info) |
+| 8 | Empty active epic | WARNING | Active epic with no linked stories |
+| 9 | Done epic with open stories | ERROR | Epic marked done but has stories not done/archived |
+| 10 | Orphaned epic reference | WARNING | Story references a non-existent epic ID |
+| 11 | Stale draft epic | INFO | Draft epic with no stories for >30 days |
+| 12 | Hub documentation checks | WARNING/INFO | Missing or unfilled hub docs (VISION.md, ARCHITECTURE.md, DECISIONS.md) |
+| 13 | Stale task assignment | WARNING | Task assigned to someone with no updates for >14 days |
+| 14 | Malformed files in quarantine | WARNING | Files quarantined in `.project/malformed/` needing repair |
+| 15 | Dependency cycle | ERROR | A cycle exists in the task/story `depends_on` graph |
+| 16 | Orphaned dependency reference | WARNING | A task/story depends on an ID that doesn't exist |
+| 17 | Missing implementation tasks | WARNING | Story has only test tasks and no implementation tasks — needs scoping |
 
 Output is written to `.project/DRIFT.md` and printed to stdout.

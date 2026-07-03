@@ -85,6 +85,46 @@ Automated bulk scoping. Discovers what needs scoping and walks through creation.
 
 Also accessible via `/pm autoscope` or natural language like "scope everything".
 
+## /pm-orchestrate
+
+Drive the active sprint to done by dispatching worker subagents task-by-task and independently validating their work. Used when you want tasks executed autonomously rather than one at a time.
+
+```
+/pm-orchestrate
+/pm-orchestrate --sprint SPRINT-PRJ-2
+/pm-orchestrate --max 5 --dry-run
+/pm-orchestrate --auto
+```
+
+**Flags:**
+
+- `--sprint <id>` — Drive a specific sprint instead of the active one
+- `--max <n>` — Stop after `n` worker dispatches (safety budget; default no limit)
+- `--dry-run` — Show the execution plan and stop without spawning workers
+- `--auto` — Skip the pre-flight confirmation
+
+**Operating model:** The skill acts as an orchestrator, not a worker — it picks the next ready task, hands it to a worker subagent, then independently validates the output before accepting it. Workers run sequentially (one at a time), changes are staged but never committed, and failing tasks are parked in `review` with a run-log record so the loop keeps moving. Every attempt is recorded via `pm_update` run-log entries.
+
+**Note:** Has `disable-model-invocation: true` — only runs when explicitly invoked with `/pm-orchestrate`.
+
+## /pm-cleanup
+
+Archive completed epics, stories, tasks, and old sprints to reduce context noise when looking for active items.
+
+```
+/pm-cleanup
+```
+
+**Workflow:**
+
+1. Reads current state via `pm_status`
+2. Identifies archive candidates — done epics (with all stories done), done stories outside active epics, and completed sprints older than two weeks
+3. Presents an archive plan and **asks for explicit approval before proceeding**
+4. Archives in order (tasks → stories → epics) via `pm_archive`, then rebuilds indexes with `pm_reindex`
+5. Suggests committing the archive and planning the next sprint
+
+Also accessible via natural language like "clean up" or "archive done work".
+
 ## Web Dashboard via /pm
 
 The `/pm` skill routes web-related commands to the MCP web tools:

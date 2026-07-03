@@ -56,6 +56,8 @@ projectman setup-claude
 - **Task Dependencies** — `depends_on` links between sibling tasks with cycle detection and topological ordering
 - **Changesets** — coordinate multi-project changes with cross-referenced PRs
 - **Activity Log** — append-only JSONL audit trail of every create, update, delete, and archive
+- **Run Log** — per-item history of work attempts, outcomes, and notes, recorded via `pm_update` and read with `pm_run_log`
+- **Sprint Tracking** — create sprints with goals, dates, and planned stories; live progress rollup via `pm_get_sprint`
 - **Auto-Commit & Push** — `pm_commit`, `pm_push`, and coordinated `pm_push_all` for hub workflows
 - **Git Status Dashboard** — `pm_git_status` shows branch, dirty state, ahead/behind, and open PRs across all submodules
 - **Burndown Tracking** — points completed vs remaining
@@ -63,7 +65,7 @@ projectman setup-claude
 ## Architecture
 
 ```
-User → Claude Code Skills (/pm, /pm-status, /pm-plan, /pm-do)
+User → Claude Code Skills (/pm, /pm-status, /pm-plan, /pm-do, /pm-orchestrate, /pm-autoscope, /pm-cleanup)
          → PM Agent (.claude/agents/pm.md)
            → MCP Server (projectman serve, stdio)
              → Store (.project/ markdown files, hub-managed per project)
@@ -91,6 +93,18 @@ pip install "projectman[all] @ git+https://github.com/Biztactix-Ryan/ProjectMan.
 ```
 
 Extras: `[mcp]` for Claude Code integration, `[web]` for the web dashboard, `[embeddings]` for semantic search, `[all]` for everything.
+
+## Upgrading
+
+```bash
+# Upgrade the package and refresh installed Claude skills in one step
+projectman upgrade
+
+# Just check the installed version and source
+projectman upgrade --check
+```
+
+`projectman upgrade` runs `pipx upgrade` and then re-renders the pm agent and skills wherever they're already installed (`~/.claude` and the current repo's `.claude/`). To refresh skills without upgrading — e.g. in another repo after upgrading globally — run `projectman refresh-skills`. Restart Claude Code afterward to pick up the updated skills.
 
 ## Documentation
 
