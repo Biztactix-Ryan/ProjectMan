@@ -178,8 +178,13 @@ def test_pm_commit_hub_scoped_to_subproject(tmp_git_hub, monkeypatch):
     data = yaml.safe_load(result)
 
     assert "committed" in data
-    files = data["committed"]["files_committed"]
+    assert data["committed"]["files_committed"] > 0
     # All committed files should be under .project/projects/api/
+    show = subprocess.run(
+        ["git", "show", "--name-only", "--format=", "HEAD"],
+        cwd=str(tmp_git_hub), capture_output=True, text=True,
+    )
+    files = [f for f in show.stdout.splitlines() if f.strip()]
     for f in files:
         assert "projects/api" in f, f"Expected subproject path, got: {f}"
 
@@ -209,7 +214,7 @@ def test_pm_commit_hub_level_commits_hub_changes(tmp_git_hub, monkeypatch):
     data = yaml.safe_load(result)
 
     assert "committed" in data
-    assert len(data["committed"]["files_committed"]) > 0
+    assert data["committed"]["files_committed"] > 0
 
 
 def test_pm_commit_subproject_scope_does_not_cross_contaminate(tmp_git_hub, monkeypatch):
@@ -235,7 +240,11 @@ def test_pm_commit_subproject_scope_does_not_cross_contaminate(tmp_git_hub, monk
     data = yaml.safe_load(result)
 
     assert "committed" in data
-    for f in data["committed"]["files_committed"]:
+    show = subprocess.run(
+        ["git", "show", "--name-only", "--format=", "HEAD"],
+        cwd=str(tmp_git_hub), capture_output=True, text=True,
+    )
+    for f in [f for f in show.stdout.splitlines() if f.strip()]:
         assert "projects/api" in f
         assert "projects/web" not in f
 

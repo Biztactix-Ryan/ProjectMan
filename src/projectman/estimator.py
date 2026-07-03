@@ -38,4 +38,4 @@ def estimate(store: Store, item_id: str) -> str:
         "estimation_guidance": calibration,
     }
 
-    return yaml.dump(result, default_flow_style=False, sort_keys=False)
+    return yaml.dump(result, default_flow_style=False, sort_keys=False, allow_unicode=True, width=10000)

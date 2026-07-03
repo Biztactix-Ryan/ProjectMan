@@ -40,7 +40,7 @@ def scope(store: Store, story_id: str) -> str:
         "decomposition_guidance": guidance,
     }
 
-    return yaml.dump(result, default_flow_style=False, sort_keys=False)
+    return yaml.dump(result, default_flow_style=False, sort_keys=False, allow_unicode=True, width=10000)
 
 
 def auto_scope(
@@ -79,23 +79,32 @@ def _auto_scope_full(store: Store) -> str:
     root = store.root
     signals = {}
 
-    # Read project documentation files
+    # Read project documentation files (capped — scoping needs the shape of
+    # the project, not every word of every doc)
+    max_doc_chars = 8000
     doc_files = ["README.md", "PROJECT.md", "INFRASTRUCTURE.md", "SECURITY.md"]
     docs = {}
     for name in doc_files:
         # Check both root and .project/ for docs
         for candidate in [root / name, root / ".project" / name]:
             if candidate.exists():
-                docs[name] = candidate.read_text()
+                text = candidate.read_text()
+                if len(text) > max_doc_chars:
+                    text = (
+                        text[:max_doc_chars]
+                        + f"\n…[truncated {len(text) - max_doc_chars} chars]"
+                    )
+                docs[name] = text
                 break
     if docs:
         signals["documentation"] = docs
 
-    # Detect and read build files (first 200 lines each)
+    # Detect and read build files (first 200 lines each; lockfiles skipped —
+    # they carry no scoping signal)
     build_files = [
         "pyproject.toml", "setup.py", "setup.cfg",
-        "package.json", "package-lock.json",
-        "Cargo.toml", "go.mod", "go.sum",
+        "package.json",
+        "Cargo.toml", "go.mod",
         "Makefile", "CMakeLists.txt",
         "Gemfile", "pom.xml", "build.gradle",
         "requirements.txt", "Pipfile",
@@ -154,7 +163,7 @@ def _auto_scope_full(store: Store) -> str:
     signals["project"] = store.config.name
     signals["prefix"] = store.config.prefix
 
-    return yaml.dump(signals, default_flow_style=False, sort_keys=False)
+    return yaml.dump(signals, default_flow_style=False, sort_keys=False, allow_unicode=True, width=10000)
 
 
 def _auto_scope_incremental(store: Store, limit: int = 5, offset: int = 0) -> str:
@@ -225,7 +234,7 @@ def _auto_scope_incremental(store: Store, limit: int = 5, offset: int = 0) -> st
     if has_more:
         result["next_offset"] = offset + limit
 
-    return yaml.dump(result, default_flow_style=False, sort_keys=False)
+    return yaml.dump(result, default_flow_style=False, sort_keys=False, allow_unicode=True, width=10000)
 
 
 def _tree(root: Path, depth: int, exclude: set[str], prefix: str = "") -> list[str]:
@@ -286,4 +295,4 @@ def scope_epic(store: Store, epic_id: str) -> str:
         "decomposition_guidance": guidance,
     }
 
-    return yaml.dump(result, default_flow_style=False, sort_keys=False)
+    return yaml.dump(result, default_flow_style=False, sort_keys=False, allow_unicode=True, width=10000)

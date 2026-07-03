@@ -7,16 +7,18 @@ Get project status summary.
 - **project** (optional): Project name for hub mode
 - **Returns**: Epic/story/task counts, points, completion percentage, status breakdown
 
-### pm_get(id)
-Get full details of an epic, story, or task.
-- **id**: Epic ID (e.g. `EPIC-PRJ-1`), story ID (e.g. `US-PRJ-1`), or task ID (e.g. `US-PRJ-1-1`)
-- **Returns**: Full frontmatter + body content
+### pm_get(id, include_log?)
+Get full details of one or more epics, stories, or tasks.
+- **id**: One or more comma-separated IDs — epic (e.g. `EPIC-PRJ-1`), story (e.g. `US-PRJ-1`), or task (e.g. `US-PRJ-1-1,US-PRJ-1-2`). Prefer one multi-ID call over repeated single-ID calls.
+- **include_log** (optional, default `false`): Include the 3 most recent run-log entries per item
+- **Returns**: Full frontmatter + body content. A single ID returns one object; multiple IDs return a list (missing IDs become `{id, error}` entries).
 
-### pm_batch_get(type, project?)
-Get all items of a type with full data in a single call.
+### pm_batch_get(type?, ids?, project?)
+Get every item of a type (or a specific ID list) with full data in a single call.
 - **type**: Item type to fetch: `"epics"`, `"stories"`, or `"tasks"`
+- **ids** (optional): Comma-separated item IDs to fetch; takes precedence over `type`
 - **project** (optional): Project name for hub mode
-- **Returns**: All items of the specified type with frontmatter and body content. Much faster than calling `pm_get` for each item individually.
+- **Returns**: Items with frontmatter and body content. Much faster than calling `pm_get` for each item individually.
 
 ### pm_docs(doc?, project?)
 Read project documentation files.
@@ -49,10 +51,11 @@ Get the task board grouped by workflow state.
 Get burndown data.
 - **Returns**: Total, completed, remaining points with completion percentage
 
-### pm_context(project?, limit?)
+### pm_context(project?, limit?, max_doc_chars?)
 Get combined hub and project context.
 - **project** (optional): Project name for hub mode
 - **limit** (optional, default `20`): Max epics/stories to include
+- **max_doc_chars** (optional, default `4000`): Max characters per embedded doc (`0` = no limit); truncated docs point at `pm_docs` for the full text
 - **Returns**: Hub vision/architecture + project docs + active epics/stories (with totals)
 
 ### pm_epic(id, project?, limit?, offset?)
@@ -70,7 +73,7 @@ Create a new user story.
 - **epic_id** (optional): Link story to an epic
 - **acceptance_criteria** (optional): Comma-separated acceptance criteria
 - **tags** (optional): Comma-separated tags
-- **Returns**: Created story metadata
+- **Returns**: Created story `id`/`title`/`status` plus any set fields, and `id`/`title` of auto-created test tasks
 
 ### pm_create_epic(title, description, priority?, target_date?, tags?, project?)
 Create a new epic.
@@ -80,14 +83,14 @@ Create a new epic.
 Create a task under a story.
 - **tags** (optional): Comma-separated tags
 - **depends_on** (optional): Comma-separated sibling task IDs
-- **Returns**: Created task metadata
+- **Returns**: Created task `id`/`title`/`story_id` plus any set fields
 
 ### pm_create_tasks(story_id, tasks, project?)
 Create multiple tasks under a story in a single call.
 - **story_id**: Parent story ID (e.g. `US-PRJ-1`)
 - **tasks**: List of task objects, each with `title` (str), `description` (str), `points` (int, optional), `depends_on` (list[str], optional)
 - **project** (optional): Project name for hub mode
-- **Returns**: List of created task metadata, count, and total points
+- **Returns**: List of created task `id`/`title` (plus set fields), count, and total points
 
 ### pm_update(id, status?, points?, title?, assignee?, epic_id?, body?, acceptance_criteria?, tags?, depends_on?, outcome?, note?, project?)
 Update an epic, story, or task.
@@ -100,17 +103,26 @@ Update an epic, story, or task.
 - Epic status values: `draft`, `active`, `done`, `archived`
 - Story status values: `backlog`, `ready`, `active`, `done`, `archived`
 - Task status values: `todo`, `in-progress`, `review`, `done`, `blocked`
-- **Returns**: Updated metadata
+- **Returns**: `id`, current `status`, and the fields changed by this call (plus `run_log: <outcome>` when a run-log entry was appended) — not the full object
 
 ### pm_archive(id)
 Archive an epic, story, or task.
 
-### pm_grab(task_id, assignee?)
+### pm_grab(task_id, assignee?, include_story?)
 Claim a task with readiness validation.
 - Sets assignee and status to `in-progress`
 - Validates task readiness before claiming
 - Loads task context for implementation
-- **Returns**: Task details and context
+- **include_story** (optional, default `true`): Include the parent story body. Pass `false` when the story context is already known (e.g. grabbing a second task from the same story).
+- **Returns**: Task details and context — task frontmatter + body, story context, unfinished sibling tasks (with `sibling_tasks_total` / `sibling_tasks_done` counts), dependency status, readiness warnings
+
+### pm_done_next(task_id, outcome?, note?, assignee?, same_story_only?)
+Complete a task and claim the next ready one in a single call — the loop primitive for working through tasks.
+- Marks `task_id` done; appends a run-log entry when `note` is given (`outcome` defaults to `success`)
+- Closes the parent story automatically if this was its last open task (`story_closed` in the response)
+- Grabs the next ready unassigned task — same-story siblings first (topological order), then other stories by priority. The story body is only included when the next task belongs to a different story.
+- **same_story_only** (optional, default `false`): Stop instead of crossing to another story
+- **Returns**: `completed` summary, optional `story_closed`, and `next` (a full grab payload, or `null` with `next_info` when nothing is ready)
 
 ### pm_update_doc(doc, content, project?)
 Update a project documentation file.
@@ -134,8 +146,9 @@ Discover what needs scoping — returns codebase signals or undecomposed stories
 - **offset** (optional, default `0`): Starting index for pagination in incremental mode
 - **Returns**: Full scan returns documentation, build files, source tree, and creation guidance. Incremental returns a paginated batch of undecomposed story IDs/titles with `has_more` and `next_offset` for pagination.
 
-### pm_audit(project?)
+### pm_audit(include_info?, project?)
 Run project audit for drift detection. Performs 13 checks covering stories, tasks, epics, documentation, hub docs, assignments, and malformed files.
+- **include_info** (optional, default `false`): Include info-level findings in the response. By default only errors and warnings are returned, with omitted info findings summarized as a count. The full report is always written to `DRIFT.md`.
 
 ### pm_reindex(project?)
 Rebuild project index and embeddings.
@@ -195,7 +208,7 @@ Get git status of all hub submodules.
 Commit `.project/` changes.
 - **scope** (optional, default `"all"`): `"hub"`, `"project:<name>"`, or `"all"`
 - **message** (optional): Commit message (auto-generated if omitted)
-- **Returns**: List of committed files
+- **Returns**: Commit hash and committed-file count (the message is echoed only when auto-generated)
 
 ### pm_push(scope?)
 Push committed changes to remote.

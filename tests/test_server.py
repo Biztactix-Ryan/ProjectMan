@@ -718,8 +718,10 @@ def test_pm_commit_auto_message(tmp_git_project, monkeypatch):
 
     assert "committed" in data
     assert data["committed"]["commit_hash"]
+    # Auto-generated message is echoed so the caller learns what was used
     assert data["committed"]["message"].startswith("pm: ")
-    assert len(data["committed"]["files_committed"]) > 0
+    # File list is summarized as a count to keep the response small
+    assert data["committed"]["files_committed"] > 0
 
     # Verify git log shows the commit
     log = subprocess.run(
@@ -732,7 +734,9 @@ def test_pm_commit_auto_message(tmp_git_project, monkeypatch):
 
 
 def test_pm_commit_custom_message(tmp_git_project, monkeypatch):
-    """pm_commit accepts a custom message override."""
+    """pm_commit accepts a custom message override (not echoed back)."""
+    import subprocess
+
     monkeypatch.chdir(tmp_git_project)
     from projectman.server import pm_create_story, pm_commit
 
@@ -740,7 +744,16 @@ def test_pm_commit_custom_message(tmp_git_project, monkeypatch):
     result = pm_commit(message="custom: my commit")
     data = yaml.safe_load(result)
 
-    assert data["committed"]["message"] == "custom: my commit"
+    # Caller-supplied messages are not echoed back — verify via git instead
+    assert "message" not in data["committed"]
+    assert data["committed"]["commit_hash"]
+    log = subprocess.run(
+        ["git", "log", "--format=%s", "-1"],
+        cwd=str(tmp_git_project),
+        capture_output=True,
+        text=True,
+    )
+    assert log.stdout.strip() == "custom: my commit"
 
 
 def test_pm_commit_no_changes(tmp_git_project, monkeypatch):

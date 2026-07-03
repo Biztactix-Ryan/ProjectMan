@@ -11,11 +11,16 @@ from .deps import build_combined_dep_graph, detect_cycle
 from .store import Store
 
 
-def run_audit(root: Path, project_dir: Optional[Path] = None) -> str:
+def run_audit(
+    root: Path, project_dir: Optional[Path] = None, include_info: bool = True
+) -> str:
     """Run all audit checks and generate a report. Also writes DRIFT.md.
 
     When *project_dir* is given (hub subproject), the Store is rooted at
     *root* but reads PM data from *project_dir* instead of ``root/.project/``.
+
+    When *include_info* is False, info-level findings are omitted from the
+    returned report (summarized as a count); DRIFT.md always gets the full report.
     """
     store = Store(root, project_dir=project_dir) if project_dir else Store(root)
     findings = []
@@ -322,25 +327,32 @@ def run_audit(root: Path, project_dir: Optional[Path] = None) -> str:
                 })
 
     # Generate report
-    report_lines = ["# Project Audit Report\n"]
-
     error_count = sum(1 for f in findings if f["severity"] == "error")
     warn_count = sum(1 for f in findings if f["severity"] == "warning")
     info_count = sum(1 for f in findings if f["severity"] == "info")
+    header = f"**Errors:** {error_count} | **Warnings:** {warn_count} | **Info:** {info_count}\n"
 
-    report_lines.append(f"**Errors:** {error_count} | **Warnings:** {warn_count} | **Info:** {info_count}\n")
+    def _render(items: list[dict], footer: Optional[str] = None) -> str:
+        lines = ["# Project Audit Report\n", header]
+        if not findings:
+            lines.append("No issues found. Project is clean.\n")
+        else:
+            for f in items:
+                icon = {"error": "[ERROR]", "warning": "[WARN]", "info": "[INFO]"}[f["severity"]]
+                lines.append(f"- {icon} {f['message']}")
+            if footer:
+                lines.append(footer)
+        return "\n".join(lines)
 
-    if not findings:
-        report_lines.append("No issues found. Project is clean.\n")
-    else:
-        for f in findings:
-            icon = {"error": "[ERROR]", "warning": "[WARN]", "info": "[INFO]"}[f["severity"]]
-            report_lines.append(f"- {icon} {f['message']}")
-
-    report = "\n".join(report_lines)
-
-    # Write DRIFT.md
+    # Write DRIFT.md (always the full report)
+    report = _render(findings)
     drift_path = store.project_dir / "DRIFT.md"
     drift_path.write_text(report + "\n")
 
-    return report
+    if include_info or not info_count:
+        return report
+    visible = [f for f in findings if f["severity"] != "info"]
+    return _render(
+        visible,
+        footer=f"\n({info_count} info finding(s) omitted — see DRIFT.md or pass include_info=true)",
+    )

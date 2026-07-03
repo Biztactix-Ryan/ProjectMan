@@ -116,7 +116,15 @@ def _emit_status_change(
 
 
 def _yaml_dump(data) -> str:
-    return yaml.dump(data, default_flow_style=False, sort_keys=False)
+    # allow_unicode avoids 6-char \uXXXX escapes; a large width avoids
+    # backslash-continuation line wrapping — both waste client tokens
+    return yaml.dump(
+        data,
+        default_flow_style=False,
+        sort_keys=False,
+        allow_unicode=True,
+        width=10000,
+    )
 
 
 # ─── Query Tools ────────────────────────────────────────────────
@@ -171,22 +179,39 @@ def pm_status(project: Optional[str] = None) -> str:
 @mcp.tool(
     title="Get Item", annotations=ToolAnnotations(title="Get Item", readOnlyHint=True)
 )
-def pm_get(id: str, project: Optional[str] = None) -> str:
-    """Get full details of an epic, story, or task by ID.
+def pm_get(id: str, include_log: bool = False, project: Optional[str] = None) -> str:
+    """Get full details of epics, stories, or tasks by ID. Accepts multiple comma-separated IDs — always fetch related items in one call instead of repeated single-ID calls.
 
     Args:
-        id: Epic ID (e.g. EPIC-PRJ-1), story ID (e.g. US-PRJ-1), or task ID (e.g. US-PRJ-1-1)
+        id: One or more comma-separated IDs — epic (e.g. EPIC-PRJ-1), story (e.g. US-PRJ-1), or task (e.g. US-PRJ-1-1,US-PRJ-1-2)
+        include_log: Include the 3 most recent run-log entries per item (default false; use pm_run_log for full history)
         project: Optional project name (hub mode only)
     """
     try:
         store = _store(project)
-        meta, body = store.get(id)
-        result = meta.model_dump(mode="json")
-        result["body"] = body
-        recent_log = store.get_run_log(id, limit=3)
-        if recent_log:
-            result["recent_run_log"] = [e.model_dump(mode="json") for e in recent_log]
-        return _yaml_dump(result)
+
+        def _fetch(item_id: str) -> dict:
+            meta, body = store.get(item_id)
+            result = meta.model_dump(mode="json")
+            result["body"] = body
+            if include_log:
+                recent_log = store.get_run_log(item_id, limit=3)
+                if recent_log:
+                    result["recent_run_log"] = [
+                        e.model_dump(mode="json") for e in recent_log
+                    ]
+            return result
+
+        item_ids = [i.strip() for i in id.split(",") if i.strip()]
+        if len(item_ids) == 1:
+            return _yaml_dump(_fetch(item_ids[0]))
+        items = []
+        for item_id in item_ids:
+            try:
+                items.append(_fetch(item_id))
+            except Exception as e:
+                items.append({"id": item_id, "error": str(e)})
+        return _yaml_dump(items)
     except Exception as e:
         return f"error: {e}"
 
@@ -195,18 +220,33 @@ def pm_get(id: str, project: Optional[str] = None) -> str:
     title="Batch Get Items",
     annotations=ToolAnnotations(title="Batch Get Items", readOnlyHint=True),
 )
-def pm_batch_get(type: str, project: Optional[str] = None) -> str:
-    """Get all items of a type with full data in a single call.
-
-    Returns all epics, stories, or tasks with frontmatter and body content.
-    Much faster than calling pm_get for each item individually.
+def pm_batch_get(
+    type: Optional[str] = None,
+    ids: Optional[str] = None,
+    project: Optional[str] = None,
+) -> str:
+    """Get every item of a type (or a specific ID list) with full data in a single call.
 
     Args:
-        type: Item type to fetch: "epics", "stories", or "tasks"
+        type: Fetch all items of a type: "epics", "stories", or "tasks"
+        ids: Comma-separated item IDs to fetch (e.g. "US-PRJ-1,US-PRJ-2-3,EPIC-PRJ-1"). Takes precedence over type.
         project: Optional project name (hub mode only)
     """
     try:
         store = _store(project)
+        if ids:
+            items = []
+            for item_id in [i.strip() for i in ids.split(",") if i.strip()]:
+                try:
+                    meta, body = store.get(item_id)
+                    item = meta.model_dump(mode="json")
+                    item["body"] = body
+                    items.append(item)
+                except Exception as e:
+                    items.append({"id": item_id, "error": str(e)})
+            return _yaml_dump(items)
+        if not type:
+            return "error: provide ids or type"
         items = store.list_all(type)
         return _yaml_dump(items)
     except Exception as e:
@@ -690,8 +730,21 @@ def pm_create_story(
             store.update(meta.id, epic_id=epic_id)
             meta, _ = store.get_story(meta.id)
         write_index(store)
-        result = {"created": meta.model_dump(mode="json")}
-        result["test_tasks"] = [t.model_dump(mode="json") for t in (test_tasks or [])]
+        # Echo identity + non-empty settable fields, not the full object
+        dumped = meta.model_dump(mode="json")
+        created = {
+            "id": meta.id,
+            "title": meta.title,
+            "status": dumped.get("status"),
+        }
+        for field in ("priority", "points", "epic_id", "tags", "depends_on"):
+            value = dumped.get(field)
+            if value:
+                created[field] = value
+        result = {"created": created}
+        result["test_tasks"] = [
+            {"id": t.id, "title": t.title} for t in (test_tasks or [])
+        ]
         _emit("project.updated", {"summary": f"Story {meta.id} created"})
         return _yaml_dump(result)
     except Exception as e:
@@ -822,21 +875,34 @@ def pm_epic(
 def pm_context(
     project: Optional[str] = None,
     limit: int = 20,
+    max_doc_chars: int = 4000,
 ) -> str:
     """Get combined hub + project context for an agent starting work.
 
     Returns hub-level vision/architecture (if hub mode) plus project-specific
-    docs, active epics, and active stories.
+    docs, active epics, and active stories. Docs are truncated to max_doc_chars
+    each — use pm_docs(doc=...) to read a full document.
 
     Args:
         project: Optional project name (hub mode only)
         limit: Max epics/stories to include (default 20)
+        max_doc_chars: Max characters per embedded doc (default 4000; 0 = no limit)
     """
     try:
         hub_root = find_project_root()
         hub_config = load_config(hub_root)
         store = _store(project)
         proj_dir = store.project_dir
+
+        def _doc_text(path, doc_key: str) -> str:
+            text = path.read_text()
+            if max_doc_chars and len(text) > max_doc_chars:
+                return (
+                    text[:max_doc_chars]
+                    + f"\n…[truncated {len(text) - max_doc_chars} chars — "
+                    + f'use pm_docs(doc="{doc_key}") for the full text]'
+                )
+            return text
 
         result = {}
 
@@ -849,7 +915,7 @@ def pm_context(
             ]:
                 path = hub_dir / filename
                 if path.exists():
-                    result[f"hub_{doc_key}"] = path.read_text()
+                    result[f"hub_{doc_key}"] = _doc_text(path, doc_key)
 
         # Project-level context
         project_docs = {}
@@ -860,7 +926,7 @@ def pm_context(
         ]:
             path = proj_dir / filename
             if path.exists():
-                project_docs[doc_key] = path.read_text()
+                project_docs[doc_key] = _doc_text(path, doc_key)
         result["project_docs"] = project_docs
 
         # Active epics
@@ -926,7 +992,13 @@ def pm_create_task(
         )
         write_index(store)
         _emit("task.created", {"taskId": meta.id, "storyId": story_id, "title": title})
-        return _yaml_dump({"created": meta.model_dump(mode="json")})
+        dumped = meta.model_dump(mode="json")
+        created = {"id": meta.id, "title": meta.title, "story_id": story_id}
+        for field in ("points", "tags", "depends_on"):
+            value = dumped.get(field)
+            if value:
+                created[field] = value
+        return _yaml_dump({"created": created})
     except Exception as e:
         return f"error: {e}"
 
@@ -958,9 +1030,18 @@ def pm_create_tasks(
                 "task.created", {"taskId": t.id, "storyId": story_id, "title": t.title}
             )
         total_points = sum(t.points or 0 for t in created)
+        created_list = []
+        for t in created:
+            dumped = t.model_dump(mode="json")
+            entry = {"id": t.id, "title": t.title}
+            for field in ("points", "tags", "depends_on"):
+                value = dumped.get(field)
+                if value:
+                    entry[field] = value
+            created_list.append(entry)
         return _yaml_dump(
             {
-                "created": [t.model_dump(mode="json") for t in created],
+                "created": created_list,
                 "count": len(created),
                 "total_points": total_points,
             }
@@ -1059,7 +1140,26 @@ def pm_update(
         ):
             _emit_status_change(store, id, old_status_val, status, meta)
 
-        return _yaml_dump({"updated": meta.model_dump(mode="json")})
+        # Echo only identity + the fields changed in this call (confirms how
+        # comma-separated inputs were parsed) — not the full object
+        dumped = meta.model_dump(mode="json")
+        result = {"id": meta.id, "status": dumped.get("status")}
+        for field in (
+            "points",
+            "title",
+            "assignee",
+            "epic_id",
+            "acceptance_criteria",
+            "tags",
+            "depends_on",
+        ):
+            if field in kwargs:
+                result[field] = dumped.get(field)
+        if body is not None:
+            result["body_chars"] = len(body)
+        if outcome is not None:
+            result["run_log"] = outcome
+        return _yaml_dump({"updated": result})
     except Exception as e:
         return f"error: {e}"
 
@@ -1086,6 +1186,115 @@ def pm_archive(id: str, project: Optional[str] = None) -> str:
         return f"error: {e}"
 
 
+def _do_grab(store, task_id: str, assignee: str, include_story: bool) -> dict:
+    """Claim a task and build its context payload. Shared by pm_grab and pm_done_next.
+
+    Returns a dict — either {"error", "blockers"} or {"grabbed": {...}}.
+    """
+    from .readiness import check_readiness
+
+    task_meta, task_body = store.get_task(task_id)
+
+    # Validate readiness
+    readiness = check_readiness(task_meta, task_body, store)
+    if not readiness["ready"]:
+        return {
+            "error": "task is not ready to grab",
+            "blockers": readiness["blockers"],
+        }
+
+    # Claim: set assignee and status
+    old_status = task_meta.status.value
+    store.update(task_id, assignee=assignee, status="in-progress")
+    write_index(store)
+    _emit(
+        "task.status_update",
+        {
+            "taskId": task_id,
+            "oldStatus": old_status,
+            "newStatus": "in-progress",
+            "storyId": task_meta.story_id,
+        },
+    )
+
+    # Re-read updated task
+    task_meta, task_body = store.get_task(task_id)
+
+    # Load parent story context (body only when requested — it is identical
+    # for every grab within the same story)
+    story_context = {}
+    try:
+        story_meta, story_body = store.get_story(task_meta.story_id)
+        story_context = {
+            "id": story_meta.id,
+            "title": story_meta.title,
+            "status": story_meta.status.value,
+            "priority": story_meta.priority.value,
+        }
+        if include_story:
+            story_context["body"] = story_body
+    except FileNotFoundError:
+        story_context = {"id": task_meta.story_id, "error": "not found"}
+
+    # Load sibling tasks — only unfinished ones (cap at 20 to avoid bloat)
+    siblings = store.list_tasks(story_id=task_meta.story_id)
+    all_siblings = [s for s in siblings if s.id != task_id]
+    open_siblings = [s for s in all_siblings if s.status.value != "done"]
+    sibling_list = [
+        {
+            "id": s.id,
+            "title": s.title,
+            "status": s.status.value,
+            "assignee": s.assignee,
+        }
+        for s in open_siblings[:20]
+    ]
+
+    # Build dependency status (cross-story aware)
+    dependency_status = []
+    if task_meta.depends_on:
+        # Build lookup maps for all tasks and stories
+        all_tasks = store.list_tasks()
+        all_stories = store.list_stories()
+        task_map = {t.id: t for t in all_tasks}
+        story_map = {s.id: s for s in all_stories}
+
+        for dep_id in task_meta.depends_on:
+            if dep_id in task_map:
+                dep = task_map[dep_id]
+                dependency_status.append(
+                    {
+                        "id": dep.id,
+                        "title": dep.title,
+                        "status": dep.status.value,
+                        "type": "task",
+                    }
+                )
+            elif dep_id in story_map:
+                dep = story_map[dep_id]
+                dependency_status.append(
+                    {
+                        "id": dep.id,
+                        "title": dep.title,
+                        "status": dep.status.value,
+                        "type": "story",
+                    }
+                )
+
+    return {
+        "grabbed": {
+            "task": task_meta.model_dump(mode="json"),
+            "body": task_body,
+            "story_context": story_context,
+            "sibling_tasks": sibling_list,
+            "sibling_tasks_total": len(all_siblings),
+            "sibling_tasks_done": len(all_siblings) - len(open_siblings),
+            "dependency_status": dependency_status,
+            "warnings": readiness["warnings"],
+        },
+    }
+
+
 @mcp.tool(
     title="Grab Task",
     annotations=ToolAnnotations(
@@ -1095,6 +1304,7 @@ def pm_archive(id: str, project: Optional[str] = None) -> str:
 def pm_grab(
     task_id: str,
     assignee: str = "claude",
+    include_story: bool = True,
     project: Optional[str] = None,
 ) -> str:
     """Claim a task — validates readiness, assigns, sets in-progress, loads context.
@@ -1102,110 +1312,148 @@ def pm_grab(
     Args:
         task_id: Task ID to claim (e.g. US-PRJ-1-1)
         assignee: Who is claiming (default "claude" for AI agents, or a human name)
+        include_story: Include the parent story body (default true). Pass false when grabbing another task from a story whose context you already have.
         project: Optional project name (hub mode only)
     """
     try:
+        store = _store(project)
+        return _yaml_dump(_do_grab(store, task_id, assignee, include_story))
+    except Exception as e:
+        return f"error: {e}"
+
+
+@mcp.tool(
+    title="Complete Task & Grab Next",
+    annotations=ToolAnnotations(
+        title="Complete Task & Grab Next", readOnlyHint=False, destructiveHint=False
+    ),
+)
+def pm_done_next(
+    task_id: str,
+    outcome: str = "success",
+    note: Optional[str] = None,
+    assignee: str = "claude",
+    same_story_only: bool = False,
+    project: Optional[str] = None,
+) -> str:
+    """Complete a task and claim the next ready one in a single call — use this instead of pm_update + pm_grab when working through tasks.
+
+    Marks task_id done (appending a run-log entry when note is given), closes the
+    parent story automatically if this was its last open task, then grabs the next
+    ready task — preferring siblings in the same story. The story body is only
+    included when the next task belongs to a different story.
+
+    Args:
+        task_id: Task ID just finished (e.g. US-PRJ-1-1)
+        outcome: Run-log outcome for the completed task: success/partial/info (default success; only logged when note is given)
+        note: Run-log note describing what was accomplished (max 1024 chars)
+        assignee: Who claims the next task (default "claude")
+        same_story_only: Only grab a next task from the same story; report and stop otherwise (default false)
+        project: Optional project name (hub mode only)
+    """
+    try:
+        from .deps import topological_sort
         from .readiness import check_readiness
 
         store = _store(project)
-        task_meta, task_body = store.get_task(task_id)
-
-        # Validate readiness
-        readiness = check_readiness(task_meta, task_body, store)
-        if not readiness["ready"]:
-            return _yaml_dump(
-                {
-                    "error": "task is not ready to grab",
-                    "blockers": readiness["blockers"],
-                }
-            )
-
-        # Claim: set assignee and status
+        task_meta, _ = store.get_task(task_id)
+        story_id = task_meta.story_id
         old_status = task_meta.status.value
-        store.update(task_id, assignee=assignee, status="in-progress")
+
+        # 1. Complete the task (+ run log when a note is given)
+        kwargs = {"status": "done"}
+        if note is not None:
+            kwargs["outcome"] = outcome
+            kwargs["note"] = note
+        meta = store.update(task_id, **kwargs)
         write_index(store)
-        _emit(
-            "task.status_update",
-            {
-                "taskId": task_id,
-                "oldStatus": old_status,
-                "newStatus": "in-progress",
-                "storyId": task_meta.story_id,
-            },
+        if old_status != "done":
+            _emit_status_change(store, task_id, old_status, "done", meta)
+
+        result = {"completed": {"id": task_id, "status": "done"}}
+        if note is not None:
+            result["completed"]["run_log"] = outcome
+
+        # 2. Close the parent story if this was its last open task
+        siblings = store.list_tasks(story_id=story_id)
+        open_siblings = [s for s in siblings if s.status.value != "done"]
+        if not open_siblings:
+            try:
+                story_meta, _ = store.get_story(story_id)
+                if story_meta.status.value not in ("done", "archived"):
+                    old_story_status = story_meta.status.value
+                    story_meta = store.update(story_id, status="done")
+                    write_index(store)
+                    _emit_status_change(
+                        store, story_id, old_story_status, "done", story_meta
+                    )
+                result["story_closed"] = story_id
+            except Exception as e:
+                result["story_close_error"] = str(e)
+
+        # 3. Pick the next ready task: same story first (topological order),
+        # then other stories by priority > story > topological order > points
+        all_tasks = store.list_tasks()
+        story_priority = {}
+        priority_order = {"must": 0, "should": 1, "could": 2, "wont": 3}
+        for s in store.list_stories():
+            story_priority[s.id] = priority_order.get(s.priority.value, 1)
+
+        story_tasks: dict[str, list] = {}
+        for t in all_tasks:
+            story_tasks.setdefault(t.story_id, []).append(t)
+        topo_position: dict[str, int] = {}
+        for sid, tasks_in_story in story_tasks.items():
+            try:
+                sorted_tasks = topological_sort(tasks_in_story)
+            except Exception:
+                sorted_tasks = tasks_in_story
+            for idx, t in enumerate(sorted_tasks):
+                topo_position[t.id] = idx
+
+        candidates = [
+            t for t in all_tasks if t.status.value == "todo" and not t.assignee
+        ]
+        if same_story_only:
+            candidates = [t for t in candidates if t.story_id == story_id]
+        candidates.sort(
+            key=lambda t: (
+                t.story_id != story_id,  # same story first
+                story_priority.get(t.story_id, 1),
+                t.story_id,
+                topo_position.get(t.id, 0),
+                t.points or 99,
+            )
         )
 
-        # Re-read updated task
-        task_meta, task_body = store.get_task(task_id)
+        # Readiness-check candidates lazily until one is grabbable
+        next_grab = None
+        not_ready_count = 0
+        for candidate in candidates:
+            _, cand_body = store.get_task(candidate.id)
+            if check_readiness(candidate, cand_body, store)["ready"]:
+                grab = _do_grab(
+                    store,
+                    candidate.id,
+                    assignee,
+                    include_story=candidate.story_id != story_id,
+                )
+                if "grabbed" in grab:
+                    next_grab = grab["grabbed"]
+                    break
+                not_ready_count += 1
+            else:
+                not_ready_count += 1
 
-        # Load parent story context
-        story_context = {}
-        try:
-            story_meta, story_body = store.get_story(task_meta.story_id)
-            story_context = {
-                "id": story_meta.id,
-                "title": story_meta.title,
-                "status": story_meta.status.value,
-                "priority": story_meta.priority.value,
-                "body": story_body,
-            }
-        except FileNotFoundError:
-            story_context = {"id": task_meta.story_id, "error": "not found"}
-
-        # Load sibling tasks (cap at 20 to avoid bloat)
-        siblings = store.list_tasks(story_id=task_meta.story_id)
-        all_siblings = [s for s in siblings if s.id != task_id]
-        sibling_list = [
-            {
-                "id": s.id,
-                "title": s.title,
-                "status": s.status.value,
-                "assignee": s.assignee,
-            }
-            for s in all_siblings[:20]
-        ]
-
-        # Build dependency status (cross-story aware)
-        dependency_status = []
-        if task_meta.depends_on:
-            # Build lookup maps for all tasks and stories
-            all_tasks = store.list_tasks()
-            all_stories = store.list_stories()
-            task_map = {t.id: t for t in all_tasks}
-            story_map = {s.id: s for s in all_stories}
-
-            for dep_id in task_meta.depends_on:
-                if dep_id in task_map:
-                    dep = task_map[dep_id]
-                    dependency_status.append(
-                        {
-                            "id": dep.id,
-                            "title": dep.title,
-                            "status": dep.status.value,
-                            "type": "task",
-                        }
-                    )
-                elif dep_id in story_map:
-                    dep = story_map[dep_id]
-                    dependency_status.append(
-                        {
-                            "id": dep.id,
-                            "title": dep.title,
-                            "status": dep.status.value,
-                            "type": "story",
-                        }
-                    )
-
-        result = {
-            "grabbed": {
-                "task": task_meta.model_dump(mode="json"),
-                "body": task_body,
-                "story_context": story_context,
-                "sibling_tasks": sibling_list,
-                "sibling_tasks_total": len(all_siblings),
-                "dependency_status": dependency_status,
-                "warnings": readiness["warnings"],
-            },
-        }
+        if next_grab:
+            result["next"] = next_grab
+        else:
+            scope_note = "in this story" if same_story_only else "in this project"
+            result["next"] = None
+            result["next_info"] = (
+                f"no ready unassigned tasks {scope_note} "
+                f"({len(candidates)} todo, {not_ready_count} blocked — see pm_board)"
+            )
         return _yaml_dump(result)
     except Exception as e:
         return f"error: {e}"
@@ -1258,10 +1506,14 @@ def pm_scope(id: str, project: Optional[str] = None) -> str:
     title="Project Audit",
     annotations=ToolAnnotations(title="Project Audit", readOnlyHint=True),
 )
-def pm_audit(project: Optional[str] = None) -> str:
+def pm_audit(include_info: bool = False, project: Optional[str] = None) -> str:
     """Run project audit — checks for drift, inconsistencies, stale items.
 
+    Returns errors and warnings; info-level findings are summarized as a count
+    unless include_info is true. The full report is always written to DRIFT.md.
+
     Args:
+        include_info: Include info-level findings in the response (default false)
         project: Optional project name (hub mode only)
     """
     try:
@@ -1274,8 +1526,8 @@ def pm_audit(project: Optional[str] = None) -> str:
                 pm_dir = root / ".project" / "projects" / project
                 if not (pm_dir / "config.yaml").exists():
                     return f"error: project '{project}' not found in hub"
-                return run_audit(root, project_dir=pm_dir)
-        return run_audit(root)
+                return run_audit(root, project_dir=pm_dir, include_info=include_info)
+        return run_audit(root, include_info=include_info)
     except Exception as e:
         return f"error: {e}"
 
@@ -1680,6 +1932,14 @@ def pm_commit(
 
         if isinstance(result, dict) and result.get("nothing_to_commit"):
             return "error: No .project/ changes to commit"
+        if isinstance(result, dict):
+            # Return a file count, not the full path list; echo the message
+            # only when auto-generated (the caller already knows their own)
+            files = result.pop("files_committed", None)
+            if files is not None:
+                result["files_committed"] = len(files)
+            if message is not None:
+                result.pop("message", None)
         return _yaml_dump({"committed": result})
     except (RuntimeError, ValueError, FileNotFoundError) as e:
         return f"error: {e}"
