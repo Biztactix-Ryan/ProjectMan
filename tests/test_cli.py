@@ -245,24 +245,66 @@ class TestRefreshSkills:
             assert result.exit_code == 0
             assert "No installed pm skills found" in result.output
 
-    def test_refresh_skills_updates_existing_locations(self, runner, tmp_path, monkeypatch):
+    def test_refresh_skills_prunes_superseded_local_copies(self, runner, tmp_path, monkeypatch):
         fake_home = tmp_path / "home"
         fake_home.mkdir()
         monkeypatch.setenv("HOME", str(fake_home))
         monkeypatch.setattr("projectman.cli.shutil.which", lambda name: None)
         with runner.isolated_filesystem(temp_dir=tmp_path):
-            # Install globally and locally, then stamp both stale
+            # Install globally and locally — local copies are duplicates
+            runner.invoke(cli, ["setup-claude", "--global", "--local-skills"])
+            # A non-pm skill must survive the prune
+            other = Path(".claude/skills/custom")
+            other.mkdir(parents=True)
+            (other / "SKILL.md").write_text("mine")
+            global_skill = fake_home / ".claude/skills/pm/SKILL.md"
+            global_skill.write_text("stale")
+
+            result = runner.invoke(cli, ["refresh-skills"])
+            assert result.exit_code == 0
+            assert "superseded" in result.output
+            # Local pm copies pruned, global refreshed, other skills untouched
+            assert not Path(".claude/skills/pm/SKILL.md").exists()
+            assert not Path(".claude/skills/pm-do").exists()
+            assert not Path(".claude/agents/pm.md").exists()
+            assert (other / "SKILL.md").read_text() == "mine"
+            assert global_skill.read_text() != "stale"
+            assert "Restart Claude Code" in result.output
+
+    def test_refresh_skills_keep_local_refreshes_both(self, runner, tmp_path, monkeypatch):
+        fake_home = tmp_path / "home"
+        fake_home.mkdir()
+        monkeypatch.setenv("HOME", str(fake_home))
+        monkeypatch.setattr("projectman.cli.shutil.which", lambda name: None)
+        with runner.isolated_filesystem(temp_dir=tmp_path):
             runner.invoke(cli, ["setup-claude", "--global", "--local-skills"])
             global_skill = fake_home / ".claude/skills/pm/SKILL.md"
             local_skill = Path(".claude/skills/pm/SKILL.md")
             global_skill.write_text("stale")
             local_skill.write_text("stale")
 
-            result = runner.invoke(cli, ["refresh-skills"])
+            result = runner.invoke(cli, ["refresh-skills", "--keep-local"])
             assert result.exit_code == 0
             assert global_skill.read_text() != "stale"
             assert local_skill.read_text() != "stale"
             assert "Refreshed pm skills" in result.output
+
+    def test_refresh_skills_local_only_is_refreshed_not_pruned(self, runner, tmp_path, monkeypatch):
+        fake_home = tmp_path / "home"
+        fake_home.mkdir()
+        monkeypatch.setenv("HOME", str(fake_home))
+        monkeypatch.setattr("projectman.cli.shutil.which", lambda name: None)
+        with runner.isolated_filesystem(temp_dir=tmp_path):
+            # Local install only — no global to supersede it
+            runner.invoke(cli, ["init", "--name", "proj"])
+            runner.invoke(cli, ["setup-claude"])
+            local_skill = Path(".claude/skills/pm/SKILL.md")
+            local_skill.write_text("stale")
+
+            result = runner.invoke(cli, ["refresh-skills"])
+            assert result.exit_code == 0
+            assert local_skill.read_text() != "stale"
+            assert "Restart Claude Code" in result.output
 
     def test_refresh_skills_does_not_install_new_locations(self, runner, tmp_path, monkeypatch):
         fake_home = tmp_path / "home"

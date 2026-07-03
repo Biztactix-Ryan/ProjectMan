@@ -82,8 +82,11 @@ After a successful upgrade the command invokes the **new** binary's `refresh-ski
 Re-render the pm agent + skills from the installed package's templates, in every location where they are already installed (`~/.claude` and `./.claude`). Does not install into new locations — use `setup-claude` for that. Run this in each project that keeps local skill copies after upgrading elsewhere.
 
 ```bash
-projectman refresh-skills
+projectman refresh-skills               # refresh (prunes superseded local copies)
+projectman refresh-skills --keep-local  # keep + refresh local copies alongside global
 ```
+
+If the skills are installed both globally and in the current project, the project-local copies are superseded — Claude Code loads both and shows duplicate skills — so they are removed by default (only ProjectMan-managed files are touched: `agents/pm.md` and `skills/pm*`; other agents/skills are left alone). Pass `--keep-local` to keep and refresh them instead. After any refresh, restart Claude Code (or start a new session) to pick up the updated skills.
 
 ## projectman web
 

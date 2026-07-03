@@ -205,30 +205,79 @@ def setup_claude(transport, host, port, global_, local_skills):
     click.echo("Claude Code integration installed. Restart Claude Code to activate.")
 
 
-def _installed_skill_dirs() -> list:
-    """Return .claude/ dirs that already contain the pm skills (global + cwd)."""
-    candidates = [Path.home() / ".claude", Path.cwd() / ".claude"]
-    return [c for c in candidates if (c / "skills" / "pm" / "SKILL.md").exists()]
+def _remove_claude_assets(claude_dir: Path) -> None:
+    """Remove the ProjectMan-managed agent + skills from a .claude/ directory.
+
+    Only touches files this tool wrote (agents/pm.md, skills/pm*); other
+    agents and skills are left alone. Empty parent dirs are cleaned up.
+    """
+    agent = claude_dir / "agents" / "pm.md"
+    if agent.exists():
+        agent.unlink()
+        click.echo(f"Removed {agent}")
+
+    for skill_name, _ in CLAUDE_SKILLS:
+        skill_dir = claude_dir / "skills" / skill_name
+        if skill_dir.exists():
+            shutil.rmtree(skill_dir)
+            click.echo(f"Removed {skill_dir}/")
+    for stale in STALE_SKILLS:
+        stale_dir = claude_dir / "skills" / stale
+        if stale_dir.exists():
+            shutil.rmtree(stale_dir)
+            click.echo(f"Removed stale {stale_dir}/")
+
+    for parent in (claude_dir / "agents", claude_dir / "skills"):
+        if parent.is_dir() and not any(parent.iterdir()):
+            parent.rmdir()
 
 
 @cli.command("refresh-skills")
-def refresh_skills():
+@click.option("--keep-local", is_flag=True, help="Keep project-local pm skill copies even when the same skills are installed globally in ~/.claude (they are pruned as duplicates by default)")
+def refresh_skills(keep_local):
     """Rewrite the pm agent + skills wherever they are already installed.
 
     Checks ~/.claude and the current directory's .claude/ and re-renders the
     ProjectMan-managed files (agents/pm.md, skills/pm*) from the installed
     package's templates. Use setup-claude to install into a new location.
+
+    If the skills are installed both globally and in the current project,
+    the local copies are superseded — Claude Code loads both and shows
+    duplicates — so the local copies are removed (pass --keep-local to
+    keep and refresh them instead).
     """
-    targets = _installed_skill_dirs()
-    if not targets:
+    global_dir = Path.home() / ".claude"
+    local_dir = Path.cwd() / ".claude"
+    has_global = (global_dir / "skills" / "pm" / "SKILL.md").exists()
+    has_local = (
+        local_dir.resolve() != global_dir.resolve()
+        and (local_dir / "skills" / "pm" / "SKILL.md").exists()
+    )
+
+    if not has_global and not has_local:
         click.echo(
             "No installed pm skills found in ~/.claude or ./.claude — "
             "run 'projectman setup-claude' (optionally --global) first."
         )
         return
+
+    if has_global and has_local and not keep_local:
+        click.echo(
+            f"Local pm skills in {local_dir} are superseded by the global install "
+            "in ~/.claude (Claude Code loads both and shows duplicates) — removing local copies."
+        )
+        _remove_claude_assets(local_dir)
+        has_local = False
+
+    targets = []
+    if has_global:
+        targets.append(global_dir)
+    if has_local:
+        targets.append(local_dir)
     for target in targets:
         _write_claude_assets(target)
     click.echo(f"Refreshed pm skills in: {', '.join(str(t) for t in targets)}")
+    click.echo("Restart Claude Code (or start a new session) to pick up the updated skills.")
 
 
 PROJECTMAN_REPO = "git+https://github.com/Biztactix-Ryan/ProjectMan"
