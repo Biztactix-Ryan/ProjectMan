@@ -173,3 +173,105 @@ class TestUpgrade:
         result = runner.invoke(cli, ["update"])
         assert result.exit_code != 0
         assert "pipx not found" in result.output
+
+    def _upgrade_env(self, monkeypatch, which_map, ran):
+        """Fake pipx list/upgrade + executable lookup for upgrade tests."""
+        import subprocess
+
+        listing = {
+            "venvs": {
+                "projectman": {
+                    "metadata": {
+                        "main_package": {
+                            "package_or_url": "git+https://example.com/projectman.git",
+                            "package_version": "9.9.9",
+                        }
+                    }
+                }
+            }
+        }
+
+        def fake_run(cmd, **kwargs):
+            ran.append(cmd)
+
+            class R:
+                returncode = 0
+                stdout = json.dumps(listing)
+                stderr = ""
+            return R()
+
+        monkeypatch.setattr(
+            "projectman.cli.shutil.which", lambda name: which_map.get(name)
+        )
+        monkeypatch.setattr(subprocess, "run", fake_run)
+
+    def test_upgrade_refreshes_skills_via_new_binary(self, runner, monkeypatch):
+        ran = []
+        self._upgrade_env(
+            monkeypatch,
+            {"pipx": "/usr/bin/pipx", "projectman": "/fake/bin/projectman"},
+            ran,
+        )
+        result = runner.invoke(cli, ["upgrade"])
+        assert result.exit_code == 0
+        assert ["/fake/bin/projectman", "refresh-skills"] in ran
+
+    def test_upgrade_no_skills_skips_refresh(self, runner, monkeypatch):
+        ran = []
+        self._upgrade_env(
+            monkeypatch,
+            {"pipx": "/usr/bin/pipx", "projectman": "/fake/bin/projectman"},
+            ran,
+        )
+        result = runner.invoke(cli, ["upgrade", "--no-skills"])
+        assert result.exit_code == 0
+        assert ["/fake/bin/projectman", "refresh-skills"] not in ran
+
+    def test_upgrade_warns_when_binary_missing(self, runner, monkeypatch):
+        ran = []
+        self._upgrade_env(monkeypatch, {"pipx": "/usr/bin/pipx"}, ran)
+        result = runner.invoke(cli, ["upgrade"])
+        assert result.exit_code == 0
+        assert "refresh-skills" in result.output  # manual-run hint
+
+
+class TestRefreshSkills:
+    def test_refresh_skills_no_installs(self, runner, tmp_path, monkeypatch):
+        fake_home = tmp_path / "home"
+        fake_home.mkdir()
+        monkeypatch.setenv("HOME", str(fake_home))
+        with runner.isolated_filesystem(temp_dir=tmp_path):
+            result = runner.invoke(cli, ["refresh-skills"])
+            assert result.exit_code == 0
+            assert "No installed pm skills found" in result.output
+
+    def test_refresh_skills_updates_existing_locations(self, runner, tmp_path, monkeypatch):
+        fake_home = tmp_path / "home"
+        fake_home.mkdir()
+        monkeypatch.setenv("HOME", str(fake_home))
+        monkeypatch.setattr("projectman.cli.shutil.which", lambda name: None)
+        with runner.isolated_filesystem(temp_dir=tmp_path):
+            # Install globally and locally, then stamp both stale
+            runner.invoke(cli, ["setup-claude", "--global", "--local-skills"])
+            global_skill = fake_home / ".claude/skills/pm/SKILL.md"
+            local_skill = Path(".claude/skills/pm/SKILL.md")
+            global_skill.write_text("stale")
+            local_skill.write_text("stale")
+
+            result = runner.invoke(cli, ["refresh-skills"])
+            assert result.exit_code == 0
+            assert global_skill.read_text() != "stale"
+            assert local_skill.read_text() != "stale"
+            assert "Refreshed pm skills" in result.output
+
+    def test_refresh_skills_does_not_install_new_locations(self, runner, tmp_path, monkeypatch):
+        fake_home = tmp_path / "home"
+        fake_home.mkdir()
+        monkeypatch.setenv("HOME", str(fake_home))
+        monkeypatch.setattr("projectman.cli.shutil.which", lambda name: None)
+        with runner.isolated_filesystem(temp_dir=tmp_path):
+            runner.invoke(cli, ["setup-claude", "--global"])
+            result = runner.invoke(cli, ["refresh-skills"])
+            assert result.exit_code == 0
+            # Global refreshed, but no project-local install created
+            assert not Path(".claude/skills/pm/SKILL.md").exists()

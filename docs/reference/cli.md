@@ -65,6 +65,26 @@ If `.mcp.json` already exists, ProjectMan merges its server config into the exis
 
 **Note:** If upgrading from an older version, stale skill directories (e.g. `pm-scope`, `pm-audit`, `pm-fix`, `pm-init`) may remain in `.claude/skills/`. These can be safely deleted.
 
+## projectman upgrade
+
+Upgrade projectman via pipx and keep installed skills in sync.
+
+```bash
+projectman upgrade              # upgrade + refresh installed skills
+projectman upgrade --check     # show installed version and pipx source only
+projectman upgrade --no-skills # upgrade without touching skill files
+```
+
+After a successful upgrade the command invokes the **new** binary's `refresh-skills`, re-rendering the pm agent and skills from the upgraded templates wherever they are already installed (`~/.claude` and the current directory's `.claude/`). `projectman update` is an alias.
+
+## projectman refresh-skills
+
+Re-render the pm agent + skills from the installed package's templates, in every location where they are already installed (`~/.claude` and `./.claude`). Does not install into new locations — use `setup-claude` for that. Run this in each project that keeps local skill copies after upgrading elsewhere.
+
+```bash
+projectman refresh-skills
+```
+
 ## projectman web
 
 Start the web dashboard server. Provides a visual UI with kanban board, epic/story/task views, search, burndown charts, and drag-drop status updates.

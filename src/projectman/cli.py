@@ -205,13 +205,45 @@ def setup_claude(transport, host, port, global_, local_skills):
     click.echo("Claude Code integration installed. Restart Claude Code to activate.")
 
 
+def _installed_skill_dirs() -> list:
+    """Return .claude/ dirs that already contain the pm skills (global + cwd)."""
+    candidates = [Path.home() / ".claude", Path.cwd() / ".claude"]
+    return [c for c in candidates if (c / "skills" / "pm" / "SKILL.md").exists()]
+
+
+@cli.command("refresh-skills")
+def refresh_skills():
+    """Rewrite the pm agent + skills wherever they are already installed.
+
+    Checks ~/.claude and the current directory's .claude/ and re-renders the
+    ProjectMan-managed files (agents/pm.md, skills/pm*) from the installed
+    package's templates. Use setup-claude to install into a new location.
+    """
+    targets = _installed_skill_dirs()
+    if not targets:
+        click.echo(
+            "No installed pm skills found in ~/.claude or ./.claude — "
+            "run 'projectman setup-claude' (optionally --global) first."
+        )
+        return
+    for target in targets:
+        _write_claude_assets(target)
+    click.echo(f"Refreshed pm skills in: {', '.join(str(t) for t in targets)}")
+
+
 PROJECTMAN_REPO = "git+https://github.com/Biztactix-Ryan/ProjectMan"
 
 
 @cli.command()
 @click.option("--check", is_flag=True, help="Show the installed version and pipx source without upgrading")
-def upgrade(check):
-    """Upgrade projectman via pipx (or check the installed version)."""
+@click.option("--no-skills", is_flag=True, help="Skip refreshing installed Claude skills after the upgrade")
+def upgrade(check, no_skills):
+    """Upgrade projectman via pipx (or check the installed version).
+
+    After a successful upgrade, installed pm skills (in ~/.claude and the
+    current directory's .claude/) are re-rendered from the new version's
+    templates so tools and skills stay in sync.
+    """
     import subprocess
     from importlib.metadata import PackageNotFoundError
     from importlib.metadata import version as _pkg_version
@@ -258,6 +290,18 @@ def upgrade(check):
         click.echo(f"Already up to date ({current}).")
     else:
         click.echo(f"Upgraded {current} → {new_version}. Restart any running MCP servers to pick up the new version.")
+
+    if not no_skills:
+        # Re-render installed skills from the NEW package's templates. This
+        # process still runs the pre-upgrade code, so the refresh must be
+        # executed by the upgraded binary.
+        exe = shutil.which("projectman")
+        if exe:
+            refresh = subprocess.run([exe, "refresh-skills"], text=True)
+            if refresh.returncode != 0:
+                click.echo("Skill refresh failed — run 'projectman refresh-skills' manually.", err=True)
+        else:
+            click.echo("projectman executable not found on PATH — run 'projectman refresh-skills' manually to update skills.")
 
 
 @cli.command()
