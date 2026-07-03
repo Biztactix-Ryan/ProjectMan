@@ -1,0 +1,3604 @@
+entries:
+- id: EPIC-PRJ-1
+  title: 'Hub Push Workflow: Fix Submodule Commit & Push Alignment'
+  type: epic
+  status: done
+  points: null
+  story_id: null
+  epic_id: null
+  tags: []
+- id: EPIC-PRJ-10
+  title: Documentation & Changelog
+  type: epic
+  status: draft
+  points: null
+  story_id: null
+  epic_id: null
+  tags: []
+- id: EPIC-PRJ-11
+  title: MCP Tools, Skills & CLI Parity
+  type: epic
+  status: draft
+  points: null
+  story_id: null
+  epic_id: null
+  tags: []
+- id: EPIC-PRJ-12
+  title: Test Coverage & Quality Gaps
+  type: epic
+  status: draft
+  points: null
+  story_id: null
+  epic_id: null
+  tags: []
+- id: EPIC-PRJ-2
+  title: Tags on Epics, Stories & Tasks
+  type: epic
+  status: done
+  points: null
+  story_id: null
+  epic_id: null
+  tags: []
+- id: EPIC-PRJ-3
+  title: Activity Log
+  type: epic
+  status: done
+  points: null
+  story_id: null
+  epic_id: null
+  tags: []
+- id: EPIC-PRJ-4
+  title: Task Dependency System
+  type: epic
+  status: done
+  points: null
+  story_id: null
+  epic_id: null
+  tags: []
+- id: EPIC-PRJ-5
+  title: Improve Frontmatter Caching and Performance
+  type: epic
+  status: done
+  points: null
+  story_id: null
+  epic_id: null
+  tags: []
+- id: EPIC-PRJ-6
+  title: "System Analysis Fixes \u2014 Caching, Dependencies, and Performance"
+  type: epic
+  status: done
+  points: null
+  story_id: null
+  epic_id: null
+  tags: []
+- id: EPIC-PRJ-7
+  title: Performance & Caching Optimization
+  type: epic
+  status: draft
+  points: null
+  story_id: null
+  epic_id: null
+  tags: []
+- id: EPIC-PRJ-8
+  title: Batch Operations & Bulk Workflows
+  type: epic
+  status: draft
+  points: null
+  story_id: null
+  epic_id: null
+  tags: []
+- id: EPIC-PRJ-9
+  title: Code Quality, Safety & Error Handling
+  type: epic
+  status: draft
+  points: null
+  story_id: null
+  epic_id: null
+  tags: []
+- id: US-PRJ-1
+  title: Audit & document current hub git workflow pain points
+  type: story
+  status: done
+  points: 3
+  story_id: null
+  epic_id: EPIC-PRJ-1
+  tags: []
+- id: US-PRJ-10
+  title: Add cross-repo changesets for grouped multi-project changes
+  type: story
+  status: done
+  points: 13
+  story_id: null
+  epic_id: EPIC-PRJ-1
+  tags: []
+- id: US-PRJ-11
+  title: Handle hub submodule ref conflicts between developers
+  type: story
+  status: done
+  points: 8
+  story_id: null
+  epic_id: EPIC-PRJ-1
+  tags: []
+- id: US-PRJ-12
+  title: Add tags field to Task data model
+  type: story
+  status: done
+  points: 2
+  story_id: null
+  epic_id: EPIC-PRJ-2
+  tags: []
+- id: US-PRJ-13
+  title: Wire tags through store and MCP create/update APIs
+  type: story
+  status: done
+  points: 3
+  story_id: null
+  epic_id: EPIC-PRJ-2
+  tags: []
+- id: US-PRJ-14
+  title: Add tag filtering to board search and active queries
+  type: story
+  status: done
+  points: 5
+  story_id: null
+  epic_id: EPIC-PRJ-2
+  tags: []
+- id: US-PRJ-15
+  title: Web dashboard tag support for stories and tasks
+  type: story
+  status: done
+  points: 5
+  story_id: null
+  epic_id: EPIC-PRJ-2
+  tags: []
+- id: US-PRJ-16
+  title: Include tags in markdown indexes
+  type: story
+  status: done
+  points: 2
+  story_id: null
+  epic_id: EPIC-PRJ-2
+  tags: []
+- id: US-PRJ-17
+  title: Activity log data model and storage layer
+  type: story
+  status: done
+  points: 3
+  story_id: null
+  epic_id: EPIC-PRJ-3
+  tags: []
+- id: US-PRJ-18
+  title: Instrument Store mutations to emit activity log entries
+  type: story
+  status: done
+  points: 5
+  story_id: null
+  epic_id: EPIC-PRJ-3
+  tags: []
+- id: US-PRJ-19
+  title: MCP tool for querying activity log
+  type: story
+  status: done
+  points: 3
+  story_id: null
+  epic_id: EPIC-PRJ-3
+  tags: []
+- id: US-PRJ-2
+  title: Add pre-push validation for submodule branch alignment
+  type: story
+  status: done
+  points: 5
+  story_id: null
+  epic_id: EPIC-PRJ-1
+  tags: []
+- id: US-PRJ-20
+  title: Web UI activity feed
+  type: story
+  status: done
+  points: 5
+  story_id: null
+  epic_id: EPIC-PRJ-3
+  tags: []
+- id: US-PRJ-21
+  title: Core dependency model and graph algorithms
+  type: story
+  status: done
+  points: 5
+  story_id: null
+  epic_id: EPIC-PRJ-4
+  tags: []
+- id: US-PRJ-22
+  title: Store layer dependency support
+  type: story
+  status: done
+  points: 5
+  story_id: null
+  epic_id: EPIC-PRJ-4
+  tags: []
+- id: US-PRJ-23
+  title: Readiness and board dependency integration
+  type: story
+  status: done
+  points: 5
+  story_id: null
+  epic_id: EPIC-PRJ-4
+  tags: []
+- id: US-PRJ-24
+  title: MCP and Web API dependency exposure
+  type: story
+  status: done
+  points: 3
+  story_id: null
+  epic_id: EPIC-PRJ-4
+  tags: []
+- id: US-PRJ-25
+  title: Scoper guidance and audit and indexer updates
+  type: story
+  status: done
+  points: 3
+  story_id: null
+  epic_id: EPIC-PRJ-4
+  tags: []
+- id: US-PRJ-26
+  title: In-Memory Cache Layer for Store
+  type: story
+  status: done
+  points: 8
+  story_id: null
+  epic_id: EPIC-PRJ-5
+  tags: []
+- id: US-PRJ-27
+  title: Cache Invalidation on MCP Mutations
+  type: story
+  status: done
+  points: 5
+  story_id: null
+  epic_id: EPIC-PRJ-5
+  tags: []
+- id: US-PRJ-28
+  title: Server-Level Store Singleton and Cache Lifecycle
+  type: story
+  status: done
+  points: 5
+  story_id: null
+  epic_id: EPIC-PRJ-5
+  tags: []
+- id: US-PRJ-29
+  title: Consolidate cycle detection and clean up dead code in deps
+  type: story
+  status: done
+  points: 3
+  story_id: null
+  epic_id: EPIC-PRJ-6
+  tags: []
+- id: US-PRJ-3
+  title: Add pm_commit and pm_push MCP tools for hub-aware git operations
+  type: story
+  status: done
+  points: 8
+  story_id: null
+  epic_id: EPIC-PRJ-1
+  tags: []
+- id: US-PRJ-30
+  title: Add config caching with TTL
+  type: story
+  status: backlog
+  points: 2
+  story_id: null
+  epic_id: EPIC-PRJ-6
+  tags: []
+- id: US-PRJ-31
+  title: Document blocked status vs dependency blocking distinction
+  type: story
+  status: backlog
+  points: 1
+  story_id: null
+  epic_id: EPIC-PRJ-6
+  tags: []
+- id: US-PRJ-32
+  title: Reduce pm_board N+1 I/O pattern
+  type: story
+  status: backlog
+  points: 5
+  story_id: null
+  epic_id: EPIC-PRJ-6
+  tags: []
+- id: US-PRJ-33
+  title: "Batch list_tasks in pm_epic to eliminate N\xB2 queries"
+  type: story
+  status: backlog
+  points: 3
+  story_id: null
+  epic_id: EPIC-PRJ-6
+  tags: []
+- id: US-PRJ-34
+  title: Parallelize hub rollup
+  type: story
+  status: backlog
+  points: 3
+  story_id: null
+  epic_id: EPIC-PRJ-6
+  tags: []
+- id: US-PRJ-35
+  title: Add vector index for embedding search
+  type: story
+  status: backlog
+  points: 5
+  story_id: null
+  epic_id: EPIC-PRJ-6
+  tags: []
+- id: US-PRJ-36
+  title: Cache and documentation polish
+  type: story
+  status: backlog
+  points: 3
+  story_id: null
+  epic_id: EPIC-PRJ-6
+  tags: []
+- id: US-PRJ-37
+  title: Eliminate deep copy overhead on cached reads
+  type: story
+  status: active
+  points: 5
+  story_id: null
+  epic_id: EPIC-PRJ-7
+  tags: []
+- id: US-PRJ-38
+  title: Replace brute-force embedding search with vectorized operations
+  type: story
+  status: backlog
+  points: 5
+  story_id: null
+  epic_id: EPIC-PRJ-7
+  tags: []
+- id: US-PRJ-39
+  title: Add secondary index for O(1) cache lookups by ID
+  type: story
+  status: backlog
+  points: 3
+  story_id: null
+  epic_id: EPIC-PRJ-7
+  tags: []
+- id: US-PRJ-4
+  title: Add coordinated multi-project push command
+  type: story
+  status: done
+  points: 8
+  story_id: null
+  epic_id: EPIC-PRJ-1
+  tags: []
+- id: US-PRJ-40
+  title: Add incremental index rebuilds with dirty tracking
+  type: story
+  status: backlog
+  points: 8
+  story_id: null
+  epic_id: EPIC-PRJ-7
+  tags: []
+- id: US-PRJ-41
+  title: Optimize hub git subprocess calls with batching
+  type: story
+  status: backlog
+  points: 5
+  story_id: null
+  epic_id: EPIC-PRJ-7
+  tags: []
+- id: US-PRJ-42
+  title: Fix N+1 audit queries with pre-loaded data
+  type: story
+  status: backlog
+  points: 3
+  story_id: null
+  epic_id: EPIC-PRJ-7
+  tags: []
+- id: US-PRJ-43
+  title: Fix N+1 patterns in pm_board, pm_epic, pm_search
+  type: story
+  status: backlog
+  points: 5
+  story_id: null
+  epic_id: EPIC-PRJ-8
+  tags: []
+- id: US-PRJ-44
+  title: Implement pm_batch_update MCP tool
+  type: story
+  status: backlog
+  points: 5
+  story_id: null
+  epic_id: EPIC-PRJ-8
+  tags: []
+- id: US-PRJ-45
+  title: Implement pm_batch_archive MCP tool
+  type: story
+  status: backlog
+  points: 3
+  story_id: null
+  epic_id: EPIC-PRJ-8
+  tags: []
+- id: US-PRJ-46
+  title: Optimize _next_task_id to avoid full task list load
+  type: story
+  status: backlog
+  points: 2
+  story_id: null
+  epic_id: EPIC-PRJ-8
+  tags: []
+- id: US-PRJ-47
+  title: Fix shell injection risk in changeset PR command generation
+  type: story
+  status: backlog
+  points: 3
+  story_id: null
+  epic_id: EPIC-PRJ-9
+  tags: []
+- id: US-PRJ-48
+  title: Add structured error responses and specific exception types
+  type: story
+  status: backlog
+  points: 5
+  story_id: null
+  epic_id: EPIC-PRJ-9
+  tags: []
+- id: US-PRJ-49
+  title: Fix destructive annotations on mutation tools
+  type: story
+  status: backlog
+  points: 1
+  story_id: null
+  epic_id: EPIC-PRJ-9
+  tags: []
+- id: US-PRJ-5
+  title: Add auto-commit option for PM mutations
+  type: story
+  status: done
+  points: 5
+  story_id: null
+  epic_id: EPIC-PRJ-1
+  tags: []
+- id: US-PRJ-50
+  title: Enforce strict ID format patterns in models
+  type: story
+  status: backlog
+  points: 3
+  story_id: null
+  epic_id: EPIC-PRJ-9
+  tags: []
+- id: US-PRJ-51
+  title: Fix ChangesetEntry status type inconsistency
+  type: story
+  status: backlog
+  points: 2
+  story_id: null
+  epic_id: EPIC-PRJ-9
+  tags: []
+- id: US-PRJ-52
+  title: Improve activity log event coverage and change tracking
+  type: story
+  status: backlog
+  points: 5
+  story_id: null
+  epic_id: EPIC-PRJ-9
+  tags: []
+- id: US-PRJ-53
+  title: Fix installation.md wrong package reference
+  type: story
+  status: done
+  points: 1
+  story_id: null
+  epic_id: EPIC-PRJ-10
+  tags: []
+- id: US-PRJ-54
+  title: Create CHANGELOG.md with version history
+  type: story
+  status: active
+  points: 3
+  story_id: null
+  epic_id: EPIC-PRJ-10
+  tags: []
+- id: US-PRJ-55
+  title: Add hub-mode troubleshooting guide
+  type: story
+  status: backlog
+  points: 3
+  story_id: null
+  epic_id: EPIC-PRJ-10
+  tags: []
+- id: US-PRJ-56
+  title: Clarify skill routing and CLI vs MCP in docs
+  type: story
+  status: backlog
+  points: 2
+  story_id: null
+  epic_id: EPIC-PRJ-10
+  tags: []
+- id: US-PRJ-57
+  title: Fix pm skill references to non-existent tools
+  type: story
+  status: backlog
+  points: 2
+  story_id: null
+  epic_id: EPIC-PRJ-11
+  tags: []
+- id: US-PRJ-58
+  title: Convert comma-separated string params to list types
+  type: story
+  status: backlog
+  points: 3
+  story_id: null
+  epic_id: EPIC-PRJ-11
+  tags: []
+- id: US-PRJ-59
+  title: Expand pm-status and pm-plan skill depth
+  type: story
+  status: backlog
+  points: 3
+  story_id: null
+  epic_id: EPIC-PRJ-11
+  tags: []
+- id: US-PRJ-6
+  title: Update workflow documentation and skills for new git integration
+  type: story
+  status: done
+  points: 3
+  story_id: null
+  epic_id: EPIC-PRJ-1
+  tags: []
+- id: US-PRJ-60
+  title: Add tag management and export MCP tools
+  type: story
+  status: backlog
+  points: 5
+  story_id: null
+  epic_id: EPIC-PRJ-11
+  tags: []
+- id: US-PRJ-61
+  title: Commit pending cache test files
+  type: story
+  status: backlog
+  points: 1
+  story_id: null
+  epic_id: EPIC-PRJ-12
+  tags: []
+- id: US-PRJ-62
+  title: Add direct search.py unit tests
+  type: story
+  status: backlog
+  points: 3
+  story_id: null
+  epic_id: EPIC-PRJ-12
+  tags: []
+- id: US-PRJ-63
+  title: Add N+1 regression tests for board and epic views
+  type: story
+  status: backlog
+  points: 3
+  story_id: null
+  epic_id: EPIC-PRJ-12
+  tags: []
+- id: US-PRJ-64
+  title: Expand estimator.py test coverage
+  type: story
+  status: backlog
+  points: 2
+  story_id: null
+  epic_id: EPIC-PRJ-12
+  tags: []
+- id: US-PRJ-7
+  title: Add PR-based workflow for subproject changes into deploy branch
+  type: story
+  status: done
+  points: 8
+  story_id: null
+  epic_id: EPIC-PRJ-1
+  tags: []
+- id: US-PRJ-8
+  title: Add hub git status dashboard across all submodules
+  type: story
+  status: done
+  points: 5
+  story_id: null
+  epic_id: EPIC-PRJ-1
+  tags: []
+- id: US-PRJ-9
+  title: Enforce opinionated git conventions for hub subprojects
+  type: story
+  status: backlog
+  points: 5
+  story_id: null
+  epic_id: EPIC-PRJ-1
+  tags: []
+- id: US-PRJ-1-1
+  title: 'Test: Pain points documented with concrete scenarios'
+  type: task
+  status: done
+  points: null
+  story_id: US-PRJ-1
+  epic_id: null
+  tags: []
+- id: US-PRJ-1-2
+  title: 'Test: Current workflow steps listed end-to-end'
+  type: task
+  status: done
+  points: null
+  story_id: US-PRJ-1
+  epic_id: null
+  tags: []
+- id: US-PRJ-1-3
+  title: 'Test: Failure modes catalogued with severity'
+  type: task
+  status: done
+  points: null
+  story_id: US-PRJ-1
+  epic_id: null
+  tags: []
+- id: US-PRJ-1-4
+  title: Map current end-to-end hub git workflow steps
+  type: task
+  status: done
+  points: 1
+  story_id: US-PRJ-1
+  epic_id: null
+  tags: []
+- id: US-PRJ-1-5
+  title: Document submodule branch tracking drift scenarios
+  type: task
+  status: done
+  points: 2
+  story_id: US-PRJ-1
+  epic_id: null
+  tags: []
+- id: US-PRJ-1-6
+  title: Document multi-developer hub ref conflict scenarios
+  type: task
+  status: done
+  points: 2
+  story_id: US-PRJ-1
+  epic_id: null
+  tags: []
+- id: US-PRJ-1-7
+  title: Compile audit into final document with recommendations
+  type: task
+  status: done
+  points: 1
+  story_id: US-PRJ-1
+  epic_id: null
+  tags: []
+- id: US-PRJ-10-1
+  title: 'Test: Changesets group related changes across N repos'
+  type: task
+  status: done
+  points: null
+  story_id: US-PRJ-10
+  epic_id: null
+  tags: []
+- id: US-PRJ-10-10
+  title: Register changeset MCP tools and CLI commands
+  type: task
+  status: done
+  points: 2
+  story_id: US-PRJ-10
+  epic_id: null
+  tags: []
+- id: US-PRJ-10-11
+  title: Write tests for changeset lifecycle
+  type: task
+  status: done
+  points: 3
+  story_id: US-PRJ-10
+  epic_id: null
+  tags: []
+- id: US-PRJ-10-2
+  title: 'Test: PRs created together with cross-references'
+  type: task
+  status: done
+  points: null
+  story_id: US-PRJ-10
+  epic_id: null
+  tags: []
+- id: US-PRJ-10-3
+  title: 'Test: Hub refs update only when all changeset PRs merge'
+  type: task
+  status: done
+  points: null
+  story_id: US-PRJ-10
+  epic_id: null
+  tags: []
+- id: US-PRJ-10-4
+  title: 'Test: Partial merge state is clearly reported'
+  type: task
+  status: done
+  points: null
+  story_id: US-PRJ-10
+  epic_id: null
+  tags: []
+- id: US-PRJ-10-5
+  title: 'Test: Changeset status visible in git status dashboard'
+  type: task
+  status: done
+  points: 2
+  story_id: US-PRJ-10
+  epic_id: null
+  tags: []
+- id: US-PRJ-10-6
+  title: Define changeset data model and storage
+  type: task
+  status: done
+  points: 3
+  story_id: US-PRJ-10
+  epic_id: null
+  tags: []
+- id: US-PRJ-10-7
+  title: Implement changeset PR creation with cross-references
+  type: task
+  status: done
+  points: 3
+  story_id: US-PRJ-10
+  epic_id: null
+  tags: []
+- id: US-PRJ-10-8
+  title: Implement changeset merge tracking and hub ref gating
+  type: task
+  status: done
+  points: 3
+  story_id: US-PRJ-10
+  epic_id: null
+  tags: []
+- id: US-PRJ-10-9
+  title: Add changeset status to git status dashboard
+  type: task
+  status: done
+  points: 2
+  story_id: US-PRJ-10
+  epic_id: null
+  tags: []
+- id: US-PRJ-11-1
+  title: 'Test: Hub auto-rebases submodule ref updates on push conflict'
+  type: task
+  status: done
+  points: 3
+  story_id: US-PRJ-11
+  epic_id: null
+  tags: []
+- id: US-PRJ-11-10
+  title: Write tests for hub conflict resolution
+  type: task
+  status: done
+  points: 3
+  story_id: US-PRJ-11
+  epic_id: null
+  tags: []
+- id: US-PRJ-11-2
+  title: 'Test: Fast-forwardable ref conflicts resolved automatically'
+  type: task
+  status: done
+  points: 2
+  story_id: US-PRJ-11
+  epic_id: null
+  tags: []
+- id: US-PRJ-11-3
+  title: 'Test: Non-fast-forward conflicts flagged clearly for manual resolution'
+  type: task
+  status: done
+  points: 2
+  story_id: US-PRJ-11
+  epic_id: null
+  tags: []
+- id: US-PRJ-11-4
+  title: 'Test: Push retried after successful rebase'
+  type: task
+  status: done
+  points: 2
+  story_id: US-PRJ-11
+  epic_id: null
+  tags: []
+- id: US-PRJ-11-5
+  title: 'Test: Ref update history logged for audit'
+  type: task
+  status: done
+  points: 2
+  story_id: US-PRJ-11
+  epic_id: null
+  tags: []
+- id: US-PRJ-11-6
+  title: Implement hub ref update logging for auditability
+  type: task
+  status: done
+  points: 2
+  story_id: US-PRJ-11
+  epic_id: null
+  tags: []
+- id: US-PRJ-11-7
+  title: Implement auto-rebase for hub push conflicts
+  type: task
+  status: done
+  points: 3
+  story_id: US-PRJ-11
+  epic_id: null
+  tags: []
+- id: US-PRJ-11-8
+  title: Implement fast-forward check for conflicting submodule refs
+  type: task
+  status: done
+  points: 3
+  story_id: US-PRJ-11
+  epic_id: null
+  tags: []
+- id: US-PRJ-11-9
+  title: Wire auto-rebase into coordinated_push and push_hub
+  type: task
+  status: done
+  points: 2
+  story_id: US-PRJ-11
+  epic_id: null
+  tags: []
+- id: US-PRJ-12-1
+  title: 'Test: TaskFrontmatter has tags field with default empty list'
+  type: task
+  status: done
+  points: null
+  story_id: US-PRJ-12
+  epic_id: null
+  tags: []
+- id: US-PRJ-12-2
+  title: 'Test: IndexEntry includes optional tags field'
+  type: task
+  status: done
+  points: null
+  story_id: US-PRJ-12
+  epic_id: null
+  tags: []
+- id: US-PRJ-12-3
+  title: 'Test: Existing task files without tags still load without errors'
+  type: task
+  status: done
+  points: null
+  story_id: US-PRJ-12
+  epic_id: null
+  tags: []
+- id: US-PRJ-13-1
+  title: 'Test: pm_create_story accepts comma-separated tags parameter'
+  type: task
+  status: done
+  points: null
+  story_id: US-PRJ-13
+  epic_id: null
+  tags: []
+- id: US-PRJ-13-2
+  title: 'Test: pm_create_task accepts comma-separated tags parameter'
+  type: task
+  status: done
+  points: null
+  story_id: US-PRJ-13
+  epic_id: null
+  tags: []
+- id: US-PRJ-13-3
+  title: 'Test: pm_update exposes tags as explicit parameter for all item types'
+  type: task
+  status: done
+  points: 2
+  story_id: US-PRJ-13
+  epic_id: null
+  tags: []
+- id: US-PRJ-13-4
+  title: 'Test: store.create_story passes tags to frontmatter'
+  type: task
+  status: done
+  points: 1
+  story_id: US-PRJ-13
+  epic_id: null
+  tags: []
+- id: US-PRJ-13-5
+  title: 'Test: store.create_task and create_tasks pass tags to frontmatter'
+  type: task
+  status: done
+  points: 1
+  story_id: US-PRJ-13
+  epic_id: null
+  tags: []
+- id: US-PRJ-14-1
+  title: 'Test: pm_board accepts optional tag filter and only shows matching items'
+  type: task
+  status: done
+  points: 2
+  story_id: US-PRJ-14
+  epic_id: null
+  tags: []
+- id: US-PRJ-14-2
+  title: 'Test: pm_search supports tag-based filtering'
+  type: task
+  status: done
+  points: 2
+  story_id: US-PRJ-14
+  epic_id: null
+  tags: []
+- id: US-PRJ-14-3
+  title: 'Test: pm_active accepts optional tag filter'
+  type: task
+  status: done
+  points: 2
+  story_id: US-PRJ-14
+  epic_id: null
+  tags: []
+- id: US-PRJ-14-4
+  title: 'Test: Tags are included in search embedding text for semantic relevance'
+  type: task
+  status: done
+  points: 1
+  story_id: US-PRJ-14
+  epic_id: null
+  tags: []
+- id: US-PRJ-15-1
+  title: 'Test: CreateStoryRequest and CreateTaskRequest schemas include optional
+    tags field'
+  type: task
+  status: done
+  points: 2
+  story_id: US-PRJ-15
+  epic_id: null
+  tags: []
+- id: US-PRJ-15-2
+  title: 'Test: TaskResponse schema includes tags field'
+  type: task
+  status: done
+  points: 1
+  story_id: US-PRJ-15
+  epic_id: null
+  tags: []
+- id: US-PRJ-15-3
+  title: 'Test: stories.html has tag input in create form and tags column in table'
+  type: task
+  status: done
+  points: 2
+  story_id: US-PRJ-15
+  epic_id: null
+  tags: []
+- id: US-PRJ-15-4
+  title: 'Test: story_detail.html displays and allows editing tags'
+  type: task
+  status: done
+  points: 2
+  story_id: US-PRJ-15
+  epic_id: null
+  tags: []
+- id: US-PRJ-15-5
+  title: 'Test: task_detail.html displays and allows editing tags'
+  type: task
+  status: done
+  points: 2
+  story_id: US-PRJ-15
+  epic_id: null
+  tags: []
+- id: US-PRJ-15-6
+  title: 'Test: Web API routes pass tags through on create'
+  type: task
+  status: done
+  points: 2
+  story_id: US-PRJ-15
+  epic_id: null
+  tags: []
+- id: US-PRJ-16-1
+  title: 'Test: INDEX-EPICS.md table includes Tags column'
+  type: task
+  status: done
+  points: 1
+  story_id: US-PRJ-16
+  epic_id: null
+  tags: []
+- id: US-PRJ-16-2
+  title: 'Test: INDEX-STORIES.md table includes Tags column'
+  type: task
+  status: done
+  points: 1
+  story_id: US-PRJ-16
+  epic_id: null
+  tags: []
+- id: US-PRJ-16-3
+  title: 'Test: INDEX-TASKS.md table includes Tags column'
+  type: task
+  status: done
+  points: 1
+  story_id: US-PRJ-16
+  epic_id: null
+  tags: []
+- id: US-PRJ-16-4
+  title: 'Test: Tags rendered as comma-separated in index tables'
+  type: task
+  status: done
+  points: 1
+  story_id: US-PRJ-16
+  epic_id: null
+  tags: []
+- id: US-PRJ-17-1
+  title: 'Test: Log entry schema defined with all required fields'
+  type: task
+  status: done
+  points: 1
+  story_id: US-PRJ-17
+  epic_id: null
+  tags: []
+- id: US-PRJ-17-2
+  title: 'Test: Append-only writer function that atomically appends entries'
+  type: task
+  status: done
+  points: 2
+  story_id: US-PRJ-17
+  epic_id: null
+  tags: []
+- id: US-PRJ-17-3
+  title: 'Test: Storage format is JSONL (one JSON object per line) for easy parsing'
+  type: task
+  status: done
+  points: 1
+  story_id: US-PRJ-17
+  epic_id: null
+  tags: []
+- id: US-PRJ-17-4
+  title: 'Test: Entries include ISO 8601 timestamps'
+  type: task
+  status: done
+  points: 1
+  story_id: US-PRJ-17
+  epic_id: null
+  tags: []
+- id: US-PRJ-17-5
+  title: 'Test: File created automatically on first write'
+  type: task
+  status: done
+  points: 1
+  story_id: US-PRJ-17
+  epic_id: null
+  tags: []
+- id: US-PRJ-18-1
+  title: 'Test: All Store.create_* methods emit "created" log entries'
+  type: task
+  status: done
+  points: 2
+  story_id: US-PRJ-18
+  epic_id: null
+  tags: []
+- id: US-PRJ-18-2
+  title: 'Test: Store.update() emits "updated" entries with before/after field diffs'
+  type: task
+  status: done
+  points: 2
+  story_id: US-PRJ-18
+  epic_id: null
+  tags: []
+- id: US-PRJ-18-3
+  title: 'Test: Store.archive() emits "archived" entries'
+  type: task
+  status: done
+  points: 2
+  story_id: US-PRJ-18
+  epic_id: null
+  tags: []
+- id: US-PRJ-18-4
+  title: 'Test: Logging does not break existing functionality (transparent)'
+  type: task
+  status: done
+  points: 2
+  story_id: US-PRJ-18
+  epic_id: null
+  tags: []
+- id: US-PRJ-18-5
+  title: 'Test: Actor field populated when available (e.g. from git config or env
+    var)'
+  type: task
+  status: done
+  points: 1
+  story_id: US-PRJ-18
+  epic_id: null
+  tags: []
+- id: US-PRJ-19-1
+  title: 'Test: pm_activity tool registered and callable via MCP'
+  type: task
+  status: done
+  points: 2
+  story_id: US-PRJ-19
+  epic_id: null
+  tags: []
+- id: US-PRJ-19-2
+  title: 'Test: Supports filtering by item_id and event_type and date range'
+  type: task
+  status: done
+  points: 2
+  story_id: US-PRJ-19
+  epic_id: null
+  tags: []
+- id: US-PRJ-19-3
+  title: 'Test: Returns formatted human-readable output with timestamps'
+  type: task
+  status: done
+  points: 2
+  story_id: US-PRJ-19
+  epic_id: null
+  tags: []
+- id: US-PRJ-19-4
+  title: 'Test: Handles empty or missing log file gracefully'
+  type: task
+  status: done
+  points: 1
+  story_id: US-PRJ-19
+  epic_id: null
+  tags: []
+- id: US-PRJ-19-5
+  title: 'Test: Pagination via limit/offset parameters'
+  type: task
+  status: done
+  points: 1
+  story_id: US-PRJ-19
+  epic_id: null
+  tags: []
+- id: US-PRJ-2-1
+  title: 'Test: Pre-push check validates submodule branch matches .gitmodules tracking'
+  type: task
+  status: done
+  points: 2
+  story_id: US-PRJ-2
+  epic_id: null
+  tags: []
+- id: US-PRJ-2-2
+  title: 'Test: Clear error message on branch mismatch showing expected vs actual'
+  type: task
+  status: done
+  points: 2
+  story_id: US-PRJ-2
+  epic_id: null
+  tags: []
+- id: US-PRJ-2-3
+  title: 'Test: Can be run standalone as a validation command'
+  type: task
+  status: done
+  points: 2
+  story_id: US-PRJ-2
+  epic_id: null
+  tags: []
+- id: US-PRJ-2-4
+  title: Implement validate_branches() core function in hub/registry.py
+  type: task
+  status: done
+  points: 3
+  story_id: US-PRJ-2
+  epic_id: null
+  tags: []
+- id: US-PRJ-2-5
+  title: Add validate-branches CLI command and MCP tool
+  type: task
+  status: done
+  points: 2
+  story_id: US-PRJ-2
+  epic_id: null
+  tags: []
+- id: US-PRJ-2-6
+  title: Integrate pre-push validation into sync() and coordinated push path
+  type: task
+  status: done
+  points: 2
+  story_id: US-PRJ-2
+  epic_id: null
+  tags: []
+- id: US-PRJ-2-7
+  title: Write tests for validate_branches using tmp_hub fixture
+  type: task
+  status: done
+  points: 2
+  story_id: US-PRJ-2
+  epic_id: null
+  tags: []
+- id: US-PRJ-20-1
+  title: 'Test: Activity feed visible on web dashboard'
+  type: task
+  status: done
+  points: 3
+  story_id: US-PRJ-20
+  epic_id: null
+  tags: []
+- id: US-PRJ-20-2
+  title: 'Test: Entries show event type icon and item ID linked to detail view'
+  type: task
+  status: done
+  points: 2
+  story_id: US-PRJ-20
+  epic_id: null
+  tags: []
+- id: US-PRJ-20-3
+  title: 'Test: Relative timestamps displayed'
+  type: task
+  status: done
+  points: 1
+  story_id: US-PRJ-20
+  epic_id: null
+  tags: []
+- id: US-PRJ-20-4
+  title: 'Test: Feed loads recent entries with scroll/pagination'
+  type: task
+  status: done
+  points: 2
+  story_id: US-PRJ-20
+  epic_id: null
+  tags: []
+- id: US-PRJ-20-5
+  title: 'Test: API endpoint serves activity data as JSON'
+  type: task
+  status: done
+  points: 2
+  story_id: US-PRJ-20
+  epic_id: null
+  tags: []
+- id: US-PRJ-21-1
+  title: 'Test: depends_on field added to TaskFrontmatter with [] default'
+  type: task
+  status: done
+  points: 2
+  story_id: US-PRJ-21
+  epic_id: null
+  tags: []
+- id: US-PRJ-21-2
+  title: 'Test: Field validator checks task ID format'
+  type: task
+  status: done
+  points: 1
+  story_id: US-PRJ-21
+  epic_id: null
+  tags: []
+- id: US-PRJ-21-3
+  title: 'Test: Topological sort produces correct ordering for chains and diamonds'
+  type: task
+  status: done
+  points: 2
+  story_id: US-PRJ-21
+  epic_id: null
+  tags: []
+- id: US-PRJ-21-4
+  title: 'Test: Cycle detection catches self-refs and multi-node cycles'
+  type: task
+  status: done
+  points: 2
+  story_id: US-PRJ-21
+  epic_id: null
+  tags: []
+- id: US-PRJ-21-5
+  title: 'Test: Backward compatible with existing tasks lacking depends_on'
+  type: task
+  status: done
+  points: 2
+  story_id: US-PRJ-21
+  epic_id: null
+  tags: []
+- id: US-PRJ-21-6
+  title: 'Test: All deps.py functions have unit tests'
+  type: task
+  status: done
+  points: 2
+  story_id: US-PRJ-21
+  epic_id: null
+  tags: []
+- id: US-PRJ-21-7
+  title: Add depends_on field to TaskFrontmatter
+  type: task
+  status: done
+  points: 1
+  story_id: US-PRJ-21
+  epic_id: null
+  tags: []
+- id: US-PRJ-21-8
+  title: Create deps.py with graph algorithms
+  type: task
+  status: done
+  points: 5
+  story_id: US-PRJ-21
+  epic_id: null
+  tags: []
+- id: US-PRJ-22-1
+  title: 'Test: create_task accepts depends_on param and validates'
+  type: task
+  status: done
+  points: 2
+  story_id: US-PRJ-22
+  epic_id: null
+  tags: []
+- id: US-PRJ-22-2
+  title: 'Test: create_tasks batch supports depends_on per entry with cycle check'
+  type: task
+  status: done
+  points: 2
+  story_id: US-PRJ-22
+  epic_id: null
+  tags: []
+- id: US-PRJ-22-3
+  title: 'Test: update validates depends_on for tasks and rejects cycles'
+  type: task
+  status: done
+  points: 2
+  story_id: US-PRJ-22
+  epic_id: null
+  tags: []
+- id: US-PRJ-22-4
+  title: 'Test: Invalid deps (self-ref or non-sibling or cycle) raise ValueError'
+  type: task
+  status: done
+  points: 2
+  story_id: US-PRJ-22
+  epic_id: null
+  tags: []
+- id: US-PRJ-22-5
+  title: 'Test: Store tests cover all validation cases'
+  type: task
+  status: done
+  points: 3
+  story_id: US-PRJ-22
+  epic_id: null
+  tags: []
+- id: US-PRJ-22-6
+  title: Wire depends_on through create_task
+  type: task
+  status: done
+  points: 2
+  story_id: US-PRJ-22
+  epic_id: null
+  tags: []
+- id: US-PRJ-22-7
+  title: Wire depends_on through create_tasks batch
+  type: task
+  status: done
+  points: 2
+  story_id: US-PRJ-22
+  epic_id: null
+  tags: []
+- id: US-PRJ-22-8
+  title: Wire depends_on through update
+  type: task
+  status: done
+  points: 2
+  story_id: US-PRJ-22
+  epic_id: null
+  tags: []
+- id: US-PRJ-23-1
+  title: 'Test: Tasks with incomplete deps appear in not_ready on board'
+  type: task
+  status: done
+  points: 2
+  story_id: US-PRJ-23
+  epic_id: null
+  tags: []
+- id: US-PRJ-23-2
+  title: 'Test: Board available section sorted by topological order within each story'
+  type: task
+  status: done
+  points: 2
+  story_id: US-PRJ-23
+  epic_id: null
+  tags: []
+- id: US-PRJ-23-3
+  title: 'Test: pm_grab returns error when task has incomplete dependencies'
+  type: task
+  status: done
+  points: 2
+  story_id: US-PRJ-23
+  epic_id: null
+  tags: []
+- id: US-PRJ-23-4
+  title: 'Test: pm_grab includes dependency_status in response showing dep titles
+    and statuses'
+  type: task
+  status: done
+  points: 2
+  story_id: US-PRJ-23
+  epic_id: null
+  tags: []
+- id: US-PRJ-23-5
+  title: 'Test: Readiness blocker message lists specific incomplete dep IDs'
+  type: task
+  status: done
+  points: 2
+  story_id: US-PRJ-23
+  epic_id: null
+  tags: []
+- id: US-PRJ-23-6
+  title: Add dependency blocker to readiness checks
+  type: task
+  status: done
+  points: 2
+  story_id: US-PRJ-23
+  epic_id: null
+  tags: []
+- id: US-PRJ-23-7
+  title: Add topological sort to pm_board ordering
+  type: task
+  status: done
+  points: 3
+  story_id: US-PRJ-23
+  epic_id: null
+  tags: []
+- id: US-PRJ-23-8
+  title: Add dependency_status to pm_grab response
+  type: task
+  status: done
+  points: 1
+  story_id: US-PRJ-23
+  epic_id: null
+  tags: []
+- id: US-PRJ-24-1
+  title: 'Test: pm_create_task accepts comma-separated depends_on'
+  type: task
+  status: done
+  points: 1
+  story_id: US-PRJ-24
+  epic_id: null
+  tags: []
+- id: US-PRJ-24-2
+  title: 'Test: pm_update accepts comma-separated depends_on for tasks'
+  type: task
+  status: done
+  points: 2
+  story_id: US-PRJ-24
+  epic_id: null
+  tags: []
+- id: US-PRJ-24-3
+  title: 'Test: pm_create_tasks docstring documents depends_on key'
+  type: task
+  status: done
+  points: 1
+  story_id: US-PRJ-24
+  epic_id: null
+  tags: []
+- id: US-PRJ-24-4
+  title: 'Test: Web CreateTaskRequest and UpdateItemRequest include depends_on'
+  type: task
+  status: done
+  points: 2
+  story_id: US-PRJ-24
+  epic_id: null
+  tags: []
+- id: US-PRJ-24-5
+  title: 'Test: Web TaskResponse includes depends_on'
+  type: task
+  status: done
+  points: 1
+  story_id: US-PRJ-24
+  epic_id: null
+  tags: []
+- id: US-PRJ-24-6
+  title: 'Test: Server tests cover MCP tool parameter parsing'
+  type: task
+  status: done
+  points: 2
+  story_id: US-PRJ-24
+  epic_id: null
+  tags: []
+- id: US-PRJ-24-7
+  title: Add depends_on to MCP tool signatures
+  type: task
+  status: done
+  points: 2
+  story_id: US-PRJ-24
+  epic_id: null
+  tags: []
+- id: US-PRJ-24-8
+  title: Add depends_on to web API schemas and routes
+  type: task
+  status: done
+  points: 1
+  story_id: US-PRJ-24
+  epic_id: null
+  tags: []
+- id: US-PRJ-25-1
+  title: 'Test: Scoper guidance includes depends_on in rules and template'
+  type: task
+  status: done
+  points: 2
+  story_id: US-PRJ-25
+  epic_id: null
+  tags: []
+- id: US-PRJ-25-2
+  title: 'Test: Audit detects dependency cycles as error'
+  type: task
+  status: done
+  points: 1
+  story_id: US-PRJ-25
+  epic_id: null
+  tags: []
+- id: US-PRJ-25-3
+  title: 'Test: Audit detects orphaned dependency references as warning'
+  type: task
+  status: done
+  points: 1
+  story_id: US-PRJ-25
+  epic_id: null
+  tags: []
+- id: US-PRJ-25-4
+  title: 'Test: Index task table includes Depends On column'
+  type: task
+  status: done
+  points: 1
+  story_id: US-PRJ-25
+  epic_id: null
+  tags: []
+- id: US-PRJ-25-5
+  title: 'Test: All three modules updated with minimal changes'
+  type: task
+  status: done
+  points: 1
+  story_id: US-PRJ-25
+  epic_id: null
+  tags: []
+- id: US-PRJ-25-6
+  title: Update scoper guidance with depends_on
+  type: task
+  status: done
+  points: 1
+  story_id: US-PRJ-25
+  epic_id: null
+  tags: []
+- id: US-PRJ-25-7
+  title: Add dependency audit checks
+  type: task
+  status: done
+  points: 2
+  story_id: US-PRJ-25
+  epic_id: null
+  tags: []
+- id: US-PRJ-25-8
+  title: Add Depends On column to indexer
+  type: task
+  status: done
+  points: 1
+  story_id: US-PRJ-25
+  epic_id: null
+  tags: []
+- id: US-PRJ-26-1
+  title: 'Test: Store holds parsed frontmatter in memory after first load'
+  type: task
+  status: done
+  points: 2
+  story_id: US-PRJ-26
+  epic_id: null
+  tags: []
+- id: US-PRJ-26-10
+  title: 'Test: Cache is per-Store instance with module-level shared dict'
+  type: task
+  status: done
+  points: 1
+  story_id: US-PRJ-26
+  epic_id: null
+  tags: []
+- id: US-PRJ-26-11
+  title: 'Test: Sub-second response for listing tasks of a story with 50+ tasks'
+  type: task
+  status: done
+  points: 1
+  story_id: US-PRJ-26
+  epic_id: null
+  tags: []
+- id: US-PRJ-26-2
+  title: 'Test: Subsequent list_tasks/list_stories/list_epics calls return from cache
+    not disk'
+  type: task
+  status: done
+  points: 2
+  story_id: US-PRJ-26
+  epic_id: null
+  tags: []
+- id: US-PRJ-26-3
+  title: 'Test: Cache is per-Store instance with a module-level shared cache dict'
+  type: task
+  status: done
+  points: 1
+  story_id: US-PRJ-26
+  epic_id: null
+  tags: []
+- id: US-PRJ-26-4
+  title: 'Test: Sub-second response for listing tasks of a story with 50+ tasks'
+  type: task
+  status: done
+  points: 2
+  story_id: US-PRJ-26
+  epic_id: null
+  tags: []
+- id: US-PRJ-26-5
+  title: Add module-level cache dict and cache-aware list methods to Store
+  type: task
+  status: done
+  points: 3
+  story_id: US-PRJ-26
+  epic_id: null
+  tags: []
+- id: US-PRJ-26-6
+  title: Add cache-aware get methods to Store
+  type: task
+  status: done
+  points: 2
+  story_id: US-PRJ-26
+  epic_id: null
+  tags: []
+- id: US-PRJ-26-7
+  title: Add cache stats and clear_cache() utility
+  type: task
+  status: done
+  points: 1
+  story_id: US-PRJ-26
+  epic_id: null
+  tags: []
+- id: US-PRJ-26-8
+  title: 'Test: Store holds parsed frontmatter in memory after first load'
+  type: task
+  status: done
+  points: 1
+  story_id: US-PRJ-26
+  epic_id: null
+  tags: []
+- id: US-PRJ-26-9
+  title: 'Test: Subsequent list calls return from cache not disk'
+  type: task
+  status: done
+  points: 1
+  story_id: US-PRJ-26
+  epic_id: null
+  tags: []
+- id: US-PRJ-27-1
+  title: 'Test: All Store mutation methods (create_story/task/epic update archive)
+    invalidate or update the relevant cache entries'
+  type: task
+  status: done
+  points: null
+  story_id: US-PRJ-27
+  epic_id: null
+  tags: []
+- id: US-PRJ-27-10
+  title: 'Test: No stale data after any mutation sequence'
+  type: task
+  status: done
+  points: 1
+  story_id: US-PRJ-27
+  epic_id: null
+  tags: []
+- id: US-PRJ-27-2
+  title: "Test: Cache invalidation is surgical \u2014 only affected entries are evicted\
+    \ not the whole cache"
+  type: task
+  status: done
+  points: null
+  story_id: US-PRJ-27
+  epic_id: null
+  tags: []
+- id: US-PRJ-27-3
+  title: 'Test: write_index reuses cached data instead of re-reading from disk'
+  type: task
+  status: done
+  points: null
+  story_id: US-PRJ-27
+  epic_id: null
+  tags: []
+- id: US-PRJ-27-4
+  title: 'Test: No stale data observed after any mutation sequence'
+  type: task
+  status: done
+  points: null
+  story_id: US-PRJ-27
+  epic_id: null
+  tags: []
+- id: US-PRJ-27-5
+  title: Add cache invalidation to all Store write methods
+  type: task
+  status: done
+  points: 3
+  story_id: US-PRJ-27
+  epic_id: null
+  tags: []
+- id: US-PRJ-27-6
+  title: Make write_index and build_index use cached data
+  type: task
+  status: done
+  points: 1
+  story_id: US-PRJ-27
+  epic_id: null
+  tags: []
+- id: US-PRJ-27-7
+  title: 'Test: All mutation methods invalidate/update cache entries'
+  type: task
+  status: done
+  points: 1
+  story_id: US-PRJ-27
+  epic_id: null
+  tags: []
+- id: US-PRJ-27-8
+  title: 'Test: Cache invalidation is surgical, not full-clear'
+  type: task
+  status: done
+  points: 1
+  story_id: US-PRJ-27
+  epic_id: null
+  tags: []
+- id: US-PRJ-27-9
+  title: 'Test: write_index reuses cached data'
+  type: task
+  status: done
+  points: 1
+  story_id: US-PRJ-27
+  epic_id: null
+  tags: []
+- id: US-PRJ-28-1
+  title: 'Test: Server._store() returns a cached Store instance per project instead
+    of creating a new one each call'
+  type: task
+  status: done
+  points: 1
+  story_id: US-PRJ-28
+  epic_id: null
+  tags: []
+- id: US-PRJ-28-10
+  title: 'Test: Cache hit behavior across sequential tool calls'
+  type: task
+  status: done
+  points: 1
+  story_id: US-PRJ-28
+  epic_id: null
+  tags: []
+- id: US-PRJ-28-2
+  title: 'Test: Cache persists across MCP tool invocations within the same server
+    process'
+  type: task
+  status: done
+  points: 2
+  story_id: US-PRJ-28
+  epic_id: null
+  tags: []
+- id: US-PRJ-28-3
+  title: "Test: Memory usage stays bounded \u2014 cache doesn't grow unbounded with\
+    \ archived items"
+  type: task
+  status: done
+  points: 2
+  story_id: US-PRJ-28
+  epic_id: null
+  tags: []
+- id: US-PRJ-28-4
+  title: 'Test: Tests verify cache hit behavior across multiple sequential tool calls'
+  type: task
+  status: done
+  points: 2
+  story_id: US-PRJ-28
+  epic_id: null
+  tags: []
+- id: US-PRJ-28-5
+  title: Convert Server._store() to return cached Store instances
+  type: task
+  status: done
+  points: 2
+  story_id: US-PRJ-28
+  epic_id: null
+  tags: []
+- id: US-PRJ-28-6
+  title: Add cache eviction policy for bounded memory
+  type: task
+  status: done
+  points: 2
+  story_id: US-PRJ-28
+  epic_id: null
+  tags: []
+- id: US-PRJ-28-7
+  title: 'Test: Server._store() returns cached Store instance per project'
+  type: task
+  status: done
+  points: 1
+  story_id: US-PRJ-28
+  epic_id: null
+  tags: []
+- id: US-PRJ-28-8
+  title: 'Test: Cache persists across MCP tool invocations'
+  type: task
+  status: done
+  points: 1
+  story_id: US-PRJ-28
+  epic_id: null
+  tags: []
+- id: US-PRJ-28-9
+  title: 'Test: Memory stays bounded with archived items'
+  type: task
+  status: done
+  points: 1
+  story_id: US-PRJ-28
+  epic_id: null
+  tags: []
+- id: US-PRJ-29-1
+  title: 'Test: store.py _check_dependency_cycles uses deps.py detect_cycle()'
+  type: task
+  status: done
+  points: 1
+  story_id: US-PRJ-29
+  epic_id: null
+  tags: []
+- id: US-PRJ-29-2
+  title: 'Test: Cycle errors show full path (A -> B -> C -> A) everywhere'
+  type: task
+  status: todo
+  points: null
+  story_id: US-PRJ-29
+  epic_id: null
+  tags: []
+- id: US-PRJ-29-3
+  title: 'Test: validate_dependencies() either removed or integrated into store layer'
+  type: task
+  status: todo
+  points: null
+  story_id: US-PRJ-29
+  epic_id: null
+  tags: []
+- id: US-PRJ-29-4
+  title: 'Test: All existing tests pass'
+  type: task
+  status: todo
+  points: null
+  story_id: US-PRJ-29
+  epic_id: null
+  tags: []
+- id: US-PRJ-29-5
+  title: 'Test: No new test regressions'
+  type: task
+  status: todo
+  points: null
+  story_id: US-PRJ-29
+  epic_id: null
+  tags: []
+- id: US-PRJ-29-6
+  title: Refactor store.py _check_dependency_cycles to use deps.detect_cycle()
+  type: task
+  status: done
+  points: 2
+  story_id: US-PRJ-29
+  epic_id: null
+  tags: []
+- id: US-PRJ-29-7
+  title: Remove or integrate validate_dependencies() from deps.py
+  type: task
+  status: done
+  points: 1
+  story_id: US-PRJ-29
+  epic_id: null
+  tags: []
+- id: US-PRJ-29-8
+  title: Verify cycle error messages show full path end-to-end
+  type: task
+  status: done
+  points: 1
+  story_id: US-PRJ-29
+  epic_id: null
+  tags: []
+- id: US-PRJ-3-1
+  title: 'Test: pm_commit tool commits .project/ changes with auto-generated message'
+  type: task
+  status: done
+  points: 3
+  story_id: US-PRJ-3
+  epic_id: null
+  tags: []
+- id: US-PRJ-3-2
+  title: 'Test: pm_push tool pushes with branch validation'
+  type: task
+  status: done
+  points: 3
+  story_id: US-PRJ-3
+  epic_id: null
+  tags: []
+- id: US-PRJ-3-3
+  title: 'Test: Hub vs subproject scope is configurable'
+  type: task
+  status: done
+  points: 2
+  story_id: US-PRJ-3
+  epic_id: null
+  tags: []
+- id: US-PRJ-3-4
+  title: 'Test: Integrates with existing MCP server'
+  type: task
+  status: done
+  points: 2
+  story_id: US-PRJ-3
+  epic_id: null
+  tags: []
+- id: US-PRJ-3-5
+  title: Implement pm_commit() for hub and subproject PM data
+  type: task
+  status: done
+  points: 3
+  story_id: US-PRJ-3
+  epic_id: null
+  tags: []
+- id: US-PRJ-3-6
+  title: Implement pm_push() with scope and validation
+  type: task
+  status: done
+  points: 2
+  story_id: US-PRJ-3
+  epic_id: null
+  tags: []
+- id: US-PRJ-3-7
+  title: Register pm_commit and pm_push as MCP tools and CLI commands
+  type: task
+  status: done
+  points: 2
+  story_id: US-PRJ-3
+  epic_id: null
+  tags: []
+- id: US-PRJ-3-8
+  title: Write tests for pm_commit and pm_push
+  type: task
+  status: done
+  points: 2
+  story_id: US-PRJ-3
+  epic_id: null
+  tags: []
+- id: US-PRJ-30-1
+  title: 'Test: load_config() uses module-level cache'
+  type: task
+  status: todo
+  points: null
+  story_id: US-PRJ-30
+  epic_id: null
+  tags: []
+- id: US-PRJ-30-2
+  title: 'Test: Cache has TTL or explicit invalidation on config write'
+  type: task
+  status: todo
+  points: null
+  story_id: US-PRJ-30
+  epic_id: null
+  tags: []
+- id: US-PRJ-30-3
+  title: 'Test: Repeated calls in same process return cached result'
+  type: task
+  status: todo
+  points: null
+  story_id: US-PRJ-30
+  epic_id: null
+  tags: []
+- id: US-PRJ-30-4
+  title: 'Test: _save_config() invalidates the cache'
+  type: task
+  status: todo
+  points: null
+  story_id: US-PRJ-30
+  epic_id: null
+  tags: []
+- id: US-PRJ-30-5
+  title: 'Test: All existing tests pass'
+  type: task
+  status: todo
+  points: null
+  story_id: US-PRJ-30
+  epic_id: null
+  tags: []
+- id: US-PRJ-30-6
+  title: Add module-level config cache to config.py
+  type: task
+  status: todo
+  points: 1
+  story_id: US-PRJ-30
+  epic_id: null
+  tags: []
+- id: US-PRJ-30-7
+  title: Invalidate config cache on _save_config()
+  type: task
+  status: todo
+  points: 1
+  story_id: US-PRJ-30
+  epic_id: null
+  tags: []
+- id: US-PRJ-30-8
+  title: Add tests for config cache hit and invalidation
+  type: task
+  status: todo
+  points: 1
+  story_id: US-PRJ-30
+  epic_id: null
+  tags: []
+- id: US-PRJ-31-1
+  title: 'Test: pm_board output includes note distinguishing blocked vs not_ready'
+  type: task
+  status: todo
+  points: null
+  story_id: US-PRJ-31
+  epic_id: null
+  tags: []
+- id: US-PRJ-31-2
+  title: 'Test: Board tool docstring clarifies the distinction'
+  type: task
+  status: todo
+  points: null
+  story_id: US-PRJ-31
+  epic_id: null
+  tags: []
+- id: US-PRJ-31-3
+  title: 'Test: Forward references in batch create are documented in pm_create_tasks
+    docstring'
+  type: task
+  status: todo
+  points: null
+  story_id: US-PRJ-31
+  epic_id: null
+  tags: []
+- id: US-PRJ-31-4
+  title: Add blocked vs not_ready note to pm_board output
+  type: task
+  status: todo
+  points: 1
+  story_id: US-PRJ-31
+  epic_id: null
+  tags: []
+- id: US-PRJ-31-5
+  title: Document forward references and blocked semantics in docstrings
+  type: task
+  status: todo
+  points: 1
+  story_id: US-PRJ-31
+  epic_id: null
+  tags: []
+- id: US-PRJ-32-1
+  title: 'Test: pm_board avoids per-task get_task() body reads where possible'
+  type: task
+  status: todo
+  points: null
+  story_id: US-PRJ-32
+  epic_id: null
+  tags: []
+- id: US-PRJ-32-10
+  title: Wire pre-loaded context through pm_board readiness loop
+  type: task
+  status: todo
+  points: 1
+  story_id: US-PRJ-32
+  epic_id: null
+  tags: []
+- id: US-PRJ-32-11
+  title: Add performance test for 100+ task board
+  type: task
+  status: todo
+  points: 1
+  story_id: US-PRJ-32
+  epic_id: null
+  tags: []
+- id: US-PRJ-32-2
+  title: 'Test: Readiness checks use pre-loaded story and sibling data instead of
+    per-task lookups'
+  type: task
+  status: todo
+  points: null
+  story_id: US-PRJ-32
+  epic_id: null
+  tags: []
+- id: US-PRJ-32-3
+  title: 'Test: Total file I/O for 100 tasks reduced by at least 50%'
+  type: task
+  status: todo
+  points: null
+  story_id: US-PRJ-32
+  epic_id: null
+  tags: []
+- id: US-PRJ-32-4
+  title: 'Test: All board tests pass with same output'
+  type: task
+  status: todo
+  points: null
+  story_id: US-PRJ-32
+  epic_id: null
+  tags: []
+- id: US-PRJ-32-5
+  title: 'Test: Performance test added for 100+ task board'
+  type: task
+  status: todo
+  points: null
+  story_id: US-PRJ-32
+  epic_id: null
+  tags: []
+- id: US-PRJ-32-6
+  title: Pre-load all task bodies in pm_board instead of per-task get_task()
+  type: task
+  status: todo
+  points: 2
+  story_id: US-PRJ-32
+  epic_id: null
+  tags: []
+- id: US-PRJ-32-7
+  title: Refactor check_readiness to accept pre-loaded context
+  type: task
+  status: todo
+  points: 2
+  story_id: US-PRJ-32
+  epic_id: null
+  tags: []
+- id: US-PRJ-32-8
+  title: Pre-load all task bodies in pm_board instead of per-task get_task()
+  type: task
+  status: todo
+  points: 2
+  story_id: US-PRJ-32
+  epic_id: null
+  tags: []
+- id: US-PRJ-32-9
+  title: Refactor check_readiness to accept pre-loaded context
+  type: task
+  status: todo
+  points: 2
+  story_id: US-PRJ-32
+  epic_id: null
+  tags: []
+- id: US-PRJ-33-1
+  title: 'Test: pm_epic loads all tasks once then filters by story_id in memory'
+  type: task
+  status: todo
+  points: null
+  story_id: US-PRJ-33
+  epic_id: null
+  tags: []
+- id: US-PRJ-33-2
+  title: 'Test: File I/O reduced from N list_tasks calls to 1'
+  type: task
+  status: todo
+  points: null
+  story_id: US-PRJ-33
+  epic_id: null
+  tags: []
+- id: US-PRJ-33-3
+  title: 'Test: All epic tests pass'
+  type: task
+  status: todo
+  points: null
+  story_id: US-PRJ-33
+  epic_id: null
+  tags: []
+- id: US-PRJ-33-4
+  title: 'Test: Performance acceptable for epics with 20+ stories'
+  type: task
+  status: todo
+  points: null
+  story_id: US-PRJ-33
+  epic_id: null
+  tags: []
+- id: US-PRJ-33-5
+  title: Refactor pm_epic to load all tasks once then filter by story_id
+  type: task
+  status: todo
+  points: 2
+  story_id: US-PRJ-33
+  epic_id: null
+  tags: []
+- id: US-PRJ-33-6
+  title: Add performance test for epic with 20+ stories
+  type: task
+  status: todo
+  points: 1
+  story_id: US-PRJ-33
+  epic_id: null
+  tags: []
+- id: US-PRJ-34-1
+  title: 'Test: rollup() uses ThreadPoolExecutor for parallel project scanning'
+  type: task
+  status: todo
+  points: null
+  story_id: US-PRJ-34
+  epic_id: null
+  tags: []
+- id: US-PRJ-34-2
+  title: 'Test: Max workers capped similar to git_status_all (min(projects 16))'
+  type: task
+  status: todo
+  points: null
+  story_id: US-PRJ-34
+  epic_id: null
+  tags: []
+- id: US-PRJ-34-3
+  title: 'Test: Results identical to sequential version'
+  type: task
+  status: todo
+  points: null
+  story_id: US-PRJ-34
+  epic_id: null
+  tags: []
+- id: US-PRJ-34-4
+  title: 'Test: Performance improvement measurable on 5+ project hubs'
+  type: task
+  status: todo
+  points: null
+  story_id: US-PRJ-34
+  epic_id: null
+  tags: []
+- id: US-PRJ-34-5
+  title: Refactor rollup() to use ThreadPoolExecutor
+  type: task
+  status: todo
+  points: 2
+  story_id: US-PRJ-34
+  epic_id: null
+  tags: []
+- id: US-PRJ-34-6
+  title: Add test verifying parallel rollup matches sequential results
+  type: task
+  status: todo
+  points: 1
+  story_id: US-PRJ-34
+  epic_id: null
+  tags: []
+- id: US-PRJ-35-1
+  title: 'Test: Search uses indexed vector lookup instead of full table scan'
+  type: task
+  status: todo
+  points: null
+  story_id: US-PRJ-35
+  epic_id: null
+  tags: []
+- id: US-PRJ-35-2
+  title: 'Test: Performance acceptable for 5000+ items'
+  type: task
+  status: todo
+  points: null
+  story_id: US-PRJ-35
+  epic_id: null
+  tags: []
+- id: US-PRJ-35-3
+  title: 'Test: Backward compatible with existing embeddings.db'
+  type: task
+  status: todo
+  points: null
+  story_id: US-PRJ-35
+  epic_id: null
+  tags: []
+- id: US-PRJ-35-4
+  title: 'Test: FAISS or similar lightweight solution (no heavy external DB)'
+  type: task
+  status: todo
+  points: null
+  story_id: US-PRJ-35
+  epic_id: null
+  tags: []
+- id: US-PRJ-35-5
+  title: Evaluate and select vector index library
+  type: task
+  status: todo
+  points: 1
+  story_id: US-PRJ-35
+  epic_id: null
+  tags: []
+- id: US-PRJ-35-6
+  title: Implement indexed vector search in embeddings.py
+  type: task
+  status: todo
+  points: 3
+  story_id: US-PRJ-35
+  epic_id: null
+  tags: []
+- id: US-PRJ-35-7
+  title: Add benchmark test for 5000+ item search
+  type: task
+  status: todo
+  points: 1
+  story_id: US-PRJ-35
+  epic_id: null
+  tags: []
+- id: US-PRJ-36-1
+  title: 'Test: _cache_stats invalidations counter only tracks true invalidations'
+  type: task
+  status: todo
+  points: null
+  story_id: US-PRJ-36
+  epic_id: null
+  tags: []
+- id: US-PRJ-36-2
+  title: 'Test: Changesets cached following same pattern as stories/epics/tasks'
+  type: task
+  status: todo
+  points: null
+  story_id: US-PRJ-36
+  epic_id: null
+  tags: []
+- id: US-PRJ-36-3
+  title: 'Test: Single-threaded cache assumption documented in store.py'
+  type: task
+  status: todo
+  points: null
+  story_id: US-PRJ-36
+  epic_id: null
+  tags: []
+- id: US-PRJ-36-4
+  title: 'Test: Duplicate depends_on entries deduplicated in model validator'
+  type: task
+  status: todo
+  points: null
+  story_id: US-PRJ-36
+  epic_id: null
+  tags: []
+- id: US-PRJ-36-5
+  title: Fix _cache_stats counter naming and tracking
+  type: task
+  status: todo
+  points: 1
+  story_id: US-PRJ-36
+  epic_id: null
+  tags: []
+- id: US-PRJ-36-6
+  title: Add changeset caching following stories/epics/tasks pattern
+  type: task
+  status: todo
+  points: 1
+  story_id: US-PRJ-36
+  epic_id: null
+  tags: []
+- id: US-PRJ-36-7
+  title: Document single-threaded cache assumption in store.py
+  type: task
+  status: todo
+  points: 1
+  story_id: US-PRJ-36
+  epic_id: null
+  tags: []
+- id: US-PRJ-36-8
+  title: Add depends_on deduplication in TaskFrontmatter validator
+  type: task
+  status: todo
+  points: 1
+  story_id: US-PRJ-36
+  epic_id: null
+  tags: []
+- id: US-PRJ-37-1
+  title: 'Test: Deep copies removed from all list/get cache returns'
+  type: task
+  status: done
+  points: 2
+  story_id: US-PRJ-37
+  epic_id: null
+  tags: []
+- id: US-PRJ-37-2
+  title: 'Test: Benchmark shows 10x+ improvement for 1000-item lists'
+  type: task
+  status: done
+  points: 2
+  story_id: US-PRJ-37
+  epic_id: null
+  tags: []
+- id: US-PRJ-37-3
+  title: 'Test: No mutation side effects from removing deep copy'
+  type: task
+  status: todo
+  points: null
+  story_id: US-PRJ-37
+  epic_id: null
+  tags: []
+- id: US-PRJ-37-4
+  title: 'Test: Regression tests confirm cache integrity'
+  type: task
+  status: todo
+  points: null
+  story_id: US-PRJ-37
+  epic_id: null
+  tags: []
+- id: US-PRJ-38-1
+  title: 'Test: Vectors batch-decoded into numpy array once'
+  type: task
+  status: todo
+  points: null
+  story_id: US-PRJ-38
+  epic_id: null
+  tags: []
+- id: US-PRJ-38-2
+  title: 'Test: Cosine similarity uses np.dot(Q; all_vecs.T) instead of loop'
+  type: task
+  status: todo
+  points: null
+  story_id: US-PRJ-38
+  epic_id: null
+  tags: []
+- id: US-PRJ-38-3
+  title: 'Test: First search lazy-loads and caches decoded vectors'
+  type: task
+  status: todo
+  points: null
+  story_id: US-PRJ-38
+  epic_id: null
+  tags: []
+- id: US-PRJ-38-4
+  title: 'Test: 10x+ improvement for 1000-item projects'
+  type: task
+  status: todo
+  points: null
+  story_id: US-PRJ-38
+  epic_id: null
+  tags: []
+- id: US-PRJ-39-1
+  title: 'Test: Secondary dict index maintained alongside cache list'
+  type: task
+  status: todo
+  points: null
+  story_id: US-PRJ-39
+  epic_id: null
+  tags: []
+- id: US-PRJ-39-2
+  title: 'Test: Cache update/invalidation is O(1) by ID'
+  type: task
+  status: todo
+  points: null
+  story_id: US-PRJ-39
+  epic_id: null
+  tags: []
+- id: US-PRJ-39-3
+  title: 'Test: Index stays consistent across append/update/invalidate operations'
+  type: task
+  status: todo
+  points: null
+  story_id: US-PRJ-39
+  epic_id: null
+  tags: []
+- id: US-PRJ-4-1
+  title: 'Test: Single command pushes across hub + N subprojects'
+  type: task
+  status: done
+  points: 3
+  story_id: US-PRJ-4
+  epic_id: null
+  tags: []
+- id: US-PRJ-4-10
+  title: Write tests for coordinated push workflow
+  type: task
+  status: done
+  points: 3
+  story_id: US-PRJ-4
+  epic_id: null
+  tags: []
+- id: US-PRJ-4-2
+  title: 'Test: Validates branch alignment before any push'
+  type: task
+  status: done
+  points: 2
+  story_id: US-PRJ-4
+  epic_id: null
+  tags: []
+- id: US-PRJ-4-3
+  title: 'Test: Subprojects pushed before hub ref update'
+  type: task
+  status: done
+  points: 2
+  story_id: US-PRJ-4
+  epic_id: null
+  tags: []
+- id: US-PRJ-4-4
+  title: 'Test: Clear report of what succeeded/failed'
+  type: task
+  status: done
+  points: 2
+  story_id: US-PRJ-4
+  epic_id: null
+  tags: []
+- id: US-PRJ-4-5
+  title: 'Test: No silent partial pushes'
+  type: task
+  status: done
+  points: 2
+  story_id: US-PRJ-4
+  epic_id: null
+  tags: []
+- id: US-PRJ-4-6
+  title: Implement pre-push preflight check aggregating all validations
+  type: task
+  status: done
+  points: 3
+  story_id: US-PRJ-4
+  epic_id: null
+  tags: []
+- id: US-PRJ-4-7
+  title: Implement push_subprojects() for ordered per-project push
+  type: task
+  status: done
+  points: 2
+  story_id: US-PRJ-4
+  epic_id: null
+  tags: []
+- id: US-PRJ-4-8
+  title: Implement push_hub() for hub ref commit and push
+  type: task
+  status: done
+  points: 2
+  story_id: US-PRJ-4
+  epic_id: null
+  tags: []
+- id: US-PRJ-4-9
+  title: Implement coordinated_push() orchestrator and CLI command
+  type: task
+  status: done
+  points: 3
+  story_id: US-PRJ-4
+  epic_id: null
+  tags: []
+- id: US-PRJ-40-1
+  title: 'Test: Dirty flag tracks which item types changed since last rebuild'
+  type: task
+  status: todo
+  points: null
+  story_id: US-PRJ-40
+  epic_id: null
+  tags: []
+- id: US-PRJ-40-2
+  title: 'Test: Only affected markdown index files are regenerated'
+  type: task
+  status: todo
+  points: null
+  story_id: US-PRJ-40
+  epic_id: null
+  tags: []
+- id: US-PRJ-40-3
+  title: 'Test: Full rebuild still available as fallback'
+  type: task
+  status: todo
+  points: null
+  story_id: US-PRJ-40
+  epic_id: null
+  tags: []
+- id: US-PRJ-40-4
+  title: 'Test: Hub README rebuild skips unchanged subprojects'
+  type: task
+  status: todo
+  points: null
+  story_id: US-PRJ-40
+  epic_id: null
+  tags: []
+- id: US-PRJ-41-1
+  title: 'Test: Status collection uses max 2 git calls per project instead of 4+'
+  type: task
+  status: todo
+  points: null
+  story_id: US-PRJ-41
+  epic_id: null
+  tags: []
+- id: US-PRJ-41-2
+  title: 'Test: ThreadPoolExecutor still used for parallelism'
+  type: task
+  status: todo
+  points: null
+  story_id: US-PRJ-41
+  epic_id: null
+  tags: []
+- id: US-PRJ-41-3
+  title: 'Test: Results match current output format'
+  type: task
+  status: todo
+  points: null
+  story_id: US-PRJ-41
+  epic_id: null
+  tags: []
+- id: US-PRJ-42-1
+  title: 'Test: All stories/tasks/epics loaded once at audit start'
+  type: task
+  status: todo
+  points: null
+  story_id: US-PRJ-42
+  epic_id: null
+  tags: []
+- id: US-PRJ-42-2
+  title: 'Test: 15 checks run against pre-loaded data'
+  type: task
+  status: todo
+  points: null
+  story_id: US-PRJ-42
+  epic_id: null
+  tags: []
+- id: US-PRJ-42-3
+  title: 'Test: No repeated list_stories or get_story calls'
+  type: task
+  status: todo
+  points: null
+  story_id: US-PRJ-42
+  epic_id: null
+  tags: []
+- id: US-PRJ-42-4
+  title: 'Test: Duplicate doc check logic extracted to shared function'
+  type: task
+  status: todo
+  points: null
+  story_id: US-PRJ-42
+  epic_id: null
+  tags: []
+- id: US-PRJ-43-1
+  title: 'Test: pm_board uses list_all or cache for task bodies instead of per-task
+    get'
+  type: task
+  status: todo
+  points: null
+  story_id: US-PRJ-43
+  epic_id: null
+  tags: []
+- id: US-PRJ-43-2
+  title: 'Test: pm_epic pre-fetches all tasks and partitions by story_id locally'
+  type: task
+  status: todo
+  points: null
+  story_id: US-PRJ-43
+  epic_id: null
+  tags: []
+- id: US-PRJ-43-3
+  title: 'Test: pm_search tag filter batch-loads metadata instead of individual gets'
+  type: task
+  status: todo
+  points: null
+  story_id: US-PRJ-43
+  epic_id: null
+  tags: []
+- id: US-PRJ-43-4
+  title: 'Test: pm_active removes redundant list_stories call on line 252'
+  type: task
+  status: todo
+  points: null
+  story_id: US-PRJ-43
+  epic_id: null
+  tags: []
+- id: US-PRJ-44-1
+  title: 'Test: pm_batch_update accepts JSON array of update dicts'
+  type: task
+  status: todo
+  points: null
+  story_id: US-PRJ-44
+  epic_id: null
+  tags: []
+- id: US-PRJ-44-2
+  title: 'Test: Each update applied via store.update with validation'
+  type: task
+  status: todo
+  points: null
+  story_id: US-PRJ-44
+  epic_id: null
+  tags: []
+- id: US-PRJ-44-3
+  title: 'Test: Single auto-commit for entire batch'
+  type: task
+  status: todo
+  points: null
+  story_id: US-PRJ-44
+  epic_id: null
+  tags: []
+- id: US-PRJ-44-4
+  title: 'Test: Returns list of updated items or per-item errors'
+  type: task
+  status: todo
+  points: null
+  story_id: US-PRJ-44
+  epic_id: null
+  tags: []
+- id: US-PRJ-44-5
+  title: 'Test: Proper MCP annotations (destructive=false)'
+  type: task
+  status: todo
+  points: null
+  story_id: US-PRJ-44
+  epic_id: null
+  tags: []
+- id: US-PRJ-45-1
+  title: 'Test: pm_batch_archive accepts comma-separated or list of IDs'
+  type: task
+  status: todo
+  points: null
+  story_id: US-PRJ-45
+  epic_id: null
+  tags: []
+- id: US-PRJ-45-2
+  title: 'Test: Archives all items with single commit'
+  type: task
+  status: todo
+  points: null
+  story_id: US-PRJ-45
+  epic_id: null
+  tags: []
+- id: US-PRJ-45-3
+  title: 'Test: Reports per-item success/failure'
+  type: task
+  status: todo
+  points: null
+  story_id: US-PRJ-45
+  epic_id: null
+  tags: []
+- id: US-PRJ-45-4
+  title: 'Test: Proper destructive=true annotation'
+  type: task
+  status: todo
+  points: null
+  story_id: US-PRJ-45
+  epic_id: null
+  tags: []
+- id: US-PRJ-46-1
+  title: 'Test: _next_task_id uses directory glob count instead of list_tasks'
+  type: task
+  status: todo
+  points: null
+  story_id: US-PRJ-46
+  epic_id: null
+  tags: []
+- id: US-PRJ-46-2
+  title: 'Test: Batch create_tasks generates IDs without N list_tasks calls'
+  type: task
+  status: todo
+  points: null
+  story_id: US-PRJ-46
+  epic_id: null
+  tags: []
+- id: US-PRJ-46-3
+  title: 'Test: Existing tests still pass'
+  type: task
+  status: todo
+  points: null
+  story_id: US-PRJ-46
+  epic_id: null
+  tags: []
+- id: US-PRJ-47-1
+  title: 'Test: PR commands use subprocess list args or shlex.quote for all user input'
+  type: task
+  status: todo
+  points: null
+  story_id: US-PRJ-47
+  epic_id: null
+  tags: []
+- id: US-PRJ-47-2
+  title: 'Test: Cross-ref block renders newlines correctly in GitHub'
+  type: task
+  status: todo
+  points: null
+  story_id: US-PRJ-47
+  epic_id: null
+  tags: []
+- id: US-PRJ-47-3
+  title: 'Test: Titles and descriptions with quotes/backticks/semicolons are safe'
+  type: task
+  status: todo
+  points: null
+  story_id: US-PRJ-47
+  epic_id: null
+  tags: []
+- id: US-PRJ-47-4
+  title: 'Test: Tests cover special character edge cases'
+  type: task
+  status: todo
+  points: null
+  story_id: US-PRJ-47
+  epic_id: null
+  tags: []
+- id: US-PRJ-48-1
+  title: 'Test: Specific exception types caught where appropriate (FileNotFoundError;
+    ValueError; etc.)'
+  type: task
+  status: todo
+  points: null
+  story_id: US-PRJ-48
+  epic_id: null
+  tags: []
+- id: US-PRJ-48-2
+  title: 'Test: Error responses include error_code and message fields'
+  type: task
+  status: todo
+  points: null
+  story_id: US-PRJ-48
+  epic_id: null
+  tags: []
+- id: US-PRJ-48-3
+  title: 'Test: Generic catch-all still exists as fallback'
+  type: task
+  status: todo
+  points: null
+  story_id: US-PRJ-48
+  epic_id: null
+  tags: []
+- id: US-PRJ-48-4
+  title: 'Test: Existing error behavior preserved for backwards compatibility'
+  type: task
+  status: todo
+  points: null
+  story_id: US-PRJ-48
+  epic_id: null
+  tags: []
+- id: US-PRJ-49-1
+  title: 'Test: pm_fix_malformed marked destructiveHint=True'
+  type: task
+  status: todo
+  points: null
+  story_id: US-PRJ-49
+  epic_id: null
+  tags: []
+- id: US-PRJ-49-2
+  title: 'Test: pm_restore marked destructiveHint=True'
+  type: task
+  status: todo
+  points: null
+  story_id: US-PRJ-49
+  epic_id: null
+  tags: []
+- id: US-PRJ-49-3
+  title: 'Test: pm_push and pm_push_all marked destructiveHint=True'
+  type: task
+  status: todo
+  points: null
+  story_id: US-PRJ-49
+  epic_id: null
+  tags: []
+- id: US-PRJ-49-4
+  title: 'Test: All other tools reviewed for correct annotations'
+  type: task
+  status: todo
+  points: null
+  story_id: US-PRJ-49
+  epic_id: null
+  tags: []
+- id: US-PRJ-5-1
+  title: 'Test: Config option to enable/disable auto-commit'
+  type: task
+  status: done
+  points: 3
+  story_id: US-PRJ-5
+  epic_id: null
+  tags: []
+- id: US-PRJ-5-2
+  title: 'Test: Auto-generated commit messages from PM operations'
+  type: task
+  status: done
+  points: 2
+  story_id: US-PRJ-5
+  epic_id: null
+  tags: []
+- id: US-PRJ-5-3
+  title: 'Test: Only commits .project/ files touched by the mutation'
+  type: task
+  status: done
+  points: 2
+  story_id: US-PRJ-5
+  epic_id: null
+  tags: []
+- id: US-PRJ-5-4
+  title: 'Test: Does not auto-push'
+  type: task
+  status: done
+  points: 2
+  story_id: US-PRJ-5
+  epic_id: null
+  tags: []
+- id: US-PRJ-5-5
+  title: Add auto_commit config option to ProjectConfig
+  type: task
+  status: done
+  points: 1
+  story_id: US-PRJ-5
+  epic_id: null
+  tags: []
+- id: US-PRJ-5-6
+  title: Add auto-commit hook into store.py mutation methods
+  type: task
+  status: done
+  points: 3
+  story_id: US-PRJ-5
+  epic_id: null
+  tags: []
+- id: US-PRJ-5-7
+  title: Write tests for auto-commit behavior
+  type: task
+  status: done
+  points: 2
+  story_id: US-PRJ-5
+  epic_id: null
+  tags: []
+- id: US-PRJ-50-1
+  title: 'Test: Story ID regex enforces US-PREFIX-N pattern'
+  type: task
+  status: todo
+  points: null
+  story_id: US-PRJ-50
+  epic_id: null
+  tags: []
+- id: US-PRJ-50-2
+  title: 'Test: Task ID regex enforces US-PREFIX-N-N pattern'
+  type: task
+  status: todo
+  points: null
+  story_id: US-PRJ-50
+  epic_id: null
+  tags: []
+- id: US-PRJ-50-3
+  title: 'Test: Epic ID regex enforces EPIC-PREFIX-N pattern'
+  type: task
+  status: todo
+  points: null
+  story_id: US-PRJ-50
+  epic_id: null
+  tags: []
+- id: US-PRJ-50-4
+  title: 'Test: Changeset ID regex enforces CS-PREFIX-N pattern'
+  type: task
+  status: todo
+  points: null
+  story_id: US-PRJ-50
+  epic_id: null
+  tags: []
+- id: US-PRJ-50-5
+  title: 'Test: Existing valid IDs all pass new validation'
+  type: task
+  status: todo
+  points: null
+  story_id: US-PRJ-50
+  epic_id: null
+  tags: []
+- id: US-PRJ-51-1
+  title: 'Test: ChangesetEntry.status uses same enum as ChangesetFrontmatter'
+  type: task
+  status: todo
+  points: null
+  story_id: US-PRJ-51
+  epic_id: null
+  tags: []
+- id: US-PRJ-51-2
+  title: 'Test: All status assignments validated against enum values'
+  type: task
+  status: todo
+  points: null
+  story_id: US-PRJ-51
+  epic_id: null
+  tags: []
+- id: US-PRJ-51-3
+  title: 'Test: Serialization/deserialization handles enum correctly'
+  type: task
+  status: todo
+  points: null
+  story_id: US-PRJ-51
+  epic_id: null
+  tags: []
+- id: US-PRJ-52-1
+  title: 'Test: Update operations record old_value and new_value in changes dict'
+  type: task
+  status: todo
+  points: null
+  story_id: US-PRJ-52
+  epic_id: null
+  tags: []
+- id: US-PRJ-52-2
+  title: 'Test: Status transitions logged with from/to states'
+  type: task
+  status: todo
+  points: null
+  story_id: US-PRJ-52
+  epic_id: null
+  tags: []
+- id: US-PRJ-52-3
+  title: 'Test: Log rotation implemented (configurable max size or age)'
+  type: task
+  status: todo
+  points: null
+  story_id: US-PRJ-52
+  epic_id: null
+  tags: []
+- id: US-PRJ-52-4
+  title: 'Test: Activity log query functions moved to dedicated module'
+  type: task
+  status: todo
+  points: null
+  story_id: US-PRJ-52
+  epic_id: null
+  tags: []
+- id: US-PRJ-53-1
+  title: 'Test: installation.md embeddings row shows fastembed not sentence-transformers'
+  type: task
+  status: done
+  points: 1
+  story_id: US-PRJ-53
+  epic_id: null
+  tags: []
+- id: US-PRJ-53-2
+  title: 'Test: All other optional dependency entries verified against pyproject.toml'
+  type: task
+  status: done
+  points: 1
+  story_id: US-PRJ-53
+  epic_id: null
+  tags: []
+- id: US-PRJ-54-1
+  title: 'Test: CHANGELOG.md exists with entries for 0.8.0 through 0.8.3'
+  type: task
+  status: in-progress
+  points: 1
+  story_id: US-PRJ-54
+  epic_id: null
+  tags: []
+- id: US-PRJ-54-2
+  title: 'Test: Each version lists added/changed/fixed items'
+  type: task
+  status: todo
+  points: null
+  story_id: US-PRJ-54
+  epic_id: null
+  tags: []
+- id: US-PRJ-54-3
+  title: 'Test: Format follows Keep a Changelog convention'
+  type: task
+  status: todo
+  points: null
+  story_id: US-PRJ-54
+  epic_id: null
+  tags: []
+- id: US-PRJ-55-1
+  title: 'Test: docs/hub-mode/troubleshooting.md created'
+  type: task
+  status: todo
+  points: null
+  story_id: US-PRJ-55
+  epic_id: null
+  tags: []
+- id: US-PRJ-55-2
+  title: 'Test: Covers submodule sync issues with resolution steps'
+  type: task
+  status: todo
+  points: null
+  story_id: US-PRJ-55
+  epic_id: null
+  tags: []
+- id: US-PRJ-55-3
+  title: 'Test: Covers auto-rebase conflict resolution'
+  type: task
+  status: todo
+  points: null
+  story_id: US-PRJ-55
+  epic_id: null
+  tags: []
+- id: US-PRJ-55-4
+  title: 'Test: Explains when to use pm repair vs manual fixes'
+  type: task
+  status: todo
+  points: null
+  story_id: US-PRJ-55
+  epic_id: null
+  tags: []
+- id: US-PRJ-56-1
+  title: 'Test: Skills docs clarify all operations route through /pm'
+  type: task
+  status: todo
+  points: null
+  story_id: US-PRJ-56
+  epic_id: null
+  tags: []
+- id: US-PRJ-56-2
+  title: 'Test: Quick reference table mapping operations to CLI/MCP/skill access'
+  type: task
+  status: todo
+  points: null
+  story_id: US-PRJ-56
+  epic_id: null
+  tags: []
+- id: US-PRJ-56-3
+  title: 'Test: Daily workflow doc updated to remove standalone /pm scope references'
+  type: task
+  status: todo
+  points: null
+  story_id: US-PRJ-56
+  epic_id: null
+  tags: []
+- id: US-PRJ-57-1
+  title: 'Test: All tool references in pm skill correspond to actual MCP tools'
+  type: task
+  status: todo
+  points: null
+  story_id: US-PRJ-57
+  epic_id: null
+  tags: []
+- id: US-PRJ-57-2
+  title: 'Test: Non-existent tool references either implemented or removed'
+  type: task
+  status: todo
+  points: null
+  story_id: US-PRJ-57
+  epic_id: null
+  tags: []
+- id: US-PRJ-57-3
+  title: 'Test: Skill tested to verify all routing targets exist'
+  type: task
+  status: todo
+  points: null
+  story_id: US-PRJ-57
+  epic_id: null
+  tags: []
+- id: US-PRJ-58-1
+  title: 'Test: List-type params accepted alongside comma-separated strings for backwards
+    compat'
+  type: task
+  status: todo
+  points: null
+  story_id: US-PRJ-58
+  epic_id: null
+  tags: []
+- id: US-PRJ-58-2
+  title: 'Test: pm_create_story acceptance_criteria accepts list'
+  type: task
+  status: todo
+  points: null
+  story_id: US-PRJ-58
+  epic_id: null
+  tags: []
+- id: US-PRJ-58-3
+  title: 'Test: pm_changeset_create projects accepts list'
+  type: task
+  status: todo
+  points: null
+  story_id: US-PRJ-58
+  epic_id: null
+  tags: []
+- id: US-PRJ-58-4
+  title: 'Test: All affected tools documented with both input formats'
+  type: task
+  status: todo
+  points: null
+  story_id: US-PRJ-58
+  epic_id: null
+  tags: []
+- id: US-PRJ-59-1
+  title: 'Test: pm-status includes epic rollup and blocker analysis steps'
+  type: task
+  status: todo
+  points: null
+  story_id: US-PRJ-59
+  epic_id: null
+  tags: []
+- id: US-PRJ-59-2
+  title: 'Test: pm-plan includes prioritization guidance and task creation workflow'
+  type: task
+  status: todo
+  points: null
+  story_id: US-PRJ-59
+  epic_id: null
+  tags: []
+- id: US-PRJ-59-3
+  title: 'Test: Both skills suggest actionable next steps based on findings'
+  type: task
+  status: todo
+  points: null
+  story_id: US-PRJ-59
+  epic_id: null
+  tags: []
+- id: US-PRJ-6-1
+  title: 'Test: Daily workflow docs updated with git integration'
+  type: task
+  status: done
+  points: 2
+  story_id: US-PRJ-6
+  epic_id: null
+  tags: []
+- id: US-PRJ-6-2
+  title: 'Test: Hub mode docs cover coordinated push'
+  type: task
+  status: done
+  points: 1
+  story_id: US-PRJ-6
+  epic_id: null
+  tags: []
+- id: US-PRJ-6-3
+  title: 'Test: /pm skill routes commit/push commands'
+  type: task
+  status: done
+  points: 1
+  story_id: US-PRJ-6
+  epic_id: null
+  tags: []
+- id: US-PRJ-6-4
+  title: 'Test: Auto-commit option documented'
+  type: task
+  status: done
+  points: 1
+  story_id: US-PRJ-6
+  epic_id: null
+  tags: []
+- id: US-PRJ-6-5
+  title: Update daily-workflow.md with git integration steps
+  type: task
+  status: done
+  points: 2
+  story_id: US-PRJ-6
+  epic_id: null
+  tags: []
+- id: US-PRJ-6-6
+  title: Update hub mode docs with coordinated push and PR workflow
+  type: task
+  status: done
+  points: 2
+  story_id: US-PRJ-6
+  epic_id: null
+  tags: []
+- id: US-PRJ-6-7
+  title: Update /pm skill routing for git commands
+  type: task
+  status: done
+  points: 1
+  story_id: US-PRJ-6
+  epic_id: null
+  tags: []
+- id: US-PRJ-60-1
+  title: 'Test: pm_tags tool lists all tags with usage counts'
+  type: task
+  status: todo
+  points: null
+  story_id: US-PRJ-60
+  epic_id: null
+  tags: []
+- id: US-PRJ-60-2
+  title: 'Test: pm_rename_tag tool renames a tag across all items'
+  type: task
+  status: todo
+  points: null
+  story_id: US-PRJ-60
+  epic_id: null
+  tags: []
+- id: US-PRJ-60-3
+  title: 'Test: pm_export tool exports to JSON format'
+  type: task
+  status: todo
+  points: null
+  story_id: US-PRJ-60
+  epic_id: null
+  tags: []
+- id: US-PRJ-60-4
+  title: 'Test: All new tools have proper annotations and error handling'
+  type: task
+  status: todo
+  points: null
+  story_id: US-PRJ-60
+  epic_id: null
+  tags: []
+- id: US-PRJ-61-1
+  title: 'Test: All 6 cache test files committed and tracked'
+  type: task
+  status: todo
+  points: null
+  story_id: US-PRJ-61
+  epic_id: null
+  tags: []
+- id: US-PRJ-61-2
+  title: 'Test: Tests pass in CI'
+  type: task
+  status: todo
+  points: null
+  story_id: US-PRJ-61
+  epic_id: null
+  tags: []
+- id: US-PRJ-61-3
+  title: 'Test: No duplicate test names or conflicts'
+  type: task
+  status: todo
+  points: null
+  story_id: US-PRJ-61
+  epic_id: null
+  tags: []
+- id: US-PRJ-62-1
+  title: 'Test: test_search.py created with direct keyword_search tests'
+  type: task
+  status: todo
+  points: null
+  story_id: US-PRJ-62
+  epic_id: null
+  tags: []
+- id: US-PRJ-62-2
+  title: 'Test: Snippet generation tested with various content lengths'
+  type: task
+  status: todo
+  points: null
+  story_id: US-PRJ-62
+  epic_id: null
+  tags: []
+- id: US-PRJ-62-3
+  title: 'Test: Score calculation verified (title match vs content match)'
+  type: task
+  status: todo
+  points: null
+  story_id: US-PRJ-62
+  epic_id: null
+  tags: []
+- id: US-PRJ-62-4
+  title: 'Test: Empty results and case-insensitive matching tested'
+  type: task
+  status: todo
+  points: null
+  story_id: US-PRJ-62
+  epic_id: null
+  tags: []
+- id: US-PRJ-63-1
+  title: 'Test: test_performance_n1.py created'
+  type: task
+  status: todo
+  points: null
+  story_id: US-PRJ-63
+  epic_id: null
+  tags: []
+- id: US-PRJ-63-2
+  title: 'Test: Tests verify pm_board uses batch loads not per-task fetches'
+  type: task
+  status: todo
+  points: null
+  story_id: US-PRJ-63
+  epic_id: null
+  tags: []
+- id: US-PRJ-63-3
+  title: 'Test: Tests verify pm_epic uses single list_tasks call'
+  type: task
+  status: todo
+  points: null
+  story_id: US-PRJ-63
+  epic_id: null
+  tags: []
+- id: US-PRJ-63-4
+  title: 'Test: Tests verify pm_search tag filter uses batch metadata loading'
+  type: task
+  status: todo
+  points: null
+  story_id: US-PRJ-63
+  epic_id: null
+  tags: []
+- id: US-PRJ-64-1
+  title: 'Test: Estimator tests cover empty history edge case'
+  type: task
+  status: todo
+  points: null
+  story_id: US-PRJ-64
+  epic_id: null
+  tags: []
+- id: US-PRJ-64-2
+  title: 'Test: Large history (20+ items) tested'
+  type: task
+  status: todo
+  points: null
+  story_id: US-PRJ-64
+  epic_id: null
+  tags: []
+- id: US-PRJ-64-3
+  title: 'Test: Mixed status combinations tested'
+  type: task
+  status: todo
+  points: null
+  story_id: US-PRJ-64
+  epic_id: null
+  tags: []
+- id: US-PRJ-64-4
+  title: 'Test: Error conditions tested'
+  type: task
+  status: todo
+  points: null
+  story_id: US-PRJ-64
+  epic_id: null
+  tags: []
+- id: US-PRJ-7-1
+  title: 'Test: Subproject changes create feature branches not direct commits to deploy'
+  type: task
+  status: done
+  points: 3
+  story_id: US-PRJ-7
+  epic_id: null
+  tags: []
+- id: US-PRJ-7-10
+  title: Add deploy branch protection validation
+  type: task
+  status: done
+  points: 2
+  story_id: US-PRJ-7
+  epic_id: null
+  tags: []
+- id: US-PRJ-7-11
+  title: Write tests for PR workflow end-to-end
+  type: task
+  status: done
+  points: 3
+  story_id: US-PRJ-7
+  epic_id: null
+  tags: []
+- id: US-PRJ-7-2
+  title: 'Test: PR creation integrated into workflow (gh cli)'
+  type: task
+  status: done
+  points: 2
+  story_id: US-PRJ-7
+  epic_id: null
+  tags: []
+- id: US-PRJ-7-3
+  title: 'Test: Hub only updates refs after PRs are merged'
+  type: task
+  status: done
+  points: 3
+  story_id: US-PRJ-7
+  epic_id: null
+  tags: []
+- id: US-PRJ-7-4
+  title: 'Test: Deploy branch is protected from direct pushes'
+  type: task
+  status: done
+  points: 2
+  story_id: US-PRJ-7
+  epic_id: null
+  tags: []
+- id: US-PRJ-7-5
+  title: 'Test: Workflow supports simultaneous PRs across multiple subprojects'
+  type: task
+  status: done
+  points: 3
+  story_id: US-PRJ-7
+  epic_id: null
+  tags: []
+- id: US-PRJ-7-6
+  title: Add deploy_branch config to per-subproject config.yaml
+  type: task
+  status: done
+  points: 2
+  story_id: US-PRJ-7
+  epic_id: null
+  tags: []
+- id: US-PRJ-7-7
+  title: Implement create_feature_branch() for task-linked branching
+  type: task
+  status: done
+  points: 2
+  story_id: US-PRJ-7
+  epic_id: null
+  tags: []
+- id: US-PRJ-7-8
+  title: Implement create_pr() wrapping gh cli for subproject PRs
+  type: task
+  status: done
+  points: 3
+  story_id: US-PRJ-7
+  epic_id: null
+  tags: []
+- id: US-PRJ-7-9
+  title: Implement update_hub_refs_after_merge() for post-PR hub sync
+  type: task
+  status: done
+  points: 3
+  story_id: US-PRJ-7
+  epic_id: null
+  tags: []
+- id: US-PRJ-8-1
+  title: 'Test: Single command shows git state of all N submodules'
+  type: task
+  status: done
+  points: 3
+  story_id: US-PRJ-8
+  epic_id: null
+  tags: []
+- id: US-PRJ-8-2
+  title: 'Test: Shows branch/dirty/ahead-behind/PR status per repo'
+  type: task
+  status: done
+  points: 3
+  story_id: US-PRJ-8
+  epic_id: null
+  tags: []
+- id: US-PRJ-8-3
+  title: 'Test: Highlights mismatches and issues'
+  type: task
+  status: done
+  points: 2
+  story_id: US-PRJ-8
+  epic_id: null
+  tags: []
+- id: US-PRJ-8-4
+  title: 'Test: Scales to 20+ submodules without clutter'
+  type: task
+  status: done
+  points: 2
+  story_id: US-PRJ-8
+  epic_id: null
+  tags: []
+- id: US-PRJ-8-5
+  title: Implement git_status_all() core data collection
+  type: task
+  status: done
+  points: 3
+  story_id: US-PRJ-8
+  epic_id: null
+  tags: []
+- id: US-PRJ-8-6
+  title: Add PR status collection via gh cli
+  type: task
+  status: done
+  points: 2
+  story_id: US-PRJ-8
+  epic_id: null
+  tags: []
+- id: US-PRJ-8-7
+  title: Add formatted CLI output with attention-priority sorting
+  type: task
+  status: done
+  points: 2
+  story_id: US-PRJ-8
+  epic_id: null
+  tags: []
+- id: US-PRJ-8-8
+  title: Add pm_git_status MCP tool and /pm routing
+  type: task
+  status: done
+  points: 2
+  story_id: US-PRJ-8
+  epic_id: null
+  tags: []
+- id: US-PRJ-8-9
+  title: Write tests for git status dashboard
+  type: task
+  status: done
+  points: 2
+  story_id: US-PRJ-8
+  epic_id: null
+  tags: []
+- id: US-PRJ-9-1
+  title: 'Test: Deploy branch configurable per subproject in config'
+  type: task
+  status: todo
+  points: null
+  story_id: US-PRJ-9
+  epic_id: null
+  tags: []
+- id: US-PRJ-9-10
+  title: Write tests for conventions config and validation
+  type: task
+  status: todo
+  points: 2
+  story_id: US-PRJ-9
+  epic_id: null
+  tags: []
+- id: US-PRJ-9-2
+  title: 'Test: Feature branch naming convention enforced on create'
+  type: task
+  status: todo
+  points: null
+  story_id: US-PRJ-9
+  epic_id: null
+  tags: []
+- id: US-PRJ-9-3
+  title: 'Test: Direct pushes to deploy branch blocked'
+  type: task
+  status: todo
+  points: null
+  story_id: US-PRJ-9
+  epic_id: null
+  tags: []
+- id: US-PRJ-9-4
+  title: 'Test: Convention violations produce clear error messages'
+  type: task
+  status: todo
+  points: null
+  story_id: US-PRJ-9
+  epic_id: null
+  tags: []
+- id: US-PRJ-9-5
+  title: 'Test: Conventions stored in hub config and shared'
+  type: task
+  status: todo
+  points: null
+  story_id: US-PRJ-9
+  epic_id: null
+  tags: []
+- id: US-PRJ-9-6
+  title: Add hub-level conventions config schema
+  type: task
+  status: todo
+  points: 2
+  story_id: US-PRJ-9
+  epic_id: null
+  tags: []
+- id: US-PRJ-9-7
+  title: Implement validate_conventions() unified checker
+  type: task
+  status: todo
+  points: 3
+  story_id: US-PRJ-9
+  epic_id: null
+  tags: []
+- id: US-PRJ-9-8
+  title: Add commit message formatting helpers
+  type: task
+  status: todo
+  points: 1
+  story_id: US-PRJ-9
+  epic_id: null
+  tags: []
+- id: US-PRJ-9-9
+  title: Wire convention checks into existing operations
+  type: task
+  status: todo
+  points: 2
+  story_id: US-PRJ-9
+  epic_id: null
+  tags: []
+total_points: 665
+completed_points: 504
+story_count: 64
+task_count: 372
+epic_count: 12
