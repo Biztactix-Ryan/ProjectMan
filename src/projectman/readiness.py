@@ -6,19 +6,32 @@ from .store import Store
 
 
 def check_readiness(
-    task_meta: TaskFrontmatter, task_body: str, store: Store
+    task_meta: TaskFrontmatter,
+    task_body: str,
+    store: Store,
+    reclaim_for: str | None = None,
 ) -> dict:
     """Check if a task meets the Definition of Ready.
+
+    reclaim_for: assignee allowed to re-claim their own task — when the task
+    is already assigned to this name and is todo or in-progress, the status
+    and assignee gates pass so a repeated grab is idempotent.
 
     Returns: {"ready": bool, "blockers": list[str], "warnings": list[str]}
     """
     blockers = []
     warnings = []
 
+    reclaiming = (
+        reclaim_for is not None
+        and task_meta.assignee == reclaim_for
+        and task_meta.status in (TaskStatus.todo, TaskStatus.in_progress)
+    )
+
     # Hard gates
-    if task_meta.status != TaskStatus.todo:
+    if task_meta.status != TaskStatus.todo and not reclaiming:
         blockers.append(f"status is '{task_meta.status.value}', not 'todo'")
-    if task_meta.assignee is not None:
+    if task_meta.assignee is not None and not reclaiming:
         blockers.append(f"already assigned to '{task_meta.assignee}'")
     if task_meta.points is None:
         blockers.append("no point estimate")

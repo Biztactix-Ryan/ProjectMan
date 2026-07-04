@@ -964,11 +964,19 @@ class Store:
         old_body = post.content
         old_meta = dict(post.metadata)
 
+        # Empty-string assignee means "unassign" (MCP optional params can't
+        # express None-as-a-value); applied to metadata directly below.
+        unassign = kwargs.get("assignee") == ""
+        if unassign:
+            kwargs["assignee"] = None
+
         # Capture field info for auto-commit message before modifying kwargs
         commit_parts = []
         for k, v in kwargs.items():
             if v is not None:
                 commit_parts.append(f"{k}={v}" if k != "body" else "body")
+        if unassign:
+            commit_parts.append("assignee=none")
 
         # Pop run-log fields — they don't go into frontmatter
         outcome = kwargs.pop("outcome", None)
@@ -995,6 +1003,8 @@ class Store:
         for key, value in kwargs.items():
             if value is not None:
                 post.metadata[key] = value
+        if unassign:
+            post.metadata["assignee"] = None
         post.metadata["updated"] = date.today().isoformat()
 
         if is_epic:
@@ -1029,6 +1039,8 @@ class Store:
 
         # Build before/after field diffs for activity log
         changes: dict[str, dict] = {}
+        if unassign and old_meta.get("assignee") is not None:
+            changes["assignee"] = {"before": old_meta.get("assignee"), "after": None}
         for key, value in kwargs.items():
             if value is not None:
                 before = old_meta.get(key)

@@ -1078,7 +1078,7 @@ def pm_update(
         status: New status (epics: draft/active/done/archived; stories: backlog/ready/active/done/archived; tasks: todo/in-progress/review/done/blocked)
         points: New point estimate (fibonacci: 1,2,3,5,8,13)
         title: New title
-        assignee: Assignee name (tasks only)
+        assignee: Assignee name (tasks only); pass "" to unassign
         epic_id: Link a story to an epic (stories only)
         body: New markdown body/description content
         acceptance_criteria: Comma-separated acceptance criteria (stories only, e.g. "Users can log in,Error shown on invalid password")
@@ -1195,8 +1195,8 @@ def _do_grab(store, task_id: str, assignee: str, include_story: bool) -> dict:
 
     task_meta, task_body = store.get_task(task_id)
 
-    # Validate readiness
-    readiness = check_readiness(task_meta, task_body, store)
+    # Validate readiness (re-claiming your own task is idempotent)
+    readiness = check_readiness(task_meta, task_body, store, reclaim_for=assignee)
     if not readiness["ready"]:
         return {
             "error": "task is not ready to grab",
@@ -1207,15 +1207,16 @@ def _do_grab(store, task_id: str, assignee: str, include_story: bool) -> dict:
     old_status = task_meta.status.value
     store.update(task_id, assignee=assignee, status="in-progress")
     write_index(store)
-    _emit(
-        "task.status_update",
-        {
-            "taskId": task_id,
-            "oldStatus": old_status,
-            "newStatus": "in-progress",
-            "storyId": task_meta.story_id,
-        },
-    )
+    if old_status != "in-progress":
+        _emit(
+            "task.status_update",
+            {
+                "taskId": task_id,
+                "oldStatus": old_status,
+                "newStatus": "in-progress",
+                "storyId": task_meta.story_id,
+            },
+        )
 
     # Re-read updated task
     task_meta, task_body = store.get_task(task_id)
@@ -1308,6 +1309,9 @@ def pm_grab(
     project: Optional[str] = None,
 ) -> str:
     """Claim a task — validates readiness, assigns, sets in-progress, loads context.
+
+    Re-claiming a task already assigned to the same assignee (e.g. pre-claimed
+    by an orchestrator via pm_done_next) succeeds and returns the same payload.
 
     Args:
         task_id: Task ID to claim (e.g. US-PRJ-1-1)
