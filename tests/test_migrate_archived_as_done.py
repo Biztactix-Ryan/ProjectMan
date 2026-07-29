@@ -353,6 +353,82 @@ class TestIdempotency:
         assert "no archived-as-done tasks found" in format_report(report)
 
 
+# ─── a realistic multi-task project, built deterministically ──────────
+
+
+class TestAgainstARealisticProject:
+    """The identification rules against a project with mixed history.
+
+    This class used to run against a *copy* of this repo's own ``.project/``
+    directory and assert set-equality with a hardcoded pair of task ids
+    (``US-PM-1-1``, ``US-PM-2-1``).  That coupled a unit test to live project
+    data: closing any unrelated task straight from ``todo`` to ``done`` added a
+    candidate and broke the equality, which is exactly what happened when a
+    ``/pm audit`` pass closed four stale placeholder tasks.  The fixture below
+    reproduces the same *shape* of history — several genuinely finished tasks,
+    two legacy archives, a re-open, and a blocked-prior archive — without
+    depending on data that legitimately changes.
+    """
+
+    @pytest.fixture
+    def realistic(self, tmp_project):
+        _cache.clear()
+        store = Store(tmp_project)
+
+        # Genuinely finished work: picked up, then completed.
+        self.genuine = [
+            _genuinely_complete(store, _make_task(store, f"Real {n}"))
+            for n in range(1, 6)
+        ]
+        # Archived under the old behaviour, from the two never-started statuses.
+        self.legacy_todo = _legacy_archive(store, _make_task(store, "Legacy todo"))
+        self.legacy_blocked = _legacy_archive(
+            store, _make_task(store, "Legacy blocked"), from_status="blocked"
+        )
+        # Archived, then re-opened and genuinely finished — must be skipped.
+        self.reopened = _legacy_archive(store, _make_task(store, "Reopened"))
+        store.update(self.reopened, status="in-progress")
+        store.update(self.reopened, status="done")
+        _cache.clear()
+        return store
+
+    LEGACY = property(lambda self: {self.legacy_todo, self.legacy_blocked})
+
+    def test_finds_exactly_the_legacy_archives(self, realistic):
+        report = find_archived_as_done(realistic)
+        assert {c.task_id for c in report.candidates} == self.LEGACY
+
+    def test_restores_each_to_the_status_it_held(self, realistic):
+        report = find_archived_as_done(realistic)
+        prior = {c.task_id: c.prior_status for c in report.candidates}
+        assert prior[self.legacy_todo] == "todo"
+        assert prior[self.legacy_blocked] == "blocked"
+
+    def test_genuinely_done_tasks_are_left_alone(self, realistic):
+        report = find_archived_as_done(realistic)
+        flagged = {c.task_id for c in report.candidates}
+        assert flagged.isdisjoint(self.genuine)
+        assert report.examined > len(self.LEGACY)
+        assert report.needs_review == []
+
+    def test_reopened_task_is_skipped_not_migrated(self, realistic):
+        report = find_archived_as_done(realistic)
+        assert self.reopened not in {c.task_id for c in report.candidates}
+        assert self.reopened in {s.task_id for s in report.skipped}
+
+    def test_apply_migrates_only_the_legacy_archives(self, realistic):
+        done_before = {t.id for t in realistic.list_tasks(status="done")}
+        report = migrate_archived_as_done(realistic, apply=True)
+        assert set(report.migrated) == self.LEGACY
+        _cache.clear()
+        done_after = {t.id for t in realistic.list_tasks(status="done")}
+        assert done_before - done_after == self.LEGACY
+
+    def test_apply_is_idempotent(self, realistic):
+        migrate_archived_as_done(realistic, apply=True)
+        assert migrate_archived_as_done(realistic, apply=True).migrated == []
+
+
 # ─── this repository's real data, against a copy ──────────────────────
 
 
@@ -364,60 +440,40 @@ REAL_PROJECT = Path(__file__).resolve().parents[1] / ".project"
     reason="this repo's own .project/ data is not present",
 )
 class TestAgainstACopyOfThisProject:
-    """US-PM-1-1 and US-PM-2-1 were archived under the old behaviour.
+    """Smoke-check the migration against real, messy project data.
 
-    The live ``.project/`` directory is never touched — everything runs on a
-    copy in tmp_path.
+    Deliberately makes no claim about *which* tasks are candidates — that set
+    changes as the project is worked, and pinning it is what made the previous
+    version of this class brittle.  What is asserted here is invariant: the
+    live directory is never written, and every candidate is a shape the
+    migration is allowed to act on.
     """
-
-    KNOWN = {"US-PM-1-1", "US-PM-2-1"}
 
     @pytest.fixture
     def real_copy(self, tmp_path):
         _cache.clear()
         shutil.copytree(REAL_PROJECT, tmp_path / ".project")
-        store = Store(tmp_path)
-        done_unarchived = {
-            t.id
-            for t in store.list_tasks(status="done")
-            if not getattr(t, "archived", False)
-        }
-        if not self.KNOWN <= done_unarchived:
-            pytest.skip("the known archived-as-done tasks have already been fixed")
-        return store
+        return Store(tmp_path)
 
-    def test_finds_exactly_the_known_archived_tasks(self, real_copy):
+    def test_every_candidate_has_a_never_started_prior_status(self, real_copy):
         report = find_archived_as_done(real_copy)
-        assert {c.task_id for c in report.candidates} == self.KNOWN
+        assert {c.prior_status for c in report.candidates} <= {"todo", "blocked"}
 
-    def test_would_restore_both_to_todo(self, real_copy):
-        report = find_archived_as_done(real_copy)
-        assert {c.prior_status for c in report.candidates} == {"todo"}
+    def test_nothing_needs_review(self, real_copy):
+        assert find_archived_as_done(real_copy).needs_review == []
 
-    def test_dozens_of_genuinely_done_tasks_are_left_alone(self, real_copy):
-        report = find_archived_as_done(real_copy)
-        assert report.examined > len(self.KNOWN)
-        assert report.needs_review == []
-
-    def test_apply_on_the_copy_migrates_only_those_two(self, real_copy):
-        done_before = {t.id for t in real_copy.list_tasks(status="done")}
-        report = migrate_archived_as_done(real_copy, apply=True)
-        assert set(report.migrated) == self.KNOWN
-        _cache.clear()
-        done_after = {t.id for t in real_copy.list_tasks(status="done")}
-        assert done_before - done_after == self.KNOWN
-
-    def test_apply_on_the_copy_is_idempotent(self, real_copy):
+    def test_apply_is_idempotent_on_real_data(self, real_copy):
         migrate_archived_as_done(real_copy, apply=True)
         assert migrate_archived_as_done(real_copy, apply=True).migrated == []
 
     def test_live_project_directory_is_never_written(self, real_copy):
         """Belt and braces: the copy is what changed, not the repo."""
+        before = {
+            p.name: p.read_text() for p in (REAL_PROJECT / "tasks").glob("*.md")
+        }
         migrate_archived_as_done(real_copy, apply=True)
-        for task_id in self.KNOWN:
-            live = frontmatter.load(str(REAL_PROJECT / "tasks" / f"{task_id}.md"))
-            assert live.metadata["status"] == "done"
-            assert live.metadata.get("archived", False) is False
+        after = {p.name: p.read_text() for p in (REAL_PROJECT / "tasks").glob("*.md")}
+        assert before == after
 
 
 # ─── the CLI surface ──────────────────────────────────────────────────
