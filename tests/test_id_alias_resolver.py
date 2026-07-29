@@ -292,6 +292,10 @@ WIRED = [
     Wired("pm_run_log", "id", "task_id", "US-TST-1-1", echoes=False),
     # canonical typed name → `id`
     Wired("pm_grab", "task_id", "id", "US-TST-1-1", alias_ident="US-TST-1-2"),
+    # Completing a task twice is idempotent, but the *second* spelling must
+    # still find a task to complete — so it is pointed at a second task, as
+    # for the other mutating tools.
+    Wired("pm_done_next", "task_id", "id", "US-TST-1-1", alias_ident="US-TST-1-2"),
     Wired("pm_get_sprint", "sprint_id", "id", "SPRINT-TST-1", other="SPRINT-TST-9"),
     Wired("pm_update_sprint", "sprint_id", "id", "SPRINT-TST-1", other="SPRINT-TST-9"),
     Wired("pm_activity", "item_id", "id", "US-TST-1", other="US-TST-9", optional=True),
@@ -774,15 +778,17 @@ def test_the_human_docs_agree_with_the_docstrings_about_every_alias():
     conclude fourteen tools do not have one.  Every aliased tool must carry the
     same ``(alias: X)`` marker there as in its docstring.
 
-    ``UNDOCUMENTED_TOOLS`` is asserted *exactly*, not skipped: those two tools
-    have no section in the file at all — a pre-existing gap, wider than this
-    story — and pinning the set means the day someone writes their section
-    without the marker, this fails rather than passing on an exemption.
+    ``UNDOCUMENTED_TOOLS`` is asserted *exactly*, not skipped: a tool with no
+    section in the file at all is a documentation gap wider than this story, and
+    pinning the set means the day someone writes its section without the marker,
+    this fails rather than passing on an exemption.  It is empty now — the
+    ``pm_get_sprint`` / ``pm_update_sprint`` sections that were missing have
+    since been written, and carry the marker.
     """
     import pathlib
 
-    #: Aliased tools the reference does not document at all (pre-existing).
-    UNDOCUMENTED_TOOLS = {"pm_get_sprint", "pm_update_sprint"}
+    #: Aliased tools the reference does not document at all.
+    UNDOCUMENTED_TOOLS: set[str] = set()
 
     docs = pathlib.Path(__file__).resolve().parents[1] / "docs/reference/mcp-tools.md"
     text = docs.read_text()
@@ -1626,6 +1632,7 @@ CONFLICT_PAIR = {
     "pm_scope": (ALPHA_STORY, BETA_STORY),
     "pm_run_log": (ALPHA_TASK, BETA_TASK),
     "pm_grab": (ALPHA_TASK, BETA_TASK),
+    "pm_done_next": (ALPHA_TASK, BETA_TASK),
     "pm_get_sprint": (ALPHA_SPRINT, BETA_SPRINT),
     "pm_update_sprint": (ALPHA_SPRINT, BETA_SPRINT),
     "pm_activity": (ALPHA_TASK, BETA_TASK),
@@ -1648,6 +1655,9 @@ CONFLICT_EXTRA = {
     },
     "pm_update_sprint": {"status": "active", "goal": "MUST NEVER BE WRITTEN"},
     "pm_changeset_add_project": {"name": "gamma"},
+    # Completes the task *and* files a run-log entry, so a resolver that ran
+    # late would leave two separate traces behind.
+    "pm_done_next": {"outcome": "success", "note": "MUST NEVER BE FILED"},
 }
 
 #: The wired tools that write.  Kept honest from two sides: the guard below
@@ -1659,6 +1669,7 @@ MUTATING = [
     "pm_update",
     "pm_archive",
     "pm_grab",
+    "pm_done_next",
     "pm_update_sprint",
     "pm_changeset_add_project",
     "pm_changeset_push",

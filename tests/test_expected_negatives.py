@@ -736,21 +736,52 @@ def test_already_correct_negatives_from_the_real_tools_are_not_failures(tmp_proj
     assert report.successes == report.total == len(bodies)
 
 
-# ------------------------------------------------ pm_done_next: deferred --
+# -------------------------------------------------- pm_done_next: landed --
 
 
-def test_pm_done_next_does_not_exist_in_this_checkout():
-    """Half of this task's body cannot be executed here -- proven, not assumed.
+def test_pm_done_next_with_no_next_task_is_a_success(tmp_project):
+    """US-PM-2-6's second site, now that the tool is in this checkout.
 
-    US-PM-2-6 asks for ``pm_done_next`` with no next task. The tool was added
-    upstream; this checkout is v0.8.9 and 12 commits behind. See
-    ``docs/reference/error-paths-inventory.md`` 7.1. Deleting this test is the
-    signal that the port has landed and the assertion below must be replaced
-    with a real call.
+    This test replaces the one that proved ``pm_done_next`` was absent (the
+    checkout was 12 commits behind; see ``docs/reference/error-paths-inventory.md``
+    7.1).  The shape asserted here is the one
+    :func:`test_the_shape_pm_done_next_must_adopt_is_already_valid` pinned in
+    advance of the port, driven for real against the only task in the project.
     """
-    import projectman.server as server
+    from projectman.server import pm_done_next, pm_grab
 
-    assert not hasattr(server, "pm_done_next")
+    _story_with_task()
+    pm_grab("US-TST-1-1")
+
+    body = pm_done_next("US-TST-1-1", note="did it")
+    data = assert_expected_negative(body, "no_next_task")
+    assert data["message"] == "no ready task follows US-TST-1-1"
+    # Completing the task is not the part that had no answer -- the work the
+    # call actually did survives alongside the negative.
+    assert data["completed"] == {
+        "id": "US-TST-1-1",
+        "status": "done",
+        "run_log": "success",
+    }
+    assert data["next"] is None
+    assert "see pm_board" in data["next_info"]
+    assert_not_a_failure("pm_done_next", body)
+
+
+def test_pm_done_next_no_next_task_is_not_counted_as_a_soft_error(tmp_project):
+    """The instrument agrees, at the corpus rate this epic is judged on.
+
+    89 of 413 observed ``pm_done_next`` calls ended this way -- the highest-
+    traffic negative of any tool -- so it is the single largest contributor to
+    the measured soft-error rate if it is scored wrong.
+    """
+    from projectman.server import pm_done_next, pm_grab
+
+    _story_with_task()
+    pm_grab("US-TST-1-1")
+    body = pm_done_next("US-TST-1-1")
+
+    assert classify_corpus([("pm_done_next", body)] * 89).failure_rate == 0.0
 
 
 def test_the_shape_pm_done_next_must_adopt_is_already_valid():

@@ -68,6 +68,21 @@ def _clear_store_cache():
     _store_cache.clear()
 
 
+def _redump(payload_dict) -> str:
+    """Re-render a parsed payload the way the server rendered the real one.
+
+    ``TestPayloadSize`` measures a byte *delta*, so the reconstruction must use
+    the server's own dumper.  ``yaml.dump``'s defaults differ from it in two
+    ways that both cost bytes — ``width=80`` folds long scalars (a task body
+    wraps, adding an indent per continuation line) and ``allow_unicode=False``
+    escapes an em-dash to six ASCII bytes — and either one would be counted as
+    part of the warnings-block saving.
+    """
+    from projectman.server import _yaml_dump
+
+    return _yaml_dump(payload_dict)
+
+
 def _grab_payload(tmp_project, monkeypatch, body=PROSE_BODY, points=2, n=1):
     """Create ``n`` tasks the normal way and return the pm_grab payload of #1."""
     monkeypatch.chdir(tmp_project)
@@ -181,7 +196,7 @@ class TestPayloadSize:
         assert "warnings" not in parsed["grabbed"]
 
         old = {"grabbed": {**parsed["grabbed"], "warnings": list(SUPPRESSED)}}
-        old_payload = yaml.dump(old, default_flow_style=False, sort_keys=False)
+        old_payload = _redump(old)
 
         saved = len(old_payload.encode()) - len(payload.encode())
         assert saved == 131, f"expected a 131-byte drop, measured {saved}"
@@ -193,7 +208,7 @@ class TestPayloadSize:
         parsed = yaml.safe_load(payload)
 
         empty = {"grabbed": {**parsed["grabbed"], "warnings": []}}
-        empty_payload = yaml.dump(empty, default_flow_style=False, sort_keys=False)
+        empty_payload = _redump(empty)
 
         assert len(payload.encode()) < len(empty_payload.encode())
 
@@ -249,7 +264,7 @@ class TestPayloadSize:
                     "warnings": list(SUPPRESSED) + (surviving or []),
                 }
             }
-            old_payload = yaml.dump(old, default_flow_style=False, sort_keys=False)
+            old_payload = _redump(old)
 
             saved = len(old_payload.encode()) - len(payload.encode())
             assert saved > 0, f"US-TST-1-{i + 1} saved nothing"
@@ -723,6 +738,10 @@ class TestPmGetNeverCarriedTheWarnings:
         If a second surface ever starts putting ``readiness["warnings"]`` into
         a response, this fails and names it — which is the event that would
         make the pm_get half of the criterion meetable after all.
+
+        The function is ``_do_grab``, the helper ``pm_grab`` and ``pm_done_next``
+        both delegate to: still exactly one expression, and still reachable only
+        from a grab.
         """
         import projectman
 
@@ -745,9 +764,9 @@ class TestPmGetNeverCarriedTheWarnings:
                         emitters.append(node.name)
                         break
 
-        assert sorted(set(emitters)) == ["pm_grab"], (
+        assert sorted(set(emitters)) == ["_do_grab"], (
             "the set of functions reading readiness['warnings'] changed; "
-            f"expected only pm_grab, found {sorted(set(emitters))}"
+            f"expected only _do_grab, found {sorted(set(emitters))}"
         )
 
     def test_no_call_path_from_pm_get_reaches_check_readiness(self):
@@ -788,9 +807,13 @@ class TestPmGetNeverCarriedTheWarnings:
         calls = []
         original = readiness.check_readiness
 
-        def counting(meta, body, store):
+        # ``*args, **kwargs`` rather than the three positionals: ``_do_grab``
+        # passes ``reclaim_for=`` and a future caller may pass more, and a
+        # signature mismatch here would surface as a tool error rather than as
+        # the miscount this test exists to catch.
+        def counting(meta, body, store, *args, **kwargs):
             calls.append(meta.id)
-            return original(meta, body, store)
+            return original(meta, body, store, *args, **kwargs)
 
         monkeypatch.setattr(readiness, "check_readiness", counting)
 

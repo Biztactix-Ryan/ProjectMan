@@ -282,6 +282,9 @@ class TestResponseSize:
     def test_note_that_fits_costs_no_extra_bytes(self, task):
         from projectman.server import pm_update
 
+        # ``outcome`` is held constant: it is echoed back as ``run_log``, so
+        # dropping it from the control would measure that echo rather than the
+        # note.  The note is the only thing that differs between the two calls.
         with_note = pm_update(task, status="done", outcome="success", note="ok")
-        without_note = pm_update(task, status="done")
+        without_note = pm_update(task, status="done", outcome="success")
         assert len(with_note) == len(without_note)

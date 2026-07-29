@@ -387,30 +387,30 @@ deliberately. US-PM-2-6 should assert it stays one.
 
 ## 7. Port-forward notes
 
-This checkout is v0.8.9 and 12 commits behind `origin/main`. Two error paths
-exist upstream but not here, and need the same treatment when these changes are
-ported forward.
+Written when this checkout was v0.8.9 and 12 commits behind `origin/main`: two
+error paths existed upstream but not here, and needed the same treatment when
+these changes were ported forward. §7.1 has since been ported — see its status
+list for the one item still outstanding.
 
-### 7.1 `pm_done_next`
+### 7.1 `pm_done_next` — **ported, one item outstanding**
 
-**Does not exist in this checkout.** Upstream it is the highest-traffic
+The tool has since landed in this checkout. It is the highest-traffic
 note-bearing entry point (426 calls in the corpus; 338 calls / 25.1% soft-error
 rate in the Study A study — the worst rate of any tool). It has its own copy
 of the `except Exception as e: return f"error: {e}"` handler and its own run-log
 note path.
 
-When porting:
+Status of the three items this section called for:
 
-- it must call `_note_truncation_fields()` and merge the result into its
-  response, exactly as `pm_update` does (already flagged in the docstring of
-  `server.py:69`);
-- its generic handler is a **GENUINE FAILURE** site and gets US-PM-2-3's
-  treatment;
-- if it carries a readiness check like `pm_grab`'s, that path is an **EXPECTED
-  NEGATIVE** and gets US-PM-2-4's treatment.
-
-US-PM-2-4's body references `pm_done_next`; this is why it cannot be completed
-in this checkout alone.
+- ❌ **outstanding** — it must call `_note_truncation_fields()` and merge the
+  result into its response, exactly as `pm_update` does (still flagged in that
+  helper's docstring). An oversized note is currently truncated with no flag on
+  the highest-traffic note-bearing tool.
+- ✅ its generic handler raises through `_failed()`, US-PM-2-3's treatment.
+- ✅ its "nothing ready follows" path is an **EXPECTED NEGATIVE** carrying
+  `status: no_next_task`, US-PM-2-4's treatment — the shape §7.1 predicted, and
+  the one `test_the_shape_pm_done_next_must_adopt_is_already_valid` pinned before
+  the port.
 
 ### 7.2 Multi-id `pm_get` per-item `error` key
 

@@ -151,8 +151,13 @@ def test_pm_batch_get_by_ids(tmp_project):
 
 
 def test_pm_batch_get_requires_type_or_ids(tmp_project):
+    """A genuine failure, so it raises rather than returning an ``error:`` body
+    the transport would score as a success (US-PM-2-3)."""
+    from mcp.server.fastmcp.exceptions import ToolError
     from projectman.server import pm_batch_get
-    assert pm_batch_get().startswith("error:")
+
+    with pytest.raises(ToolError, match="provide ids or type"):
+        pm_batch_get()
 
 
 # ─── pm_grab: include_story + open siblings only ─────────────────

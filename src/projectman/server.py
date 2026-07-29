@@ -84,10 +84,10 @@ def _note_truncation_fields(store: Store, note: Optional[str]) -> dict:
     docs/telemetry/baseline-pre-fix.md (median 341 bytes per call, and only
     ~13% of real notes exceed the old cap at all).
 
-    NOTE (port forward): ``pm_done_next`` does not exist in this checkout — it
-    was added upstream.  When these changes are ported onto a newer main,
-    ``pm_done_next`` must call this same helper and merge the result into its
-    response, since it is the higher-traffic note-bearing entry point.
+    OUTSTANDING (was inventory §7.1): ``pm_done_next`` has landed but does not
+    yet call this helper, so an oversized note to the higher-traffic note-bearing
+    entry point is still truncated silently.  It must merge the result into its
+    response exactly as ``pm_update`` does.
     """
     record = store.last_note_truncation if note is not None else None
     store.last_note_truncation = None
@@ -142,11 +142,10 @@ def _expected_negative(status: str, message: str, **detail) -> str:
     Nothing beyond the three fixed keys is added — response bytes are a tracked
     cost for this epic (docs/telemetry/baseline-pre-fix.md).
 
-    NOTE (port forward): ``pm_done_next`` does not exist in this checkout — it
-    was added upstream.  Its ``next: null`` result is the same kind of answer
-    (89 of 413 observed calls, carrying a ``next_info`` hint) and should adopt
-    this exact shape when ported: ``status: no_next_task`` with the hint kept
-    as a detail field.  See docs/reference/error-paths-inventory.md §7.1.
+    Ported (was inventory §7.1): ``pm_done_next``'s ``next: null`` result is the
+    same kind of answer (89 of 413 observed calls, carrying a ``next_info``
+    hint) and now carries this shape — ``status: no_next_task`` with the hint
+    kept as a detail field.  See docs/reference/error-paths-inventory.md §7.1.
     """
     return _yaml_dump(_expected_negative_payload(status, message, **detail))
 
@@ -188,11 +187,9 @@ def _failed(exc: Exception) -> ToolError:
     server-side logs.  For a failure detected without an exception, raise
     ``ToolError("...")`` directly.
 
-    NOTE (port forward): ``pm_done_next`` does not exist in this checkout — it
-    was added upstream and carries its own copy of the generic
-    ``except Exception as e: return f"error: {e}"`` handler.  That handler is a
-    GENUINE FAILURE site and must be converted to use this helper when these
-    changes are ported onto a newer main.  See
+    Ported (was inventory §7.1): ``pm_done_next``'s own copy of the generic
+    ``except Exception as e: return f"error: {e}"`` handler is a GENUINE FAILURE
+    site and now raises through this helper like every other one.  See
     docs/reference/error-paths-inventory.md 7.1.
     """
     return ToolError(str(exc) or exc.__class__.__name__)
@@ -566,7 +563,7 @@ def pm_batch_get(
                     items.append({"id": item_id, "error": str(e)})
             return _yaml_dump(items)
         if not type:
-            return "error: provide ids or type"
+            raise ToolError("provide ids or type")
         items = store.list_all(type)
         return _yaml_dump(items)
     except Exception as e:
@@ -1764,12 +1761,13 @@ def pm_grab(
     ),
 )
 def pm_done_next(
-    task_id: str,
+    task_id: Optional[str] = None,
     outcome: str = "success",
     note: Optional[str] = None,
     assignee: str = "claude",
     same_story_only: bool = False,
     project: Optional[str] = None,
+    id: Optional[str] = None,
 ) -> str:
     """Complete a task and claim the next ready one in a single call — use this instead of pm_update + pm_grab when working through tasks.
 
@@ -1778,18 +1776,25 @@ def pm_done_next(
     ready task — preferring siblings in the same story. The story body is only
     included when the next task belongs to a different story.
 
+    When nothing is ready to follow, the response is an expected negative —
+    `outcome: expected_negative` with `status: no_next_task` — not a failure:
+    the call did complete the task, and "none left" is a valid answer. `next`
+    is still present and null, with the `next_info` hint alongside it.
+
     Args:
-        task_id: Task ID just finished (e.g. US-PRJ-1-1)
+        task_id: Task ID just finished (e.g. US-PRJ-1-1) (alias: id)
         outcome: Run-log outcome for the completed task: success/partial/info (default success; only logged when note is given)
         note: Run-log note describing what was accomplished (max 1024 chars)
         assignee: Who claims the next task (default "claude")
         same_story_only: Only grab a next task from the same story; report and stop otherwise (default false)
         project: Optional project name (hub mode only)
+        id: Alias for task_id — either spelling works; passing both with different values is an error
     """
     try:
         from .deps import topological_sort
         from .readiness import check_readiness
 
+        task_id = _resolve_id("task_id", task_id, id=id)
         store = _store(project)
         task_meta, _ = store.get_task(task_id)
         story_id = task_meta.story_id
@@ -1883,12 +1888,23 @@ def pm_done_next(
         if next_grab:
             result["next"] = next_grab
         else:
+            # Expected negative, not a failure: the task really was completed,
+            # and "nothing follows it" is a valid answer to the second half of
+            # the question.  The discriminator leads the payload so a caller
+            # branches on it before reading anything else; the `next_info` hint
+            # is kept verbatim as detail.  See _expected_negative.
             scope_note = "in this story" if same_story_only else "in this project"
-            result["next"] = None
-            result["next_info"] = (
-                f"no ready unassigned tasks {scope_note} "
-                f"({len(candidates)} todo, {not_ready_count} blocked — see pm_board)"
-            )
+            result = {
+                **_expected_negative_payload(
+                    "no_next_task", f"no ready task follows {task_id}"
+                ),
+                **result,
+                "next": None,
+                "next_info": (
+                    f"no ready unassigned tasks {scope_note} "
+                    f"({len(candidates)} todo, {not_ready_count} blocked — see pm_board)"
+                ),
+            }
         return _yaml_dump(result)
     except Exception as e:
         raise _failed(e) from e

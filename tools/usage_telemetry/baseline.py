@@ -60,6 +60,10 @@ DEFAULT_OUT_DIR = "docs/telemetry"
 def _git(repo: Path, *args: str) -> str | None:
     """Read-only git query. ``None`` when git is absent or ``repo`` is not one.
 
+    A *successful* query that simply had nothing to say returns ``""``, not
+    ``None`` -- collapsing the two would make a clean tree indistinguishable from
+    an unreadable one, and ``git_provenance`` reports that difference.
+
     This module never writes git state -- capturing a baseline must not commit,
     stage or otherwise mutate the tree it is describing.
     """
@@ -75,7 +79,7 @@ def _git(repo: Path, *args: str) -> str | None:
         return None
     if proc.returncode != 0:
         return None
-    return proc.stdout.strip() or None
+    return proc.stdout.strip()
 
 
 def git_provenance(repo: Path) -> dict[str, Any]:
@@ -90,9 +94,13 @@ def git_provenance(repo: Path) -> dict[str, Any]:
     status = _git(repo, "status", "--porcelain")
     return {
         "repo": str(repo),
-        "commit": commit,
-        "branch": branch,
-        # None (not False) when git could not be read: unknown != clean.
+        # An empty answer to either of these means no usable value: keep the
+        # long-standing ``None`` for "unknown" rather than an empty string.
+        "commit": commit or None,
+        "branch": branch or None,
+        # None (not False) when git could not be read: unknown != clean.  An
+        # empty porcelain listing is a read that succeeded and found nothing,
+        # which is exactly what "clean" means.
         "dirty": None if status is None else bool(status),
     }
 

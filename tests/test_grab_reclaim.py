@@ -51,7 +51,9 @@ def test_pm_grab_still_blocks_other_assignee(tmp_project):
     _story_with_tasks(1)
     pm_grab("US-TST-1-1")
     result = yaml.safe_load(pm_grab("US-TST-1-1", assignee="bob"))
-    assert result["error"] == "task is not ready to grab"
+    # An expected negative, not a failure — see server._expected_negative.
+    assert result["status"] == "not_ready"
+    assert result["message"] == "task is not ready to grab"
     assert any("already assigned to 'claude'" in b for b in result["blockers"])
 
 
@@ -73,7 +75,8 @@ def test_pm_grab_blocks_done_task_even_for_same_assignee(tmp_project):
     pm_grab("US-TST-1-1")
     pm_update("US-TST-1-1", status="done")
     result = yaml.safe_load(pm_grab("US-TST-1-1"))
-    assert result["error"] == "task is not ready to grab"
+    assert result["status"] == "not_ready"
+    assert result["message"] == "task is not ready to grab"
 
 
 def test_done_next_pre_claim_then_worker_grab(tmp_project):

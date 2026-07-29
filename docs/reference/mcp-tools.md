@@ -176,11 +176,12 @@ Claim a task with readiness validation.
 
 ### pm_done_next(task_id, outcome?, note?, assignee?, same_story_only?)
 Complete a task and claim the next ready one in a single call — the loop primitive for working through tasks.
+- **task_id**: Task ID just finished (e.g. `US-PRJ-1-1`) (alias: `id`)
 - Marks `task_id` done; appends a run-log entry when `note` is given (`outcome` defaults to `success`)
 - Closes the parent story automatically if this was its last open task (`story_closed` in the response)
 - Grabs the next ready unassigned task — same-story siblings first (topological order), then other stories by priority. The story body is only included when the next task belongs to a different story.
 - **same_story_only** (optional, default `false`): Stop instead of crossing to another story
-- **Returns**: `completed` summary, optional `story_closed`, and `next` (a full grab payload, or `null` with `next_info` when nothing is ready)
+- **Returns**: `completed` summary, optional `story_closed`, and `next` (a full grab payload). When nothing is ready the response is an expected negative — `{outcome: expected_negative, status: no_next_task, message, completed, next: null, next_info}` — the task was still completed; only the second half of the question has no answer.
 
 ### pm_update_doc(doc, content, project?)
 Update a project documentation file.
@@ -200,7 +201,7 @@ Create a sprint with a name, goal, dates, and planned stories.
 
 ### pm_get_sprint(sprint_id, project?)
 View sprint details with live progress per story.
-- **sprint_id**: Sprint ID (e.g. `SPRINT-PRJ-1`)
+- **sprint_id**: Sprint ID (e.g. `SPRINT-PRJ-1`) (alias: `id`)
 - **Returns**: Sprint metadata plus per-story rollup (task counts, points completed vs. remaining)
 
 ### pm_list_sprints(status?, project?)
@@ -210,7 +211,7 @@ List sprints, optionally filtered by status.
 
 ### pm_update_sprint(sprint_id, name?, status?, goal?, start_date?, end_date?, planned_stories?, project?)
 Update sprint fields (status, stories, dates, etc.).
-- **sprint_id**: Sprint ID
+- **sprint_id**: Sprint ID (alias: `id`)
 - **status** (optional): New status — `planning`, `active`, `completed`, or `cancelled`
 - **planned_stories** (optional): Comma-separated story IDs (replaces the planned set)
 - **Returns**: Updated sprint metadata, plus `dependency_warnings` if newly planned stories have unmet dependencies

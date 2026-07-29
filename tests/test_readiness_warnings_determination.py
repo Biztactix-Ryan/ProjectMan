@@ -350,7 +350,9 @@ class TestNoTemplateEmitsTheDemandedStructure:
     def test_the_template_directory_is_enumerable(self):
         """Anti-vacuity: the scans below must actually see templates."""
         templates = _all_templates()
-        assert len(templates) >= 20, (
+        # 19 since US-PM-4-6 deleted the dead ``task.md.j2`` (asserted gone by
+        # the next test) — a floor, not a census, so adding one is free.
+        assert len(templates) >= 19, (
             f"only {len(templates)} templates found — the glob is wrong and "
             "every scan in this class is passing vacuously"
         )
