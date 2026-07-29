@@ -2,7 +2,7 @@
 name: pm-orchestrate
 description: Drive the active sprint to done by dispatching worker subagents task-by-task and independently validating their work. Use when the user says "run the sprint", "work through the sprint", "orchestrate", or wants tasks executed autonomously.
 disable-model-invocation: true
-args: "[--sprint <id>] [--max <n>] [--dry-run] [--auto]"
+args: "[--sprint <id>] [--max <n>] [--orchestrator-model <m>] [--executor-model <m>] [--dry-run] [--auto]"
 ---
 
 # /pm-orchestrate — Sprint Orchestrator
@@ -13,6 +13,8 @@ You are the **orchestrator**, not a worker. You read the sprint, pick the next r
 
 - `--sprint <id>` — Drive a specific sprint instead of the active one
 - `--max <n>` — Stop after `n` worker dispatches, including retries (safety budget; default no limit)
+- `--orchestrator-model <m>` — Model to run orchestration/validation on. You are already running in a fixed session model, so this is advisory: if the session model differs, the skill notes it once rather than switching. Default **Fable 5**.
+- `--executor-model <m>` — Model each spawned worker runs on (passed as the `model` argument to the `Agent` tool). Default **Opus 4.8** → `model="opus"`.
 - `--dry-run` — Show the execution plan and stop. Do not spawn any workers.
 - `--auto` — Skip the pre-flight confirmation. Still stops on audit errors and reports at the end.
 
@@ -22,6 +24,25 @@ You are the **orchestrator**, not a worker. You read the sprint, pick the next r
 - **Commits**: stage-only. Neither you nor workers run `git commit`, `git push`, `pm_commit`, or `pm_push`. The user reviews and commits at the end.
 - **Failures park, they don't halt.** A task that fails validation twice is parked (left in `review` with a run-log record) and the loop moves on to the next ready task. Only systemic problems stop the run.
 - **Every attempt is logged** as a run-log entry — `pm_update(id, outcome=..., note=...)` appends one, and `pm_done_next` does the same on accept; `pm_run_log(id)` reads the history. Failures stay visible to future sessions and audits.
+
+## Phase 0 — Model Selection
+
+Big model orchestrates, cheaper model executes. Resolve both models **before** pre-flight and use the executor model for every worker spawn.
+
+**Defaults (current as of this skill's authoring):**
+
+| Role | Default | How it's applied |
+|------|---------|------------------|
+| **Orchestrator** (this session — planning + validation) | **Fable 5** | Session model — advisory, see below |
+| **Executor** (spawned workers — implementation) | **Opus 4.8** | `Agent(..., model="opus")` |
+
+The `Agent` tool's `model` override only accepts coarse tiers — `fable`, `opus`, `sonnet`, `haiku` — not point releases. Map the resolved executor model to its tier (Opus 4.8 → `opus`, Sonnet 5 → `sonnet`, etc.).
+
+- **Executor** — use `--executor-model` if given, else the default (`opus`). This tier is passed to every `Agent` call in step 15.
+- **Orchestrator** — use `--orchestrator-model` if given, else the default (Fable 5). You cannot switch the running session's model, so this is advisory: if the current session model is weaker than the resolved orchestrator model, say so once ("For best results, run `/pm-orchestrate` on Fable 5") and continue — do not stop.
+- **Newer-model check** — the defaults above assume Fable 5 / Opus 4.8 are the top two tiers. If you are aware of a model **newer or more capable** than either default, do **not** silently fall back to the default: call `AskUserQuestion` to let the user choose the orchestrator and executor models, offering the newer model as an option. Skip this prompt (and use the resolved defaults/flags) when `--auto` is set or when both `--orchestrator-model` and `--executor-model` are explicitly provided. If the defaults are still the newest models available, run silently.
+
+State the resolved orchestrator/executor pair in the pre-flight summary.
 
 ## Phase 1 — Pre-flight
 
@@ -49,7 +70,7 @@ Repeat until no dispatchable tasks remain:
 12. Pick the next task: first plan entry with status `todo`, all `depends_on` done, and no assignee (or still assigned `claude` by a previous orchestrator run — `pm_grab` re-claims your own tasks idempotently). If none are ready and none are retryable → exit the loop.
 13. Check the `--max` budget (dispatches + retries). Exceeded → stop and report; if you are holding a pre-claimed, unstarted task from `pm_done_next`, release it first: `pm_update(<id>, status="todo", assignee="")`.
 14. Record the pre-task diff state: `git status --short` (you will diff against this in validation).
-15. **Spawn the worker** via the `Agent` tool — `subagent_type: general-purpose`, foreground (you need the result before validating), no worktree isolation (sequential + stage-only). Use the Worker Prompt below.
+15. **Spawn the worker** via the `Agent` tool — `subagent_type: general-purpose`, `model:` the resolved executor tier from Phase 0 (default `"opus"`), foreground (you need the result before validating), no worktree isolation (sequential + stage-only). Use the Worker Prompt below.
 
 ### Validation — your own judgment, not the worker's word
 

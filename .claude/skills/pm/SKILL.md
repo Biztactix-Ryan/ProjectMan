@@ -60,6 +60,7 @@ Examples:
 - `init [project]` → set up project documentation (wizard for new, import for existing)
 - `fix` → `pm_malformed`, then fix quarantined files one at a time via `pm_fix_malformed`
 - `grab <task-id> [assignee]` → `pm_grab(task_id, assignee)` — claim with readiness validation. On success, suggest `/pm-do <id>` to execute (spawned agents use `/pm-do <id> --complete`).
+- `done <task-id> [note]` → `pm_done_next(task_id, outcome, note)` — complete a task, auto-close its story if finished, and claim the next ready task in one call. Prefer this over separate `pm_update` + `pm_grab` when working through tasks.
 
 ### Git Operations
 - `commit [scope] [--message "..."]` → `pm_commit(scope, message)` — commit .project/ changes. Scope: `all` (default), `hub`, `project:<name>`
@@ -88,7 +89,7 @@ After every action, suggest the logical next step:
 - Created a story → "Scope it: `/pm scope <id>`"
 - Scoped a story → "Plan it into a sprint: `/pm-plan`"
 - Grabbed a task → "Execute it: `/pm-do <id>`"
-- Completed a task → "Board for more work: `/pm board`"
+- Completed a task → `pm_done_next` already returns the next ready task — offer to continue with it
 - Sprint fully planned → "Run it: `/pm-orchestrate`"
 - All repos clean → "Ready for coordinated operations"
 
