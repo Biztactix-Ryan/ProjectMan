@@ -7,7 +7,7 @@ build/
 *.egg
 .eggs/
 *.so
-.venv/
+.venv*/
 venv/
 env/
 .env
