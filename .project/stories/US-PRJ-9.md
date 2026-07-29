@@ -6,14 +6,14 @@ acceptance_criteria:
 - Convention violations produce clear error messages
 - Conventions stored in hub config and shared
 created: '2026-02-16'
-epic_id: EPIC-PRJ-1
+epic_id: EPIC-PRJ-9
 id: US-PRJ-9
 points: 5
 priority: must
 status: backlog
 tags: []
 title: Enforce opinionated git conventions for hub subprojects
-updated: '2026-02-16'
+updated: '2026-07-30'
 ---
 
 As a team using ProjectMan hub mode, I want enforced conventions for how subprojects are managed so that the workflow is predictable and consistent across all repos.

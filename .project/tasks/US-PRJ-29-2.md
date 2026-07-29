@@ -4,11 +4,11 @@ created: '2026-03-06'
 depends_on: []
 id: US-PRJ-29-2
 points: null
-status: todo
+status: done
 story_id: US-PRJ-29
 tags: []
 title: 'Test: Cycle errors show full path (A -> B -> C -> A) everywhere'
-updated: '2026-03-06'
+updated: '2026-07-30'
 ---
 
 Verify acceptance criterion for story US-PRJ-29:

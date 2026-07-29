@@ -9,12 +9,14 @@ goal: 'The orchestrator''s moves become verbs it cannot spell wrong: claiming an
   need them.'
 id: SPRINT-PM-2
 name: Sprint 2 — Orchestrator State Machine
-planned_points: 23
+planned_points: 30
 planned_stories:
 - US-PM-7
 - US-PM-8
 - US-PM-9
 - US-PM-13
+- US-PM-1
+- US-PM-17
 start_date: '2026-07-29'
 status: active
 updated: '2026-07-30'
