@@ -404,6 +404,37 @@ def repair():
     click.echo(report)
 
 
+@cli.command("migrate-archived")
+@click.option(
+    "--apply",
+    "apply_changes",
+    is_flag=True,
+    help="Write the changes. Without this flag the command only reports.",
+)
+@click.option("--project", default=None, help="Project name (hub mode only)")
+def migrate_archived(apply_changes, project):
+    """Repair tasks archived under the old archive-as-done behaviour.
+
+    Archiving a task used to set it to 'done', so abandoned work counts as
+    delivered. This finds those tasks from the activity log, sets the archived
+    flag and restores the status they held before being archived.
+
+    Reports only by default; pass --apply to rewrite the task files.
+    """
+    from projectman.config import find_project_root
+    from projectman.migrations import format_report, migrate_archived_as_done
+    from projectman.store import Store
+
+    root = find_project_root()
+    if project:
+        store = Store(root, project_dir=root / ".project" / "projects" / project)
+    else:
+        store = Store(root)
+
+    report = migrate_archived_as_done(store, apply=apply_changes)
+    click.echo(format_report(report))
+
+
 @cli.command()
 @click.option("--all", "audit_all", is_flag=True, help="Audit all projects in hub")
 def audit(audit_all):

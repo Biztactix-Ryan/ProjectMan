@@ -349,6 +349,41 @@ Check PR merge status and update changeset status.
 projectman changeset push CS-PRJ-1
 ```
 
+## projectman migrate-archived
+
+Repair tasks archived under the old archive-as-done behaviour.
+
+Before ProjectMan gave tasks an `archived` flag, archiving a task set its status to `done`. Abandoned work therefore counts as delivered in completion, burndown and velocity. This command finds those tasks in `activity.jsonl`, sets `archived: true`, and restores the status the task held before it was archived.
+
+```bash
+# Report what would change — the default, writes nothing
+projectman migrate-archived
+
+# Write the changes
+projectman migrate-archived --apply
+```
+
+**Options:**
+
+| Option | Description |
+|--------|-------------|
+| `--apply` | Write the changes. Without it the command only reports. |
+| `--project` | Project name (hub mode only) |
+
+**Safety:**
+
+- Dry run by default — `--apply` is the only thing that writes.
+- Idempotent: a migrated task is no longer `done` and carries `archived: true`, so re-running finds nothing.
+- Never runs implicitly. No other command triggers it.
+
+**What it can and cannot detect.** The old archive was `update(status="done")`, so the activity log records it as an ordinary update — there is no distinct archive event. A task is only migrated when its last status change moved it to `done`, changed nothing but `status`, came from a status work never ran in (`todo` or `blocked`), and the task was never re-opened afterwards. Consequently:
+
+- A task archived from `in-progress` or `review` is **indistinguishable** from one that was genuinely finished, and is deliberately left alone.
+- A task that was archived, re-opened and then completed is reported as skipped rather than migrated.
+- If the log has no usable prior status, the task is listed under "need manual review" and left untouched — the migration never invents a status.
+
+Every ambiguous case is skipped rather than written: a missed archive is a metrics inaccuracy, whereas a wrongly restored task destroys the record of real completed work.
+
 ## projectman audit
 
 Run drift detection and generate a `DRIFT.md` report.

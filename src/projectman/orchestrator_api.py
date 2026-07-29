@@ -74,8 +74,10 @@ def register_routes(mcp_instance: Any, event_bus: EventBus, get_store: Any) -> N
     @mcp_instance.custom_route("/api/tasks/current", methods=["GET"])
     async def api_tasks_current(request: Request) -> JSONResponse:
         store = _get_store()
-        active_tasks = store.list_tasks(status="in-progress")
-        queued_tasks = store.list_tasks(status="todo")
+        # Archived tasks keep their real status, so they must be filtered out
+        # explicitly or the orchestrator would hand abandoned work to an agent.
+        active_tasks = store.list_tasks(status="in-progress", archived=False)
+        queued_tasks = store.list_tasks(status="todo", archived=False)
 
         active = None
         if active_tasks:

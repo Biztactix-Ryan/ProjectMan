@@ -599,16 +599,24 @@ class TestPRsCreatedWithCrossReferences:
         assert "command" in commands[0]
         assert "skipped" in commands[1]["status"]
 
-    def test_pr_empty_changeset_returns_error(self, tmp_project, monkeypatch):
-        """A changeset with no entries returns an error."""
+    def test_pr_empty_changeset_raises(self, tmp_project, monkeypatch):
+        """A changeset with no entries is a real error.
+
+        Inverted by US-PM-2-3 from ``assert "error" in result``: a constraint
+        violation is a genuine failure and must set ``is_error``.  The
+        ``ValueError`` message from ``changeset_create_prs`` is preserved.
+        """
         monkeypatch.chdir(tmp_project)
         store = Store(tmp_project)
         cs = store.create_changeset("empty-cs", [])
 
+        from mcp.server.fastmcp.exceptions import ToolError
+
         from projectman.server import pm_changeset_create_prs
 
-        result = pm_changeset_create_prs(cs.id)
-        assert "error" in result
+        with pytest.raises(ToolError) as excinfo:
+            pm_changeset_create_prs(cs.id)
+        assert "changeset has no project entries" in str(excinfo.value)
 
     def test_pr_commands_use_correct_branch(self, tmp_project, monkeypatch):
         """Each PR command uses the correct --head branch from the entry ref."""

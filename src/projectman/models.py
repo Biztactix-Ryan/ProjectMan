@@ -33,6 +33,23 @@ class TaskStatus(str, Enum):
     blocked = "blocked"
 
 
+def is_archived(meta: Any) -> bool:
+    """True if an epic, story, or task is archived.
+
+    Epics and stories carry ``archived`` as a status value; tasks carry it as a
+    boolean beside status so the status they had when work stopped survives.
+    This helper is the single place callers should ask the question, so
+    completion/burndown/velocity math does not have to know which encoding an
+    item type uses.
+    """
+    archived_flag = getattr(meta, "archived", False)
+    if archived_flag:
+        return True
+    status = getattr(meta, "status", None)
+    status_value = getattr(status, "value", status)
+    return status_value == "archived"
+
+
 class Priority(str, Enum):
     must = "must"
     should = "should"
@@ -115,6 +132,10 @@ class TaskFrontmatter(BaseModel):
     story_id: str
     title: str
     status: TaskStatus = TaskStatus.todo
+    # Archival is orthogonal to status: a task can be archived from any status
+    # and keeps the status it had when work stopped.  Defaults to False so task
+    # files written before this field existed still parse.
+    archived: bool = False
     points: Optional[int] = None
     assignee: Optional[str] = None
     tags: list[str] = []
@@ -242,6 +263,9 @@ class IndexEntry(BaseModel):
     title: str
     type: str  # "story", "task", or "epic"
     status: str
+    # Tasks carry archival as a flag beside status; epics/stories encode it in
+    # status itself, so this stays False for them.
+    archived: bool = False
     points: Optional[int] = None
     story_id: Optional[str] = None
     epic_id: Optional[str] = None

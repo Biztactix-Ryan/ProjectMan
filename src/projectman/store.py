@@ -4,6 +4,7 @@ import logging
 import os
 import subprocess
 from datetime import date, datetime, timezone
+from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Optional
 
@@ -26,6 +27,212 @@ _cache_mtimes: dict[tuple[str, str], tuple[float, int]] = {}
 # Cache statistics — only tracked when PROJECTMAN_CACHE_DEBUG is set.
 _cache_stats: dict[str, int] = {"hits": 0, "misses": 0, "invalidations": 0}
 _cache_debug: bool = bool(os.environ.get("PROJECTMAN_CACHE_DEBUG"))
+
+# Maximum stored length of a run-log note, in characters.  Notes longer than
+# this are truncated server-side (never rejected) — an oversized note must
+# never cost the caller the status/outcome write that came with it.
+#
+# Cap chosen from measured telemetry over 1,128 real note-bearing pm_update /
+# pm_done_next calls: median 618, p90 1,071, p95 1,205, p99 1,529, max 2,865.
+# 13.3% of those notes exceeded the old 1,024 cap; 0.27% exceed 2,048; none
+# exceed 4,096.  4,096 therefore covers the entire observed distribution with
+# ~1.4x headroom over the observed maximum while staying bounded.
+RUN_LOG_NOTE_LIMIT = 4096
+
+
+class NothingToCommit(RuntimeError):
+    """There was nothing under ``.project/`` to commit.
+
+    An *expected negative*, not a failure: the caller asked for ``.project/``
+    to be committed and it already is, so the requested end-state holds.  It
+    subclasses ``RuntimeError`` purely for backward compatibility — every
+    existing ``except RuntimeError`` / ``pytest.raises(RuntimeError)`` around
+    ``commit_project_changes`` keeps working — but its own type is what lets
+    ``server.pm_commit`` tell this apart from a real commit failure *without*
+    matching on the message text.  See ``server._expected_negative``.
+    """
+
+
+def truncate_run_log_note(
+    note: str | None, limit: int = RUN_LOG_NOTE_LIMIT
+) -> tuple[str | None, bool, int]:
+    """Clamp a run-log note to ``limit`` characters, marking what was dropped.
+
+    Returns ``(note, was_truncated, dropped_chars)``.  ``None`` and notes that
+    already fit pass through untouched.  When truncation happens the returned
+    string is exactly ``limit`` characters or fewer *including* the visible
+    ``...[truncated N chars]`` marker, and ``N`` is the true number of dropped
+    characters (the marker length is solved for as a fixed point, since the
+    digit count of ``N`` feeds back into how much room the marker needs).
+    """
+    if note is None:
+        return None, False, 0
+    if limit <= 0:
+        return "", bool(note), len(note)
+    if len(note) <= limit:
+        return note, False, 0
+
+    dropped = len(note) - limit
+    keep = 0
+    for _ in range(8):
+        marker = f"...[truncated {dropped} chars]"
+        if len(marker) >= limit:
+            # Pathologically small cap: no room for a marker, hard-cut instead.
+            return note[:limit], True, len(note) - limit
+        keep = limit - len(marker)
+        new_dropped = len(note) - keep
+        if new_dropped == dropped:
+            break
+        dropped = new_dropped
+    return f"{note[:keep]}...[truncated {dropped} chars]", True, dropped
+
+
+# --- Auto-generated acceptance-criterion test tasks ---------------------
+#
+# One test task is generated per acceptance criterion.  Both the creation path
+# (``Store.create_story``) and the reconciliation path (``Store.update``) go
+# through the three helpers below so the two can never drift apart.
+#
+# The generated *body* doubles as the association between a task and the
+# criterion it came from: ``criterion_from_test_task_body`` is the exact
+# inverse of ``generate_test_task_body``, so the criterion text a task was generated
+# from can always be recovered from the task itself.  No frontmatter field is
+# needed, which means tasks written by every prior version of ProjectMan are
+# recognised on equal footing with new ones.
+
+TEST_TASK_TITLE_LIMIT = 120
+
+# The generated body's fixed opening.  The criterion follows the ``"> "``
+# blockquote marker and runs to the end of the body (or to the end marker
+# below, when one is needed).
+TEST_TASK_BODY_HEADER = "Verify acceptance criterion for story {story_id}:\n\n>"
+
+# US-PM-5-8.  ``frontmatter.dumps``/``loads`` strip trailing whitespace from
+# the content they write and read back, so a criterion that is blank or ends
+# in whitespace does *not* survive the trip to disk: ``"> "`` collapses to
+# ``">"``, the parser stops recognising the task as auto-generated, and every
+# subsequent reconciliation adds another duplicate for the same criterion.
+#
+# The fix is an explicit end marker appended only when the body would
+# otherwise end in whitespace.  It is an HTML comment, so it is invisible in
+# every markdown renderer, and it is absent from the overwhelmingly common
+# case, so an ordinary test task's body is byte-for-byte what it always was.
+TEST_TASK_BODY_END_MARKER = "\n\n<!-- end acceptance criterion -->"
+
+
+def generate_test_task_title(criterion: str) -> str:
+    """Return the auto-generated test-task title for *criterion*."""
+    title = f"Test: {criterion}"
+    if len(title) > TEST_TASK_TITLE_LIMIT:
+        title = title[: TEST_TASK_TITLE_LIMIT - 3] + "..."
+    return title
+
+
+def generate_test_task_body(story_id: str, criterion: str) -> str:
+    """Return the auto-generated test-task body for *criterion*.
+
+    The result always round-trips: ``criterion_from_test_task_body`` recovers
+    *criterion* exactly, both from this string and from what it becomes after
+    a write/read cycle through ``frontmatter`` — including for blank,
+    whitespace-only and trailing-whitespace criteria, which the serialiser
+    would otherwise silently truncate.
+    """
+    body = f"{TEST_TASK_BODY_HEADER.format(story_id=story_id)} {criterion}"
+    if body != body.rstrip():
+        body += TEST_TASK_BODY_END_MARKER
+    return body
+
+
+def criterion_similarity(a: str, b: str) -> float:
+    """How likely it is that *b* is *a* after an edit, in ``0.0..1.0``.
+
+    ``difflib``'s plain ratio alone punishes short criteria unfairly —
+    appending three words to a five-character criterion drops it below any
+    useful threshold even though it is obviously the same criterion reworded.
+    So the score is the better of the plain ratio and the longest shared run
+    of characters measured against the *shorter* string, which makes "extended
+    in place" and "trimmed in place" edits score high regardless of length.
+    """
+    if not a or not b:
+        return 1.0 if a == b else 0.0
+    matcher = SequenceMatcher(None, a, b)
+    longest = matcher.find_longest_match(0, len(a), 0, len(b)).size
+    return max(matcher.ratio(), longest / min(len(a), len(b)))
+
+
+def criterion_from_test_task_body(story_id: str, body: str) -> Optional[str]:
+    """Recover the criterion a test-task body was generated from.
+
+    Returns ``None`` when *body* is not in the generated shape — that is the
+    marker for "this task is not an auto-generated test task", so hand-written
+    tasks (and test tasks whose body a human has rewritten) are never touched
+    by reconciliation.
+
+    Exact inverse of :func:`generate_test_task_body`, and tolerant of what the
+    serialiser used to leave on disk before US-PM-5-8: a body already trimmed
+    down to a bare ``">"`` is a blank criterion's task, not an unrecognised
+    one, so pre-existing duplicates stop breeding as soon as this ships.
+    """
+    header = TEST_TASK_BODY_HEADER.format(story_id=story_id)
+    if not body.startswith(header):
+        return None
+    rest = body[len(header) :]
+
+    # Both readings of the tail are tried — "the end marker is ours" and "the
+    # end marker is part of the criterion text" — and the one that regenerates
+    # *body* byte-for-byte wins.  That keeps the pair exact inverses even for
+    # a criterion that itself ends in the marker's text.
+    candidates = []
+    if rest.endswith(TEST_TASK_BODY_END_MARKER):
+        candidates.append(rest[: -len(TEST_TASK_BODY_END_MARKER)])
+    candidates.append(rest)
+    for candidate in candidates:
+        if candidate and not candidate.startswith(" "):
+            continue
+        criterion = candidate[1:] if candidate else ""
+        if generate_test_task_body(story_id, criterion) == body:
+            return criterion
+
+    # Legacy on-disk shape, written before the end marker existed: the
+    # serialiser stripped the trailing whitespace the body used to end in.
+    # A bare ">" is a blank criterion's task, not an unrecognised one — so
+    # pre-existing duplicates stop breeding as soon as this ships, and the
+    # next reconciliation rewrites the body into the round-tripping form.
+    if rest == "":
+        return ""
+    if rest.startswith(" "):
+        return rest[1:]
+    return None
+
+
+# --- Removal policy for orphaned test tasks (US-PM-5-6) -----------------
+#
+# An "orphan" is an auto-generated test task whose criterion no longer appears
+# in the story.  The policy is: NEVER delete.  Archive the ones nothing has
+# happened to; leave the rest exactly where they are and flag them.
+#
+# Why not delete the untouched ones, as originally proposed:
+#
+# * The criterion text survives nowhere else.  Once the story's
+#   ``acceptance_criteria`` list drops an entry, the task body is the only
+#   remaining record that the criterion was ever agreed.  Deleting the task
+#   destroys that record with no undo.
+# * US-PM-16 established that archiving a task is not deletion — it sets an
+#   orthogonal ``archived`` flag and preserves the status the work really
+#   reached.  Archiving already gives us everything deletion was wanted for
+#   (out of the board, out of burndown, out of "incomplete tasks on a done
+#   story") at none of its cost, and ``Store.unarchive`` reverses it.
+# * The matcher this policy sits on is a heuristic with documented failure
+#   modes — a criterion reworded past ``CRITERION_EDIT_SIMILARITY`` is
+#   reported as an orphan plus a brand-new task.  Under a delete policy that
+#   misfire is unrecoverable data loss on an ordinary typo fix.  Under an
+#   archive policy it is one ``Store.unarchive`` away.
+#
+# So the proposal is accepted in shape (untouched vs. touched) and rejected in
+# its destructive half: "delete when untouched" becomes "archive when
+# untouched".  Nothing this module does removes a file.
+ORPHAN_ACTION_ARCHIVE = "archive"
+ORPHAN_ACTION_FLAG = "flag"
 
 
 def clear_all_caches() -> None:
@@ -63,6 +270,7 @@ from .models import (
     StoryStatus,
     TaskFrontmatter,
     TaskStatus,
+    is_archived,
 )
 
 
@@ -78,6 +286,15 @@ class Store:
         self.tasks_dir = self.project_dir / "tasks"
         self.epics_dir = self.project_dir / "epics"
         self.config = load_config(root) if project_dir is None else self._load_config()
+        # Truncation record for the most recent update() that carried a note.
+        # None until an update with a note runs.  Read by the MCP layer so the
+        # response can tell the caller their note was clamped.
+        self.last_note_truncation: dict | None = None
+        # Result of the most recent acceptance-criteria/test-task
+        # reconciliation performed by update().  None until a story update
+        # actually changes acceptance_criteria.  Its "orphaned" bucket is the
+        # hand-off point for the removal policy (US-PM-5-6).
+        self.last_criteria_reconciliation: dict | None = None
 
     def _load_config(self) -> ProjectConfig:
         """Load config.yaml from self.project_dir."""
@@ -346,12 +563,8 @@ class Store:
         # Auto-create test tasks for each acceptance criterion
         test_tasks: list[TaskFrontmatter] = []
         for criterion in acceptance_criteria or []:
-            task_title = f"Test: {criterion}"
-            if len(task_title) > 120:
-                task_title = task_title[:117] + "..."
-            task_desc = (
-                f"Verify acceptance criterion for story {story_id}:\n\n> {criterion}"
-            )
+            task_title = generate_test_task_title(criterion)
+            task_desc = generate_test_task_body(story_id, criterion)
             task_meta = self.create_task(story_id, task_title, task_desc, _batch=True)
             test_tasks.append(task_meta)
 
@@ -360,6 +573,528 @@ class Store:
         self._auto_commit(files, f"pm: create {story_id}")
 
         return meta, test_tasks
+
+    # --- Acceptance-criterion / test-task reconciliation -----------------
+
+    # Below this ratio two criterion texts are considered different criteria
+    # rather than an edit of the same one.  0.6 is difflib's own "close
+    # enough" convention (``get_close_matches`` default cutoff).
+    CRITERION_EDIT_SIMILARITY = 0.6
+
+    def _test_tasks_for_story(
+        self, story_id: str, archived: Optional[bool] = False
+    ) -> list[tuple[TaskFrontmatter, str]]:
+        """Return ``(meta, generated_criterion)`` for the story's test tasks.
+
+        A task counts as auto-generated only if its *body* still has the
+        generated shape (see :func:`criterion_from_test_task_body`).  Anything
+        a human wrote, or a test task whose body a human has rewritten, is
+        invisible here and therefore never modified.
+
+        Archived tasks are excluded by default: an archived test task has been
+        deliberately taken out of the working set, and silently rewriting it
+        to a new criterion would resurrect it.  ``archived=True`` asks for
+        only the archived ones (what :meth:`detect_criteria_drift` uses to
+        avoid reporting a criterion whose test task was retired on purpose)
+        and ``archived=None`` for both.
+
+        Ordered by task number so positional reasoning is stable (the plain
+        filename sort puts ``-10`` before ``-2``).
+        """
+        result: list[tuple[TaskFrontmatter, str]] = []
+        for meta in self.list_tasks(story_id=story_id, archived=archived):
+            try:
+                _, body = self.get_task(meta.id)
+            except FileNotFoundError:
+                continue
+            criterion = criterion_from_test_task_body(story_id, body)
+            if criterion is None:
+                continue
+            result.append((meta, criterion))
+
+        def _num(item: tuple[TaskFrontmatter, str]) -> int:
+            tail = item[0].id.rsplit("-", 1)[-1]
+            return int(tail) if tail.isdigit() else 0
+
+        result.sort(key=_num)
+        return result
+
+    def plan_criteria_reconciliation(
+        self, story_id: str, new_criteria: list[str]
+    ) -> dict:
+        """Work out how the story's test tasks map onto *new_criteria*.
+
+        Pure: reads only, writes nothing.  Returns a dict with four buckets::
+
+            {
+              "unchanged": [{"task_id", "criterion"}],
+              "resync":    [{"task_id", "old_criterion", "criterion",
+                             "title", "retitle"}],
+              "create":    [{"criterion", "index"}],
+              "retired":   [{"criterion", "index", "task_id",
+                             "old_criterion"}],
+              "orphaned":  [{"task_id", "criterion", "status", "assignee",
+                             "archived", "has_work", "work_reasons",
+                             "action"}],
+            }
+
+        ``retired`` is a criterion that *would* be created except that an
+        **archived** test task already covers it.  Nothing is done to it: the
+        archived task is left archived and no new task is made.  See pass 3
+        below for why.
+
+        ``orphaned`` carries the US-PM-5-6 removal policy verdict for each
+        test task that no longer corresponds to any criterion:
+
+        ``action``
+            ``"archive"`` when nothing has happened to the task, ``"flag"``
+            when something has.  See :func:`ORPHAN_ACTION_ARCHIVE` /
+            :func:`ORPHAN_ACTION_FLAG` and the module comment for why the
+            untouched branch archives rather than deletes.
+        ``work_reasons``
+            The machine-readable reasons the task counts as touched — an
+            empty list is exactly ``action == "archive"``.  A caller branches
+            on these codes; it never parses a sentence.
+        ``has_work``
+            ``bool(work_reasons)``, kept for callers written against 5-5.
+
+        This method stays pure — it decides, it does not act.
+        :meth:`_reconcile_criteria_tasks` is what applies the verdict.
+
+        Matching strategy, two passes:
+
+        1. **Identity.** A criterion whose exact text a task was generated
+           from keeps that task.  Position is irrelevant, so reordering
+           criteria and inserting into the middle are both free.
+        2. **Similarity.** Whatever is left over is matched greedily,
+           best-ratio-first, by :func:`criterion_similarity` above
+           ``CRITERION_EDIT_SIMILARITY``.  This is what recognises "the same
+           criterion, reworded" and drives the title/body resync.
+        3. **Archived coverage.** Whatever is *still* left over is checked,
+           by exact text only, against the story's **archived** test tasks.
+           A hit is diverted from ``create`` into ``retired`` and nothing
+           happens to it (US-PM-5-9).
+
+        Pass 3 exists because archiving is not deletion and not completion
+        (US-PM-16); it is the recoverable resting place a human — or the
+        US-PM-5-6 orphan policy — chose for a test task, and
+        :meth:`unarchive` is what reverses it.  Without pass 3 a live
+        criterion whose test task was archived sat in ``create`` forever, so
+        *any* unrelated edit to the criteria list minted a second live task
+        quoting a criterion the story already had.  Silently un-archiving
+        instead would be the same overreach in the other direction: it
+        undoes a deliberate decision without asking.  So the reconciler
+        declines to act, and the record says so, leaving ``pm_restore`` as
+        the explicit way back.  This also keeps the pass in step with
+        :meth:`detect_criteria_drift`, which has always suppressed exactly
+        these criteria — see the contract in that docstring.
+
+        Known failure modes, stated honestly:
+
+        * A criterion rewritten past the similarity threshold reads as a
+          delete plus an add: a new task is created and the old one is
+          reported as orphaned.  Nothing is lost, but the history splits.
+        * Deleting one criterion while heavily editing another in the *same*
+          call can pair the surviving edit against the deleted criterion's
+          task when the two texts are similar.  Greedy best-first ordering
+          makes the most-similar pair win, which limits but does not
+          eliminate this.
+        * Duplicate identical criteria are matched arbitrarily among
+          themselves.  Harmless: the texts are identical.
+        * Swapping the text of two criteria in place is seen as "no change",
+          since both texts still exist.  The task-to-criterion association
+          flips but every task still quotes a live criterion.
+        """
+        tasks = self._test_tasks_for_story(story_id)
+        claimed: set[str] = set()
+        matched: dict[int, tuple[TaskFrontmatter, str]] = {}
+
+        # Pass 1 — identity.
+        for i, criterion in enumerate(new_criteria):
+            for meta, old_criterion in tasks:
+                if meta.id in claimed:
+                    continue
+                if old_criterion == criterion:
+                    matched[i] = (meta, old_criterion)
+                    claimed.add(meta.id)
+                    break
+
+        # Pass 2 — similarity, greedy best-first over what is left.
+        candidates: list[tuple[float, int, str, TaskFrontmatter, str]] = []
+        for i, criterion in enumerate(new_criteria):
+            if i in matched:
+                continue
+            for meta, old_criterion in tasks:
+                if meta.id in claimed:
+                    continue
+                ratio = criterion_similarity(old_criterion, criterion)
+                if ratio >= self.CRITERION_EDIT_SIMILARITY:
+                    candidates.append((ratio, i, meta.id, meta, old_criterion))
+        # Sort by descending ratio, then by criterion index and task id so the
+        # outcome is deterministic when ratios tie.
+        candidates.sort(key=lambda c: (-c[0], c[1], c[2]))
+        for _ratio, i, task_id, meta, old_criterion in candidates:
+            if i in matched or task_id in claimed:
+                continue
+            matched[i] = (meta, old_criterion)
+            claimed.add(task_id)
+
+        # Pass 3 — archived coverage.  Purely a veto on ``create``: archived
+        # tasks are never claimed, resynced, retitled or re-orphaned, so this
+        # cannot disturb any of the buckets above.
+        #
+        # Identity only, deliberately — no similarity arm.  A resync is what
+        # similarity buys elsewhere, and an archived task's body is never
+        # rewritten, so a *reworded* criterion has no test task quoting it
+        # and genuinely does need one.  The exact-text case is the only one
+        # where creating would produce a literal duplicate of text an
+        # existing task already carries.
+        retired_tasks = self._test_tasks_for_story(story_id, archived=True)
+
+        def _covering_archived_task(
+            criterion: str,
+        ) -> Optional[tuple[TaskFrontmatter, str]]:
+            for meta, old_criterion in retired_tasks:
+                if old_criterion == criterion:
+                    return meta, old_criterion
+            return None
+
+        unchanged: list[dict] = []
+        resync: list[dict] = []
+        create: list[dict] = []
+        retired: list[dict] = []
+        for i, criterion in enumerate(new_criteria):
+            if i not in matched:
+                covering = _covering_archived_task(criterion)
+                if covering is not None:
+                    retired.append(
+                        {
+                            "criterion": criterion,
+                            "index": i,
+                            "task_id": covering[0].id,
+                            "old_criterion": covering[1],
+                        }
+                    )
+                else:
+                    create.append({"criterion": criterion, "index": i})
+                continue
+            meta, old_criterion = matched[i]
+            if old_criterion == criterion:
+                unchanged.append({"task_id": meta.id, "criterion": criterion})
+                continue
+            # Only retitle a task whose title is still exactly what the
+            # generator produced.  A human-renamed test task keeps its title;
+            # its body is still resynced, because a body quoting a criterion
+            # that no longer exists is the bug this whole story is about.
+            retitle = meta.title == generate_test_task_title(old_criterion)
+            resync.append(
+                {
+                    "task_id": meta.id,
+                    "old_criterion": old_criterion,
+                    "criterion": criterion,
+                    "title": generate_test_task_title(criterion) if retitle else meta.title,
+                    "retitle": retitle,
+                }
+            )
+
+        orphaned = []
+        for meta, old_criterion in tasks:
+            if meta.id in claimed:
+                continue
+            reasons = self._orphan_work_reasons(meta, old_criterion)
+            orphaned.append(
+                {
+                    "task_id": meta.id,
+                    "criterion": old_criterion,
+                    "status": meta.status.value
+                    if hasattr(meta.status, "value")
+                    else str(meta.status),
+                    "assignee": meta.assignee,
+                    "archived": meta.archived,
+                    "has_work": bool(reasons),
+                    "work_reasons": reasons,
+                    "action": ORPHAN_ACTION_FLAG if reasons else ORPHAN_ACTION_ARCHIVE,
+                }
+            )
+
+        return {
+            "unchanged": unchanged,
+            "resync": resync,
+            "create": create,
+            "retired": retired,
+            "orphaned": orphaned,
+        }
+
+    def detect_criteria_drift(
+        self, story_id: str, criteria: Optional[list[str]] = None
+    ) -> dict:
+        """Report acceptance-criteria / test-task drift for one story.
+
+        US-PM-5-7.  Pure — reads only, decides nothing, changes nothing.
+        Returns::
+
+            {
+              "missing": [{"criterion", "index"}],   # criterion, no test task
+              "stale":   [{"task_id", "criterion"}],  # test task, dead quote
+            }
+
+        This is deliberately a thin projection of
+        :meth:`plan_criteria_reconciliation` rather than a second matcher.
+        pm_audit and the reconciler must never disagree about what counts as
+        a match: if the audit reports drift the reconciler cannot see, a
+        caller is told to fix something that no ``pm_update`` will fix.
+
+        * ``missing`` is the plan's ``create`` bucket, verbatim — criteria
+          that would get a brand-new test task.  A criterion an **archived**
+          test task already covers is not among them: the plan itself
+          diverts those into its ``retired`` bucket (US-PM-5-9), because an
+          archived test task was retired on purpose (US-PM-16) and neither
+          nagging about it nor re-creating it is wanted.  This filter used
+          to live here instead, which is precisely how the pair came to
+          disagree: the audit suppressed a criterion the reconciler still
+          created, so the audit read clean right up until ``pm_update`` grew
+          a duplicate.
+        * ``stale`` is the plan's ``orphaned`` bucket (a test task quoting
+          text with no live counterpart at all) plus its ``resync`` bucket (a
+          test task whose quoted text was *edited*, so the body still quotes
+          a criterion that no longer exists — the exact shape of the drift
+          that prompted this check).
+
+        A story with no criteria yields no ``missing`` — there is nothing that
+        could be untested — but it can still yield ``stale``: see below.
+        Hand-written tasks and human-rewritten test-task bodies are invisible
+        to the matcher and so can never appear here.
+        """
+        if criteria is None:
+            try:
+                meta, _ = self.get_story(story_id)
+            except FileNotFoundError:
+                return {"missing": [], "stale": []}
+            criteria = list(meta.acceptance_criteria or [])
+        criteria = [c for c in criteria]
+
+        plan = self.plan_criteria_reconciliation(story_id, criteria)
+
+        # ``missing`` is defined relative to the criteria list, so an empty
+        # list has none by construction (``plan["create"]`` is empty too).
+        # ``stale`` is not: a live test task quoting text that no criterion
+        # carries is stale whether the story has other criteria or not, and
+        # when *every* criterion is removed that task is exactly the flagged
+        # orphan pm_update refused to archive.  Short-circuiting on "no
+        # criteria" used to drop it, so the flag died with the pm_update
+        # response and no audit ever mentioned it again (US-PM-5-10).
+        missing: list[dict] = [
+            {"criterion": e["criterion"], "index": e["index"]}
+            for e in plan["create"]
+        ]
+        stale = [
+            {"task_id": e["task_id"], "criterion": e["criterion"]}
+            for e in plan["orphaned"]
+        ] + [
+            {"task_id": e["task_id"], "criterion": e["old_criterion"]}
+            for e in plan["resync"]
+        ]
+        stale.sort(key=lambda e: e["task_id"])
+        return {"missing": missing, "stale": stale}
+
+    def _has_criteria_drift(self, story_id: str, criteria: list[str]) -> bool:
+        """Whether *story_id*'s test tasks disagree with *criteria*.
+
+        The same detector pm_audit reports from, so "the audit says drifted"
+        and "update will reconcile" are the same predicate.  Never raises: a
+        failure to probe must not take down the caller's real update.
+        """
+        try:
+            drift = self.detect_criteria_drift(story_id, criteria)
+        except Exception:
+            logger.debug("criteria drift probe failed for %s", story_id)
+            return False
+        return bool(drift["missing"] or drift["stale"])
+
+    # Reason codes for "something has happened to this task".  Stable strings:
+    # a caller branches on these, so they are part of the contract.
+    ORPHAN_REASON_STATUS = "status-not-todo"
+    ORPHAN_REASON_ASSIGNED = "assigned"
+    ORPHAN_REASON_RUN_LOG = "run-log-entries"
+    ORPHAN_REASON_RENAMED = "title-edited"
+    ORPHAN_REASON_DEPENDS_ON = "has-dependencies"
+    ORPHAN_REASON_DEPENDED_ON = "has-dependents"
+
+    def _orphan_work_reasons(self, meta: TaskFrontmatter, criterion: str) -> list[str]:
+        """Every reason an orphaned test task counts as touched, or ``[]``.
+
+        Empty means "nothing has happened to this task since it was
+        generated", which is the only state the policy will archive.  The
+        definition is deliberately wider than the original proposal's
+        (todo / unassigned / no run log), because each extra signal is a
+        human having done something to the task:
+
+        * ``status-not-todo`` — somebody moved it, including to ``done``.
+        * ``assigned`` — somebody owns it.
+        * ``run-log-entries`` — an attempt was recorded against it.
+        * ``title-edited`` — the title is no longer what the generator
+          produced, so a human renamed it.
+        * ``has-dependencies`` / ``has-dependents`` — a human wired it into
+          the dependency graph, in either direction.
+
+        Two further "touched" states never reach this function at all, which
+        is why they have no code here: a task whose *body* a human rewrote
+        stops parsing as auto-generated (:func:`criterion_from_test_task_body`
+        returns ``None``), and an already-archived task is excluded by
+        :meth:`_test_tasks_for_story`.  Both are invisible to reconciliation
+        and therefore untouchable by this policy.
+        """
+        reasons: list[str] = []
+        status = (
+            meta.status.value if hasattr(meta.status, "value") else str(meta.status)
+        )
+        if status != TaskStatus.todo.value:
+            reasons.append(self.ORPHAN_REASON_STATUS)
+        if meta.assignee:
+            reasons.append(self.ORPHAN_REASON_ASSIGNED)
+        if self._run_log_shows_activity(meta.id):
+            reasons.append(self.ORPHAN_REASON_RUN_LOG)
+        if meta.title != generate_test_task_title(criterion):
+            reasons.append(self.ORPHAN_REASON_RENAMED)
+        if meta.depends_on:
+            reasons.append(self.ORPHAN_REASON_DEPENDS_ON)
+        if any(meta.id in t.depends_on for t in self.list_tasks()):
+            reasons.append(self.ORPHAN_REASON_DEPENDED_ON)
+        return reasons
+
+    def _run_log_shows_activity(self, item_id: str) -> bool:
+        """Whether *item_id*'s run log is evidence that something happened.
+
+        True when the log holds any content at all, false only for "no file"
+        and "a file with nothing but whitespace in it".
+
+        Deliberately *not* ``bool(self.get_run_log(...))``.  That reader drops
+        malformed lines on the floor so one corrupt entry cannot hide the rest
+        of the history — correct for display, wrong for this question, because
+        a wholly corrupt log then parses as empty and reads as "never
+        touched", which is how an orphan with unreadable evidence of work got
+        archived instead of flagged (US-PM-5-10).  An unreadable run log is
+        not evidence of absence, so every failure mode here — unparseable
+        lines, undecodable bytes, an unreadable file — resolves to True and
+        the task is flagged for a human rather than archived.
+        """
+        log_path = self.project_dir / "logs" / f"{item_id}.jsonl"
+        try:
+            if not log_path.exists():
+                return False
+            return any(line.strip() for line in log_path.read_text().splitlines())
+        except Exception:
+            logger.debug("run log: unreadable for %s, counting it as work", item_id)
+            return True
+
+    def _write_test_task_sync(self, task_id: str, title: str, body: str) -> Path:
+        """Rewrite a test task's title and body in place.
+
+        Deliberately not routed through :meth:`update`, which would reset
+        ``last_note_truncation`` on the in-flight story update and fire a
+        separate auto-commit per task.
+        """
+        path = self._task_path(task_id)
+        post = frontmatter.load(str(path))
+        old_title = post.metadata.get("title")
+        old_body = post.content
+        post.metadata["title"] = title
+        post.metadata["updated"] = date.today().isoformat()
+        post.content = body
+        meta = TaskFrontmatter(**post.metadata)
+        path.write_text(frontmatter.dumps(post))
+        self._cache_update_entry("tasks", task_id, meta, body)
+        changes: dict[str, dict] = {}
+        if old_title != title:
+            changes["title"] = {"before": old_title, "after": title}
+        if old_body != body:
+            changes["body"] = {"before": old_body, "after": body}
+        self._emit_log(EventType.update, task_id, ItemType.task, changes=changes)
+        self._index_embedding(task_id, title, "task", body)
+        return path
+
+    def _write_test_task_archived(self, task_id: str) -> Path:
+        """Set an orphaned test task's ``archived`` flag in place.
+
+        Title, body and status are left exactly as they were — US-PM-16's
+        rule: archiving records that work was abandoned, it does not claim it
+        was finished, and it does not remove anything.  ``Store.unarchive``
+        puts the task straight back.
+
+        Not routed through :meth:`update` for the same reason as
+        :meth:`_write_test_task_sync`: it would clobber the in-flight story
+        update's ``last_note_truncation`` and fire a per-task auto-commit.
+        """
+        path = self._task_path(task_id)
+        post = frontmatter.load(str(path))
+        was_archived = bool(post.metadata.get("archived"))
+        post.metadata["archived"] = True
+        post.metadata["updated"] = date.today().isoformat()
+        meta = TaskFrontmatter(**post.metadata)
+        path.write_text(frontmatter.dumps(post))
+        self._cache_update_entry("tasks", task_id, meta, post.content)
+        if not was_archived:
+            self._emit_log(
+                EventType.update,
+                task_id,
+                ItemType.task,
+                changes={"archived": {"before": False, "after": True}},
+            )
+        return path
+
+    def _reconcile_criteria_tasks(
+        self, story_id: str, new_criteria: list[str]
+    ) -> tuple[dict, list[Path]]:
+        """Apply :meth:`plan_criteria_reconciliation` to disk.
+
+        Adds a test task for every new criterion, resyncs the title and body
+        of every task whose criterion was edited, and applies the US-PM-5-6
+        removal policy to the orphans: those with no work against them are
+        archived (never deleted — see the module comment above
+        :data:`ORPHAN_ACTION_ARCHIVE`), and those with work are left
+        byte-for-byte alone and reported for human attention.
+        """
+        plan = self.plan_criteria_reconciliation(story_id, new_criteria)
+        touched: list[Path] = []
+
+        for entry in plan["resync"]:
+            body = generate_test_task_body(story_id, entry["criterion"])
+            touched.append(
+                self._write_test_task_sync(entry["task_id"], entry["title"], body)
+            )
+
+        created: list[str] = []
+        for entry in plan["create"]:
+            criterion = entry["criterion"]
+            meta = self.create_task(
+                story_id,
+                generate_test_task_title(criterion),
+                generate_test_task_body(story_id, criterion),
+                _batch=True,
+            )
+            created.append(meta.id)
+            entry["task_id"] = meta.id
+            touched.append(self._task_path(meta.id))
+
+        archived: list[str] = []
+        flagged: list[str] = []
+        for entry in plan["orphaned"]:
+            if entry["action"] == ORPHAN_ACTION_ARCHIVE:
+                touched.append(self._write_test_task_archived(entry["task_id"]))
+                entry["archived"] = True
+                archived.append(entry["task_id"])
+            else:
+                flagged.append(entry["task_id"])
+
+        plan["created_task_ids"] = created
+        # Nothing to apply for ``retired`` — declining to act is the action
+        # (US-PM-5-9).  The ids are surfaced so a caller can see which
+        # archived task stood in for a criterion and reach for pm_restore.
+        plan["retired_task_ids"] = [e["task_id"] for e in plan["retired"]]
+        plan["resynced_task_ids"] = [e["task_id"] for e in plan["resync"]]
+        plan["archived_task_ids"] = archived
+        plan["flagged_task_ids"] = flagged
+        return plan, touched
 
     def get_story(self, story_id: str) -> tuple[StoryFrontmatter, str]:
         """Read a story, returning (frontmatter, body). Uses cache if populated and fresh."""
@@ -847,8 +1582,14 @@ class Store:
         self,
         story_id: Optional[str] = None,
         status: Optional[str] = None,
+        archived: Optional[bool] = None,
     ) -> list[TaskFrontmatter]:
         """List tasks, optionally filtered by story and/or status. Skips malformed files.
+
+        Args:
+            archived: ``None`` (default) returns archived and active tasks
+                alike — the historical behaviour.  ``False`` returns only
+                active tasks, ``True`` only archived ones.
 
         Cache is automatically invalidated if external file changes are detected.
         """
@@ -877,6 +1618,8 @@ class Store:
             result = [(m, b) for m, b in result if m.story_id == story_id]
         if status:
             result = [(m, b) for m, b in result if m.status.value == status]
+        if archived is not None:
+            result = [(m, b) for m, b in result if m.archived is archived]
         return [m for m, _ in result]
 
     def list_all(
@@ -915,8 +1658,12 @@ class Store:
         self,
         story_id: Optional[str] = None,
         status_filter: Optional[str] = None,
+        archived: Optional[bool] = None,
     ) -> list[tuple[TaskFrontmatter, str]]:
         """Read tasks from disk, optionally filtered by story and/or status.
+
+        ``archived`` defaults to ``None`` (no filtering); pass ``False`` for
+        only-active or ``True`` for only-archived tasks.
 
         Always reads from disk, bypassing cache entirely.
         """
@@ -930,6 +1677,8 @@ class Store:
                 if story_id and meta.story_id != story_id:
                     continue
                 if status_filter and meta.status.value != status_filter:
+                    continue
+                if archived is not None and meta.archived is not archived:
                     continue
                 entries.append((meta, post.content))
             except Exception:
@@ -982,8 +1731,27 @@ class Store:
         outcome = kwargs.pop("outcome", None)
         note = kwargs.pop("note", None)
 
-        if note is not None and len(note) > 1024:
-            raise ValueError("Run-log note must be 1024 characters or fewer")
+        # An oversized note is truncated, never rejected.  Raising here would
+        # take the status/outcome write down with it — a caller that only
+        # checks is_error would silently lose the state change.
+        self.last_note_truncation = None
+        if note is not None:
+            original_length = len(note)
+            note, was_truncated, dropped = truncate_run_log_note(note)
+            self.last_note_truncation = {
+                "truncated": was_truncated,
+                "original_length": original_length,
+                "stored_length": len(note),
+                "dropped_chars": dropped,
+                "limit": RUN_LOG_NOTE_LIMIT,
+            }
+            if was_truncated:
+                logger.warning(
+                    "run log: truncated note for %s (%d chars, dropped %d)",
+                    item_id,
+                    original_length,
+                    dropped,
+                )
         if outcome is not None:
             Outcome(outcome)  # validate enum value
 
@@ -1023,6 +1791,33 @@ class Store:
             self._cache_update_entry("tasks", item_id, meta, post.content)
         else:
             self._cache_update_entry("stories", item_id, meta, post.content)
+
+        # Reconcile auto-generated test tasks when a story's acceptance
+        # criteria actually change.  Skipped entirely when the criteria are
+        # untouched *and* the test tasks already agree with them, so a no-op
+        # edit stays byte-for-byte a no-op.
+        #
+        # The "already agree" half matters: criteria edited straight in the
+        # .md file never went through this method, so the drift is on disk
+        # with the criteria list already at its new value.  Without the drift
+        # probe, re-applying the same criteria — the obvious repair, and the
+        # one pm_audit's criteria-without-test-task finding recommends —
+        # would be a silent no-op and the drift would be unfixable through
+        # the API.  With it, supplying a story's own criteria is a repair.
+        self.last_criteria_reconciliation = None
+        reconciled_paths: list[Path] = []
+        if is_story:
+            new_criteria = kwargs.get("acceptance_criteria")
+            old_criteria = list(old_meta.get("acceptance_criteria") or [])
+            needs_reconcile = new_criteria is not None and (
+                list(new_criteria) != old_criteria
+                or self._has_criteria_drift(item_id, list(new_criteria))
+            )
+            if needs_reconcile:
+                (
+                    self.last_criteria_reconciliation,
+                    reconciled_paths,
+                ) = self._reconcile_criteria_tasks(item_id, list(new_criteria))
 
         # Check for dependency cycles after writing the update
         if new_depends_on is not None and is_task:
@@ -1070,7 +1865,7 @@ class Store:
 
         suffix = " ".join(commit_parts)
         msg = f"pm: update {item_id}" + (f" {suffix}" if suffix else "")
-        self._auto_commit([path], msg)
+        self._auto_commit([path, *reconciled_paths], msg)
 
         if is_task:
             self._index_embedding(item_id, meta.title, "task", post.content)
@@ -1080,13 +1875,25 @@ class Store:
         return meta
 
     def archive(self, item_id: str) -> None:
-        """Archive an epic, story, or task."""
+        """Archive an epic, story, or task.
+
+        Epics and stories have a genuine ``archived`` status.  Tasks do not:
+        archiving a task sets the orthogonal ``archived`` flag and leaves
+        ``status`` alone, so abandoned work keeps the status it really reached
+        instead of being recorded as completed.
+        """
         if self._is_epic_id(item_id):
             self.update(item_id, status=EpicStatus.archived.value)
         elif self._is_task_id(item_id):
-            self.update(item_id, status=TaskStatus.done.value)
+            self.update(item_id, archived=True)
         else:
             self.update(item_id, status=StoryStatus.archived.value)
+
+    def unarchive(self, item_id: str) -> None:
+        """Clear a task's archived flag, restoring it to its recorded status."""
+        if not self._is_task_id(item_id) or self._is_epic_id(item_id):
+            raise ValueError(f"unarchive only applies to tasks, got: {item_id}")
+        self.update(item_id, archived=False)
 
     def get(
         self, item_id: str
@@ -1294,13 +2101,20 @@ class Store:
                     changes[key] = {"before": old_val, "after": value}
                 setattr(meta, key, value)
 
-        # Auto-compute completed_points when status set to completed
+        # Auto-compute completed_points when status set to completed.
+        #
+        # This number *is* the team's velocity: future sprints are sized
+        # against it.  Only genuinely delivered stories may count.  An
+        # archived story was abandoned, not delivered — counting it here
+        # silently raises the bar every future sprint is planned against.
         if meta.status == SprintStatus.completed:
             completed_pts = 0
             for sid in meta.planned_stories:
                 try:
                     story_meta, _ = self.get_story(sid)
-                    if story_meta.status.value in ("done", "archived"):
+                    if is_archived(story_meta):
+                        continue
+                    if story_meta.status.value == "done":
                         completed_pts += story_meta.points or 0
                 except Exception:
                     pass
@@ -1336,7 +2150,9 @@ class Store:
         generated from the staged diff (e.g. "pm: add 2 stories, update 1 task").
 
         Returns a dict with ``commit_hash``, ``message``, and ``files_changed``.
-        Raises ``RuntimeError`` if the commit fails or there are no changes.
+        Raises ``RuntimeError`` if the commit fails, or :class:`NothingToCommit`
+        (a ``RuntimeError`` subclass) when there was nothing to commit — the
+        latter is an expected negative, not a failure.
         """
         import subprocess
 
@@ -1361,7 +2177,7 @@ class Store:
 
         changed_files = [f for f in diff_result.stdout.strip().splitlines() if f]
         if not changed_files:
-            raise RuntimeError("No .project/ changes to commit")
+            raise NothingToCommit("No .project/ changes to commit")
 
         # Auto-generate message if not provided
         if message is None:

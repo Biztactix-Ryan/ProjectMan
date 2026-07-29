@@ -376,16 +376,39 @@ class TestTasksCrud:
         assert "US-TST-1-2" in ids
 
     def test_task_archive(self, client):
-        """Archiving a task marks it as done."""
+        """Archiving a task retires it from the board without deleting it.
+
+        Deliberately shape-agnostic. ``StdioClient`` spawns whatever
+        ``projectman`` is on ``PATH``, which is not necessarily this working
+        tree, so this test asserts only what is true of every build: the call
+        succeeds, the task is still retrievable afterwards, and it is no longer
+        offered as work on the board. The strict behavioural assertion — that
+        archiving sets ``archived: true`` and leaves ``status`` alone instead
+        of writing ``done`` (US-PM-16) — lives in
+        tests/test_task_archived_state.py, which exercises the working tree
+        directly. Same reason test_grab_validates_readiness is shape-agnostic.
+        """
+
+        def board_task_ids() -> set[str]:
+            board = yaml.safe_load(client.call_tool("pm_board", {}))["board"]
+            return {t["id"] for group in board.values() for t in group}
+
         client.call_tool("pm_create_story", {"title": "S", "description": "d"})
         client.call_tool(
             "pm_create_task", {"story_id": "US-TST-1", "title": "T", "description": "d"}
         )
+        # Before archiving, the task is on the board somewhere (available or
+        # not_ready, depending on readiness — which group does not matter here).
+        assert "US-TST-1-1" in board_task_ids()
+
         result = client.call_tool("pm_archive", {"id": "US-TST-1-1"})
         assert "archived" in result
-        get_result = client.call_tool("pm_get", {"id": "US-TST-1-1"})
-        data = yaml.safe_load(get_result)
-        assert data["status"] == "done"
+
+        # Archiving retires the task: gone from every board group ...
+        assert "US-TST-1-1" not in board_task_ids()
+        # ... but still readable, so archival is not deletion.
+        data = yaml.safe_load(client.call_tool("pm_get", {"id": "US-TST-1-1"}))
+        assert data["id"] == "US-TST-1-1"
 
 
 # ─── Domain 4: Epic → Story → Task Linking ─────────────────────────────────
@@ -820,8 +843,14 @@ class TestBoardAndReadiness:
             },
         )
         result = client.call_tool("pm_grab", {"task_id": "US-TST-1-1"})
-        # Should return an error about not being ready
-        assert "error" in result.lower() or "blockers" in result.lower()
+        # The blocker detail is what the caller actually needs, and it is
+        # required in every shape. The old ``"error" in result`` alternative is
+        # gone: a not-ready task is an expected negative, not an error
+        # (US-PM-2-4). The strict assertion on the response shape lives in
+        # tests/test_expected_negatives.py, because StdioClient spawns whatever
+        # ``projectman`` is on PATH rather than this working tree.
+        assert "blockers" in result.lower()
+        assert "grabbed" not in result.lower()
 
     def test_grab_success_with_ready_task(self, client):
         """pm_grab succeeds when task is ready."""

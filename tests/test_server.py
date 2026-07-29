@@ -608,7 +608,12 @@ def test_pm_grab_not_ready_no_points(tmp_project):
 
     result = pm_grab("US-TST-1-1")
     data = yaml.safe_load(result)
-    assert "error" in data
+    # Expected negative, not an error: success response with a reason code.
+    assert not result.lstrip().startswith("error:")
+    assert "error" not in data
+    assert data["outcome"] == "expected_negative"
+    assert data["status"] == "not_ready"
+    assert data["message"] == "task is not ready to grab"
     assert any("no point estimate" in b for b in data["blockers"])
 
 
@@ -621,7 +626,8 @@ def test_pm_grab_already_assigned(tmp_project):
 
     result = pm_grab("US-TST-1-1")
     data = yaml.safe_load(result)
-    assert "error" in data
+    assert "error" not in data
+    assert data["status"] == "not_ready"
     assert any("already assigned" in b for b in data["blockers"])
 
 
@@ -633,12 +639,13 @@ def test_pm_grab_parent_story_backlog(tmp_project):
 
     result = pm_grab("US-TST-1-1")
     data = yaml.safe_load(result)
-    assert "error" in data
+    assert "error" not in data
+    assert data["status"] == "not_ready"
     assert any("backlog" in b for b in data["blockers"])
 
 
 def test_pm_grab_incomplete_dependencies(tmp_project):
-    """pm_grab returns error when task has incomplete dependencies."""
+    """pm_grab returns a not_ready expected negative on incomplete dependencies."""
     from projectman.server import pm_create_story, pm_create_tasks, pm_update, pm_grab
 
     pm_create_story("Story", "Description")
@@ -654,7 +661,8 @@ def test_pm_grab_incomplete_dependencies(tmp_project):
     # Try to grab the dependent task while prerequisite is still todo
     result = pm_grab("US-TST-1-2")
     data = yaml.safe_load(result)
-    assert "error" in data
+    assert "error" not in data
+    assert data["status"] == "not_ready"
     assert any("incomplete dependencies" in b for b in data["blockers"])
     assert any("US-TST-1-1" in b for b in data["blockers"])
 
@@ -757,13 +765,22 @@ def test_pm_commit_custom_message(tmp_git_project, monkeypatch):
 
 
 def test_pm_commit_no_changes(tmp_git_project, monkeypatch):
-    """pm_commit returns an error when there are no .project/ changes."""
+    """pm_commit reports an expected negative when there are no .project/ changes.
+
+    Inverted from the old assertion (``"error" in result``): committing when
+    the tree is already clean is an idempotent no-op, not a failure — an
+    orchestrator that commits after every task must not log a failure on every
+    clean loop.  See docs/reference/error-paths-inventory.md 5.2.
+    """
     monkeypatch.chdir(tmp_git_project)
     from projectman.server import pm_commit
 
     result = pm_commit()
-    assert "error" in result
-    assert "No .project/ changes" in result
+    assert not result.lstrip().startswith("error:")
+    data = yaml.safe_load(result)
+    assert data["outcome"] == "expected_negative"
+    assert data["status"] == "nothing_to_commit"
+    assert data["message"] == "No .project/ changes to commit"
 
 
 def test_pm_commit_message_summarizes_file_types(tmp_git_project, monkeypatch):
@@ -803,15 +820,25 @@ def test_pm_push_success(tmp_git_project_with_remote, monkeypatch):
 
 
 def test_pm_push_no_remote(tmp_git_project, monkeypatch):
-    """pm_push returns an error when no remote is configured."""
+    """pm_push raises a real MCP error when no remote is configured.
+
+    Inverted by US-PM-2-3 from ``assert "error" in result.lower()``: a push
+    that could not happen is a genuine failure, so it must set ``is_error``
+    rather than return a successful body that merely reads like an error.
+    """
     monkeypatch.chdir(tmp_git_project)
+    from mcp.server.fastmcp.exceptions import ToolError
+
     from projectman.server import pm_create_story, pm_commit, pm_push
 
     pm_create_story("Feature", "Description")
     pm_commit()
 
-    result = pm_push()
-    assert "error" in result.lower()
+    with pytest.raises(ToolError) as excinfo:
+        pm_push()
+    # The human-readable message survives; only the envelope changed.
+    assert str(excinfo.value)
+    assert not str(excinfo.value).startswith("error:")
 
 
 def test_pm_push_nothing_to_push(tmp_git_project_with_remote, monkeypatch):
@@ -827,10 +854,17 @@ def test_pm_push_nothing_to_push(tmp_git_project_with_remote, monkeypatch):
 
 
 def test_pm_push_validates_branch_not_detached(tmp_git_project_with_remote, monkeypatch):
-    """pm_push rejects pushes from a detached HEAD state."""
+    """pm_push rejects pushes from a detached HEAD state.
+
+    Inverted by US-PM-2-3: the rejection is now a raised ``ToolError`` (so the
+    MCP layer sets ``is_error``) instead of an ``error:`` body.  The assertion
+    on the message content is kept, unweakened -- it must still name the cause.
+    """
     import subprocess
 
     monkeypatch.chdir(tmp_git_project_with_remote)
+    from mcp.server.fastmcp.exceptions import ToolError
+
     from projectman.server import pm_push
 
     # Detach HEAD
@@ -845,9 +879,10 @@ def test_pm_push_validates_branch_not_detached(tmp_git_project_with_remote, monk
         capture_output=True,
     )
 
-    result = pm_push()
-    assert "error" in result.lower()
-    assert "detach" in result.lower() or "branch" in result.lower()
+    with pytest.raises(ToolError) as excinfo:
+        pm_push()
+    message = str(excinfo.value).lower()
+    assert "detach" in message or "branch" in message
 
 
 def test_pm_push_returns_branch_info(tmp_git_project_with_remote, monkeypatch):

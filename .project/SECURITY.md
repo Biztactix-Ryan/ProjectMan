@@ -1,52 +1,67 @@
 # ProjectMan — Security
 
-ProjectMan is a local-only CLI/MCP tool. It has no authentication, network services, or remote data storage by default.
-
 ## Authentication
 
-Not applicable — ProjectMan runs locally as the current user. No multi-user auth is needed.
+<!-- REQUIRED: Describe how users authenticate.
+     Include: method (JWT, session, OAuth, API keys), token lifetime, refresh strategy. -->
+
+### Method
+
+### Token/Session Management
+
+### Multi-factor Authentication
 
 ## Authorization
 
-Not applicable — single-user tool with filesystem-level access control. The user has full access to their `.project/` data.
+<!-- REQUIRED: Describe the authorization model.
+     Include: roles, permissions, RBAC/ABAC, how permissions are enforced. -->
+
+### Roles & Permissions
+
+| Role | Permissions | Description |
+|------|------------|-------------|
+| | | |
+
+### Enforcement
+
+<!-- Where and how are permissions checked? Middleware, decorators, guards? -->
 
 ## Data Protection
 
-### Storage
+<!-- How is sensitive data handled?
+     Include: encryption at rest/in transit, PII handling, data retention, GDPR/compliance. -->
 
-All project data is stored as plain-text markdown files in `.project/`. Data is protected by filesystem permissions and git history.
+### Encryption
 
-### Sensitive Data
+### PII Handling
 
-ProjectMan does not store credentials, tokens, or PII. All data is project management metadata (titles, descriptions, points, statuses).
-
-### Embeddings
-
-Semantic search embeddings are cached in a local SQLite database. Contains only vector representations of story/task text — no secrets.
+### Data Retention
 
 ## API Security
 
-### Web Dashboard
-
-The optional web dashboard (`pm_web_start`) binds to `localhost` by default. It serves a read-write interface with no authentication — appropriate for local-only use.
-
-**Risk**: If the host parameter is changed to `0.0.0.0`, the dashboard would be network-accessible without authentication.
-
-### MCP Server
-
-Communicates via stdio transport only — no network exposure.
+<!-- How are APIs protected?
+     Include: rate limiting, input validation, CORS, CSP headers. -->
 
 ## Secrets Management
 
-No secrets are managed. Configuration in `.project/config.yaml` contains only project metadata.
+<!-- How are secrets stored and rotated?
+     Include: vault/KMS, rotation schedule, who has access.
+     DO NOT include actual secrets in this file. -->
 
 ## Known Risks & Mitigations
 
+<!-- REQUIRED: List known security risks and what's being done about them.
+     Format: Risk — Severity — Mitigation — Status -->
+
 | Risk | Severity | Mitigation | Status |
 |------|----------|------------|--------|
-| Web dashboard exposed on non-localhost | Low | Default bind is localhost; document the risk | Mitigated |
-| Arbitrary file paths in store operations | Low | Paths are constructed from validated IDs within `.project/` | Mitigated |
+| | | | |
+
+## Incident Response
+
+<!-- What happens when a security incident occurs?
+     Include: contacts, escalation, communication plan. -->
 
 ---
-*Last reviewed: 2026-02-16*
+*Last reviewed: {{ date }}*
 *Update this document when security posture changes. The daily audit checks for staleness.*

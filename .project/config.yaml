@@ -1,12 +1,12 @@
 auto_commit: false
 deploy_branch: null
-description: "Git-native project management for Claude Code \u2014 stories, tasks,\
-  \ epics, and burndown as markdown files"
+description: Git-native project management with MCP server for Claude Code
 hub: false
 name: ProjectMan
 next_changeset_id: 1
-next_epic_id: 13
-next_story_id: 65
-prefix: PRJ
+next_epic_id: 3
+next_sprint_id: 3
+next_story_id: 17
+prefix: PM
 projects: []
-repo: https://github.com/Biztactix-Ryan/ProjectMan.git
+repo: ''

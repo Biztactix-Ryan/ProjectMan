@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections import defaultdict, deque
 from typing import Union
 
-from projectman.models import StoryFrontmatter, TaskFrontmatter
+from projectman.models import StoryFrontmatter, TaskFrontmatter, is_archived
 
 
 class CycleError(ValueError):
@@ -151,10 +151,11 @@ def incomplete_dependencies(
     For cross-story dependencies, use incomplete_task_dependencies.
     """
     status_map = {t.id: t.status for t in siblings}
+    archived = {t.id for t in siblings if t.archived}
     return [
         dep
         for dep in task.depends_on
-        if dep in status_map and status_map[dep] != "done"
+        if dep in status_map and status_map[dep] != "done" and dep not in archived
     ]
 
 
@@ -174,11 +175,17 @@ def incomplete_task_dependencies(
         status_map[t.id] = t.status.value
     for s in all_stories:
         status_map[s.id] = s.status.value
+    # An archived dependency will never be finished, so it must not block its
+    # dependents forever.  Before archival was orthogonal to status, archiving
+    # wrote "done" and released dependents as a side effect; keeping the real
+    # status means the release has to be explicit.
+    archived = {t.id for t in all_tasks if t.archived}
+    archived |= {s.id for s in all_stories if is_archived(s)}
 
     return [
         dep
         for dep in task.depends_on
-        if dep in status_map and status_map[dep] != "done"
+        if dep in status_map and status_map[dep] != "done" and dep not in archived
     ]
 
 
@@ -192,7 +199,16 @@ def incomplete_story_dependencies(
     A story dependency is incomplete if:
     - It references a story that is not done
     - It references a task that is not done
+
+    Archived dependencies are abandoned and will never reach "done", so they
+    are not treated as incomplete — otherwise they would block their
+    dependents forever.  (Archived *stories* already drop out because
+    ``list_stories`` excludes them; archived tasks need the explicit skip
+    because ``list_tasks`` returns them by default.)
     """
+    archived = {t.id for t in all_tasks if t.archived}
+    archived |= {s.id for s in all_stories if is_archived(s)}
+
     status_map: dict[str, str] = {}
     for t in all_tasks:
         status_map[t.id] = t.status.value
@@ -202,5 +218,5 @@ def incomplete_story_dependencies(
     return [
         dep
         for dep in story.depends_on
-        if dep in status_map and status_map[dep] != "done"
+        if dep in status_map and status_map[dep] != "done" and dep not in archived
     ]

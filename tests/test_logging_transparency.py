@@ -141,9 +141,11 @@ class TestDataPersistence:
     def test_archive_task_persists_correctly(self, store):
         store.create_story("Story", "Desc")
         store.create_task("US-TST-1", "Task", "Desc")
+        store.update("US-TST-1-1", status="review")
         store.archive("US-TST-1-1")
         meta, _ = store.get_task("US-TST-1-1")
-        assert meta.status.value == "done"
+        assert meta.archived is True
+        assert meta.status.value == "review"
 
 
 # ── Logging does not affect item files ────────────────────────────────
@@ -293,7 +295,10 @@ class TestFullWorkflowTransparency:
 
         store.archive("US-TST-1-1")
         meta, _ = store.get_task("US-TST-1-1")
-        assert meta.status.value == "done"
+        # Archiving records abandonment, not completion — the task stopped
+        # in-progress and that is what the lifecycle has to show (US-PM-16).
+        assert meta.archived is True
+        assert meta.status.value == "in-progress"
 
     def test_mixed_operations_do_not_interfere(self, store):
         """Creating stories, tasks, and epics in sequence all work."""

@@ -28,7 +28,10 @@ def run_audit(
     # Check 1: Done stories with incomplete tasks
     for story in store.list_stories(status="done"):
         tasks = store.list_tasks(story_id=story.id)
-        incomplete = [t for t in tasks if t.status.value != "done"]
+        # An archived task is abandoned, not outstanding — it must not be
+        # reported as work the done story still owes.  Archival used to write
+        # "done", which excluded it here as a side effect (US-PM-16).
+        incomplete = [t for t in tasks if t.status.value != "done" and not t.archived]
         if incomplete:
             findings.append({
                 "severity": "error",
@@ -325,6 +328,60 @@ def run_audit(
                     "message": f"Story {story.id} has {len(tasks)} test task(s) but no implementation tasks — needs scoping before sprint",
                     "items": [story.id],
                 })
+
+    # Check 17: Acceptance-criteria / test-task drift (US-PM-5-7)
+    #
+    # Editing a story's acceptance criteria used to leave its auto-generated
+    # test tasks quoting the old text and create nothing for the new — and the
+    # audit said "Project is clean" the whole time.  Two findings, both
+    # sourced from Store.detect_criteria_drift so the audit and the reconciler
+    # can never disagree about what counts as a match.
+    #
+    # SEVERITY: warning, not error, and that is a deliberate choice.
+    # /pm-orchestrate halts a sprint on any error-level finding, so error is
+    # reserved here for structural contradictions — a done story with open
+    # tasks, a dependency cycle, missing documentation.  This is a coverage
+    # gap, not corruption: nothing is lost, nothing is unreachable, and one
+    # pm_update with the story's own criteria repairs it.  The matching is
+    # also a similarity heuristic, and a project whose test tasks were
+    # written by hand or imported would trip it on every story; at error
+    # level that false positive would brick the orchestrator for the whole
+    # project, while at warning level it costs a line in DRIFT.md.  It sits
+    # with its siblings missing-acceptance-criteria and
+    # missing-implementation-tasks, which are warnings for the same reason.
+    #
+    # Stories with no acceptance criteria are NOT skipped, deliberately.  They
+    # were until US-PM-5-10, and that hid the one case the flag exists for:
+    # remove every criterion from a story and its worked-on test tasks are
+    # flagged rather than archived, but the flag was then only ever visible in
+    # the pm_update response that raised it.  detect_criteria_drift reports no
+    # "missing" for a story with no criteria, so a criteria-less story that
+    # has no stale test tasks still costs nothing here.
+    for story in store.list_stories():
+        if story.status.value == "archived":
+            continue
+        drift = store.detect_criteria_drift(story.id)
+        if drift["missing"]:
+            findings.append({
+                "severity": "warning",
+                "check": "criteria-without-test-task",
+                "message": (
+                    f"Story {story.id} has {len(drift['missing'])} acceptance "
+                    f"criterion/criteria with no test task — re-apply the criteria "
+                    f"with pm_update to reconcile"
+                ),
+                "items": [story.id],
+            })
+        if drift["stale"]:
+            findings.append({
+                "severity": "warning",
+                "check": "test-task-stale-criterion",
+                "message": (
+                    f"Story {story.id} has {len(drift['stale'])} test task(s) quoting "
+                    f"an acceptance criterion that no longer exists"
+                ),
+                "items": [e["task_id"] for e in drift["stale"]],
+            })
 
     # Generate report
     error_count = sum(1 for f in findings if f["severity"] == "error")

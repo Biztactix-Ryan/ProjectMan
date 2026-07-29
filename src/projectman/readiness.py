@@ -29,6 +29,8 @@ def check_readiness(
     )
 
     # Hard gates
+    if task_meta.archived:
+        blockers.append("task is archived")
     if task_meta.status != TaskStatus.todo and not reclaiming:
         blockers.append(f"status is '{task_meta.status.value}', not 'todo'")
     if task_meta.assignee is not None and not reclaiming:
@@ -59,15 +61,20 @@ def check_readiness(
             blockers.append(f"incomplete dependencies: {dep_list}")
 
     # Soft gates (warnings only)
+    #
+    # Only genuinely conditional signals belong here.  Three body-structure
+    # warnings ("no Implementation section", "no Testing section", "no
+    # Definition of Done checklist") were removed in US-PM-4-6: they fired on
+    # 100.00% of payloads across a 3,527-call corpus, so they carried zero
+    # information while costing ~131 bytes on every pm_grab.  They demanded a
+    # layout no generator in ProjectMan produces — create_task writes the
+    # caller's description verbatim, and the only template defining that
+    # layout (templates/task.md.j2) was dead code, now deleted.  They were
+    # also buggy: a *completed* checklist (`- [x]`) still reported "no
+    # Definition of Done checklist".  See
+    # docs/reference/readiness-warnings-determination.md.  Do not reinstate.
     if task_meta.points and task_meta.points > 5:
         warnings.append(f"high points ({task_meta.points}) — consider decomposing")
-    body_lower = task_body.lower()
-    if "## implementation" not in body_lower:
-        warnings.append("no Implementation section in description")
-    if "## testing" not in body_lower:
-        warnings.append("no Testing section in description")
-    if "- [ ]" not in task_body:
-        warnings.append("no Definition of Done checklist")
 
     return {
         "ready": len(blockers) == 0,

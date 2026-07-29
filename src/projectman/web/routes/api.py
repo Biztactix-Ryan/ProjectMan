@@ -86,9 +86,12 @@ def api_status(store: Store = Depends(get_store)) -> dict:
     if index.total_points > 0:
         pct = round(index.completed_points / index.total_points * 100)
 
+    # An archived task keeps its last real status, so group it under
+    # "archived" rather than reporting abandoned work as todo or done.
     status_groups: dict[str, int] = {}
     for entry in index.entries:
-        status_groups[entry.status] = status_groups.get(entry.status, 0) + 1
+        key = "archived" if entry.archived else entry.status
+        status_groups[key] = status_groups.get(key, 0) + 1
 
     return {
         "project": store.config.name,
@@ -151,8 +154,11 @@ def get_epic(epic_id: str, store: Store = Depends(get_store)) -> dict:
 
     for story in linked_stories:
         tasks = store.list_tasks(story_id=story.id)
-        task_points = sum(t.points or 0 for t in tasks)
-        done_points = sum(t.points or 0 for t in tasks if t.status.value == "done")
+        # Archived tasks are abandoned, not delivered and not outstanding —
+        # they leave both sides of the rollup.
+        counted = [t for t in tasks if not t.archived]
+        task_points = sum(t.points or 0 for t in counted)
+        done_points = sum(t.points or 0 for t in counted if t.status.value == "done")
         total_points += task_points
         completed_points += done_points
         story_data.append(

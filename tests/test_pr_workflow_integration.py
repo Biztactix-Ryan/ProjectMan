@@ -474,22 +474,33 @@ class TestMCPServerPRIntegration:
         assert "gh pr create" in result["pr_commands"][0]["command"]
         assert "gh pr create" in result["pr_commands"][1]["command"]
 
-    def test_pm_changeset_create_prs_error_on_missing(self, tmp_project, monkeypatch):
-        """MCP tool returns error string for non-existent changeset."""
+    def test_pm_changeset_create_prs_raises_on_missing(self, tmp_project, monkeypatch):
+        """MCP tool raises a real error for a non-existent changeset.
+
+        Inverted by US-PM-2-3: an id the caller asserted and that does not
+        exist is a genuine failure, so it sets ``is_error`` instead of
+        returning an ``error:`` body.
+        """
         monkeypatch.chdir(tmp_project)
+
+        from mcp.server.fastmcp.exceptions import ToolError
 
         from projectman.server import pm_changeset_create_prs
 
-        result = pm_changeset_create_prs("CS-TST-999")
-        assert "error" in result
+        with pytest.raises(ToolError) as excinfo:
+            pm_changeset_create_prs("CS-TST-999")
+        assert "CS-TST-999" in str(excinfo.value)
 
-    def test_pm_changeset_create_prs_error_on_empty(self, tmp_project, monkeypatch):
-        """MCP tool returns error for changeset with no entries."""
+    def test_pm_changeset_create_prs_raises_on_empty(self, tmp_project, monkeypatch):
+        """MCP tool raises for a changeset with no entries (US-PM-2-3)."""
         monkeypatch.chdir(tmp_project)
         store = Store(tmp_project)
         cs = store.create_changeset("empty", [])
 
+        from mcp.server.fastmcp.exceptions import ToolError
+
         from projectman.server import pm_changeset_create_prs
 
-        result = pm_changeset_create_prs(cs.id)
-        assert "error" in result
+        with pytest.raises(ToolError) as excinfo:
+            pm_changeset_create_prs(cs.id)
+        assert "changeset has no project entries" in str(excinfo.value)

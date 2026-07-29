@@ -6,7 +6,7 @@ from typing import Optional
 
 import yaml
 
-from .models import IndexEntry, ProjectIndex
+from .models import IndexEntry, ProjectIndex, is_archived
 from .store import Store
 
 _STATUS_EMOJI = {
@@ -28,6 +28,18 @@ def _status_label(status: str) -> str:
     return f"{emoji} {status}" if emoji else status
 
 
+def _task_status_label(task) -> str:
+    """Status label for a task, annotated when the task is archived.
+
+    Archival is a flag beside a task's status, so rendering status alone would
+    show an abandoned task as (say) plain "todo".
+    """
+    label = _status_label(task.status.value)
+    if getattr(task, "archived", False):
+        return f"{_STATUS_EMOJI['archived']} archived ({label})"
+    return label
+
+
 def build_index(
     store: Store,
     *,
@@ -38,6 +50,14 @@ def build_index(
     """Read all epics, stories, and tasks, produce a ProjectIndex.
 
     Accepts optional pre-loaded lists to avoid redundant cache lookups.
+
+    Archived items are still listed in ``entries`` — they happened, and the
+    index is the record of what exists — but they are excluded from *both*
+    sides of the points math.  Archived work is abandoned: counting it as
+    completed inflates delivery, and leaving it in the denominator alone
+    inflates the outstanding work a burndown says is still to do.  Dropping
+    it from both is the only reading that says "this is no longer part of
+    the plan".
     """
     if epics is None:
         epics = store.list_epics()
@@ -71,7 +91,7 @@ def build_index(
                 epic_id=story.epic_id,
             )
         )
-        if story.points:
+        if story.points and not is_archived(story):
             total_points += story.points
             if story.status.value == "done":
                 completed_points += story.points
@@ -83,11 +103,12 @@ def build_index(
                 title=task.title,
                 type="task",
                 status=task.status.value,
+                archived=task.archived,
                 points=task.points,
                 story_id=task.story_id,
             )
         )
-        if task.points:
+        if task.points and not is_archived(task):
             total_points += task.points
             if task.status.value == "done":
                 completed_points += task.points
@@ -235,7 +256,7 @@ def write_markdown_indexes(
             deps = ", ".join(t.depends_on) if t.depends_on else "—"
             story_link = f"[{t.story_id}](stories/{t.story_id}.md)"
             lines.append(
-                f"| {link} | {t.title} | {_status_label(t.status.value)} "
+                f"| {link} | {t.title} | {_task_status_label(t)} "
                 f"| {pts} | {tags} | {assignee} | {deps} | {story_link} |"
             )
     else:

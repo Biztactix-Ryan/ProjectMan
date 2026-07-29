@@ -19,16 +19,23 @@ def _read_log(store: Store) -> list[dict]:
 def _archive_entries(store: Store) -> list[dict]:
     """Return only log entries emitted after the initial create(s).
 
-    Since archive() delegates to update(), we look for update entries
-    whose changes include a status transition to 'archived' or 'done'.
+    Since archive() delegates to update(), we look for update entries whose
+    changes record the archival.  Epics and stories archive by moving *status*
+    to 'archived'; tasks archive by setting the orthogonal ``archived`` flag
+    and leaving status alone (US-PM-16), so both shapes count.
     """
-    return [
-        e
-        for e in _read_log(store)
-        if e["event_type"] == "update"
-        and "status" in e.get("changes", {})
-        and e["changes"]["status"].get("after") in ("archived", "done")
-    ]
+    entries = []
+    for e in _read_log(store):
+        if e["event_type"] != "update":
+            continue
+        changes = e.get("changes", {})
+        status_archived = (
+            "status" in changes and changes["status"].get("after") == "archived"
+        )
+        flag_archived = "archived" in changes and changes["archived"].get("after") is True
+        if status_archived or flag_archived:
+            entries.append(e)
+    return entries
 
 
 class TestArchiveStoryEmitsLog:
@@ -62,7 +69,12 @@ class TestArchiveStoryEmitsLog:
 
 
 class TestArchiveTaskEmitsLog:
-    """Store.archive() on a task must emit a log entry with status → done."""
+    """Store.archive() on a task must emit a log entry setting ``archived``.
+
+    Archiving used to write status=done, which made abandoned work
+    indistinguishable from delivered work.  The log now has to show the
+    archival itself, and show that status was left untouched.
+    """
 
     def test_archive_task_emits_entry(self, store):
         store.create_story("Story", "Desc")
@@ -73,25 +85,27 @@ class TestArchiveTaskEmitsLog:
         assert entries[0]["item_id"] == "US-TST-1-1"
         assert entries[0]["item_type"] == "task"
 
-    def test_archive_task_status_change(self, store):
+    def test_archive_task_sets_archived_flag_not_status(self, store):
         store.create_story("Story", "Desc")
         store.create_task("US-TST-1", "Task", "Desc")
         store.archive("US-TST-1-1")
         entries = _archive_entries(store)
-        diff = entries[0]["changes"]["status"]
-        assert diff["before"] == "todo"
-        assert diff["after"] == "done"
+        diff = entries[0]["changes"]["archived"]
+        assert diff["after"] is True
+        assert "status" not in entries[0]["changes"]
 
-    def test_archive_in_progress_task_captures_transition(self, store):
+    def test_archive_in_progress_task_preserves_real_status(self, store):
         store.create_story("Story", "Desc")
         store.create_task("US-TST-1", "Task", "Desc")
         store.update("US-TST-1-1", status="in-progress")
         store.archive("US-TST-1-1")
         entries = _archive_entries(store)
         assert len(entries) == 1
-        diff = entries[0]["changes"]["status"]
-        assert diff["before"] == "in-progress"
-        assert diff["after"] == "done"
+        assert entries[0]["changes"]["archived"]["after"] is True
+        assert "status" not in entries[0]["changes"]
+        meta, _ = store.get_task("US-TST-1-1")
+        assert meta.status.value == "in-progress"
+        assert meta.archived is True
 
 
 class TestArchiveEpicEmitsLog:
@@ -156,9 +170,10 @@ class TestArchiveLogEntryFields:
         assert meta.status.value == "archived"
 
     def test_archive_task_does_not_break_existing_functionality(self, store):
-        """Archiving a task still sets it to done."""
+        """Archiving a task marks it archived without claiming it was done."""
         store.create_story("Story", "Desc")
         store.create_task("US-TST-1", "Task", "Desc")
         store.archive("US-TST-1-1")
         meta, _ = store.get_task("US-TST-1-1")
-        assert meta.status.value == "done"
+        assert meta.archived is True
+        assert meta.status.value == "todo"

@@ -27,12 +27,16 @@ class TestRunLog:
         entries = store.get_run_log("US-TST-1-1")
         assert entries == []
 
-    def test_note_over_1024_rejected(self, store):
+    def test_note_over_1024_no_longer_rejected(self, store):
+        """The old 1024-char cap raised ValueError; notes that size are now fine."""
         store.create_story("Story", "Body")
         store.create_task("US-TST-1", "Task one", "Do it")
 
-        with pytest.raises(ValueError, match="1024 characters"):
-            store.update("US-TST-1-1", outcome="info", note="x" * 1025)
+        store.update("US-TST-1-1", outcome="info", note="x" * 1025)
+
+        entries = store.get_run_log("US-TST-1-1")
+        assert len(entries) == 1
+        assert entries[0].note == "x" * 1025
 
     def test_note_exactly_1024_accepted(self, store):
         store.create_story("Story", "Body")

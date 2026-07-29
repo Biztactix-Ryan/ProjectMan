@@ -1,41 +1,50 @@
 # ProjectMan — Infrastructure
 
-ProjectMan is a locally-installed CLI/MCP tool distributed via pip/pipx. There is no hosted infrastructure — it runs entirely on the user's machine.
-
 ## Environments
+
+<!-- REQUIRED: List all deployment environments and their purposes.
+     Include: URLs, regions, scaling config, access methods. -->
 
 | Environment | URL | Purpose | Notes |
 |------------|-----|---------|-------|
-| Development | local | Local dev with `pip install -e ".[all,dev]"` | Python venv |
-| Production | local | Installed via `pipx install "projectman[all]"` | User machines |
+| Development | | Local dev | |
+| Staging | | Pre-production testing | |
+| Production | | Live | |
 
 ## CI/CD
 
+<!-- REQUIRED: Document the build and deployment pipeline.
+     Include: trigger conditions, build steps, deployment strategy, rollback procedure. -->
+
 ### Build Pipeline
 
-No CI/CD pipeline currently configured. Tests are run locally via `pytest`.
+### Deployment Process
 
-### Distribution
-
-Installed directly from GitHub via pipx:
-```bash
-pipx install "projectman[all] @ git+https://github.com/Biztactix-Ryan/ProjectMan.git"
-```
-
-Build system: Hatchling (PEP 517 compliant).
+### Rollback Procedure
 
 ## Hosting & Services
 
-- **Compute**: User's local machine only
-- **MCP Transport**: stdio (no network)
-- **Web Dashboard**: Local FastAPI server on `localhost` (user-started, not always running)
-- **Storage**: Local filesystem (`.project/` directory in the repo)
-- **Embeddings Cache**: Local SQLite database
+<!-- Where is this deployed? Cloud provider, services used, regions.
+     Include: compute, storage, CDN, DNS, email, etc. -->
+
+## Monitoring & Alerting
+
+<!-- How do you know when something is wrong?
+     Include: monitoring tools, key metrics, alert channels, on-call. -->
 
 ## Environment Variables
 
-No environment variables required. All configuration lives in `.project/config.yaml`.
+<!-- List all required env vars and their purposes.
+     DO NOT include actual secrets — just names and descriptions. -->
+
+| Variable | Required | Description |
+|----------|----------|-------------|
+| | | |
+
+## Backup & Recovery
+
+<!-- Backup strategy, retention, recovery procedures, RTO/RPO targets. -->
 
 ---
-*Last reviewed: 2026-02-16*
+*Last reviewed: {{ date }}*
 *Update this document when infrastructure changes. The daily audit checks for staleness.*

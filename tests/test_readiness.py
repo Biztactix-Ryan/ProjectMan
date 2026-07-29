@@ -91,7 +91,15 @@ class TestCheckReadiness:
         assert result["ready"] is False
         assert any("not 'todo'" in b for b in result["blockers"])
 
-    def test_warnings_for_missing_sections(self, store):
+    def test_no_body_structure_warnings(self, store):
+        """A body with no headings and no checklist produces NO warnings.
+
+        Inverted in US-PM-4-6.  This test previously asserted the three
+        body-structure warnings; they were deleted because they fired on
+        100.00% of payloads in a 3,527-call corpus while no ProjectMan
+        generator has ever produced the layout they demanded.  See
+        docs/reference/readiness-warnings-determination.md.
+        """
         store.create_story("Story", "Description")
         store.update("US-TST-1", status="active")
         store.create_task("US-TST-1", "Task", BARE_BODY, points=2)
@@ -99,9 +107,40 @@ class TestCheckReadiness:
 
         result = check_readiness(task_meta, task_body, store)
         assert result["ready"] is True
-        assert any("Implementation" in w for w in result["warnings"])
-        assert any("Testing" in w for w in result["warnings"])
-        assert any("Definition of Done" in w for w in result["warnings"])
+        assert result["warnings"] == []
+
+    def test_completed_dod_produces_no_warning(self, store):
+        """A *completed* checklist used to report "no Definition of Done".
+
+        The deleted check matched the literal `- [ ]`, so ticking every box
+        turned the warning back on.  Finishing your work must not produce a
+        complaint that the work is missing.
+        """
+        body = (
+            "Ship the login endpoint and verify it end to end.\n\n"
+            "## Definition of Done\n\n- [x] Endpoint works\n- [x] Tests pass\n"
+        )
+        store.create_story("Story", "Description")
+        store.update("US-TST-1", status="active")
+        store.create_task("US-TST-1", "Task", body, points=2)
+        task_meta, task_body = store.get_task("US-TST-1-1")
+
+        result = check_readiness(task_meta, task_body, store)
+        assert result["warnings"] == []
+
+    def test_blockers_still_fire_alongside_silent_warnings(self, store):
+        """Deleting the warnings did not touch any hard gate."""
+        store.create_story("Story", "Description")
+        store.update("US-TST-1", status="active")
+        store.create_task("US-TST-1", "Task", BARE_BODY)  # no points
+        store.update("US-TST-1-1", assignee="alice")
+        task_meta, task_body = store.get_task("US-TST-1-1")
+
+        result = check_readiness(task_meta, task_body, store)
+        assert result["ready"] is False
+        assert any("no point estimate" in b for b in result["blockers"])
+        assert any("already assigned" in b for b in result["blockers"])
+        assert result["warnings"] == []
 
     def test_high_points_warning(self, store):
         store.create_story("Story", "Description")
@@ -112,6 +151,9 @@ class TestCheckReadiness:
         result = check_readiness(task_meta, task_body, store)
         assert result["ready"] is True
         assert any("high points" in w for w in result["warnings"])
+        # It is now the *only* soft gate — genuinely conditional, so it still
+        # carries information (US-PM-4-6 kept it deliberately).
+        assert result["warnings"] == ["high points (8) — consider decomposing"]
 
     def test_incomplete_deps_blocker_lists_specific_ids(self, store):
         """Readiness blocker message lists specific incomplete dep IDs."""

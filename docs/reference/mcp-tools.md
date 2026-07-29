@@ -1,5 +1,60 @@
 # MCP Tools Reference
 
+## Expected-negative responses
+
+Some questions have a legitimate "no". A task that is not ready to grab, an
+optional document that was never written, a commit with nothing to commit —
+in each case the call did exactly what it was asked to do and the answer is
+simply negative. These are **successful** responses: no `is_error`, and no
+body beginning with `error:`. Genuine failures raise instead, so the two are
+never confused (see `docs/reference/error-paths-inventory.md`).
+
+All of them use one shape, so a caller branches on structure and never on
+prose:
+
+```yaml
+outcome: expected_negative   # the discriminator — always this literal
+status: not_ready            # machine-readable reason code, snake_case
+message: task is not ready to grab   # human-readable; never parse it
+blockers:                    # optional per-tool detail
+  - no point estimate
+  - already assigned to 'alice'
+```
+
+Branch on `status`. `outcome` lets a caller recognise an expected negative
+even when it does not know the particular code.
+
+| Tool | `status` | Meaning | Extra fields |
+|---|---|---|---|
+| `pm_grab` | `not_ready` | The task failed its readiness check and was not claimed | `blockers` |
+| `pm_docs` | `not_created` | The requested document does not exist in this project | `doc`, `file` |
+| `pm_commit` | `nothing_to_commit` | `.project/` is already clean — an idempotent no-op | — |
+
+Related negatives that predate this shape use the same `status` key with the
+same meaning: `pm_web_start` → `already_running`, `pm_web_stop` →
+`not_running`, `pm_web_status` → `running: false`.
+
+Note the boundary: `pm_docs("nonsense")` is *not* an expected negative.
+Asking for an absent-but-valid document is a lookup over an optional set;
+naming a document that does not exist at all is a bad argument, and stays an
+error.
+
+## ID argument aliases
+
+Every tool that acts on an item accepts **two spellings of its ID**: the
+generic `id` and the typed one for what it acts on (`task_id`, `story_id`,
+`epic_id`, `sprint_id`, `item_id`, `changeset_id`). The documented name below
+is the canonical one; the marker `(alias: X)` on an ID argument means `X` is
+accepted for it too. Either spelling alone is a complete call, both with the
+same value is fine, and passing both with **different** values is an error —
+there is no safe guess about which item you meant.
+
+A typed name is only an alias when it names *the item the tool acts on*.
+Where it names something else it is a real, separate argument and carries no
+alias marker: `pm_update`'s and `pm_create_story`'s `epic_id` link a story to
+an epic, and `story_id` on `pm_create_task`, `pm_create_tasks` and
+`pm_fix_malformed` is the parent story.
+
 ## Query Tools
 
 ### pm_status(project?)
@@ -9,7 +64,7 @@ Get project status summary.
 
 ### pm_get(id, include_log?)
 Get full details of one or more epics, stories, or tasks.
-- **id**: One or more comma-separated IDs — epic (e.g. `EPIC-PRJ-1`), story (e.g. `US-PRJ-1`), or task (e.g. `US-PRJ-1-1,US-PRJ-1-2`). Prefer one multi-ID call over repeated single-ID calls.
+- **id**: One or more comma-separated IDs — epic (e.g. `EPIC-PRJ-1`), story (e.g. `US-PRJ-1`), or task (e.g. `US-PRJ-1-1,US-PRJ-1-2`) (alias: `task_id`). Prefer one multi-ID call over repeated single-ID calls.
 - **include_log** (optional, default `false`): Include the 3 most recent run-log entries per item
 - **Returns**: Full frontmatter + body content. A single ID returns one object; multiple IDs return a list (missing IDs become `{id, error}` entries).
 
@@ -24,7 +79,7 @@ Get every item of a type (or a specific ID list) with full data in a single call
 Read project documentation files.
 - **doc** (optional): Specific doc to read — `project`, `infrastructure`, `security`, `vision`, `architecture`, `decisions`
 - **project** (optional): Project name for hub mode
-- **Returns**: Document content
+- **Returns**: Document content, or an expected negative `{outcome: expected_negative, status: not_created, message, doc, file}` when that document has not been created
 
 ### pm_active(project?, tag?, limit?, offset?)
 List active/in-progress items.
@@ -60,7 +115,7 @@ Get combined hub and project context.
 
 ### pm_epic(id, project?, limit?, offset?)
 Get epic details with story and task rollup.
-- **id**: Epic ID (e.g. `EPIC-PRJ-1`)
+- **id**: Epic ID (e.g. `EPIC-PRJ-1`) (alias: `epic_id`)
 - **project** (optional): Project name for hub mode
 - **limit** (optional, default `10`): Max stories to return per page
 - **offset** (optional, default `0`): Starting index for story pagination
@@ -94,12 +149,13 @@ Create multiple tasks under a story in a single call.
 
 ### pm_update(id, status?, points?, title?, assignee?, epic_id?, body?, acceptance_criteria?, tags?, depends_on?, outcome?, note?, project?)
 Update an epic, story, or task.
+- **id**: Epic, story, or task ID (alias: `task_id`). `epic_id` is **not** an alias — it links a story to an epic.
 - **body** (optional): New markdown body/description content
 - **acceptance_criteria** (optional): Comma-separated acceptance criteria (stories only)
 - **tags** (optional): Comma-separated tags
 - **depends_on** (optional): Comma-separated sibling task IDs (tasks only)
 - **outcome** (optional): Run-log outcome — `success`, `partial`, `blocked`, `failed`, or `info`. When provided, appends a run-log entry for tracking work attempts.
-- **note** (optional): Run-log note describing what was accomplished or blocked (max 1024 chars). Defaults outcome to `info` if outcome is omitted.
+- **note** (optional): Run-log note describing what was accomplished or blocked. Notes longer than 4096 characters are truncated server-side with a visible `...[truncated N chars]` marker rather than rejected, so the status/outcome write always lands. Defaults outcome to `info` if outcome is omitted.
 - Epic status values: `draft`, `active`, `done`, `archived`
 - Story status values: `backlog`, `ready`, `active`, `done`, `archived`
 - Task status values: `todo`, `in-progress`, `review`, `done`, `blocked`
@@ -107,14 +163,16 @@ Update an epic, story, or task.
 
 ### pm_archive(id)
 Archive an epic, story, or task.
+- **id**: Epic, story, or task ID to archive (alias: `task_id`)
 
 ### pm_grab(task_id, assignee?, include_story?)
 Claim a task with readiness validation.
+- **task_id**: Task ID to claim (e.g. `US-PRJ-1-1`) (alias: `id`)
 - Sets assignee and status to `in-progress`
 - Validates task readiness before claiming
 - Loads task context for implementation
 - **include_story** (optional, default `true`): Include the parent story body. Pass `false` when the story context is already known (e.g. grabbing a second task from the same story).
-- **Returns**: Task details and context — task frontmatter + body, story context, unfinished sibling tasks (with `sibling_tasks_total` / `sibling_tasks_done` counts), dependency status, readiness warnings
+- **Returns**: Task details and context — task frontmatter + body, story context, unfinished sibling tasks (with `sibling_tasks_total` / `sibling_tasks_done` counts), dependency status, readiness warnings. Returns an expected negative `{outcome: expected_negative, status: not_ready, message, blockers}` when the readiness check fails (the task is left untouched).
 
 ### pm_done_next(task_id, outcome?, note?, assignee?, same_story_only?)
 Complete a task and claim the next ready one in a single call — the loop primitive for working through tasks.
@@ -161,9 +219,11 @@ Update sprint fields (status, stories, dates, etc.).
 
 ### pm_estimate(id)
 Get estimation context with calibration guidelines.
+- **id**: Story or task ID to estimate (alias: `task_id`)
 
 ### pm_scope(id)
 Get scoping context for story decomposition.
+- **id**: Story ID to scope into tasks (alias: `story_id`)
 
 ### pm_auto_scope(mode?, project?, limit?, offset?)
 Discover what needs scoping — returns codebase signals or undecomposed stories.
@@ -235,7 +295,7 @@ Get git status of all hub submodules.
 Commit `.project/` changes.
 - **scope** (optional, default `"all"`): `"hub"`, `"project:<name>"`, or `"all"`
 - **message** (optional): Commit message (auto-generated if omitted)
-- **Returns**: Commit hash and committed-file count (the message is echoed only when auto-generated)
+- **Returns**: Commit hash and committed-file count (the message is echoed only when auto-generated), or an expected negative `{outcome: expected_negative, status: nothing_to_commit, message}` when there is nothing to commit
 
 ### pm_push(scope?)
 Push committed changes to remote.
@@ -263,31 +323,31 @@ Create a changeset to coordinate multi-project changes.
 
 ### pm_changeset_status(changeset_id?, project?)
 Get changeset details or list all changesets.
-- **changeset_id** (optional): Specific changeset ID. Omit to list all.
+- **changeset_id** (optional): Specific changeset ID. Omit to list all. (alias: `id`)
 - **Returns**: Changeset metadata and entry statuses
 
-### pm_changeset_add_project(changeset_id, name, ref?, project?)
+### pm_changeset_add_project(name, changeset_id, ref?, project?)
 Add a project entry to an existing changeset.
-- **changeset_id**: Changeset ID (e.g. `CS-PRJ-1`)
 - **name**: Project name to add
+- **changeset_id**: Changeset ID (e.g. `CS-PRJ-1`) (alias: `id`)
 - **ref** (optional): Git branch/ref for this project's changes
 - **Returns**: Updated changeset metadata
 
 ### pm_changeset_create_prs(changeset_id, project?)
 Generate `gh` CLI commands for creating cross-referenced PRs.
-- **changeset_id**: Changeset ID
+- **changeset_id**: Changeset ID (alias: `id`)
 - **Returns**: List of `gh pr create` commands with cross-references
 
 ### pm_changeset_push(changeset_id, project?)
 Check PR merge status and update changeset status.
-- **changeset_id**: Changeset ID
+- **changeset_id**: Changeset ID (alias: `id`)
 - **Returns**: Per-entry merge status, overall changeset status, `needs_review` flag
 
 ## Run Log
 
 ### pm_run_log(id, limit?, offset?, project?)
 Read the run log for an epic, story, or task — shows previous work attempts, outcomes, and notes.
-- **id**: Epic, story, or task ID
+- **id**: Epic, story, or task ID (alias: `task_id`)
 - **limit** (optional, default `20`): Max entries to return (most recent first)
 - **offset** (optional, default `0`): Starting index for pagination
 - **Returns**: JSON array of log entries, each with `timestamp`, `outcome`, `status`, `note`, `actor`
@@ -298,7 +358,7 @@ Run-log entries are created by passing `outcome` and/or `note` to `pm_update`. S
 
 ### pm_activity(item_id?, event_type?, from_date?, to_date?, actor?, limit?, offset?, project?)
 Query the activity log with filtering and pagination.
-- **item_id** (optional): Filter by item ID
+- **item_id** (optional): Filter by item ID (alias: `id`)
 - **event_type** (optional): Filter by event type (`create`, `update`, `delete`, `archive`)
 - **from_date** (optional): Start date filter (ISO format)
 - **to_date** (optional): End date filter (ISO format)

@@ -7,13 +7,14 @@ from typing import Optional
 import frontmatter
 import yaml
 from mcp.server.fastmcp import FastMCP
+from mcp.server.fastmcp.exceptions import ToolError
 from mcp.types import ToolAnnotations
 
 from .config import find_project_root, load_config
 from .event_bus import EventBus, NoOpEventBus
 from .indexer import build_index, write_index
 from .models import ChangesetStatus, ProjectIndex
-from .store import Store
+from .store import NothingToCommit, Store
 
 mcp = FastMCP("projectman")
 
@@ -66,6 +67,313 @@ def _store(project: Optional[str] = None) -> Store:
     return _store_cache[default_dir]
 
 
+def _note_truncation_fields(store: Store, note: Optional[str]) -> dict:
+    """Consume the run-log truncation record left behind by ``store.update``.
+
+    ``Store.last_note_truncation`` is per-instance mutable state and Stores are
+    cached in ``_store_cache`` for the life of the process, so the record from
+    one call outlives that call.  Two guards keep a later response honest:
+
+    1. It is only read when *this* call actually supplied a note.
+    2. It is cleared on the way out, so nothing can re-report it.
+
+    Returns the response fields to merge, and deliberately returns ``{}`` when
+    the note fitted: absence means "not truncated".  Emitting the fields only
+    on the truncated path keeps the common response byte-for-byte the size it
+    was — response bytes are a tracked cost for this epic, see
+    docs/telemetry/baseline-pre-fix.md (median 341 bytes per call, and only
+    ~13% of real notes exceed the old cap at all).
+
+    NOTE (port forward): ``pm_done_next`` does not exist in this checkout — it
+    was added upstream.  When these changes are ported onto a newer main,
+    ``pm_done_next`` must call this same helper and merge the result into its
+    response, since it is the higher-traffic note-bearing entry point.
+    """
+    record = store.last_note_truncation if note is not None else None
+    store.last_note_truncation = None
+    if not record or not record.get("truncated"):
+        return {}
+    return {
+        "note_truncated": True,
+        "note_original_length": record["original_length"],
+        "note_stored_length": record["stored_length"],
+        "note_dropped_chars": record["dropped_chars"],
+        "note_limit": record["limit"],
+    }
+
+
+#: Discriminator value carried by every expected-negative response.  A caller
+#: that does not know a particular ``status`` code can still tell "the call
+#: worked, the answer is no" from "the call failed" by testing this one field.
+EXPECTED_NEGATIVE = "expected_negative"
+
+
+def _expected_negative(status: str, message: str, **detail) -> str:
+    """Render an *expected negative* — a valid negative answer, not a failure.
+
+    Some questions have a legitimate "no": a task that is not ready to grab,
+    an optional document that was never written, a commit with nothing to
+    commit.  The call did exactly what it was asked to do; the answer is just
+    negative.  These must therefore be **successful** responses — no
+    ``is_error``, and no body beginning with ``error:`` (the two markers
+    ``tools/usage_telemetry/classify.py`` counts as failures).  Contrast
+    ``_expected_negative`` with a genuine failure, which raises so ``is_error``
+    is set (US-PM-2-3).
+
+    One shape is used for all of them so callers branch on structure, never on
+    prose::
+
+        outcome: expected_negative   # the discriminator — always this literal
+        status: not_ready            # machine-readable reason code, snake_case
+        message: task is not ready to grab   # human-readable; never parse it
+        blockers:                    # optional per-tool detail, unchanged
+          - task has no point estimate
+
+    ``status`` is the field to branch on.  Codes in use: ``not_ready``
+    (``pm_grab``), ``not_created`` (``pm_docs``), ``nothing_to_commit``
+    (``pm_commit``).  The already-correct negatives in ``pm_web_start`` /
+    ``pm_web_stop`` / ``pm_web_status`` (``already_running``, ``not_running``,
+    ``running: false``) predate this helper and use the same ``status`` key
+    with the same meaning.
+
+    Detail fields are passed through verbatim and are the reason this is a
+    superset of the old response rather than a replacement: ``pm_grab``'s
+    ``blockers`` list is the caller's whole recovery path and must survive.
+    Nothing beyond the three fixed keys is added — response bytes are a tracked
+    cost for this epic (docs/telemetry/baseline-pre-fix.md).
+
+    NOTE (port forward): ``pm_done_next`` does not exist in this checkout — it
+    was added upstream.  Its ``next: null`` result is the same kind of answer
+    (89 of 413 observed calls, carrying a ``next_info`` hint) and should adopt
+    this exact shape when ported: ``status: no_next_task`` with the hint kept
+    as a detail field.  See docs/reference/error-paths-inventory.md §7.1.
+    """
+    return _yaml_dump(_expected_negative_payload(status, message, **detail))
+
+
+def _expected_negative_payload(status: str, message: str, **detail) -> dict:
+    """The dict behind `_expected_negative`, for callers that compose it.
+
+    `_do_grab` returns a dict its callers branch on structurally (`pm_done_next`
+    tests for a "grabbed" key), so it cannot return the rendered string.  Both
+    spellings therefore build the payload here — one shape, two renderings.
+    """
+    return {
+        "outcome": EXPECTED_NEGATIVE,
+        "status": status,
+        "message": message,
+        **detail,
+    }
+
+
+def _failed(exc: Exception) -> ToolError:
+    """Turn a caught exception into a real MCP error (US-PM-2-3).
+
+    The counterpart to :func:`_expected_negative`.  A genuine failure is one
+    where the tool did not do what it was asked; the caller must be able to see
+    that without parsing prose.  Returning ``f"error: {e}"`` produced a
+    *successful* result whose body happened to start with ``error:`` — invisible
+    to every transport-level metric, which is the whole subject of US-PM-2.
+
+    ``ToolError`` is FastMCP's own signal: anything raised out of a tool body is
+    wrapped by ``mcp.server.fastmcp.tools.base.Tool.run`` and rendered by the
+    low-level server as a ``CallToolResult`` with ``isError=True``, so the
+    caller sees a hard error.  We raise it explicitly rather than letting the
+    original exception escape so that (a) the message is exactly the text that
+    used to be in the body — nothing the caller relied on is lost — and (b) one
+    exception type covers every converted site, which is what US-PM-2-5 asserts
+    against.
+
+    Use ``raise _failed(e) from e`` so the original traceback stays attached for
+    server-side logs.  For a failure detected without an exception, raise
+    ``ToolError("...")`` directly.
+
+    NOTE (port forward): ``pm_done_next`` does not exist in this checkout — it
+    was added upstream and carries its own copy of the generic
+    ``except Exception as e: return f"error: {e}"`` handler.  That handler is a
+    GENUINE FAILURE site and must be converted to use this helper when these
+    changes are ported onto a newer main.  See
+    docs/reference/error-paths-inventory.md 7.1.
+    """
+    return ToolError(str(exc) or exc.__class__.__name__)
+
+
+def _resolve_id(
+    canonical_name: str,
+    canonical_value: object,
+    *,
+    required: bool = True,
+    **aliases: object,
+) -> Optional[str]:
+    """Resolve one ID argument that has more than one accepted spelling (US-PM-3).
+
+    The API grew two conventions for the same thing — the generic ``id``
+    (``pm_get``, ``pm_update``, ``pm_archive``, ``pm_epic``, ``pm_estimate``,
+    ``pm_scope``, ``pm_run_log``, ``pm_fix_malformed``) and a typed one
+    (``task_id`` on ``pm_grab``, ``sprint_id`` on ``pm_get_sprint`` /
+    ``pm_update_sprint``) — and callers guess wrong in both directions often
+    enough to be one of the largest measured hard-error classes in the corpus.
+    This is the single mechanism that makes both spellings work; no tool is
+    meant to hand-roll its own.
+
+    Usage is one line at the top of a tool body — the tool declares its
+    canonical parameter name and every alias it accepts::
+
+        task_id = _resolve_id("task_id", task_id, id=id)     # pm_grab
+        sprint_id = _resolve_id("sprint_id", sprint_id, id=id)  # pm_get_sprint
+        id = _resolve_id("id", id, task_id=task_id)          # pm_get
+
+    The canonical value wins whenever the values agree, so nothing downstream
+    ever sees an alias.  The rules, all of them deliberate:
+
+    * **Canonical only** — the pre-existing behaviour, unchanged.
+    * **Alias only** — resolves to the alias's value.  This is the whole point.
+    * **Both, same value** — *not* an error.  It is unambiguous, so failing it
+      would reject a call that says exactly what it wants; the model belt-and-
+      braces this shape (Study B's census shows repeated keys), and refusing it
+      would trade one error class for another.  Compared after stripping, so
+      ``" US-A "`` and ``"US-A"`` agree.
+    * **Both, different values** — a GENUINE FAILURE.  There is no safe guess:
+      picking either one silently acts on an item the caller did not name.  It
+      raises :class:`ToolError`, so ``is_error`` is set on the wire per
+      US-PM-2's convention — it must never become an ``error:`` body.
+    * **Neither** — the missing-argument failure.  Aliasing forces the
+      canonical parameter to be optional in the signature (otherwise passing
+      only the alias could not typecheck), which moves this check out of
+      FastMCP's schema validation and into here.  Same outcome for the caller:
+      a hard error naming the argument, now naming its aliases too.
+    * **Empty or whitespace-only** values count as *not supplied* anywhere they
+      appear, so ``id=""`` alongside ``task_id="US-A"`` resolves to ``US-A``
+      rather than silently winning with nothing (and two blank spellings are
+      the missing-argument error, not a conflict between two empties).
+
+    ``required=False`` covers the tools whose ID is an optional *filter* rather
+    than the operand — ``pm_activity``'s ``item_id`` (omit to see everything),
+    ``pm_changeset_status``'s ``changeset_id`` (omit to list all).  Only the
+    "neither" rule changes: it returns ``None`` instead of raising, so omitting
+    the argument keeps meaning "no filter".  A conflict is still a conflict —
+    two different filters are as unanswerable as two different operands.
+
+    Values are returned stripped: an ID never legitimately carries surrounding
+    whitespace, and a stray space is exactly the kind of thing that turns an
+    alias fix into a "not found".
+
+    NOT EVERY ``*_id`` PARAMETER IS AN ALIAS CANDIDATE (US-PM-3-6).  Several
+    tools already spend a typed name on a *different* argument — a parent or a
+    link, not the item being acted on:
+
+    * ``pm_update(epic_id=...)``   links a story **to** an epic
+    * ``pm_create_story(epic_id=...)``            — same
+    * ``pm_create_task(story_id=...)`` / ``pm_create_tasks`` — the parent story
+    * ``pm_fix_malformed(story_id=...)``          — the parent story
+
+    Aliasing those onto the operand would silently retarget real calls: the
+    corpus contains ``pm_update(id=..., epic_id=...)`` with two *deliberately*
+    different values, which an alias would turn into a "conflicting ids"
+    failure.  Hence ``pm_update``'s alias is ``task_id`` and never ``epic_id``.
+
+    ``pm_fix_malformed`` is left un-aliased for the same reason plus one more:
+    its ``id`` sits between required parameters, so making it optional would
+    also have to drop ``title``/``item_type`` out of ``required`` and weaken
+    the schema validation of a repair tool that has zero calls in the corpus.
+
+    NOTE (port forward): ``pm_done_next`` does not exist in this checkout — it
+    takes ``task_id`` upstream and needs the same one-line treatment when these
+    changes are ported.  It is the single busiest ``task_id`` tool in the
+    corpus (432 calls here), so it should be first in line.
+    """
+    supplied: list[tuple[str, object]] = []
+    for name, value in ((canonical_name, canonical_value), *aliases.items()):
+        if value is None:
+            continue
+        if isinstance(value, str):
+            value = value.strip()
+            if not value:
+                continue  # empty/whitespace-only is "not supplied", not a value
+        supplied.append((name, value))
+
+    if not supplied:
+        if not required:
+            return None
+        if aliases:
+            spellings = ", ".join(aliases)
+            label = "alias" if len(aliases) == 1 else "aliases"
+            raise ToolError(f"{canonical_name} is required ({label}: {spellings})")
+        raise ToolError(f"{canonical_name} is required")
+
+    if len({value for _, value in supplied}) > 1:
+        given = " and ".join(f"{name}={value!r}" for name, value in supplied)
+        spellings = ", ".join([canonical_name, *aliases])
+        raise ToolError(
+            f"conflicting ids: {given} — {spellings} are different spellings of the "
+            f"same argument, so they cannot name different items. Pass one of them "
+            f"(canonical: {canonical_name}), or pass the same value for both."
+        )
+
+    return supplied[0][1]  # type: ignore[return-value]
+
+
+def _raise_on_hub_error(result):
+    """Convert ``hub/registry.py``'s in-band error reporting into a real error.
+
+    ``registry.py`` reports failure *inside* its return value — a ``dict`` with
+    a truthy ``error`` key, or a ``str`` beginning with ``error:`` — and the CLI
+    depends on that contract.  So the conversion happens here, at the MCP
+    boundary, rather than at the 27 return sites themselves: three call-site
+    guards (``pm_push``, ``pm_push_all``, ``pm_repair``) cover all of them and
+    leave the CLI untouched.  See docs/reference/error-paths-inventory.md 4.
+
+    Why the three shapes below are the complete set for those 27 sites:
+
+    * ``repair`` returns a bare string, ``error: not a hub project — ...``.
+    * ``registry.pm_push`` puts ``error`` at the top level, and folds
+      ``push_hub``'s error (which itself folds ``hub_push_with_rebase``'s) and
+      ``_push_subproject``'s error up into that same key.
+    * ``coordinated_push`` has no top-level ``error``; its "not a hub project"
+      case is carried in ``report``, and a failed hub push in ``hub_result``.
+
+    ``sub_result`` is deliberately *not* inspected.  A subproject failing while
+    the hub push succeeds is a genuine partial success, and a caller must not
+    lose the projects that did push — the same reasoning the inventory applies
+    to multi-id results in 7.2.
+
+    Returns *result* unchanged when it reports no failure, so it can be used
+    inline.
+    """
+    if isinstance(result, str):
+        stripped = result.lstrip()
+        if stripped.startswith("error:"):
+            raise ToolError(stripped[len("error:") :].strip())
+        return result
+    if isinstance(result, dict):
+        if result.get("error"):
+            raise ToolError(str(result["error"]))
+        report = result.get("report")
+        if isinstance(report, str) and report.lstrip().startswith("error:"):
+            raise ToolError(report.lstrip()[len("error:") :].strip())
+        hub_result = result.get("hub_result")
+        if isinstance(hub_result, dict) and hub_result.get("error"):
+            raise ToolError(str(hub_result["error"]))
+    return result
+
+
+def _no_such_malformed_file(malformed_dir: Path, filename: str) -> str:
+    """Message for a mutation whose target file is not in the quarantine.
+
+    A genuine failure, not a lookup that came back empty (inventory 5.3): the
+    caller asserted the file exists by asking for it to be fixed or restored,
+    so silently succeeding would let an orchestrator believe it had drained the
+    malformed queue when it had not.  The current listing is included so the
+    caller can recover in one turn instead of having to call ``pm_malformed``.
+    """
+    try:
+        available = sorted(p.name for p in malformed_dir.iterdir() if p.is_file())
+    except OSError:
+        available = []
+    listing = ", ".join(available) if available else "(none)"
+    return f"{filename} not found in malformed/. Available: {listing}"
+
+
 def _emit_status_change(
     store: Store, item_id: str, old_status: str, new_status: str, meta: object
 ) -> None:
@@ -84,7 +392,9 @@ def _emit_status_change(
         )
         # Check if all tasks in the story are now done
         if new_status == "done":
-            siblings = store.list_tasks(story_id=meta.story_id)
+            # An archived sibling is abandoned work — it will never reach
+            # "done", so waiting on it would keep the story open forever.
+            siblings = store.list_tasks(story_id=meta.story_id, archived=False)
             if siblings and all(t.status.value == "done" for t in siblings):
                 try:
                     story_meta, _ = store.get_story(meta.story_id)
@@ -147,10 +457,13 @@ def pm_status(project: Optional[str] = None) -> str:
         if index.total_points > 0:
             pct = round(index.completed_points / index.total_points * 100)
 
-        # Group by status
+        # Group by status.  An archived task keeps the status it had when work
+        # stopped, so reporting that status would file abandoned work under
+        # "todo" (still owed) or "done" (delivered).  Neither is true.
         status_groups = {}
         for entry in index.entries:
-            status_groups.setdefault(entry.status, []).append(entry)
+            key = "archived" if entry.archived else entry.status
+            status_groups.setdefault(key, []).append(entry)
 
         # Changeset summary
         changesets = store.list_changesets()
@@ -173,21 +486,28 @@ def pm_status(project: Optional[str] = None) -> str:
         }
         return _yaml_dump(result)
     except Exception as e:
-        return f"error: {e}"
+        raise _failed(e) from e
 
 
 @mcp.tool(
     title="Get Item", annotations=ToolAnnotations(title="Get Item", readOnlyHint=True)
 )
-def pm_get(id: str, include_log: bool = False, project: Optional[str] = None) -> str:
+def pm_get(
+    id: Optional[str] = None,
+    include_log: bool = False,
+    project: Optional[str] = None,
+    task_id: Optional[str] = None,
+) -> str:
     """Get full details of epics, stories, or tasks by ID. Accepts multiple comma-separated IDs — always fetch related items in one call instead of repeated single-ID calls.
 
     Args:
-        id: One or more comma-separated IDs — epic (e.g. EPIC-PRJ-1), story (e.g. US-PRJ-1), or task (e.g. US-PRJ-1-1,US-PRJ-1-2)
+        id: One or more comma-separated IDs — epic (e.g. EPIC-PRJ-1), story (e.g. US-PRJ-1), or task (e.g. US-PRJ-1-1,US-PRJ-1-2) (alias: task_id)
         include_log: Include the 3 most recent run-log entries per item (default false; use pm_run_log for full history)
         project: Optional project name (hub mode only)
+        task_id: Alias for id — either spelling works; passing both with different values is an error
     """
     try:
+        id = _resolve_id("id", id, task_id=task_id)
         store = _store(project)
 
         def _fetch(item_id: str) -> dict:
@@ -213,7 +533,7 @@ def pm_get(id: str, include_log: bool = False, project: Optional[str] = None) ->
                 items.append({"id": item_id, "error": str(e)})
         return _yaml_dump(items)
     except Exception as e:
-        return f"error: {e}"
+        raise _failed(e) from e
 
 
 @mcp.tool(
@@ -250,7 +570,7 @@ def pm_batch_get(
         items = store.list_all(type)
         return _yaml_dump(items)
     except Exception as e:
-        return f"error: {e}"
+        raise _failed(e) from e
 
 
 @mcp.tool(
@@ -279,10 +599,22 @@ def pm_docs(doc: Optional[str] = None, project: Optional[str] = None) -> str:
         if doc:
             filename = doc_map.get(doc.lower())
             if not filename:
-                return f"error: unknown doc '{doc}'. Use: project, infrastructure, security, vision, architecture, or decisions"
+                raise ToolError(
+                    f"unknown doc '{doc}'. Use: project, infrastructure, security, vision, architecture, or decisions"
+                )
             path = proj_dir / filename
             if not path.exists():
-                return f"error: {filename} not found"
+                # Expected negative, not a failure: the six ProjectMan
+                # documents are optional by design, so this is a lookup over
+                # an optional set that legitimately came back empty.  (An
+                # unknown *doc name* — the branch above — is a real argument
+                # error and stays one.)
+                return _expected_negative(
+                    "not_created",
+                    f"{filename} has not been created in this project",
+                    doc=doc.lower(),
+                    file=filename,
+                )
             return path.read_text()
 
         # Summary mode: return all docs with their status
@@ -314,7 +646,7 @@ def pm_docs(doc: Optional[str] = None, project: Optional[str] = None) -> str:
                 summary[key] = {"file": filename, "status": "missing"}
         return _yaml_dump(summary)
     except Exception as e:
-        return f"error: {e}"
+        raise _failed(e) from e
 
 
 @mcp.tool(
@@ -349,13 +681,15 @@ def pm_update_doc(
 
         filename = doc_map.get(doc.lower())
         if not filename:
-            return f"error: unknown doc '{doc}'. Use: project, infrastructure, security, vision, architecture, or decisions"
+            raise ToolError(
+                f"unknown doc '{doc}'. Use: project, infrastructure, security, vision, architecture, or decisions"
+            )
 
         path = proj_dir / filename
         path.write_text(content)
         return f"updated: {filename}"
     except Exception as e:
-        return f"error: {e}"
+        raise _failed(e) from e
 
 
 @mcp.tool(
@@ -379,7 +713,9 @@ def pm_active(
     try:
         store = _store(project)
         all_stories = store.list_stories(status="active")
-        all_tasks = store.list_tasks(status="in-progress")
+        # Archived tasks keep the status they stopped at, so an abandoned
+        # in-progress task would otherwise be reported as active work.
+        all_tasks = store.list_tasks(status="in-progress", archived=False)
 
         if tag:
             all_stories = [s for s in all_stories if tag in s.tags]
@@ -409,7 +745,7 @@ def pm_active(
         }
         return _yaml_dump(result)
     except Exception as e:
-        return f"error: {e}"
+        raise _failed(e) from e
 
 
 @mcp.tool(
@@ -478,7 +814,7 @@ def pm_search(
             ]
         )
     except Exception as e:
-        return f"error: {e}"
+        raise _failed(e) from e
 
 
 @mcp.tool(
@@ -504,7 +840,10 @@ def pm_board(
         from .deps import topological_sort
 
         store = _store(project)
-        all_tasks = store.list_tasks()
+        # Archived tasks are abandoned, not workable.  Archival used to write
+        # "done", which dropped them off the board as a side effect; now that
+        # they keep their real status the exclusion has to be explicit.
+        all_tasks = store.list_tasks(archived=False)
 
         # Build a story lookup for priority ordering and context
         story_cache = {}
@@ -632,7 +971,7 @@ def pm_board(
         }
         return _yaml_dump(result)
     except Exception as e:
-        return f"error: {e}"
+        raise _failed(e) from e
 
 
 @mcp.tool(
@@ -672,7 +1011,7 @@ def pm_burndown(project: Optional[str] = None) -> str:
         }
         return _yaml_dump(result)
     except Exception as e:
-        return f"error: {e}"
+        raise _failed(e) from e
 
 
 # ─── Write Tools ────────────────────────────────────────────────
@@ -748,7 +1087,7 @@ def pm_create_story(
         _emit("project.updated", {"summary": f"Story {meta.id} created"})
         return _yaml_dump(result)
     except Exception as e:
-        return f"error: {e}"
+        raise _failed(e) from e
 
 
 @mcp.tool(
@@ -783,7 +1122,7 @@ def pm_create_epic(
         _emit("project.updated", {"summary": f"Epic {meta.id} created"})
         return _yaml_dump({"created": meta.model_dump(mode="json")})
     except Exception as e:
-        return f"error: {e}"
+        raise _failed(e) from e
 
 
 @mcp.tool(
@@ -791,20 +1130,23 @@ def pm_create_epic(
     annotations=ToolAnnotations(title="Epic Details", readOnlyHint=True),
 )
 def pm_epic(
-    id: str,
+    id: Optional[str] = None,
     project: Optional[str] = None,
     limit: int = 10,
     offset: int = 0,
+    epic_id: Optional[str] = None,
 ) -> str:
     """Get epic details with rollup of linked stories and tasks.
 
     Args:
-        id: Epic ID (e.g. EPIC-PRJ-1)
+        id: Epic ID (e.g. EPIC-PRJ-1) (alias: epic_id)
         project: Optional project name (hub mode only)
         limit: Max stories to return (default 10)
         offset: Starting index for story pagination (default 0)
+        epic_id: Alias for id — either spelling works; passing both with different values is an error
     """
     try:
+        id = _resolve_id("id", id, epic_id=epic_id)
         store = _store(project)
         meta, body = store.get_epic(id)
 
@@ -816,8 +1158,14 @@ def pm_epic(
 
         for i, story in enumerate(linked_stories):
             tasks = store.list_tasks(story_id=story.id)
-            story_points = sum(t.points or 0 for t in tasks)
-            done_points = sum(t.points or 0 for t in tasks if t.status.value == "done")
+            # Archived tasks are abandoned work: they leave the numerator and
+            # the denominator alike, so the rollup neither claims them as
+            # delivered nor keeps demanding them.
+            counted = [t for t in tasks if not t.archived]
+            story_points = sum(t.points or 0 for t in counted)
+            done_points = sum(
+                t.points or 0 for t in counted if t.status.value == "done"
+            )
             total_points += story_points
             completed_points += done_points
 
@@ -865,7 +1213,7 @@ def pm_epic(
             result["next_offset"] = offset + limit
         return _yaml_dump(result)
     except Exception as e:
-        return f"error: {e}"
+        raise _failed(e) from e
 
 
 @mcp.tool(
@@ -954,7 +1302,7 @@ def pm_context(
 
         return _yaml_dump(result)
     except Exception as e:
-        return f"error: {e}"
+        raise _failed(e) from e
 
 
 @mcp.tool(
@@ -1000,7 +1348,7 @@ def pm_create_task(
                 created[field] = value
         return _yaml_dump({"created": created})
     except Exception as e:
-        return f"error: {e}"
+        raise _failed(e) from e
 
 
 @mcp.tool(
@@ -1047,7 +1395,7 @@ def pm_create_tasks(
             }
         )
     except Exception as e:
-        return f"error: {e}"
+        raise _failed(e) from e
 
 
 @mcp.tool(
@@ -1057,7 +1405,7 @@ def pm_create_tasks(
     ),
 )
 def pm_update(
-    id: str,
+    id: Optional[str] = None,
     status: Optional[str] = None,
     points: Optional[int] = None,
     title: Optional[str] = None,
@@ -1070,25 +1418,42 @@ def pm_update(
     outcome: Optional[str] = None,
     note: Optional[str] = None,
     project: Optional[str] = None,
+    task_id: Optional[str] = None,
 ) -> str:
     """Update an epic, story, or task.
 
     Args:
-        id: Epic, story, or task ID
+        id: Epic, story, or task ID (alias: task_id)
         status: New status (epics: draft/active/done/archived; stories: backlog/ready/active/done/archived; tasks: todo/in-progress/review/done/blocked)
         points: New point estimate (fibonacci: 1,2,3,5,8,13)
         title: New title
         assignee: Assignee name (tasks only); pass "" to unassign
         epic_id: Link a story to an epic (stories only)
         body: New markdown body/description content
-        acceptance_criteria: Comma-separated acceptance criteria (stories only, e.g. "Users can log in,Error shown on invalid password")
+        acceptance_criteria: Comma-separated acceptance criteria (stories only, e.g. "Users can log in,Error shown on invalid password"). Changing them reconciles the auto-generated test tasks: new criteria get a task, reworded criteria have their task retitled and rebodied, and tasks whose criterion was removed are archived if nothing has happened to them or flagged for a human if work has started. Nothing is ever deleted; archiving is reversible (Store.unarchive).
         tags: Comma-separated tags (e.g. "security,mvp,backend")
         depends_on: Comma-separated task IDs this task depends on (tasks only, e.g. "US-PRJ-1-1,US-PRJ-1-2")
         outcome: Run-log outcome (success/partial/blocked/failed/info). When provided with note, appends a run-log entry for tracking work attempts.
-        note: Run-log note describing what was accomplished or what blocked progress (max 1024 chars). Requires outcome.
+        note: Run-log note describing what was accomplished or what blocked progress. Longer notes are truncated server-side (4096 chars) with a visible marker, never rejected — the status/outcome write always lands. Requires outcome.
         project: Optional project name (hub mode only)
+        task_id: Alias for id — either spelling works; passing both with different values is an error. Note epic_id is NOT an alias: it links a story to an epic.
+
+    Response: always `updated: <item>`.  When — and only when — a supplied note
+    had to be truncated, the response additionally carries `note_truncated:
+    true`, `note_original_length`, `note_stored_length`, `note_dropped_chars`
+    and `note_limit`, so a caller can detect truncation without string-matching.
+    When editing acceptance_criteria moves test tasks, the response additionally
+    carries `test_tasks:` with `created`, `resynced`, `archived` and `flagged`
+    id lists, a `needs_attention` boolean (true iff `flagged` is non-empty),
+    and `orphaned:` detailing each removed criterion's task — `action`
+    (`archive` or `flag`) and `work_reasons` (codes such as `assigned`,
+    `run-log-entries`, `status-not-todo`) so the caller branches without
+    reading prose.  Nothing is ever deleted.
     """
     try:
+        # epic_id is deliberately absent here — on this tool it is the epic a
+        # story is being linked to, not another spelling of the item's own id.
+        id = _resolve_id("id", id, task_id=task_id)
         store = _store(project)
         # Capture old status before update for event emission
         old_status_val = None
@@ -1130,6 +1495,15 @@ def pm_update(
             kwargs["note"] = note
 
         meta = store.update(id, **kwargs)
+        # Read the reconciliation record straight after the update that
+        # produced it — it is per-instance state on a cached Store, so a later
+        # call would otherwise inherit it.
+        reconciliation = (
+            store.last_criteria_reconciliation if acceptance_criteria is not None else None
+        )
+        # Read (and clear) the truncation record straight after the update that
+        # produced it, before any later call can overwrite or inherit it.
+        truncation = _note_truncation_fields(store, note)
         write_index(store)
 
         # Emit events for status changes
@@ -1143,7 +1517,7 @@ def pm_update(
         # Echo only identity + the fields changed in this call (confirms how
         # comma-separated inputs were parsed) — not the full object
         dumped = meta.model_dump(mode="json")
-        result = {"id": meta.id, "status": dumped.get("status")}
+        updated = {"id": meta.id, "status": dumped.get("status")}
         for field in (
             "points",
             "title",
@@ -1154,14 +1528,55 @@ def pm_update(
             "depends_on",
         ):
             if field in kwargs:
-                result[field] = dumped.get(field)
+                updated[field] = dumped.get(field)
         if body is not None:
-            result["body_chars"] = len(body)
+            updated["body_chars"] = len(body)
         if outcome is not None:
-            result["run_log"] = outcome
-        return _yaml_dump({"updated": result})
+            updated["run_log"] = outcome
+        result = {"updated": updated}
+        # Present only when the note was actually truncated; absence means the
+        # note was stored whole.  See _note_truncation_fields for why.
+        result.update(truncation)
+        # Present only when editing acceptance criteria actually moved test
+        # tasks around, so the caller learns about tasks it did not ask for.
+        if reconciliation and (
+            reconciliation["created_task_ids"]
+            or reconciliation["resynced_task_ids"]
+            or reconciliation["orphaned"]
+            or reconciliation["retired"]
+        ):
+            result["test_tasks"] = {
+                "created": reconciliation["created_task_ids"],
+                "resynced": reconciliation["resynced_task_ids"],
+                # Criteria that got no new task because an *archived* test
+                # task already covers them.  Nothing was un-archived: that
+                # is a human decision (pm_restore), not the reconciler's.
+                "retired": [
+                    {"id": e["task_id"], "criterion": e["criterion"]}
+                    for e in reconciliation["retired"]
+                ],
+                # US-PM-5-6's removal policy, as applied.  `archived` and
+                # `flagged` partition `orphaned`, so a caller can branch on
+                # list membership alone; `action` and `work_reasons` on each
+                # orphan say why, in codes, never prose.
+                "archived": reconciliation["archived_task_ids"],
+                "flagged": reconciliation["flagged_task_ids"],
+                "needs_attention": bool(reconciliation["flagged_task_ids"]),
+                "orphaned": [
+                    {
+                        "id": o["task_id"],
+                        "criterion": o["criterion"],
+                        "status": o["status"],
+                        "has_work": o["has_work"],
+                        "action": o["action"],
+                        "work_reasons": o["work_reasons"],
+                    }
+                    for o in reconciliation["orphaned"]
+                ],
+            }
+        return _yaml_dump(result)
     except Exception as e:
-        return f"error: {e}"
+        raise _failed(e) from e
 
 
 @mcp.tool(
@@ -1170,26 +1585,32 @@ def pm_update(
         title="Archive Item", readOnlyHint=False, destructiveHint=True
     ),
 )
-def pm_archive(id: str, project: Optional[str] = None) -> str:
+def pm_archive(
+    id: Optional[str] = None,
+    project: Optional[str] = None,
+    task_id: Optional[str] = None,
+) -> str:
     """Archive an epic, story, or task.
 
     Args:
-        id: Epic, story, or task ID to archive
+        id: Epic, story, or task ID to archive (alias: task_id)
         project: Optional project name (hub mode only)
+        task_id: Alias for id — either spelling works; passing both with different values is an error
     """
     try:
+        id = _resolve_id("id", id, task_id=task_id)
         store = _store(project)
         store.archive(id)
         write_index(store)
         return f"archived: {id}"
     except Exception as e:
-        return f"error: {e}"
+        raise _failed(e) from e
 
 
 def _do_grab(store, task_id: str, assignee: str, include_story: bool) -> dict:
     """Claim a task and build its context payload. Shared by pm_grab and pm_done_next.
 
-    Returns a dict — either {"error", "blockers"} or {"grabbed": {...}}.
+    Returns a dict — either an expected-negative payload or {"grabbed": {...}}.
     """
     from .readiness import check_readiness
 
@@ -1198,10 +1619,14 @@ def _do_grab(store, task_id: str, assignee: str, include_story: bool) -> dict:
     # Validate readiness (re-claiming your own task is idempotent)
     readiness = check_readiness(task_meta, task_body, store, reclaim_for=assignee)
     if not readiness["ready"]:
-        return {
-            "error": "task is not ready to grab",
-            "blockers": readiness["blockers"],
-        }
+        # Expected negative, not a failure: the caller asked whether it
+        # could take this task and got a valid, informative no.  The
+        # blockers list is preserved verbatim — it is the recovery path.
+        return _expected_negative_payload(
+            "not_ready",
+            "task is not ready to grab",
+            blockers=readiness["blockers"],
+        )
 
     # Claim: set assignee and status
     old_status = task_meta.status.value
@@ -1282,18 +1707,21 @@ def _do_grab(store, task_id: str, assignee: str, include_story: bool) -> dict:
                     }
                 )
 
-    return {
-        "grabbed": {
-            "task": task_meta.model_dump(mode="json"),
-            "body": task_body,
-            "story_context": story_context,
-            "sibling_tasks": sibling_list,
-            "sibling_tasks_total": len(all_siblings),
-            "sibling_tasks_done": len(all_siblings) - len(open_siblings),
-            "dependency_status": dependency_status,
-            "warnings": readiness["warnings"],
-        },
+    grabbed = {
+        "task": task_meta.model_dump(mode="json"),
+        "body": task_body,
+        "story_context": story_context,
+        "sibling_tasks": sibling_list,
+        "sibling_tasks_total": len(all_siblings),
+        "sibling_tasks_done": len(all_siblings) - len(open_siblings),
+        "dependency_status": dependency_status,
     }
+    # Omit the key entirely when there is nothing to warn about — an empty
+    # `warnings: []` costs bytes on every call and reads as a signal.  Its
+    # presence now means "something genuinely applies to this task".
+    if readiness["warnings"]:
+        grabbed["warnings"] = readiness["warnings"]
+    return {"grabbed": grabbed}
 
 
 @mcp.tool(
@@ -1303,10 +1731,11 @@ def _do_grab(store, task_id: str, assignee: str, include_story: bool) -> dict:
     ),
 )
 def pm_grab(
-    task_id: str,
+    task_id: Optional[str] = None,
     assignee: str = "claude",
     include_story: bool = True,
     project: Optional[str] = None,
+    id: Optional[str] = None,
 ) -> str:
     """Claim a task — validates readiness, assigns, sets in-progress, loads context.
 
@@ -1314,16 +1743,18 @@ def pm_grab(
     by an orchestrator via pm_done_next) succeeds and returns the same payload.
 
     Args:
-        task_id: Task ID to claim (e.g. US-PRJ-1-1)
+        task_id: Task ID to claim (e.g. US-PRJ-1-1) (alias: id)
         assignee: Who is claiming (default "claude" for AI agents, or a human name)
         include_story: Include the parent story body (default true). Pass false when grabbing another task from a story whose context you already have.
         project: Optional project name (hub mode only)
+        id: Alias for task_id — either spelling works; passing both with different values is an error
     """
     try:
+        task_id = _resolve_id("task_id", task_id, id=id)
         store = _store(project)
         return _yaml_dump(_do_grab(store, task_id, assignee, include_story))
     except Exception as e:
-        return f"error: {e}"
+        raise _failed(e) from e
 
 
 @mcp.tool(
@@ -1460,7 +1891,7 @@ def pm_done_next(
             )
         return _yaml_dump(result)
     except Exception as e:
-        return f"error: {e}"
+        raise _failed(e) from e
 
 
 # ─── Intelligence Tools ─────────────────────────────────────────
@@ -1470,40 +1901,52 @@ def pm_done_next(
     title="Estimation Context",
     annotations=ToolAnnotations(title="Estimation Context", readOnlyHint=True),
 )
-def pm_estimate(id: str, project: Optional[str] = None) -> str:
+def pm_estimate(
+    id: Optional[str] = None,
+    project: Optional[str] = None,
+    task_id: Optional[str] = None,
+) -> str:
     """Get estimation context for a story or task — returns content + calibration guidelines.
 
     Args:
-        id: Story or task ID to estimate
+        id: Story or task ID to estimate (alias: task_id)
         project: Optional project name (hub mode only)
+        task_id: Alias for id — either spelling works; passing both with different values is an error
     """
     try:
         from .estimator import estimate
 
+        id = _resolve_id("id", id, task_id=task_id)
         store = _store(project)
         return estimate(store, id)
     except Exception as e:
-        return f"error: {e}"
+        raise _failed(e) from e
 
 
 @mcp.tool(
     title="Scoping Context",
     annotations=ToolAnnotations(title="Scoping Context", readOnlyHint=True),
 )
-def pm_scope(id: str, project: Optional[str] = None) -> str:
+def pm_scope(
+    id: Optional[str] = None,
+    project: Optional[str] = None,
+    story_id: Optional[str] = None,
+) -> str:
     """Get scoping context for a story — returns story + existing tasks + decomposition guidance.
 
     Args:
-        id: Story ID to scope into tasks
+        id: Story ID to scope into tasks (alias: story_id)
         project: Optional project name (hub mode only)
+        story_id: Alias for id — either spelling works; passing both with different values is an error
     """
     try:
         from .scoper import scope
 
+        id = _resolve_id("id", id, story_id=story_id)
         store = _store(project)
         return scope(store, id)
     except Exception as e:
-        return f"error: {e}"
+        raise _failed(e) from e
 
 
 @mcp.tool(
@@ -1529,11 +1972,11 @@ def pm_audit(include_info: bool = False, project: Optional[str] = None) -> str:
             if config.hub:
                 pm_dir = root / ".project" / "projects" / project
                 if not (pm_dir / "config.yaml").exists():
-                    return f"error: project '{project}' not found in hub"
+                    raise ToolError(f"project '{project}' not found in hub")
                 return run_audit(root, project_dir=pm_dir, include_info=include_info)
         return run_audit(root, include_info=include_info)
     except Exception as e:
-        return f"error: {e}"
+        raise _failed(e) from e
 
 
 @mcp.tool(
@@ -1550,12 +1993,12 @@ def pm_repair() -> str:
     try:
         config = load_config(find_project_root())
         if not config.hub:
-            return "error: not a hub project"
+            raise ToolError("not a hub project")
         from .hub.registry import repair
 
-        return repair()
+        return _raise_on_hub_error(repair())
     except Exception as e:
-        return f"error: {e}"
+        raise _failed(e) from e
 
 
 @mcp.tool(
@@ -1575,7 +2018,7 @@ def pm_validate_branches() -> str:
         result = validate_branches(root=root)
         return _yaml_dump(result)
     except Exception as e:
-        return f"error: {e}"
+        raise _failed(e) from e
 
 
 @mcp.tool(
@@ -1642,7 +2085,7 @@ def pm_malformed(project: Optional[str] = None) -> str:
         }
         return _yaml_dump(result)
     except Exception as e:
-        return f"error: {e}"
+        raise _failed(e) from e
 
 
 @mcp.tool(
@@ -1687,7 +2130,7 @@ def pm_fix_malformed(
         source = malformed_dir / filename
 
         if not source.exists():
-            return f"error: {filename} not found in malformed/"
+            raise ToolError(_no_such_malformed_file(malformed_dir, filename))
 
         # Read existing body if not provided
         if body is None:
@@ -1703,7 +2146,7 @@ def pm_fix_malformed(
 
         if item_type == "task":
             if not story_id:
-                return "error: story_id is required for tasks"
+                raise ToolError("story_id is required for tasks")
             meta = TaskFrontmatter(
                 id=id,
                 story_id=story_id,
@@ -1742,7 +2185,7 @@ def pm_fix_malformed(
             {"fixed": meta.model_dump(mode="json"), "restored_to": str(dest)}
         )
     except Exception as e:
-        return f"error: {e}"
+        raise _failed(e) from e
 
 
 @mcp.tool(
@@ -1767,7 +2210,7 @@ def pm_restore(filename: str, project: Optional[str] = None) -> str:
         source = malformed_dir / filename
 
         if not source.exists():
-            return f"error: {filename} not found in malformed/"
+            raise ToolError(_no_such_malformed_file(malformed_dir, filename))
 
         # Validate before restoring
         post = fm.load(str(source))
@@ -1794,7 +2237,7 @@ def pm_restore(filename: str, project: Optional[str] = None) -> str:
         write_index(store)
         return f"restored: {filename} → {'tasks' if is_task else 'stories'}/"
     except Exception as e:
-        return f"error: {e}"
+        raise _failed(e) from e
 
 
 @mcp.tool(
@@ -1823,7 +2266,7 @@ def pm_reindex(project: Optional[str] = None) -> str:
         except (ImportError, Exception):
             return "reindexed: index.yaml (embeddings not available)"
     except Exception as e:
-        return f"error: {e}"
+        raise _failed(e) from e
 
 
 @mcp.tool(
@@ -1853,7 +2296,7 @@ def pm_auto_scope(
         store = _store(project)
         return auto_scope(store, mode=mode, limit=limit, offset=offset)
     except Exception as e:
-        return f"error: {e}"
+        raise _failed(e) from e
 
 
 # ─── Git Tools ───────────────────────────────────────────────────
@@ -1882,7 +2325,7 @@ def pm_git_status(project: Optional[str] = None) -> str:
             # Filter to a single project
             matched = [p for p in data.get("projects", []) if p["name"] == project]
             if not matched:
-                return f"error: project '{project}' not found in hub status"
+                raise ToolError(f"project '{project}' not found in hub status")
             return _yaml_dump(
                 {
                     "projects": matched,
@@ -1895,7 +2338,18 @@ def pm_git_status(project: Optional[str] = None) -> str:
 
         return _yaml_dump(data)
     except Exception as e:
-        return f"error: {e}"
+        raise _failed(e) from e
+
+
+def _nothing_to_commit() -> str:
+    """The one ``pm_commit`` expected negative, shared by both commit routes.
+
+    Idempotent no-op: the caller asked for ``.project/`` to be committed and it
+    already is, so there is nothing to fix and nothing to retry.  Raising here
+    would make every clean loop of an orchestrator that commits after each task
+    look like a failure.
+    """
+    return _expected_negative("nothing_to_commit", "No .project/ changes to commit")
 
 
 @mcp.tool(
@@ -1935,7 +2389,7 @@ def pm_commit(
                 result["files_committed"] = result.pop("files_changed")
 
         if isinstance(result, dict) and result.get("nothing_to_commit"):
-            return "error: No .project/ changes to commit"
+            return _nothing_to_commit()
         if isinstance(result, dict):
             # Return a file count, not the full path list; echo the message
             # only when auto-generated (the caller already knows their own)
@@ -1945,10 +2399,16 @@ def pm_commit(
             if message is not None:
                 result.pop("message", None)
         return _yaml_dump({"committed": result})
+    except NothingToCommit:
+        # The non-hub route reports this by raising rather than by returning a
+        # dict, so it has to be intercepted here — *before* the handlers below,
+        # which US-PM-2-3 converts into real errors.  Both routes produce the
+        # identical expected-negative response.
+        return _nothing_to_commit()
     except (RuntimeError, ValueError, FileNotFoundError) as e:
-        return f"error: {e}"
+        raise _failed(e) from e
     except Exception as e:
-        return f"error: {e}"
+        raise _failed(e) from e
 
 
 @mcp.tool(
@@ -1975,7 +2435,7 @@ def pm_push(
         if config.hub:
             from .hub.registry import pm_push as _hub_push
 
-            result = _hub_push(scope=scope, root=root)
+            result = _raise_on_hub_error(_hub_push(scope=scope, root=root))
             return _yaml_dump({"pushed": result})
         else:
             # Non-hub: push normally
@@ -1983,9 +2443,9 @@ def pm_push(
             result = store.push_project_changes()
             return _yaml_dump({"pushed": result})
     except RuntimeError as e:
-        return f"error: {e}"
+        raise _failed(e) from e
     except Exception as e:
-        return f"error: {e}"
+        raise _failed(e) from e
 
 
 @mcp.tool(
@@ -2017,14 +2477,16 @@ def pm_push_all(
             [p.strip() for p in projects.split(",") if p.strip()] if projects else None
         )
 
-        result = coordinated_push(
-            projects=project_list,
-            dry_run=dry_run,
-            root=root,
+        result = _raise_on_hub_error(
+            coordinated_push(
+                projects=project_list,
+                dry_run=dry_run,
+                root=root,
+            )
         )
         return _yaml_dump(result)
     except Exception as e:
-        return f"error: {e}"
+        raise _failed(e) from e
 
 
 # ─── Changeset Tools ────────────────────────────────────────────
@@ -2054,12 +2516,12 @@ def pm_changeset_create(
         store = _store(project)
         project_list = [p.strip() for p in projects.split(",") if p.strip()]
         if not project_list:
-            return "error: at least one project is required"
+            raise ToolError("at least one project is required")
         meta = store.create_changeset(title, project_list, description)
         write_index(store)
         return _yaml_dump({"created": meta.model_dump(mode="json")})
     except Exception as e:
-        return f"error: {e}"
+        raise _failed(e) from e
 
 
 @mcp.tool(
@@ -2069,14 +2531,20 @@ def pm_changeset_create(
 def pm_changeset_status(
     changeset_id: Optional[str] = None,
     project: Optional[str] = None,
+    id: Optional[str] = None,
 ) -> str:
     """Get changeset status — one changeset by ID, or list all open changesets.
 
     Args:
-        changeset_id: Optional changeset ID (e.g. CS-PRJ-1). Omit to list all.
+        changeset_id: Optional changeset ID (e.g. CS-PRJ-1). Omit to list all. (alias: id)
         project: Optional project name (hub mode only)
+        id: Alias for changeset_id — either spelling works; passing both with different values is an error
     """
     try:
+        # Optional filter, so "neither" means "list all" rather than an error.
+        changeset_id = _resolve_id(
+            "changeset_id", changeset_id, required=False, id=id
+        )
         store = _store(project)
         if changeset_id:
             meta, body = store.get_changeset(changeset_id)
@@ -2092,7 +2560,7 @@ def pm_changeset_status(
                 }
             )
     except Exception as e:
-        return f"error: {e}"
+        raise _failed(e) from e
 
 
 @mcp.tool(
@@ -2102,25 +2570,28 @@ def pm_changeset_status(
     ),
 )
 def pm_changeset_add_project(
-    changeset_id: str,
     name: str,
+    changeset_id: Optional[str] = None,
     ref: str = "",
     project: Optional[str] = None,
+    id: Optional[str] = None,
 ) -> str:
     """Add a project entry to an existing changeset.
 
     Args:
-        changeset_id: Changeset ID (e.g. CS-PRJ-1)
         name: Project name to add
+        changeset_id: Changeset ID (e.g. CS-PRJ-1) (alias: id)
         ref: Optional git ref/branch for this project
         project: Optional project name (hub mode only)
+        id: Alias for changeset_id — either spelling works; passing both with different values is an error
     """
     try:
+        changeset_id = _resolve_id("changeset_id", changeset_id, id=id)
         store = _store(project)
         meta = store.add_changeset_entry(changeset_id, name, ref=ref)
         return _yaml_dump({"updated": meta.model_dump(mode="json")})
     except Exception as e:
-        return f"error: {e}"
+        raise _failed(e) from e
 
 
 @mcp.tool(
@@ -2128,8 +2599,9 @@ def pm_changeset_add_project(
     annotations=ToolAnnotations(title="Changeset Create PRs", readOnlyHint=True),
 )
 def pm_changeset_create_prs(
-    changeset_id: str,
+    changeset_id: Optional[str] = None,
     project: Optional[str] = None,
+    id: Optional[str] = None,
 ) -> str:
     """Generate PR creation commands for all projects in a changeset.
 
@@ -2137,17 +2609,19 @@ def pm_changeset_create_prs(
     in the changeset. Does not execute them — the caller should review and run.
 
     Args:
-        changeset_id: Changeset ID (e.g. CS-PRJ-1)
+        changeset_id: Changeset ID (e.g. CS-PRJ-1) (alias: id)
         project: Optional project name (hub mode only)
+        id: Alias for changeset_id — either spelling works; passing both with different values is an error
     """
     try:
         from .changesets import changeset_create_prs
 
+        changeset_id = _resolve_id("changeset_id", changeset_id, id=id)
         store = _store(project)
         result = changeset_create_prs(store, changeset_id)
         return _yaml_dump(result)
     except Exception as e:
-        return f"error: {e}"
+        raise _failed(e) from e
 
 
 @mcp.tool(
@@ -2157,8 +2631,9 @@ def pm_changeset_create_prs(
     ),
 )
 def pm_changeset_push(
-    changeset_id: str,
+    changeset_id: Optional[str] = None,
     project: Optional[str] = None,
+    id: Optional[str] = None,
 ) -> str:
     """Mark a changeset as merged and report status for hub ref updates.
 
@@ -2166,10 +2641,12 @@ def pm_changeset_push(
     If some are still pending, marks as partial and reports what's outstanding.
 
     Args:
-        changeset_id: Changeset ID (e.g. CS-PRJ-1)
+        changeset_id: Changeset ID (e.g. CS-PRJ-1) (alias: id)
         project: Optional project name (hub mode only)
+        id: Alias for changeset_id — either spelling works; passing both with different values is an error
     """
     try:
+        changeset_id = _resolve_id("changeset_id", changeset_id, id=id)
         store = _store(project)
         meta, body = store.get_changeset(changeset_id)
 
@@ -2219,7 +2696,7 @@ def pm_changeset_push(
                 }
             )
     except Exception as e:
-        return f"error: {e}"
+        raise _failed(e) from e
 
 
 # ─── Sprint Tools ────────────────────────────────────────────────
@@ -2295,7 +2772,7 @@ def pm_create_sprint(
             result["dependency_warnings"] = warnings
         return _yaml_dump(result)
     except Exception as e:
-        return f"error: {e}"
+        raise _failed(e) from e
 
 
 @mcp.tool(
@@ -2303,18 +2780,21 @@ def pm_create_sprint(
     annotations=ToolAnnotations(title="Get Sprint", readOnlyHint=True),
 )
 def pm_get_sprint(
-    sprint_id: str,
+    sprint_id: Optional[str] = None,
     project: Optional[str] = None,
+    id: Optional[str] = None,
 ) -> str:
     """View sprint details with live progress per story.
 
     Shows each planned story's status, task completion ratio, and dependency status.
 
     Args:
-        sprint_id: Sprint ID (e.g. SPRINT-PRJ-1)
+        sprint_id: Sprint ID (e.g. SPRINT-PRJ-1) (alias: id)
         project: Optional project name (hub mode only)
+        id: Alias for sprint_id — either spelling works; passing both with different values is an error
     """
     try:
+        sprint_id = _resolve_id("sprint_id", sprint_id, id=id)
         store = _store(project)
         meta, body = store.get_sprint(sprint_id)
         result = meta.model_dump(mode="json")
@@ -2331,7 +2811,9 @@ def pm_get_sprint(
         for sid in meta.planned_stories:
             try:
                 story_meta, _ = store.get_story(sid)
-                tasks = store.list_tasks(story_id=sid)
+                # Archived tasks were abandoned mid-sprint: they are neither
+                # done nor still owed, so they drop out of the ratio entirely.
+                tasks = store.list_tasks(story_id=sid, archived=False)
                 done_tasks = [t for t in tasks if t.status.value == "done"]
 
                 # Check dependencies
@@ -2388,7 +2870,7 @@ def pm_get_sprint(
         result["body"] = body
         return _yaml_dump(result)
     except Exception as e:
-        return f"error: {e}"
+        raise _failed(e) from e
 
 
 @mcp.tool(
@@ -2415,7 +2897,7 @@ def pm_list_sprints(
             }
         )
     except Exception as e:
-        return f"error: {e}"
+        raise _failed(e) from e
 
 
 @mcp.tool(
@@ -2425,7 +2907,7 @@ def pm_list_sprints(
     ),
 )
 def pm_update_sprint(
-    sprint_id: str,
+    sprint_id: Optional[str] = None,
     name: Optional[str] = None,
     status: Optional[str] = None,
     goal: Optional[str] = None,
@@ -2433,13 +2915,14 @@ def pm_update_sprint(
     end_date: Optional[str] = None,
     planned_stories: Optional[str] = None,
     project: Optional[str] = None,
+    id: Optional[str] = None,
 ) -> str:
     """Update sprint fields (status, stories, dates, etc.).
 
     When status is set to 'completed', completed_points is auto-computed from done stories.
 
     Args:
-        sprint_id: Sprint ID (e.g. SPRINT-PRJ-1)
+        sprint_id: Sprint ID (e.g. SPRINT-PRJ-1) (alias: id)
         name: New sprint name
         status: New status: planning, active, completed, cancelled
         goal: Updated sprint goal
@@ -2447,10 +2930,12 @@ def pm_update_sprint(
         end_date: End date (YYYY-MM-DD)
         planned_stories: Comma-separated story IDs (replaces current list)
         project: Optional project name (hub mode only)
+        id: Alias for sprint_id — either spelling works; passing both with different values is an error
 
     Returns dependency warnings if new planned stories have unmet dependencies.
     """
     try:
+        sprint_id = _resolve_id("sprint_id", sprint_id, id=id)
         store = _store(project)
         kwargs = {}
         if name is not None:
@@ -2500,7 +2985,7 @@ def pm_update_sprint(
 
         return _yaml_dump(result)
     except Exception as e:
-        return f"error: {e}"
+        raise _failed(e) from e
 
 
 # ─── Web Server Tools ───────────────────────────────────────────
@@ -2552,31 +3037,25 @@ def pm_web_start(host: str = "127.0.0.1", port: int = 8000) -> str:
 
     # Check port availability
     if not _port_available(host, port):
-        return _yaml_dump(
-            {
-                "status": "error",
-                "error": f"Port {port} is already in use",
-                "suggestion": f"Try port {port + 1} or another available port",
-            }
+        raise ToolError(
+            f"Port {port} is already in use. "
+            f"Try port {port + 1} or another available port"
         )
 
     # Check web dependencies
     try:
         import uvicorn  # noqa: F401
         import fastapi  # noqa: F401
-    except ImportError:
-        return _yaml_dump(
-            {
-                "status": "error",
-                "error": "Web dependencies not installed. Install with: pip install projectman[web]",
-            }
-        )
+    except ImportError as e:
+        raise ToolError(
+            "Web dependencies not installed. Install with: pip install projectman[web]"
+        ) from e
 
     # Find project root for the working directory
     try:
         root = find_project_root()
     except Exception as e:
-        return _yaml_dump({"status": "error", "error": f"No project found: {e}"})
+        raise ToolError(f"No project found: {e}") from e
 
     # Start uvicorn as a subprocess
     try:
@@ -2609,7 +3088,7 @@ def pm_web_start(host: str = "127.0.0.1", port: int = 8000) -> str:
         )
     except Exception as e:
         _web_process = None
-        return _yaml_dump({"status": "error", "error": str(e)})
+        raise _failed(e) from e
 
 
 @mcp.tool(
@@ -2637,7 +3116,7 @@ def pm_web_stop() -> str:
             _web_process.kill()
             _web_process.wait(timeout=3)
     except Exception as e:
-        return _yaml_dump({"status": "error", "error": str(e)})
+        raise _failed(e) from e
     finally:
         _web_process = None
         _web_host = None
@@ -2692,11 +3171,12 @@ def pm_activity(
     limit: int = 20,
     offset: int = 0,
     project: Optional[str] = None,
+    id: Optional[str] = None,
 ) -> str:
     """Query the activity log for project mutations.
 
     Args:
-        item_id: Filter by item ID (e.g. US-PRJ-1)
+        item_id: Filter by item ID (e.g. US-PRJ-1) (alias: id)
         event_type: Filter by event type: create, update, delete, archive
         from_date: Filter from date (ISO 8601, e.g. 2026-01-01)
         to_date: Filter to date (ISO 8601, e.g. 2026-12-31)
@@ -2704,11 +3184,14 @@ def pm_activity(
         limit: Max entries to return (default 20)
         offset: Starting index for pagination (default 0)
         project: Optional project name (hub mode only)
+        id: Alias for item_id — either spelling works; passing both with different values is an error
     """
     import json
     from datetime import datetime
 
     try:
+        # Optional filter, so "neither" means "no filter" rather than an error.
+        item_id = _resolve_id("item_id", item_id, required=False, id=id)
         pm_dir = _resolve_project_dir(project)
         log_path = pm_dir / "activity.jsonl"
 
@@ -2784,36 +3267,39 @@ def pm_activity(
         }
         return _yaml_dump(result)
     except Exception as e:
-        return f"error: {e}"
+        raise _failed(e) from e
 
 
 @mcp.tool(
     title="Run Log", annotations=ToolAnnotations(title="Run Log", readOnlyHint=True)
 )
 def pm_run_log(
-    id: str,
+    id: Optional[str] = None,
     limit: int = 20,
     offset: int = 0,
     project: Optional[str] = None,
+    task_id: Optional[str] = None,
 ) -> str:
     """Read the run log for an epic, story, or task. Returns a JSON array of log entries
     showing previous work attempts, outcomes, and notes.
 
     Args:
-        id: Epic, story, or task ID
+        id: Epic, story, or task ID (alias: task_id)
         limit: Max entries to return (default 20, most recent first)
         offset: Number of entries to skip
         project: Optional project name (hub mode only)
+        task_id: Alias for id — either spelling works; passing both with different values is an error
     """
     try:
         import json
 
+        id = _resolve_id("id", id, task_id=task_id)
         store = _store(project)
         entries = store.get_run_log(id, limit=limit, offset=offset)
         result = [e.model_dump(mode="json") for e in entries]
         return json.dumps(result, indent=2, default=str)
     except Exception as e:
-        return f"error: {e}"
+        raise _failed(e) from e
 
 
 def run_server(

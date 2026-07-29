@@ -199,11 +199,13 @@ class TestStoreUpdate:
         assert meta.status.value == "archived"
 
     def test_archive_task(self, store):
+        """Archiving a task sets ``archived``; it must not claim the task is done."""
         store.create_story("Story", "Desc")
         store.create_task("US-TST-1", "Task", "Desc")
         store.archive("US-TST-1-1")
         meta, _ = store.get_task("US-TST-1-1")
-        assert meta.status.value == "done"
+        assert meta.archived is True
+        assert meta.status.value == "todo"
 
     def test_update_body(self, store):
         store.create_story("Story", "Original body")

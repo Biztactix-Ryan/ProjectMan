@@ -254,7 +254,7 @@ class TestAutoCommitArchive:
         auto_commit_store.archive("US-TST-1-1")
 
         messages = _git_log(tmp_git_project, 1)
-        assert messages[0] == "pm: update US-TST-1-1 status=done"
+        assert messages[0] == "pm: update US-TST-1-1 archived=True"
 
 
 class TestAutoCommitErrorHandling:
