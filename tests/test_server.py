@@ -1008,3 +1008,144 @@ def test_store_cache_same_project_returns_same_instance(tmp_project):
 
     # Cache should have exactly two entries
     assert len(_store_cache) == 2
+
+
+# ─── acceptance_criteria: list in, nothing split (US-PM-18) ─────────────
+#
+# Criteria are natural language, so a comma inside one is punctuation.  The
+# tools used to `.split(",")` them, shredding "Given a user, when they log
+# in, then the dashboard loads" into three bogus criteria — and, because
+# every criterion auto-generates a test task, into three bogus tasks too.
+
+GHERKIN = "Given a user, when they log in, then the dashboard loads"
+SECOND_CRITERION = "An invalid password shows an error, in red, above the form"
+
+
+def _criteria_on_disk(tmp_project, story_id="US-TST-1"):
+    """Read the criteria back through a fresh Store — no server-side caching."""
+    meta, _ = Store(tmp_project).get_story(story_id)
+    return list(meta.acceptance_criteria)
+
+
+def test_pm_create_story_accepts_a_list_of_criteria(tmp_project):
+    """A JSON list is one criterion per entry, commas and all."""
+    from projectman.server import pm_create_story
+    result = pm_create_story(
+        "Story", "Desc", acceptance_criteria=[GHERKIN, SECOND_CRITERION]
+    )
+    data = yaml.safe_load(result)
+    assert _criteria_on_disk(tmp_project) == [GHERKIN, SECOND_CRITERION]
+    # One test task per criterion — not one per comma-delimited fragment.
+    assert len(data["test_tasks"]) == 2
+
+
+def test_pm_create_story_bare_string_is_exactly_one_criterion(tmp_project):
+    """The string form is a single criterion, never comma-split."""
+    from projectman.server import pm_create_story
+    result = pm_create_story("Story", "Desc", acceptance_criteria=GHERKIN)
+    data = yaml.safe_load(result)
+    assert _criteria_on_disk(tmp_project) == [GHERKIN]
+    assert len(data["test_tasks"]) == 1
+
+
+def test_pm_create_story_blank_criteria_are_dropped(tmp_project):
+    """Blank entries express nothing and break test-task bodies (US-PM-5-8)."""
+    from projectman.server import pm_create_story
+    result = pm_create_story(
+        "Story", "Desc", acceptance_criteria=["  Alpha criterion  ", "", "   "]
+    )
+    data = yaml.safe_load(result)
+    assert _criteria_on_disk(tmp_project) == ["Alpha criterion"]
+    assert len(data["test_tasks"]) == 1
+
+
+def test_pm_update_accepts_a_list_of_criteria(tmp_project):
+    from projectman.server import pm_create_story, pm_update
+    pm_create_story("Story", "Desc")
+    result = pm_update(
+        "US-TST-1", acceptance_criteria=[GHERKIN, SECOND_CRITERION]
+    )
+    data = yaml.safe_load(result)
+    assert data["updated"]["acceptance_criteria"] == [GHERKIN, SECOND_CRITERION]
+    assert _criteria_on_disk(tmp_project) == [GHERKIN, SECOND_CRITERION]
+
+
+def test_pm_update_bare_string_is_exactly_one_criterion(tmp_project):
+    from projectman.server import pm_create_story, pm_update
+    pm_create_story("Story", "Desc")
+    pm_update("US-TST-1", acceptance_criteria=GHERKIN)
+    assert _criteria_on_disk(tmp_project) == [GHERKIN]
+
+
+def test_pm_update_reconciles_test_tasks_for_list_criteria(tmp_project):
+    """The reconciliation path still sees a list and still moves tasks."""
+    from projectman.server import pm_create_story, pm_update
+    pm_create_story("Story", "Desc", acceptance_criteria=[GHERKIN])
+    result = pm_update(
+        "US-TST-1", acceptance_criteria=[GHERKIN, SECOND_CRITERION]
+    )
+    data = yaml.safe_load(result)
+    assert data["test_tasks"]["created"], data
+    store = Store(tmp_project)
+    live = [
+        t for t in store.list_tasks(story_id="US-TST-1")
+        if t.title.startswith("Test:")
+    ]
+    assert len(live) == 2
+
+
+def test_pm_update_empty_list_clears_criteria(tmp_project):
+    from projectman.server import pm_create_story, pm_update
+    pm_create_story("Story", "Desc", acceptance_criteria=[GHERKIN])
+    pm_update("US-TST-1", acceptance_criteria=[])
+    assert _criteria_on_disk(tmp_project) == []
+
+
+def test_criteria_docstrings_no_longer_teach_comma_separation(tmp_project):
+    """A prose fix is half the fix; without this it drifts back."""
+    from projectman.server import pm_create_story, pm_update
+    for tool in (pm_create_story, pm_update):
+        doc = tool.__doc__ or ""
+        line = next(
+            line for line in doc.splitlines()
+            if line.strip().startswith("acceptance_criteria:")
+        )
+        assert "Comma-separated" not in line, line
+        assert "comma-separated" not in line.lower(), line
+
+
+def test_criteria_schema_advertises_an_array(tmp_project):
+    """What the model reads must offer the list form, not just a string."""
+    import anyio
+    from projectman.server import mcp as mcp_server
+
+    tools = {tool.name: tool for tool in anyio.run(mcp_server.list_tools)}
+    for name in ("pm_create_story", "pm_update"):
+        schema = tools[name].inputSchema["properties"]["acceptance_criteria"]
+        branches = schema.get("anyOf", [schema])
+        types = {branch.get("type") for branch in branches}
+        assert "array" in types, (name, schema)
+        assert "string" in types, (name, schema)
+
+
+def test_json_encoded_list_string_arrives_as_a_list(tmp_project):
+    """A client that stringifies its JSON array still gets a list.
+
+    FastMCP's ``pre_parse_json`` decodes it before the tool is called,
+    because the annotation is not a bare ``str``.  Documented behaviour, so
+    pinned here.
+    """
+    import anyio
+    import json
+    from projectman.server import mcp as mcp_server
+
+    anyio.run(
+        mcp_server.call_tool,
+        "pm_create_story",
+        {
+            "title": "Story",
+            "description": "Desc",
+            "acceptance_criteria": json.dumps([GHERKIN, SECOND_CRITERION]),
+        },
+    )
+    assert _criteria_on_disk(tmp_project) == [GHERKIN, SECOND_CRITERION]

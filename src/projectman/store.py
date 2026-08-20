@@ -3,10 +3,17 @@
 import logging
 import os
 import subprocess
+import tempfile
+from contextlib import contextmanager
 from datetime import date, datetime, timezone
 from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Optional
+
+try:  # POSIX only — see _exclusive_file_lock
+    import fcntl
+except ImportError:  # pragma: no cover - non-POSIX platforms
+    fcntl = None
 
 import frontmatter
 
@@ -38,6 +45,30 @@ _cache_debug: bool = bool(os.environ.get("PROJECTMAN_CACHE_DEBUG"))
 # exceed 4,096.  4,096 therefore covers the entire observed distribution with
 # ~1.4x headroom over the observed maximum while staying bounded.
 RUN_LOG_NOTE_LIMIT = 4096
+
+# The fields `Store.update` can be told to *clear*, mapped to the empty value
+# each one clears to and the item types it exists on.  See §3 of
+# docs/reference/claim-release-contract.md.
+#
+# `update` applies `if value is not None` to its kwargs, so the one value that
+# means "clear" is exactly the one it drops.  Clearing therefore cannot be a
+# kwarg value at all; it is a separate, explicitly-named set of field names.
+# Naming the field is also what makes the intent spellable by a model — the
+# value it types is a token it already holds (the field's own name), never an
+# absence.
+CLEARABLE_FIELDS: dict[str, tuple[object, frozenset[str]]] = {
+    "assignee": (None, frozenset({"task"})),
+    "depends_on": ([], frozenset({"task", "story"})),
+    "tags": ([], frozenset({"epic", "story", "task"})),
+    "points": (None, frozenset({"epic", "story", "task"})),
+    "epic_id": (None, frozenset({"story"})),
+}
+
+
+def _empty_value(field: str) -> object:
+    """A fresh empty value for `field` — fresh so no two items share a list."""
+    empty, _ = CLEARABLE_FIELDS[field]
+    return list(empty) if isinstance(empty, list) else empty
 
 
 class NothingToCommit(RuntimeError):
@@ -247,6 +278,64 @@ def clear_all_caches() -> None:
 def get_cache_stats() -> dict[str, int]:
     """Return a copy of the current cache statistics."""
     return dict(_cache_stats)
+
+
+def _atomic_write_text(path: Path, text: str) -> None:
+    """Write ``text`` to ``path`` so no reader ever sees a partial file.
+
+    The content lands in a temp file in the same directory and is moved into
+    place with :func:`os.replace`, which is atomic within a filesystem.  A
+    concurrent reader therefore observes either the whole old file or the
+    whole new one — never a half-written frontmatter block.  Required by the
+    compare-and-swap claim (docs/reference/claim-release-contract.md §2.3);
+    used for every ``Store.update`` write because the guarantee is free.
+    """
+    tmp_fd, tmp_name = tempfile.mkstemp(
+        dir=str(path.parent), prefix=f".{path.name}.", suffix=".tmp"
+    )
+    try:
+        with os.fdopen(tmp_fd, "w") as fh:
+            fh.write(text)
+            fh.flush()
+            os.fsync(fh.fileno())
+        try:
+            # mkstemp creates 0600; keep the file's own permissions instead.
+            os.chmod(tmp_name, path.stat().st_mode & 0o7777)
+        except OSError:
+            pass
+        os.replace(tmp_name, path)
+    except BaseException:
+        try:
+            os.unlink(tmp_name)
+        except OSError:
+            pass
+        raise
+
+
+@contextmanager
+def _exclusive_file_lock(path: Path):
+    """Hold an exclusive ``flock`` on ``path`` for the body of the block.
+
+    Chosen over an ``O_CREAT|O_EXCL`` lockfile because the kernel releases it
+    when the holder dies: a crashed worker leaves no stale lock to reap and
+    there is no expiry policy to get wrong.  Scope is one file, so workers
+    claiming *different* tasks never contend.
+
+    Code inside the block must re-read the file **by path**, not through this
+    descriptor: the writer replaces the path with a new inode, so a waiter
+    that was blocked on the old inode still sees the winner's write.
+
+    ``fcntl`` is POSIX-only.  Where it is unavailable the lock degrades to a
+    no-op and the compare-and-swap keeps its single-process guarantee.
+    """
+    with open(path, "r") as fh:
+        if fcntl is not None:
+            fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            if fcntl is not None:
+                fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
 
 
 from .config import load_config
@@ -1685,13 +1774,142 @@ class Store:
                 continue
         return entries
 
+    @staticmethod
+    def _claim_won(
+        disk: TaskFrontmatter, assignee: str, expected_assignee: str | None
+    ) -> bool:
+        """The compare half of the compare-and-swap. ``disk`` is the on-disk state.
+
+        Two things are compared, in this order
+        (docs/reference/claim-release-contract.md §2.2):
+
+        1. ``assignee`` — the swap variable; this is the CAS proper.
+        2. ``status`` — a task that reached ``review`` or ``done`` between the
+           readiness check and the lock must not be claimable even though its
+           assignee may be ``None``.
+
+        The second clause of the unguarded predicate is the **idempotent
+        re-claim**: the holder re-claiming its own todo/in-progress task wins.
+        It is load-bearing — ``pm_done_next`` pre-claims a task for a worker
+        that then calls ``pm_grab`` itself, so a CAS that rejected the holder's
+        own re-claim would break the orchestrator hand-off.  Do not drop it.
+
+        ``expected_assignee`` narrows the predicate to an explicit hand-off
+        from a named holder rather than a take from the unassigned pool.
+        """
+        held_ok = disk.status in (TaskStatus.todo, TaskStatus.in_progress)
+        if expected_assignee is not None:
+            return disk.assignee == expected_assignee and held_ok
+        return (disk.assignee is None and disk.status == TaskStatus.todo) or (
+            disk.assignee == assignee and held_ok
+        )
+
+    def claim_task(
+        self,
+        task_id: str,
+        assignee: str,
+        expected_assignee: str | None = None,
+    ) -> tuple[bool, TaskFrontmatter]:
+        """Atomically claim a task.  Returns ``(won, current_meta)``.
+
+        The compare is on the **on-disk** ``assignee`` and ``status``, re-read
+        inside an exclusive ``flock`` on the task file and bypassing the
+        process cache (``get_task`` will happily serve a stale cached copy).
+        The write goes through :func:`_atomic_write_text`, so a concurrent
+        reader never observes a half-written file.
+
+        Two concurrent workers therefore cannot both win: the loser re-reads
+        after the winner's write and sees the claim.  The loser gets
+        ``won=False`` with the current holder in ``current_meta.assignee`` and
+        the task is left byte-for-byte untouched — losing a race is the normal
+        operation of a parallel pool, not a fault, so nothing is written and
+        nothing is logged for it.
+
+        Args:
+            task_id: the task to claim.
+            assignee: who is claiming it.
+            expected_assignee: when given, win only if the task is currently
+                held by this name — an explicit hand-off rather than a take
+                from the unassigned pool.
+        """
+        path = self._task_path(task_id)
+        if not path.exists():
+            raise FileNotFoundError(f"Task not found: {task_id}")
+
+        with _exclusive_file_lock(path):
+            # Re-read by path, never from the cache and never through the
+            # lock's own descriptor — see _exclusive_file_lock.
+            post = frontmatter.load(str(path))
+            disk = TaskFrontmatter(**post.metadata)
+            if not self._claim_won(disk, assignee, expected_assignee):
+                return False, disk
+            # The swap.  update() re-reads the same file, writes it
+            # atomically and refreshes the cache entry before the lock is
+            # released, so no reader can observe the pre-claim value once the
+            # claim is durable.
+            meta = self.update(
+                task_id, assignee=assignee, status=TaskStatus.in_progress.value
+            )
+        return True, meta
+
+    @staticmethod
+    def _resolve_clear(clear, item_kind: str, kwargs: dict) -> list[str]:
+        """Validate a ``clear`` request and return the field names, deduped.
+
+        Every rejection here is a *caller bug* and raises, so the error text is
+        the recovery path.  ``ValueError`` is used rather than a bespoke type
+        because ``server`` already converts anything raised out of a tool body
+        into a ``ToolError`` (``_failed``), which is what §3 requires.
+        """
+        if clear is None:
+            return []
+        if isinstance(clear, str):
+            names = clear.split(",")
+        else:
+            names = list(clear)
+
+        valid = ", ".join(sorted(CLEARABLE_FIELDS))
+        resolved: list[str] = []
+        for raw in names:
+            name = raw.strip()
+            if not name:
+                continue
+            if name not in CLEARABLE_FIELDS:
+                raise ValueError(
+                    f"cannot clear unknown field {name!r}; valid field names are: {valid}"
+                )
+            _, applies_to = CLEARABLE_FIELDS[name]
+            if item_kind not in applies_to:
+                raise ValueError(
+                    f"cannot clear {name!r} on a {item_kind} — "
+                    f"it applies to: {', '.join(sorted(applies_to))}"
+                )
+            # Contradictory instruction: set this field and clear it in one
+            # call.  Loud and deterministic beats a silent precedence rule,
+            # which would let a release silently become an assignment.
+            if kwargs.get(name) is not None:
+                raise ValueError(
+                    f"conflicting instruction: clear={name!r} was given together "
+                    f"with {name}={kwargs[name]!r}; pass one or the other"
+                )
+            if name not in resolved:
+                resolved.append(name)
+        return resolved
+
     def update(
-        self, item_id: str, **kwargs
+        self, item_id: str, *, clear=None, **kwargs
     ) -> EpicFrontmatter | StoryFrontmatter | TaskFrontmatter:
         """Update fields on an epic, story, or task.
 
         Accepts frontmatter fields as keyword arguments.  The special
         ``body`` kwarg replaces the markdown body content (not frontmatter).
+
+        ``clear`` names fields to reset to empty — a comma-separated string or
+        an iterable of names drawn from :data:`CLEARABLE_FIELDS`.  It exists
+        because ``update`` skips ``None`` kwargs, so the value that means
+        "clear" is unreachable through a kwarg.  Clearing an already-empty
+        field is a success: ``clear`` is declarative, and the requested end
+        state already holds.
         """
         is_epic = self._is_epic_id(item_id)
         is_task = not is_epic and self._is_task_id(item_id)
@@ -1719,6 +1937,12 @@ class Store:
         if unassign:
             kwargs["assignee"] = None
 
+        # Resolved after the ""-to-None normalisation above, so the legacy
+        # sentinel and clear="assignee" in one call are the same intent, not a
+        # conflict.
+        item_kind = "epic" if is_epic else ("task" if is_task else "story")
+        cleared = self._resolve_clear(clear, item_kind, kwargs)
+
         # Capture field info for auto-commit message before modifying kwargs
         commit_parts = []
         for k, v in kwargs.items():
@@ -1726,6 +1950,8 @@ class Store:
                 commit_parts.append(f"{k}={v}" if k != "body" else "body")
         if unassign:
             commit_parts.append("assignee=none")
+        if cleared:
+            commit_parts.append(f"clear={','.join(cleared)}")
 
         # Pop run-log fields — they don't go into frontmatter
         outcome = kwargs.pop("outcome", None)
@@ -1773,6 +1999,8 @@ class Store:
                 post.metadata[key] = value
         if unassign:
             post.metadata["assignee"] = None
+        for name in cleared:
+            post.metadata[name] = _empty_value(name)
         post.metadata["updated"] = date.today().isoformat()
 
         if is_epic:
@@ -1782,7 +2010,7 @@ class Store:
         else:
             meta = StoryFrontmatter(**post.metadata)
 
-        path.write_text(frontmatter.dumps(post))
+        _atomic_write_text(path, frontmatter.dumps(post))
 
         # Surgically update relevant cache entry
         if is_epic:
@@ -1828,7 +2056,7 @@ class Store:
                 # Roll back: restore the original file
                 post.metadata = {**old_meta, "updated": date.today().isoformat()}
                 post.content = old_body
-                path.write_text(frontmatter.dumps(post))
+                _atomic_write_text(path, frontmatter.dumps(post))
                 self._invalidate_cache("tasks")
                 raise
 
@@ -1836,6 +2064,14 @@ class Store:
         changes: dict[str, dict] = {}
         if unassign and old_meta.get("assignee") is not None:
             changes["assignee"] = {"before": old_meta.get("assignee"), "after": None}
+        # Cleared fields have to be diffed separately: the kwargs loop below
+        # skips None values, and every clear ends in one of those.  A field
+        # that was already empty is not a change and is not logged.
+        for name in cleared:
+            before = old_meta.get(name)
+            after = _empty_value(name)
+            if (before or None) != (after or None):
+                changes[name] = {"before": before, "after": after}
         for key, value in kwargs.items():
             if value is not None:
                 before = old_meta.get(key)

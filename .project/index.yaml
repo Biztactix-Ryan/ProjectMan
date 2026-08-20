@@ -15,6 +15,14 @@ entries:
   story_id: null
   epic_id: null
   tags: []
+- id: EPIC-PM-3
+  title: Orphan-branch worktree storage for PM data
+  type: epic
+  status: draft
+  points: null
+  story_id: null
+  epic_id: null
+  tags: []
 - id: EPIC-PRJ-1
   title: 'Hub Push Workflow: Fix Submodule Commit & Push Alignment'
   type: epic
@@ -114,7 +122,7 @@ entries:
 - id: US-PM-1
   title: Stop rejecting oversized run-log notes
   type: story
-  status: active
+  status: done
   points: 2
   story_id: null
   epic_id: EPIC-PM-1
@@ -178,10 +186,26 @@ entries:
 - id: US-PM-17
   title: Stop the archived-as-done migration from demoting genuinely completed work
   type: story
-  status: backlog
+  status: done
   points: 5
   story_id: null
   epic_id: EPIC-PM-1
+  tags: []
+- id: US-PM-18
+  title: Fix comma-splitting of acceptance criteria in MCP story tools
+  type: story
+  status: done
+  points: 5
+  story_id: null
+  epic_id: null
+  tags: []
+- id: US-PM-19
+  title: 'Migration command: move .project onto an orphan projectman branch worktree'
+  type: story
+  status: backlog
+  points: 8
+  story_id: null
+  epic_id: EPIC-PM-3
   tags: []
 - id: US-PM-2
   title: Surface soft errors as genuine MCP errors
@@ -190,6 +214,24 @@ entries:
   points: 5
   story_id: null
   epic_id: EPIC-PM-1
+  tags: []
+- id: US-PM-20
+  title: 'Attach on clone: auto-mount the projectman branch in init plus an attach
+    command'
+  type: story
+  status: backlog
+  points: 5
+  story_id: null
+  epic_id: EPIC-PM-3
+  tags: []
+- id: US-PM-21
+  title: 'Worktree compatibility: verify pm git ops against a worktree-mounted .project
+    and document the rough edges'
+  type: story
+  status: backlog
+  points: 8
+  story_id: null
+  epic_id: EPIC-PM-3
   tags: []
 - id: US-PM-3
   title: Accept id and task_id as aliases on every tool
@@ -226,7 +268,7 @@ entries:
 - id: US-PM-7
   title: Atomic task claim and release primitive
   type: story
-  status: active
+  status: done
   points: 8
   story_id: null
   epic_id: EPIC-PM-2
@@ -779,7 +821,7 @@ entries:
 - id: US-PM-1-3
   title: Return a note_truncated flag on the update response
   type: task
-  status: todo
+  status: done
   points: 1
   story_id: US-PM-1
   epic_id: null
@@ -795,7 +837,7 @@ entries:
 - id: US-PM-1-5
   title: 'Test: note_truncated flag and boundary lengths'
   type: task
-  status: todo
+  status: done
   points: 1
   story_id: US-PM-1
   epic_id: null
@@ -803,7 +845,7 @@ entries:
 - id: US-PM-1-6
   title: Clear the stale port-forward markers left by the 0.8.15 rebase
   type: task
-  status: todo
+  status: done
   points: 1
   story_id: US-PM-1
   epic_id: null
@@ -1227,8 +1269,8 @@ entries:
   title: 'Test: A task completed in a single todo-to-done write is never a migration
     candidate'
   type: task
-  status: todo
-  points: null
+  status: done
+  points: 1
   story_id: US-PM-17
   epic_id: null
   tags: []
@@ -1236,8 +1278,8 @@ entries:
   title: 'Test: Applying the migration cannot move a task out of done without a positive
     archive signal'
   type: task
-  status: todo
-  points: null
+  status: done
+  points: 1
   story_id: US-PM-17
   epic_id: null
   tags: []
@@ -1245,16 +1287,16 @@ entries:
   title: 'Test: The known legacy archives in this repo are still handled or explicitly
     documented as unrecoverable'
   type: task
-  status: todo
-  points: null
+  status: done
+  points: 1
   story_id: US-PM-17
   epic_id: null
   tags: []
 - id: US-PM-17-4
   title: 'Test: The module docstring''s safety claim matches actual behaviour'
   type: task
-  status: todo
-  points: null
+  status: done
+  points: 1
   story_id: US-PM-17
   epic_id: null
   tags: []
@@ -1262,15 +1304,15 @@ entries:
   title: 'Test: Regression test covers single-write completion alongside the in-progress
     path'
   type: task
-  status: todo
-  points: null
+  status: done
+  points: 1
   story_id: US-PM-17
   epic_id: null
   tags: []
 - id: US-PM-17-6
   title: Decide and document how an archive is positively identified
   type: task
-  status: todo
+  status: done
   points: 2
   story_id: US-PM-17
   epic_id: null
@@ -1278,7 +1320,7 @@ entries:
 - id: US-PM-17-7
   title: Implement the chosen detection change in migrations.py
   type: task
-  status: todo
+  status: done
   points: 2
   story_id: US-PM-17
   epic_id: null
@@ -1286,7 +1328,7 @@ entries:
 - id: US-PM-17-8
   title: Add regression tests for single-write completion
   type: task
-  status: todo
+  status: done
   points: 2
   story_id: US-PM-17
   epic_id: null
@@ -1294,9 +1336,140 @@ entries:
 - id: US-PM-17-9
   title: Resolve the four live candidates in this repo
   type: task
-  status: todo
+  status: done
   points: 1
   story_id: US-PM-17
+  epic_id: null
+  tags: []
+- id: US-PM-18-1
+  title: 'Test: A criterion containing commas is stored as one criterion via pm_create_story'
+  type: task
+  status: done
+  points: 1
+  story_id: US-PM-18
+  epic_id: null
+  tags: []
+- id: US-PM-18-2
+  title: 'Test: A criterion containing commas is stored as one criterion via pm_update'
+  type: task
+  status: done
+  points: 1
+  story_id: US-PM-18
+  epic_id: null
+  tags: []
+- id: US-PM-18-3
+  title: 'Test: pm_update criteria edits still reconcile auto-generated test tasks
+    correctly'
+  type: task
+  status: done
+  points: 1
+  story_id: US-PM-18
+  epic_id: null
+  tags: []
+- id: US-PM-18-4
+  title: 'Test: Tool docstrings no longer instruct comma-separated criteria'
+  type: task
+  status: done
+  points: 1
+  story_id: US-PM-18
+  epic_id: null
+  tags: []
+- id: US-PM-18-5
+  title: 'Test: Regression tests cover comma-bearing criteria on both tools'
+  type: task
+  status: done
+  points: 1
+  story_id: US-PM-18
+  epic_id: null
+  tags: []
+- id: US-PM-18-6
+  title: Switch acceptance_criteria params to list input in pm_create_story and pm_update
+  type: task
+  status: done
+  points: 3
+  story_id: US-PM-18
+  epic_id: null
+  tags: []
+- id: US-PM-18-7
+  title: Add regression tests for comma-bearing acceptance criteria
+  type: task
+  status: done
+  points: 2
+  story_id: US-PM-18
+  epic_id: null
+  tags: []
+- id: US-PM-19-1
+  title: 'Test: Running the migration leaves .project mounted as a worktree on an
+    orphan projectman branch'
+  type: task
+  status: todo
+  points: null
+  story_id: US-PM-19
+  epic_id: null
+  tags: []
+- id: US-PM-19-2
+  title: 'Test: main stops tracking .project and gains a .gitignore entry for it'
+  type: task
+  status: todo
+  points: null
+  story_id: US-PM-19
+  epic_id: null
+  tags: []
+- id: US-PM-19-3
+  title: 'Test: All existing PM files survive the migration intact'
+  type: task
+  status: todo
+  points: null
+  story_id: US-PM-19
+  epic_id: null
+  tags: []
+- id: US-PM-19-4
+  title: 'Test: Migration refuses to run on a dirty working tree'
+  type: task
+  status: todo
+  points: null
+  story_id: US-PM-19
+  epic_id: null
+  tags: []
+- id: US-PM-19-5
+  title: 'Test: Migration refuses when a projectman branch already exists and points
+    at attach'
+  type: task
+  status: todo
+  points: null
+  story_id: US-PM-19
+  epic_id: null
+  tags: []
+- id: US-PM-19-6
+  title: 'Test: The projectman branch is pushed to origin when a remote exists'
+  type: task
+  status: todo
+  points: null
+  story_id: US-PM-19
+  epic_id: null
+  tags: []
+- id: US-PM-19-7
+  title: Implement migrate-worktree command core
+  type: task
+  status: todo
+  points: 5
+  story_id: US-PM-19
+  epic_id: null
+  tags: []
+- id: US-PM-19-8
+  title: 'Add safety rails: dirty-tree and existing-branch refusal'
+  type: task
+  status: todo
+  points: 2
+  story_id: US-PM-19
+  epic_id: null
+  tags: []
+- id: US-PM-19-9
+  title: Handle remotes and document the history-preserving variant
+  type: task
+  status: todo
+  points: 2
+  story_id: US-PM-19
   epic_id: null
   tags: []
 - id: US-PM-2-1
@@ -1346,6 +1519,132 @@ entries:
   status: done
   points: 1
   story_id: US-PM-2
+  epic_id: null
+  tags: []
+- id: US-PM-20-1
+  title: 'Test: projectman attach mounts the projectman branch as the .project worktree
+    on a fresh clone'
+  type: task
+  status: todo
+  points: null
+  story_id: US-PM-20
+  epic_id: null
+  tags: []
+- id: US-PM-20-2
+  title: 'Test: projectman init detects origin/projectman and attaches instead of
+    scaffolding a new store'
+  type: task
+  status: todo
+  points: null
+  story_id: US-PM-20
+  epic_id: null
+  tags: []
+- id: US-PM-20-3
+  title: 'Test: Attach is a friendly no-op when the worktree is already mounted'
+  type: task
+  status: todo
+  points: null
+  story_id: US-PM-20
+  epic_id: null
+  tags: []
+- id: US-PM-20-4
+  title: 'Test: Attach fails with an actionable message when .project holds untracked
+    content instead of clobbering it'
+  type: task
+  status: todo
+  points: null
+  story_id: US-PM-20
+  epic_id: null
+  tags: []
+- id: US-PM-20-5
+  title: Implement projectman attach command
+  type: task
+  status: todo
+  points: 3
+  story_id: US-PM-20
+  epic_id: null
+  tags: []
+- id: US-PM-20-6
+  title: Teach projectman init to detect origin/projectman and attach
+  type: task
+  status: todo
+  points: 2
+  story_id: US-PM-20
+  epic_id: null
+  tags: []
+- id: US-PM-21-1
+  title: 'Test: pm_commit lands commits on the projectman branch without dirtying
+    main'
+  type: task
+  status: todo
+  points: null
+  story_id: US-PM-21
+  epic_id: null
+  tags: []
+- id: US-PM-21-2
+  title: 'Test: pm_push pushes only the projectman branch'
+  type: task
+  status: todo
+  points: null
+  story_id: US-PM-21
+  epic_id: null
+  tags: []
+- id: US-PM-21-3
+  title: 'Test: pm_git_status reports the .project worktree state distinctly from
+    main'
+  type: task
+  status: todo
+  points: null
+  story_id: US-PM-21
+  epic_id: null
+  tags: []
+- id: US-PM-21-4
+  title: 'Test: Hub mode introduces no submodule-pointer noise in the parent repo'
+  type: task
+  status: todo
+  points: null
+  story_id: US-PM-21
+  epic_id: null
+  tags: []
+- id: US-PM-21-5
+  title: 'Test: Docs cover git clean behaviour and the ignored-but-precious nature
+    of .project'
+  type: task
+  status: todo
+  points: null
+  story_id: US-PM-21
+  epic_id: null
+  tags: []
+- id: US-PM-21-6
+  title: 'Test: Docs describe the private sibling-repo variant for public repos'
+  type: task
+  status: todo
+  points: null
+  story_id: US-PM-21
+  epic_id: null
+  tags: []
+- id: US-PM-21-7
+  title: 'Integration tests: pm git ops against a worktree-mounted .project'
+  type: task
+  status: todo
+  points: 5
+  story_id: US-PM-21
+  epic_id: null
+  tags: []
+- id: US-PM-21-8
+  title: Hub-mode regression check for worktree stores
+  type: task
+  status: todo
+  points: 3
+  story_id: US-PM-21
+  epic_id: null
+  tags: []
+- id: US-PM-21-9
+  title: Document worktree rough edges and the private sibling-repo variant
+  type: task
+  status: todo
+  points: 2
+  story_id: US-PM-21
   epic_id: null
   tags: []
 - id: US-PM-3-1
@@ -1615,7 +1914,7 @@ entries:
 - id: US-PM-7-1
   title: 'Test: Releasing a task is expressible without an empty-string or null sentinel'
   type: task
-  status: todo
+  status: done
   points: 1
   story_id: US-PM-7
   epic_id: null
@@ -1624,7 +1923,7 @@ entries:
   title: 'Test: Claiming uses compare-and-swap so two concurrent workers cannot both
     win'
   type: task
-  status: todo
+  status: done
   points: 1
   story_id: US-PM-7
   epic_id: null
@@ -1632,7 +1931,7 @@ entries:
 - id: US-PM-7-3
   title: 'Test: Clearing depends_on and tags has an explicit affordance'
   type: task
-  status: todo
+  status: done
   points: 1
   story_id: US-PM-7
   epic_id: null
@@ -1640,7 +1939,7 @@ entries:
 - id: US-PM-7-4
   title: 'Test: pm-orchestrate SKILL.md no longer instructs the unspellable update'
   type: task
-  status: todo
+  status: done
   points: 1
   story_id: US-PM-7
   epic_id: null
@@ -1648,7 +1947,7 @@ entries:
 - id: US-PM-7-5
   title: 'Test: Concurrent claim attempts are covered by a test'
   type: task
-  status: todo
+  status: done
   points: 1
   story_id: US-PM-7
   epic_id: null
@@ -1664,7 +1963,7 @@ entries:
 - id: US-PM-7-7
   title: Implement compare-and-swap claiming in the store
   type: task
-  status: todo
+  status: done
   points: 3
   story_id: US-PM-7
   epic_id: null
@@ -1672,7 +1971,7 @@ entries:
 - id: US-PM-7-8
   title: Implement release and the field-clear affordances
   type: task
-  status: todo
+  status: done
   points: 3
   story_id: US-PM-7
   epic_id: null
@@ -1680,7 +1979,7 @@ entries:
 - id: US-PM-7-9
   title: Rewrite the SKILL.md release instructions
   type: task
-  status: todo
+  status: done
   points: 1
   story_id: US-PM-7
   epic_id: null
@@ -4854,8 +5153,8 @@ entries:
   story_id: US-PRJ-9
   epic_id: null
   tags: []
-total_points: 882
-completed_points: 589
-story_count: 81
-task_count: 507
-epic_count: 14
+total_points: 947
+completed_points: 646
+story_count: 85
+task_count: 538
+epic_count: 15

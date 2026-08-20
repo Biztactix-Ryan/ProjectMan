@@ -11,14 +11,14 @@ epic_id: EPIC-PM-2
 id: US-PM-7
 points: 8
 priority: must
-status: active
+status: done
 tags:
 - workflow
 - orchestrator
 - concurrency
 - blocker
 title: Atomic task claim and release primitive
-updated: '2026-07-30'
+updated: '2026-08-20'
 ---
 
 As an orchestrator, I want claiming and releasing a task to be a single atomic operation with a name, so that release is spellable and parallel workers become possible.

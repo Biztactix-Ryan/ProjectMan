@@ -2,7 +2,7 @@
 
 import asyncio
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Union
 
 import frontmatter
 import yaml
@@ -84,10 +84,9 @@ def _note_truncation_fields(store: Store, note: Optional[str]) -> dict:
     docs/telemetry/baseline-pre-fix.md (median 341 bytes per call, and only
     ~13% of real notes exceed the old cap at all).
 
-    OUTSTANDING (was inventory §7.1): ``pm_done_next`` has landed but does not
-    yet call this helper, so an oversized note to the higher-traffic note-bearing
-    entry point is still truncated silently.  It must merge the result into its
-    response exactly as ``pm_update`` does.
+    Every tool that writes a run-log note merges this result into its response
+    the same way — ``pm_update``, ``pm_release`` and ``pm_done_next`` — so the
+    flag means the same thing wherever a note can be sent.
     """
     record = store.last_note_truncation if note is not None else None
     store.last_note_truncation = None
@@ -129,9 +128,13 @@ def _expected_negative(status: str, message: str, **detail) -> str:
         blockers:                    # optional per-tool detail, unchanged
           - task has no point estimate
 
-    ``status`` is the field to branch on.  Codes in use: ``not_ready``
-    (``pm_grab``), ``not_created`` (``pm_docs``), ``nothing_to_commit``
-    (``pm_commit``).  The already-correct negatives in ``pm_web_start`` /
+    ``status`` is the field to branch on.  Codes in use: ``not_ready`` and
+    ``already_claimed`` (``pm_grab``), ``not_created`` (``pm_docs``),
+    ``nothing_to_commit`` (``pm_commit``).  ``not_ready`` and
+    ``already_claimed`` are deliberately distinct because their recoveries
+    differ: ``not_ready`` means *this task needs fixing*, ``already_claimed``
+    means *this task is fine, take a different one*.
+    The already-correct negatives in ``pm_web_start`` /
     ``pm_web_stop`` / ``pm_web_status`` (``already_running``, ``not_running``,
     ``running: false``) predate this helper and use the same ``status`` key
     with the same meaning.
@@ -274,10 +277,9 @@ def _resolve_id(
     also have to drop ``title``/``item_type`` out of ``required`` and weaken
     the schema validation of a repair tool that has zero calls in the corpus.
 
-    NOTE (port forward): ``pm_done_next`` does not exist in this checkout — it
-    takes ``task_id`` upstream and needs the same one-line treatment when these
-    changes are ported.  It is the single busiest ``task_id`` tool in the
-    corpus (432 calls here), so it should be first in line.
+    ``pm_done_next`` — the single busiest ``task_id`` tool in the corpus (432
+    calls) — gets the same one-line treatment: it resolves ``task_id`` against
+    an ``id`` alias like every other task-operand tool.
     """
     supplied: list[tuple[str, object]] = []
     for name, value in ((canonical_name, canonical_value), *aliases.items()):
@@ -432,6 +434,37 @@ def _yaml_dump(data) -> str:
         allow_unicode=True,
         width=10000,
     )
+
+
+#: Acceptance criteria are the one list-shaped input on this surface whose
+#: entries are natural language, so — unlike tags, ids or field names — a
+#: comma inside one is ordinary punctuation, not a separator.  US-PM-18: the
+#: old ``.split(",")`` shredded "Given a user, when they log in, then the
+#: dashboard loads" into three bogus criteria, and since every criterion
+#: auto-generates a test task, into three bogus tasks as well.
+def _criteria_list(
+    value: Union[str, list[str], None],
+) -> Optional[list[str]]:
+    """Normalise an ``acceptance_criteria`` argument to a list of criteria.
+
+    A list is one criterion per entry.  A bare string is exactly ONE
+    criterion, whatever punctuation it contains — it is never split.
+
+    Note on JSON-encoded strings: a client that sends a *string* holding a
+    JSON array (``'["a", "b"]'``) never reaches here holding one — FastMCP's
+    ``pre_parse_json`` decodes it into a real list before the tool is called,
+    because the annotation is not a bare ``str``.  Called directly from
+    Python, such a string is taken at face value: one criterion.
+
+    Entries are stripped, and blank ones dropped: a blank criterion breeds
+    an unparseable test-task body (see US-PM-5-8) and expresses nothing.  An
+    empty string or empty list therefore means "no criteria" — on pm_update,
+    that clears them.  ``None`` means "not supplied" and is passed through.
+    """
+    if value is None:
+        return None
+    entries = [value] if isinstance(value, str) else list(value)
+    return [str(entry).strip() for entry in entries if str(entry).strip()]
 
 
 # ─── Query Tools ────────────────────────────────────────────────
@@ -1026,7 +1059,7 @@ def pm_create_story(
     priority: Optional[str] = None,
     points: Optional[int] = None,
     epic_id: Optional[str] = None,
-    acceptance_criteria: Optional[str] = None,
+    acceptance_criteria: Optional[Union[str, list[str]]] = None,
     tags: Optional[str] = None,
     depends_on: Optional[str] = None,
     project: Optional[str] = None,
@@ -1039,18 +1072,14 @@ def pm_create_story(
         priority: Priority level: must, should, could, wont
         points: Story points (fibonacci: 1,2,3,5,8,13)
         epic_id: Optional parent epic ID (e.g. EPIC-PRJ-1)
-        acceptance_criteria: Comma-separated acceptance criteria (e.g. "Users can log in,Error shown on invalid password")
+        acceptance_criteria: List of acceptance criteria, one entry per criterion (e.g. ["Users can log in", "Error shown on invalid password"]). Pass a JSON list, never a comma-joined string: criteria are natural language and a comma inside one is punctuation, not a separator. A bare string is accepted and taken as exactly one criterion. Each criterion auto-generates a test task.
         tags: Comma-separated tags (e.g. "security,mvp")
         depends_on: Comma-separated dependency IDs (stories or tasks this story depends on)
         project: Optional project name (hub mode only)
     """
     try:
         store = _store(project)
-        ac_list = (
-            [c.strip() for c in acceptance_criteria.split(",")]
-            if acceptance_criteria
-            else None
-        )
+        ac_list = _criteria_list(acceptance_criteria)
         tag_list = [t.strip() for t in tags.split(",")] if tags else None
         dep_list = [d.strip() for d in depends_on.split(",")] if depends_on else None
         meta, test_tasks = store.create_story(
@@ -1407,9 +1436,11 @@ def pm_update(
     points: Optional[int] = None,
     title: Optional[str] = None,
     assignee: Optional[str] = None,
+    unassign: bool = False,
+    clear: Optional[str] = None,
     epic_id: Optional[str] = None,
     body: Optional[str] = None,
-    acceptance_criteria: Optional[str] = None,
+    acceptance_criteria: Optional[Union[str, list[str]]] = None,
     tags: Optional[str] = None,
     depends_on: Optional[str] = None,
     outcome: Optional[str] = None,
@@ -1419,15 +1450,20 @@ def pm_update(
 ) -> str:
     """Update an epic, story, or task.
 
+    To hand a task back, prefer `pm_release(<id>)` — it clears the assignee,
+    resets the status and logs the reason in one call.
+
     Args:
         id: Epic, story, or task ID (alias: task_id)
         status: New status (epics: draft/active/done/archived; stories: backlog/ready/active/done/archived; tasks: todo/in-progress/review/done/blocked)
         points: New point estimate (fibonacci: 1,2,3,5,8,13)
         title: New title
-        assignee: Assignee name (tasks only); pass "" to unassign
+        assignee: Assignee name (tasks only). To remove one, pass unassign=true — never an empty assignee.
+        unassign: Set true to remove the assignee (tasks only). Changes nothing else — no status reset, no run-log entry; use pm_release for that. Passing unassign=true together with a non-empty assignee is an error.
+        clear: Comma-separated names of fields to reset to empty, e.g. "depends_on", "tags", "depends_on,tags". Valid names: assignee, depends_on, epic_id, points, tags. Clearing a field that is already empty succeeds. Naming a field here and also setting it in the same call is an error, as is an unknown name.
         epic_id: Link a story to an epic (stories only)
         body: New markdown body/description content
-        acceptance_criteria: Comma-separated acceptance criteria (stories only, e.g. "Users can log in,Error shown on invalid password"). Changing them reconciles the auto-generated test tasks: new criteria get a task, reworded criteria have their task retitled and rebodied, and tasks whose criterion was removed are archived if nothing has happened to them or flagged for a human if work has started. Nothing is ever deleted; archiving is reversible (Store.unarchive).
+        acceptance_criteria: List of acceptance criteria, one entry per criterion (stories only, e.g. ["Users can log in", "Error shown on invalid password"]). Pass a JSON list, never a comma-joined string: criteria are natural language and a comma inside one is punctuation, not a separator. A bare string is accepted and taken as exactly one criterion; an empty list clears the criteria. Changing them reconciles the auto-generated test tasks: new criteria get a task, reworded criteria have their task retitled and rebodied, and tasks whose criterion was removed are archived if nothing has happened to them or flagged for a human if work has started. Nothing is ever deleted; archiving is reversible (Store.unarchive).
         tags: Comma-separated tags (e.g. "security,mvp,backend")
         depends_on: Comma-separated task IDs this task depends on (tasks only, e.g. "US-PRJ-1-1,US-PRJ-1-2")
         outcome: Run-log outcome (success/partial/blocked/failed/info). When provided with note, appends a run-log entry for tracking work attempts.
@@ -1474,14 +1510,26 @@ def pm_update(
             kwargs["title"] = title
         if assignee is not None:
             kwargs["assignee"] = assignee
+        if unassign:
+            # A contradiction, not a precedence question: silently letting one
+            # win would turn a release into an assignment (or the reverse).
+            if assignee:
+                raise ToolError(
+                    "conflicting instruction: unassign=true was given together with "
+                    f"assignee={assignee!r}; pass one or the other"
+                )
+            # "" is normalised to None by Store.update — the legacy sentinel,
+            # still accepted there, is now spelled by this boolean instead.
+            kwargs["assignee"] = ""
+        clear_fields = (
+            [name.strip() for name in clear.split(",") if name.strip()] if clear else []
+        )
         if epic_id is not None:
             kwargs["epic_id"] = epic_id
         if body is not None:
             kwargs["body"] = body
         if acceptance_criteria is not None:
-            kwargs["acceptance_criteria"] = [
-                c.strip() for c in acceptance_criteria.split(",")
-            ]
+            kwargs["acceptance_criteria"] = _criteria_list(acceptance_criteria)
         if tags is not None:
             kwargs["tags"] = [t.strip() for t in tags.split(",")]
         if depends_on is not None:
@@ -1491,7 +1539,7 @@ def pm_update(
         if note is not None:
             kwargs["note"] = note
 
-        meta = store.update(id, **kwargs)
+        meta = store.update(id, clear=clear_fields, **kwargs)
         # Read the reconciliation record straight after the update that
         # produced it — it is per-instance state on a cached Store, so a later
         # call would otherwise inherit it.
@@ -1512,7 +1560,7 @@ def pm_update(
             _emit_status_change(store, id, old_status_val, status, meta)
 
         # Echo only identity + the fields changed in this call (confirms how
-        # comma-separated inputs were parsed) — not the full object
+        # list-shaped inputs were parsed) — not the full object
         dumped = meta.model_dump(mode="json")
         updated = {"id": meta.id, "status": dumped.get("status")}
         for field in (
@@ -1524,7 +1572,9 @@ def pm_update(
             "tags",
             "depends_on",
         ):
-            if field in kwargs:
+            # Cleared fields are echoed too — a caller that asked for a field
+            # to be emptied gets to see that it is.
+            if field in kwargs or field in clear_fields:
                 updated[field] = dumped.get(field)
         if body is not None:
             updated["body_chars"] = len(body)
@@ -1625,9 +1675,26 @@ def _do_grab(store, task_id: str, assignee: str, include_story: bool) -> dict:
             blockers=readiness["blockers"],
         )
 
-    # Claim: set assignee and status
+    # Claim: compare-and-swap on the on-disk assignee and status, under an
+    # exclusive lock on the task file.  check_readiness above is advisory and
+    # deliberately stays outside that lock — it is the expensive part, and a
+    # task that passes it and then loses the swap gets `already_claimed`,
+    # which is the correct and honest answer.
     old_status = task_meta.status.value
-    store.update(task_id, assignee=assignee, status="in-progress")
+    won, current = store.claim_task(task_id, assignee)
+    if not won:
+        # Another worker got there first.  Expected negative, not a failure:
+        # two workers racing for one task is the normal operation of a
+        # parallel pool.  Classifying it as is_error would make routine
+        # contention indistinguishable from real breakage in every
+        # transport-level metric.  The task is left untouched; `holder` is
+        # the recovery detail, exactly as `blockers` is `not_ready`'s.
+        return _expected_negative_payload(
+            "already_claimed",
+            "task is already claimed",
+            holder=current.assignee,
+            task_id=task_id,
+        )
     write_index(store)
     if old_status != "in-progress":
         _emit(
@@ -1736,6 +1803,11 @@ def pm_grab(
 ) -> str:
     """Claim a task — validates readiness, assigns, sets in-progress, loads context.
 
+    Claiming is a compare-and-swap on the on-disk assignee, so two concurrent
+    workers can never both win the same task. The loser gets an expected
+    negative (`status: already_claimed`, with `holder`) and the task is left
+    untouched — take a different task; nothing is broken.
+
     Re-claiming a task already assigned to the same assignee (e.g. pre-claimed
     by an orchestrator via pm_done_next) succeeds and returns the same payload.
 
@@ -1750,6 +1822,97 @@ def pm_grab(
         task_id = _resolve_id("task_id", task_id, id=id)
         store = _store(project)
         return _yaml_dump(_do_grab(store, task_id, assignee, include_story))
+    except Exception as e:
+        raise _failed(e) from e
+
+
+@mcp.tool(
+    title="Release Task",
+    annotations=ToolAnnotations(
+        title="Release Task", readOnlyHint=False, destructiveHint=False
+    ),
+)
+def pm_release(
+    task_id: Optional[str] = None,
+    status: str = "todo",
+    note: Optional[str] = None,
+    outcome: Optional[str] = None,
+    expected_assignee: Optional[str] = None,
+    project: Optional[str] = None,
+    id: Optional[str] = None,
+) -> str:
+    """Release a task — hand it back to the pool. The exact inverse of pm_grab.
+
+    Use this whenever a task must stop being yours: work stopped, the
+    orchestrator is unwinding, a worker is going away. One call clears the
+    assignee, resets the status to todo and records why:
+
+        pm_release("US-PRJ-1-1", note="worker stopped before finishing")
+
+    Never express this as an update with an empty assignee. There is no
+    assignee parameter here — releasing is said by the verb, not by a value.
+
+    Releasing a task nobody holds succeeds; `from_assignee` comes back null so
+    a cleanup loop never has to branch on a condition it does not care about.
+
+    Args:
+        task_id: Task ID to release (e.g. US-PRJ-1-1) (alias: id)
+        status: Status to leave the task in (default "todo", i.e. ready for anyone)
+        note: Run-log note saying why it was released. Longer notes are truncated server-side, never rejected.
+        outcome: Run-log outcome (success/partial/blocked/failed/info); defaults to info when a note is given
+        expected_assignee: Release only if this name still holds the task. Omit for an unguarded release. A mismatch is an expected negative (`status: not_holder`) and the task is left untouched.
+        project: Optional project name (hub mode only)
+        id: Alias for task_id — either spelling works; passing both with different values is an error
+
+    Response: `released:` with the full `task` and `from_assignee` — who held it
+    before the call, or null if it was already unassigned.  When — and only when
+    — a supplied note had to be truncated, the response additionally carries
+    `note_truncated: true`, `note_original_length`, `note_stored_length`,
+    `note_dropped_chars` and `note_limit`, exactly as `pm_update` does.
+    """
+    try:
+        task_id = _resolve_id("task_id", task_id, id=id)
+        store = _store(project)
+        # A genuine failure, not a negative: assignee is a task-only field, so
+        # a story or epic id here means the caller meant something else.
+        if store._is_epic_id(task_id) or not store._is_task_id(task_id):
+            raise ToolError(
+                f"pm_release applies to tasks only, got: {task_id} "
+                "(assignee is a task-only field)"
+            )
+        current, _ = store.get_task(task_id)
+        from_assignee = current.assignee
+        old_status = current.status.value
+        if expected_assignee is not None and from_assignee != expected_assignee:
+            # Guarded release lost — the holder changed under the caller.
+            # An informative no, not a fault; nothing is written.
+            return _expected_negative(
+                "not_holder",
+                "task is held by another assignee",
+                holder=from_assignee,
+                expected=expected_assignee,
+            )
+
+        kwargs: dict = {}
+        if note is not None:
+            kwargs["note"] = note
+        if note is not None or outcome is not None:
+            kwargs["outcome"] = outcome or "info"
+
+        meta = store.update(task_id, status=status, clear=["assignee"], **kwargs)
+        truncation = _note_truncation_fields(store, note)
+        write_index(store)
+        if old_status != status:
+            _emit_status_change(store, task_id, old_status, status, meta)
+
+        result = {
+            "released": {
+                "task": meta.model_dump(mode="json"),
+                "from_assignee": from_assignee,
+            }
+        }
+        result.update(truncation)
+        return _yaml_dump(result)
     except Exception as e:
         raise _failed(e) from e
 
@@ -1784,11 +1947,16 @@ def pm_done_next(
     Args:
         task_id: Task ID just finished (e.g. US-PRJ-1-1) (alias: id)
         outcome: Run-log outcome for the completed task: success/partial/info (default success; only logged when note is given)
-        note: Run-log note describing what was accomplished (max 1024 chars)
+        note: Run-log note describing what was accomplished. Longer notes are truncated server-side (4096 chars) with a visible marker, never rejected — the completion always lands.
         assignee: Who claims the next task (default "claude")
         same_story_only: Only grab a next task from the same story; report and stop otherwise (default false)
         project: Optional project name (hub mode only)
         id: Alias for task_id — either spelling works; passing both with different values is an error
+
+    When — and only when — a supplied note had to be truncated, the response
+    additionally carries `note_truncated: true`, `note_original_length`,
+    `note_stored_length`, `note_dropped_chars` and `note_limit`, exactly as
+    `pm_update` does, so a caller detects truncation without string-matching.
     """
     try:
         from .deps import topological_sort
@@ -1806,6 +1974,10 @@ def pm_done_next(
             kwargs["outcome"] = outcome
             kwargs["note"] = note
         meta = store.update(task_id, **kwargs)
+        # Read (and clear) the truncation record before anything else touches
+        # the Store: closing the parent story and grabbing the next task both
+        # call ``store.update``, and each of those resets the record.
+        truncation = _note_truncation_fields(store, note)
         write_index(store)
         if old_status != "done":
             _emit_status_change(store, task_id, old_status, "done", meta)
@@ -1813,6 +1985,9 @@ def pm_done_next(
         result = {"completed": {"id": task_id, "status": "done"}}
         if note is not None:
             result["completed"]["run_log"] = outcome
+        # Present only when the note actually had to be truncated; absence
+        # means it was stored whole.  Same fields, same rule, as pm_update.
+        result.update(truncation)
 
         # 2. Close the parent story if this was its last open task
         siblings = store.list_tasks(story_id=story_id)

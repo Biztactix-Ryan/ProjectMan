@@ -4,10 +4,10 @@
 | -- | ----- | ------ | ------ | ---- | -------- | ---------- | ----- |
 | [US-PM-1-1](tasks/US-PM-1-1.md) | Test: Oversized notes are truncated server-side with a visible marker rather than rejected;The response carries a not... | ✅ done | — |  | — | — | [US-PM-1](stories/US-PM-1.md) |
 | [US-PM-1-2](tasks/US-PM-1-2.md) | Truncate oversized run-log notes instead of raising | ✅ done | 1 |  | claude | — | [US-PM-1](stories/US-PM-1.md) |
-| [US-PM-1-3](tasks/US-PM-1-3.md) | Return a note_truncated flag on the update response | ⚪ todo | 1 |  | claude | US-PM-1-2 | [US-PM-1](stories/US-PM-1.md) |
+| [US-PM-1-3](tasks/US-PM-1-3.md) | Return a note_truncated flag on the update response | ✅ done | 1 |  | claude | US-PM-1-2 | [US-PM-1](stories/US-PM-1.md) |
 | [US-PM-1-4](tasks/US-PM-1-4.md) | Test: oversized note truncates and the status write still lands | ✅ done | 1 |  | claude | US-PM-1-2 | [US-PM-1](stories/US-PM-1.md) |
-| [US-PM-1-5](tasks/US-PM-1-5.md) | Test: note_truncated flag and boundary lengths | ⚪ todo | 1 |  | claude | US-PM-1-3 | [US-PM-1](stories/US-PM-1.md) |
-| [US-PM-1-6](tasks/US-PM-1-6.md) | Clear the stale port-forward markers left by the 0.8.15 rebase | ⚪ todo | 1 |  | — | — | [US-PM-1](stories/US-PM-1.md) |
+| [US-PM-1-5](tasks/US-PM-1-5.md) | Test: note_truncated flag and boundary lengths | ✅ done | 1 |  | claude | US-PM-1-3 | [US-PM-1](stories/US-PM-1.md) |
+| [US-PM-1-6](tasks/US-PM-1-6.md) | Clear the stale port-forward markers left by the 0.8.15 rebase | ✅ done | 1 |  | claude | — | [US-PM-1](stories/US-PM-1.md) |
 | [US-PM-10-1](tasks/US-PM-10-1.md) | Test: pm_get and pm_grab accept a fields parameter selecting returned keys | ⚪ todo | — |  | — | — | [US-PM-10](stories/US-PM-10.md) |
 | [US-PM-10-2](tasks/US-PM-10-2.md) | Test: A status-only verification fetch costs a small fraction of the full payload | ⚪ todo | — |  | — | — | [US-PM-10](stories/US-PM-10.md) |
 | [US-PM-10-3](tasks/US-PM-10-3.md) | Test: pm_batch_get and pm_list_sprints support a brief or projected mode | ⚪ todo | — |  | — | — | [US-PM-10](stories/US-PM-10.md) |
@@ -59,21 +59,52 @@
 | [US-PM-16-5](tasks/US-PM-16-5.md) | Add an archived state for tasks | ✅ done | 2 |  | claude | — | [US-PM-16](stories/US-PM-16.md) |
 | [US-PM-16-6](tasks/US-PM-16-6.md) | Exclude archived items from completion and velocity math | ✅ done | 2 |  | claude | US-PM-16-5 | [US-PM-16](stories/US-PM-16.md) |
 | [US-PM-16-7](tasks/US-PM-16-7.md) | Migrate existing archived-as-done tasks | ✅ done | 2 |  | claude | US-PM-16-5 | [US-PM-16](stories/US-PM-16.md) |
-| [US-PM-17-1](tasks/US-PM-17-1.md) | Test: A task completed in a single todo-to-done write is never a migration candidate | ⚪ todo | — |  | — | — | [US-PM-17](stories/US-PM-17.md) |
-| [US-PM-17-2](tasks/US-PM-17-2.md) | Test: Applying the migration cannot move a task out of done without a positive archive signal | ⚪ todo | — |  | — | — | [US-PM-17](stories/US-PM-17.md) |
-| [US-PM-17-3](tasks/US-PM-17-3.md) | Test: The known legacy archives in this repo are still handled or explicitly documented as unrecoverable | ⚪ todo | — |  | — | — | [US-PM-17](stories/US-PM-17.md) |
-| [US-PM-17-4](tasks/US-PM-17-4.md) | Test: The module docstring's safety claim matches actual behaviour | ⚪ todo | — |  | — | — | [US-PM-17](stories/US-PM-17.md) |
-| [US-PM-17-5](tasks/US-PM-17-5.md) | Test: Regression test covers single-write completion alongside the in-progress path | ⚪ todo | — |  | — | — | [US-PM-17](stories/US-PM-17.md) |
-| [US-PM-17-6](tasks/US-PM-17-6.md) | Decide and document how an archive is positively identified | ⚪ todo | 2 |  | — | — | [US-PM-17](stories/US-PM-17.md) |
-| [US-PM-17-7](tasks/US-PM-17-7.md) | Implement the chosen detection change in migrations.py | ⚪ todo | 2 |  | — | US-PM-17-6 | [US-PM-17](stories/US-PM-17.md) |
-| [US-PM-17-8](tasks/US-PM-17-8.md) | Add regression tests for single-write completion | ⚪ todo | 2 |  | — | US-PM-17-7 | [US-PM-17](stories/US-PM-17.md) |
-| [US-PM-17-9](tasks/US-PM-17-9.md) | Resolve the four live candidates in this repo | ⚪ todo | 1 |  | — | US-PM-17-7 | [US-PM-17](stories/US-PM-17.md) |
+| [US-PM-17-1](tasks/US-PM-17-1.md) | Test: A task completed in a single todo-to-done write is never a migration candidate | ✅ done | 1 |  | claude | US-PM-17-7 | [US-PM-17](stories/US-PM-17.md) |
+| [US-PM-17-2](tasks/US-PM-17-2.md) | Test: Applying the migration cannot move a task out of done without a positive archive signal | ✅ done | 1 |  | claude | US-PM-17-7 | [US-PM-17](stories/US-PM-17.md) |
+| [US-PM-17-3](tasks/US-PM-17-3.md) | Test: The known legacy archives in this repo are still handled or explicitly documented as unrecoverable | ✅ done | 1 |  | claude | US-PM-17-9 | [US-PM-17](stories/US-PM-17.md) |
+| [US-PM-17-4](tasks/US-PM-17-4.md) | Test: The module docstring's safety claim matches actual behaviour | ✅ done | 1 |  | claude | US-PM-17-7 | [US-PM-17](stories/US-PM-17.md) |
+| [US-PM-17-5](tasks/US-PM-17-5.md) | Test: Regression test covers single-write completion alongside the in-progress path | ✅ done | 1 |  | claude | US-PM-17-8 | [US-PM-17](stories/US-PM-17.md) |
+| [US-PM-17-6](tasks/US-PM-17-6.md) | Decide and document how an archive is positively identified | ✅ done | 2 |  | claude | — | [US-PM-17](stories/US-PM-17.md) |
+| [US-PM-17-7](tasks/US-PM-17-7.md) | Implement the chosen detection change in migrations.py | ✅ done | 2 |  | claude | US-PM-17-6 | [US-PM-17](stories/US-PM-17.md) |
+| [US-PM-17-8](tasks/US-PM-17-8.md) | Add regression tests for single-write completion | ✅ done | 2 |  | claude | US-PM-17-7 | [US-PM-17](stories/US-PM-17.md) |
+| [US-PM-17-9](tasks/US-PM-17-9.md) | Resolve the four live candidates in this repo | ✅ done | 1 |  | claude | US-PM-17-7 | [US-PM-17](stories/US-PM-17.md) |
+| [US-PM-18-1](tasks/US-PM-18-1.md) | Test: A criterion containing commas is stored as one criterion via pm_create_story | ✅ done | 1 |  | claude | US-PM-18-6 | [US-PM-18](stories/US-PM-18.md) |
+| [US-PM-18-2](tasks/US-PM-18-2.md) | Test: A criterion containing commas is stored as one criterion via pm_update | ✅ done | 1 |  | claude | US-PM-18-6 | [US-PM-18](stories/US-PM-18.md) |
+| [US-PM-18-3](tasks/US-PM-18-3.md) | Test: pm_update criteria edits still reconcile auto-generated test tasks correctly | ✅ done | 1 |  | claude | US-PM-18-6 | [US-PM-18](stories/US-PM-18.md) |
+| [US-PM-18-4](tasks/US-PM-18-4.md) | Test: Tool docstrings no longer instruct comma-separated criteria | ✅ done | 1 |  | claude | US-PM-18-6 | [US-PM-18](stories/US-PM-18.md) |
+| [US-PM-18-5](tasks/US-PM-18-5.md) | Test: Regression tests cover comma-bearing criteria on both tools | ✅ done | 1 |  | claude | US-PM-18-7 | [US-PM-18](stories/US-PM-18.md) |
+| [US-PM-18-6](tasks/US-PM-18-6.md) | Switch acceptance_criteria params to list input in pm_create_story and pm_update | ✅ done | 3 |  | claude | — | [US-PM-18](stories/US-PM-18.md) |
+| [US-PM-18-7](tasks/US-PM-18-7.md) | Add regression tests for comma-bearing acceptance criteria | ✅ done | 2 |  | claude | US-PM-18-6 | [US-PM-18](stories/US-PM-18.md) |
+| [US-PM-19-1](tasks/US-PM-19-1.md) | Test: Running the migration leaves .project mounted as a worktree on an orphan projectman branch | ⚪ todo | — |  | — | US-PM-19-7 | [US-PM-19](stories/US-PM-19.md) |
+| [US-PM-19-2](tasks/US-PM-19-2.md) | Test: main stops tracking .project and gains a .gitignore entry for it | ⚪ todo | — |  | — | US-PM-19-7 | [US-PM-19](stories/US-PM-19.md) |
+| [US-PM-19-3](tasks/US-PM-19-3.md) | Test: All existing PM files survive the migration intact | ⚪ todo | — |  | — | US-PM-19-7 | [US-PM-19](stories/US-PM-19.md) |
+| [US-PM-19-4](tasks/US-PM-19-4.md) | Test: Migration refuses to run on a dirty working tree | ⚪ todo | — |  | — | US-PM-19-8 | [US-PM-19](stories/US-PM-19.md) |
+| [US-PM-19-5](tasks/US-PM-19-5.md) | Test: Migration refuses when a projectman branch already exists and points at attach | ⚪ todo | — |  | — | US-PM-19-8 | [US-PM-19](stories/US-PM-19.md) |
+| [US-PM-19-6](tasks/US-PM-19-6.md) | Test: The projectman branch is pushed to origin when a remote exists | ⚪ todo | — |  | — | US-PM-19-9 | [US-PM-19](stories/US-PM-19.md) |
+| [US-PM-19-7](tasks/US-PM-19-7.md) | Implement migrate-worktree command core | ⚪ todo | 5 |  | — | — | [US-PM-19](stories/US-PM-19.md) |
+| [US-PM-19-8](tasks/US-PM-19-8.md) | Add safety rails: dirty-tree and existing-branch refusal | ⚪ todo | 2 |  | — | US-PM-19-7 | [US-PM-19](stories/US-PM-19.md) |
+| [US-PM-19-9](tasks/US-PM-19-9.md) | Handle remotes and document the history-preserving variant | ⚪ todo | 2 |  | — | US-PM-19-7 | [US-PM-19](stories/US-PM-19.md) |
 | [US-PM-2-1](tasks/US-PM-2-1.md) | Test: Tool failures raise a real MCP error rather than returning an error string body;is_error is set on every failur... | ✅ done | — |  | — | — | [US-PM-2](stories/US-PM-2.md) |
 | [US-PM-2-2](tasks/US-PM-2-2.md) | Inventory every error-string return path | ✅ done | 2 |  | claude | — | [US-PM-2](stories/US-PM-2.md) |
 | [US-PM-2-3](tasks/US-PM-2-3.md) | Raise genuine failures as real MCP errors | ✅ done | 2 |  | claude | US-PM-2-2 | [US-PM-2](stories/US-PM-2.md) |
 | [US-PM-2-4](tasks/US-PM-2-4.md) | Keep expected-negative results as successful responses | ✅ done | 2 |  | claude | US-PM-2-2 | [US-PM-2](stories/US-PM-2.md) |
 | [US-PM-2-5](tasks/US-PM-2-5.md) | Test: every known failure class sets is_error | ✅ done | 1 |  | claude | US-PM-2-3 | [US-PM-2](stories/US-PM-2.md) |
 | [US-PM-2-6](tasks/US-PM-2-6.md) | Test: expected negatives are not errors | ✅ done | 1 |  | claude | US-PM-2-4 | [US-PM-2](stories/US-PM-2.md) |
+| [US-PM-20-1](tasks/US-PM-20-1.md) | Test: projectman attach mounts the projectman branch as the .project worktree on a fresh clone | ⚪ todo | — |  | — | US-PM-20-5 | [US-PM-20](stories/US-PM-20.md) |
+| [US-PM-20-2](tasks/US-PM-20-2.md) | Test: projectman init detects origin/projectman and attaches instead of scaffolding a new store | ⚪ todo | — |  | — | US-PM-20-6 | [US-PM-20](stories/US-PM-20.md) |
+| [US-PM-20-3](tasks/US-PM-20-3.md) | Test: Attach is a friendly no-op when the worktree is already mounted | ⚪ todo | — |  | — | US-PM-20-5 | [US-PM-20](stories/US-PM-20.md) |
+| [US-PM-20-4](tasks/US-PM-20-4.md) | Test: Attach fails with an actionable message when .project holds untracked content instead of clobbering it | ⚪ todo | — |  | — | US-PM-20-5 | [US-PM-20](stories/US-PM-20.md) |
+| [US-PM-20-5](tasks/US-PM-20-5.md) | Implement projectman attach command | ⚪ todo | 3 |  | — | US-PM-19-7 | [US-PM-20](stories/US-PM-20.md) |
+| [US-PM-20-6](tasks/US-PM-20-6.md) | Teach projectman init to detect origin/projectman and attach | ⚪ todo | 2 |  | — | US-PM-20-5 | [US-PM-20](stories/US-PM-20.md) |
+| [US-PM-21-1](tasks/US-PM-21-1.md) | Test: pm_commit lands commits on the projectman branch without dirtying main | ⚪ todo | — |  | — | US-PM-21-7 | [US-PM-21](stories/US-PM-21.md) |
+| [US-PM-21-2](tasks/US-PM-21-2.md) | Test: pm_push pushes only the projectman branch | ⚪ todo | — |  | — | US-PM-21-7 | [US-PM-21](stories/US-PM-21.md) |
+| [US-PM-21-3](tasks/US-PM-21-3.md) | Test: pm_git_status reports the .project worktree state distinctly from main | ⚪ todo | — |  | — | US-PM-21-7 | [US-PM-21](stories/US-PM-21.md) |
+| [US-PM-21-4](tasks/US-PM-21-4.md) | Test: Hub mode introduces no submodule-pointer noise in the parent repo | ⚪ todo | — |  | — | US-PM-21-8 | [US-PM-21](stories/US-PM-21.md) |
+| [US-PM-21-5](tasks/US-PM-21-5.md) | Test: Docs cover git clean behaviour and the ignored-but-precious nature of .project | ⚪ todo | — |  | — | US-PM-21-9 | [US-PM-21](stories/US-PM-21.md) |
+| [US-PM-21-6](tasks/US-PM-21-6.md) | Test: Docs describe the private sibling-repo variant for public repos | ⚪ todo | — |  | — | US-PM-21-9 | [US-PM-21](stories/US-PM-21.md) |
+| [US-PM-21-7](tasks/US-PM-21-7.md) | Integration tests: pm git ops against a worktree-mounted .project | ⚪ todo | 5 |  | — | US-PM-19-7 | [US-PM-21](stories/US-PM-21.md) |
+| [US-PM-21-8](tasks/US-PM-21-8.md) | Hub-mode regression check for worktree stores | ⚪ todo | 3 |  | — | US-PM-21-7 | [US-PM-21](stories/US-PM-21.md) |
+| [US-PM-21-9](tasks/US-PM-21-9.md) | Document worktree rough edges and the private sibling-repo variant | ⚪ todo | 2 |  | — | US-PM-19-7 | [US-PM-21](stories/US-PM-21.md) |
 | [US-PM-3-1](tasks/US-PM-3-1.md) | Test: Every tool taking a typed ID also accepts the generic id parameter | ✅ done | 1 |  | claude | US-PM-3-6 | [US-PM-3](stories/US-PM-3.md) |
 | [US-PM-3-2](tasks/US-PM-3-2.md) | Test: Tools taking id also accept the typed alias where one exists | ✅ done | 1 |  | claude | US-PM-3-6 | [US-PM-3](stories/US-PM-3.md) |
 | [US-PM-3-3](tasks/US-PM-3-3.md) | Test: Passing both a typed ID and id with conflicting values is a clear error | ✅ done | 1 |  | claude | US-PM-3-5 | [US-PM-3](stories/US-PM-3.md) |
@@ -106,15 +137,15 @@
 | [US-PM-6-7](tasks/US-PM-6-7.md) | Classify failures correctly across all three classes | ✅ done | 2 |  | claude | US-PM-6-6 | [US-PM-6](stories/US-PM-6.md) |
 | [US-PM-6-8](tasks/US-PM-6-8.md) | Report call counts response bytes and run lengths | ✅ done | 1 |  | claude | US-PM-6-6 | [US-PM-6](stories/US-PM-6.md) |
 | [US-PM-6-9](tasks/US-PM-6-9.md) | Capture and commit a pre-fix baseline | ✅ done | 1 |  | claude | US-PM-6-7, US-PM-6-8 | [US-PM-6](stories/US-PM-6.md) |
-| [US-PM-7-1](tasks/US-PM-7-1.md) | Test: Releasing a task is expressible without an empty-string or null sentinel | ⚪ todo | 1 |  | — | US-PM-7-8 | [US-PM-7](stories/US-PM-7.md) |
-| [US-PM-7-2](tasks/US-PM-7-2.md) | Test: Claiming uses compare-and-swap so two concurrent workers cannot both win | ⚪ todo | 1 |  | — | US-PM-7-7 | [US-PM-7](stories/US-PM-7.md) |
-| [US-PM-7-3](tasks/US-PM-7-3.md) | Test: Clearing depends_on and tags has an explicit affordance | ⚪ todo | 1 |  | — | US-PM-7-8 | [US-PM-7](stories/US-PM-7.md) |
-| [US-PM-7-4](tasks/US-PM-7-4.md) | Test: pm-orchestrate SKILL.md no longer instructs the unspellable update | ⚪ todo | 1 |  | — | US-PM-7-9 | [US-PM-7](stories/US-PM-7.md) |
-| [US-PM-7-5](tasks/US-PM-7-5.md) | Test: Concurrent claim attempts are covered by a test | ⚪ todo | 1 |  | — | US-PM-7-7 | [US-PM-7](stories/US-PM-7.md) |
+| [US-PM-7-1](tasks/US-PM-7-1.md) | Test: Releasing a task is expressible without an empty-string or null sentinel | ✅ done | 1 |  | claude | US-PM-7-8 | [US-PM-7](stories/US-PM-7.md) |
+| [US-PM-7-2](tasks/US-PM-7-2.md) | Test: Claiming uses compare-and-swap so two concurrent workers cannot both win | ✅ done | 1 |  | claude | US-PM-7-7 | [US-PM-7](stories/US-PM-7.md) |
+| [US-PM-7-3](tasks/US-PM-7-3.md) | Test: Clearing depends_on and tags has an explicit affordance | ✅ done | 1 |  | claude | US-PM-7-8 | [US-PM-7](stories/US-PM-7.md) |
+| [US-PM-7-4](tasks/US-PM-7-4.md) | Test: pm-orchestrate SKILL.md no longer instructs the unspellable update | ✅ done | 1 |  | claude | US-PM-7-9 | [US-PM-7](stories/US-PM-7.md) |
+| [US-PM-7-5](tasks/US-PM-7-5.md) | Test: Concurrent claim attempts are covered by a test | ✅ done | 1 |  | claude | US-PM-7-7 | [US-PM-7](stories/US-PM-7.md) |
 | [US-PM-7-6](tasks/US-PM-7-6.md) | Design the claim and release contract | ✅ done | 2 |  | claude | — | [US-PM-7](stories/US-PM-7.md) |
-| [US-PM-7-7](tasks/US-PM-7-7.md) | Implement compare-and-swap claiming in the store | ⚪ todo | 3 |  | claude | US-PM-7-6 | [US-PM-7](stories/US-PM-7.md) |
-| [US-PM-7-8](tasks/US-PM-7-8.md) | Implement release and the field-clear affordances | ⚪ todo | 3 |  | — | US-PM-7-6 | [US-PM-7](stories/US-PM-7.md) |
-| [US-PM-7-9](tasks/US-PM-7-9.md) | Rewrite the SKILL.md release instructions | ⚪ todo | 1 |  | — | US-PM-7-8 | [US-PM-7](stories/US-PM-7.md) |
+| [US-PM-7-7](tasks/US-PM-7-7.md) | Implement compare-and-swap claiming in the store | ✅ done | 3 |  | claude | US-PM-7-6 | [US-PM-7](stories/US-PM-7.md) |
+| [US-PM-7-8](tasks/US-PM-7-8.md) | Implement release and the field-clear affordances | ✅ done | 3 |  | claude | US-PM-7-6 | [US-PM-7](stories/US-PM-7.md) |
+| [US-PM-7-9](tasks/US-PM-7-9.md) | Rewrite the SKILL.md release instructions | ✅ done | 1 |  | claude | US-PM-7-8 | [US-PM-7](stories/US-PM-7.md) |
 | [US-PM-8-1](tasks/US-PM-8-1.md) | Test: Each of the four verdicts has a verb that sets status and outcome structurally | ⚪ todo | 1 |  | — | US-PM-8-7 | [US-PM-8](stories/US-PM-8.md) |
 | [US-PM-8-2](tasks/US-PM-8-2.md) | Test: Outcome cannot be omitted on a terminal verdict | ⚪ todo | 1 |  | — | US-PM-8-7 | [US-PM-8](stories/US-PM-8.md) |
 | [US-PM-8-3](tasks/US-PM-8-3.md) | Test: pm-orchestrate SKILL.md uses the verdict verbs throughout | ⚪ todo | 1 |  | — | US-PM-8-9 | [US-PM-8](stories/US-PM-8.md) |

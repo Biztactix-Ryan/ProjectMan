@@ -68,7 +68,7 @@ Repeat until no dispatchable tasks remain:
 
 11. If the previous Accept's `pm_done_next` returned a `next` task, use it — it is already claimed, with task body, DoD, and story context in the response — and skip to step 13. Otherwise refresh the ready pool with `pm_board`.
 12. Pick the next task: first plan entry with status `todo`, all `depends_on` done, and no assignee (or still assigned `claude` by a previous orchestrator run — `pm_grab` re-claims your own tasks idempotently). If none are ready and none are retryable → exit the loop.
-13. Check the `--max` budget (dispatches + retries). Exceeded → stop and report; if you are holding a pre-claimed, unstarted task from `pm_done_next`, release it first: `pm_update(<id>, status="todo", assignee="")`.
+13. Check the `--max` budget (dispatches + retries). Exceeded → stop and report; if you are holding a pre-claimed, unstarted task from `pm_done_next`, release it first: `pm_release(<id>, note="<why it was released>")`.
 14. Record the pre-task diff state: `git status --short` (you will diff against this in validation).
 15. **Spawn the worker** via the `Agent` tool — `subagent_type: general-purpose`, `model:` the resolved executor tier from Phase 0 (default `"opus"`), foreground (you need the result before validating), no worktree isolation (sequential + stage-only). Use the Worker Prompt below.
 
@@ -133,7 +133,7 @@ verified — claims without evidence are treated as failures.
 - `pm_audit` produces a new ERROR-level finding mid-run
 - No ready tasks remain (everything blocked by out-of-sprint dependencies)
 
-In every case, run Phase 4 before exiting — and if a `pm_done_next` pre-claimed task is left unstarted, release it (`pm_update(<id>, status="todo", assignee="")`) and list it as untouched.
+In every case, run Phase 4 before exiting — and if a `pm_done_next` pre-claimed task is left unstarted, release it first: `pm_release(<id>, note="<why it was released>")` — and list it as untouched.
 
 ## What This Skill Does NOT Do
 

@@ -1,14 +1,14 @@
 ---
-assignee: null
+assignee: claude
 created: '2026-07-30'
 depends_on: []
 id: US-PM-1-6
 points: 1
-status: todo
+status: done
 story_id: US-PM-1
 tags: []
 title: Clear the stale port-forward markers left by the 0.8.15 rebase
-updated: '2026-07-30'
+updated: '2026-08-20'
 ---
 
 Sprint 1 was authored against a base without pm_done_next and left "NOTE (port forward)" markers at every site that would need revisiting. After the rebase onto 0.8.15 three of the four are done in code but their comments were never updated, so the source now misdescribes itself.

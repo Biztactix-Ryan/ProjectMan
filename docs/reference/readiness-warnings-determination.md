@@ -248,9 +248,9 @@ call sites (`server.py:861` and `server.py:1473`), and only the `pm_grab` path a
 only for a `ready` boolean and emits `hints` instead. The corpus agrees: 1 of 427 `pm_get`
 calls contains the string, and that is a nested quotation.
 
-The affected surfaces are **`pm_grab` and `pm_done_next`**. (`pm_done_next` does not exist
-in this checkout — `server.py:87` flags it as a port-forward — but it is present in the
-builds that produced the corpus and calls the same helper.) US-PM-4-3 should measure
+The affected surfaces are **`pm_grab` and `pm_done_next`**. (`pm_done_next` has since
+landed in this checkout and calls the same helper, so it is measurable here rather than
+only in the builds that produced the corpus.) US-PM-4-3 should measure
 `pm_grab` and `pm_done_next`, not `pm_get`, or it will assert a drop that cannot occur.
 
 ### Live corroboration

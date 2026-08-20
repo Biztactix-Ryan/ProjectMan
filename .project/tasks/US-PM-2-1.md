@@ -1,4 +1,5 @@
 ---
+archived: true
 assignee: null
 created: '2026-07-29'
 depends_on: []
@@ -9,7 +10,7 @@ story_id: US-PM-2
 tags: []
 title: 'Test: Tool failures raise a real MCP error rather than returning an error
   string body;is_error is set on every failur...'
-updated: '2026-07-29'
+updated: '2026-08-20'
 ---
 
 Verify acceptance criterion for story US-PM-2:

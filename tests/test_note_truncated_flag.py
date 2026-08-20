@@ -1,4 +1,4 @@
-"""``pm_update`` tells the caller, structurally, that its note was truncated.
+"""Note-writing tools tell the caller, structurally, that a note was truncated.
 
 US-PM-1-3.  Truncation is silent from the caller's point of view unless the
 response says so, and an automated caller must not have to string-match the
@@ -13,8 +13,13 @@ note body to find out.  The contract under test:
   mutable per-instance state, so a later note-less update reporting a previous
   update's truncation is a real, reachable bug.
 
-NOTE (port forward): ``pm_done_next`` does not exist in this checkout.  When
-these changes are ported onto a newer main, mirror these tests against it.
+The rule is uniform across every tool that writes a run-log note — ``pm_update``,
+``pm_release`` and ``pm_done_next`` — so ``TestDoneNext`` and ``TestRelease``
+mirror the contract against the other two entry points.  ``pm_done_next`` is the
+higher-traffic one and the riskiest: it keeps updating the Store *after* the
+note is written (closing the parent story, claiming the next task), and each of
+those updates resets the per-Store truncation record, so the record has to be
+consumed immediately or the flag is silently lost.
 """
 
 import re
@@ -274,6 +279,259 @@ class TestStaleness:
         )
         assert first["note_original_length"] == RUN_LOG_NOTE_LIMIT + 10
         assert second["note_original_length"] == RUN_LOG_NOTE_LIMIT + 900
+
+
+READY_BODY = (
+    "## Implementation\n\nDo the thing properly.\n\n"
+    "## Testing\n\nTest the thing properly.\n\n"
+    "## Definition of Done\n\n- [ ] Done\n"
+)
+
+
+@pytest.fixture
+def two_tasks():
+    """An active story with two ready tasks, so ``pm_done_next`` has a next."""
+    from projectman.server import pm_create_story, pm_create_task, pm_update
+
+    pm_create_story("Story", "Story body text long enough to matter.")
+    pm_update("US-TST-1", status="active")
+    pm_create_task("US-TST-1", "Task one", READY_BODY, points=1)
+    pm_create_task("US-TST-1", "Task two", READY_BODY, points=1)
+    return "US-TST-1-1", "US-TST-1-2"
+
+
+class TestDoneNext:
+    """``pm_done_next`` reports truncation on the same terms as ``pm_update``.
+
+    It is the higher-traffic note-bearing entry point, and the one where the
+    record is easiest to lose: the completion write is followed by more Store
+    updates (story close, next-task claim) that each reset it.
+    """
+
+    @pytest.fixture
+    def truncated(self, two_tasks):
+        from projectman.server import pm_done_next
+
+        first, _ = two_tasks
+        note = "d" * (RUN_LOG_NOTE_LIMIT + 700)
+        return note, parse(pm_done_next(first, note=note))
+
+    def test_flag_is_true(self, truncated):
+        _, payload = truncated
+        assert payload["note_truncated"] is True
+
+    def test_every_field_is_reported(self, truncated):
+        note, payload = truncated
+        assert TRUNCATION_KEYS <= set(payload), sorted(TRUNCATION_KEYS - set(payload))
+        assert payload["note_original_length"] == len(note)
+        assert payload["note_stored_length"] <= RUN_LOG_NOTE_LIMIT
+        assert payload["note_limit"] == RUN_LOG_NOTE_LIMIT
+
+    def test_completion_still_landed(self, truncated):
+        """The whole point: truncation never costs the caller the completion."""
+        _, payload = truncated
+        assert payload["completed"]["status"] == "done"
+
+    def test_flag_survives_the_next_task_claim(self, truncated, two_tasks):
+        """The claim runs more Store updates after the note was written.
+
+        Reading the record late — after the grab — would return the grab's own
+        empty record instead, and the flag would vanish on exactly the busiest
+        path.  This pins that the reported truncation belongs to *this* note.
+        """
+        _, payload = truncated
+        assert payload["next"]["task"]["id"] == two_tasks[1]
+        assert payload["note_truncated"] is True
+
+    def test_flag_survives_closing_the_parent_story(self, task):
+        """A lone task closes its story, which is another post-note update."""
+        from projectman.server import pm_done_next
+
+        note = "e" * (RUN_LOG_NOTE_LIMIT + 3)
+        payload = parse(pm_done_next(task, note=note))
+        assert payload["story_closed"] == "US-TST-1"
+        assert payload["note_truncated"] is True
+        assert payload["note_original_length"] == len(note)
+
+    def test_reported_stored_length_matches_the_persisted_note(self, truncated, two_tasks):
+        from projectman.server import pm_run_log
+
+        _, payload = truncated
+        entries = yaml.safe_load(pm_run_log(two_tasks[0]))
+        entries = entries["run_log"] if isinstance(entries, dict) else entries
+        stored = entries[-1]["note"]
+        assert MARKER_RE.search(stored), stored[-60:]
+        assert len(stored) == payload["note_stored_length"]
+
+    def test_note_that_fits_reports_nothing(self, two_tasks):
+        from projectman.server import pm_done_next
+
+        payload = parse(pm_done_next(two_tasks[0], note="all done"))
+        assert TRUNCATION_KEYS.isdisjoint(payload)
+
+    def test_note_exactly_at_limit_reports_nothing(self, two_tasks):
+        from projectman.server import pm_done_next
+
+        payload = parse(pm_done_next(two_tasks[0], note="x" * RUN_LOG_NOTE_LIMIT))
+        assert TRUNCATION_KEYS.isdisjoint(payload)
+
+    def test_one_char_over_the_limit_does_report(self, two_tasks):
+        """The boundary is exclusive here too — limit+1 is the first truncation."""
+        from projectman.server import pm_done_next
+
+        note = "x" * (RUN_LOG_NOTE_LIMIT + 1)
+        payload = parse(pm_done_next(two_tasks[0], note=note))
+        assert payload["note_truncated"] is True
+        assert payload["note_original_length"] == RUN_LOG_NOTE_LIMIT + 1
+        assert payload["note_dropped_chars"] > 0
+
+    def test_a_very_large_note_reports_correctly(self, two_tasks):
+        """A note orders of magnitude over the cap still reconciles.
+
+        The dropped count is six digits wide here, which is what makes the
+        marker's own width feed back into the arithmetic.
+        """
+        from projectman.server import pm_done_next, pm_run_log
+
+        note = "x" * 100_000
+        payload = parse(pm_done_next(two_tasks[0], note=note))
+        assert TRUNCATION_KEYS <= set(payload), sorted(TRUNCATION_KEYS - set(payload))
+        assert payload["note_truncated"] is True
+        assert payload["note_original_length"] == 100_000
+        assert payload["note_stored_length"] <= RUN_LOG_NOTE_LIMIT
+        assert payload["completed"]["status"] == "done"
+
+        entries = yaml.safe_load(pm_run_log(two_tasks[0]))
+        entries = entries["run_log"] if isinstance(entries, dict) else entries
+        stored = entries[-1]["note"]
+        marker = MARKER_RE.search(stored)
+        assert marker, stored[-60:]
+        assert len(stored) == payload["note_stored_length"]
+        assert int(marker.group(1)) == payload["note_dropped_chars"]
+        kept = stored[: -len(marker.group(0))]
+        assert len(kept) + payload["note_dropped_chars"] == 100_000
+
+    def test_no_note_reports_nothing(self, two_tasks):
+        from projectman.server import pm_done_next
+
+        payload = parse(pm_done_next(two_tasks[0]))
+        assert TRUNCATION_KEYS.isdisjoint(payload)
+
+    def test_flag_is_reported_when_nothing_follows(self, two_tasks):
+        """The expected-negative response must still carry the flag.
+
+        `no_next_task` rebuilds the response dict; a rebuild that dropped the
+        truncation fields would lose them only on this branch.
+        """
+        from projectman.server import pm_done_next
+
+        first, second = two_tasks
+        parse(pm_done_next(first, note="first"))
+        payload = parse(pm_done_next(second, note="f" * (RUN_LOG_NOTE_LIMIT + 11)))
+        assert payload["next"] is None
+        assert payload["status"] == "no_next_task"
+        assert payload["note_truncated"] is True
+        assert payload["note_original_length"] == RUN_LOG_NOTE_LIMIT + 11
+
+    def test_later_call_does_not_inherit_the_flag(self, truncated, two_tasks):
+        from projectman.server import pm_update
+
+        payload = parse(pm_update(two_tasks[1], status="review"))
+        assert TRUNCATION_KEYS.isdisjoint(payload)
+
+
+class TestRelease:
+    """``pm_release`` takes a note too, so it reports on the same terms."""
+
+    @pytest.fixture
+    def held(self, task):
+        from projectman.server import pm_update
+
+        pm_update(task, assignee="claude", status="in-progress")
+        return task
+
+    def test_flag_is_true_and_complete(self, held):
+        from projectman.server import pm_release
+
+        note = "r" * (RUN_LOG_NOTE_LIMIT + 250)
+        payload = parse(pm_release(held, note=note))
+        assert TRUNCATION_KEYS <= set(payload), sorted(TRUNCATION_KEYS - set(payload))
+        assert payload["note_truncated"] is True
+        assert payload["note_original_length"] == len(note)
+        assert payload["note_stored_length"] <= RUN_LOG_NOTE_LIMIT
+        assert payload["note_limit"] == RUN_LOG_NOTE_LIMIT
+
+    def test_release_still_landed(self, held):
+        from projectman.server import pm_release
+
+        payload = parse(pm_release(held, note="r" * (RUN_LOG_NOTE_LIMIT + 250)))
+        assert payload["released"]["from_assignee"] == "claude"
+        assert payload["released"]["task"]["assignee"] is None
+        assert payload["released"]["task"]["status"] == "todo"
+
+    def test_note_that_fits_reports_nothing(self, held):
+        from projectman.server import pm_release
+
+        payload = parse(pm_release(held, note="handing it back"))
+        assert TRUNCATION_KEYS.isdisjoint(payload)
+
+    def test_note_exactly_at_limit_reports_nothing(self, held):
+        """At the cap, absence is how the contract spells "stored whole"."""
+        from projectman.server import pm_release
+
+        payload = parse(pm_release(held, note="x" * RUN_LOG_NOTE_LIMIT))
+        assert TRUNCATION_KEYS.isdisjoint(payload)
+
+    def test_one_char_over_the_limit_does_report(self, held):
+        from projectman.server import pm_release
+
+        payload = parse(pm_release(held, note="x" * (RUN_LOG_NOTE_LIMIT + 1)))
+        assert payload["note_truncated"] is True
+        assert payload["note_original_length"] == RUN_LOG_NOTE_LIMIT + 1
+        assert payload["note_dropped_chars"] > 0
+
+    def test_a_very_large_note_reports_correctly(self, held):
+        from projectman.server import pm_release, pm_run_log
+
+        payload = parse(pm_release(held, note="x" * 100_000))
+        assert TRUNCATION_KEYS <= set(payload), sorted(TRUNCATION_KEYS - set(payload))
+        assert payload["note_original_length"] == 100_000
+        assert payload["note_stored_length"] <= RUN_LOG_NOTE_LIMIT
+        assert payload["released"]["task"]["status"] == "todo"
+
+        entries = yaml.safe_load(pm_run_log(held))
+        entries = entries["run_log"] if isinstance(entries, dict) else entries
+        stored = entries[-1]["note"]
+        marker = MARKER_RE.search(stored)
+        assert marker, stored[-60:]
+        assert len(stored) == payload["note_stored_length"]
+        assert int(marker.group(1)) == payload["note_dropped_chars"]
+
+    def test_no_note_reports_nothing(self, held):
+        from projectman.server import pm_release
+
+        payload = parse(pm_release(held))
+        assert TRUNCATION_KEYS.isdisjoint(payload)
+
+    def test_a_refused_release_reports_nothing(self, held):
+        """A guarded release that loses writes nothing, so it truncates nothing."""
+        from projectman.server import pm_release
+
+        payload = parse(
+            pm_release(
+                held,
+                note="z" * (RUN_LOG_NOTE_LIMIT + 5),
+                expected_assignee="someone-else",
+            )
+        )
+        assert payload["status"] == "not_holder"
+        assert TRUNCATION_KEYS.isdisjoint(payload)
+
+    def test_later_call_does_not_inherit_the_flag(self, held):
+        from projectman.server import pm_release, pm_update
+
+        parse(pm_release(held, note="r" * (RUN_LOG_NOTE_LIMIT + 30)))
+        assert TRUNCATION_KEYS.isdisjoint(parse(pm_update(held, points=3)))
 
 
 class TestResponseSize:

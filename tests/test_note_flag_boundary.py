@@ -34,9 +34,10 @@ Two traps get their own coverage:
   ``_note_truncation_fields`` in server.py for why the fields are omitted rather
   than emitted as false (response bytes are a tracked cost for this epic).
 
-NOTE (port forward): ``pm_done_next`` does not exist in this checkout.  It is
-the higher-traffic note-bearing entry point upstream; mirror this module
-against it when these changes are ported onto a newer main.
+Scope: the boundary and arithmetic are pinned once, through ``pm_update``.
+``pm_done_next`` — the higher-traffic note-bearing entry point — shares the
+helper and is covered against the same flag contract by ``TestDoneNext`` in
+``tests/test_note_truncated_flag.py``.
 """
 
 import json

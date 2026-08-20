@@ -443,6 +443,14 @@ class TestReproductionOfTheOriginalBug:
 
 
 class TestMcpLayer:
+    """Reconciliation as driven by the MCP tools.
+
+    Criteria whose text contains commas — the US-PM-18 regression — get the
+    same add/remove/reorder/reword treatment in
+    ``tests/test_comma_bearing_criteria.py``, which also drives both tools at
+    the wire.
+    """
+
     def test_pm_update_reconciles_through_the_server(self, tmp_project, monkeypatch):
         from projectman import server
         from projectman.store import Store, clear_all_caches
@@ -451,8 +459,10 @@ class TestMcpLayer:
         server._store_cache.clear()
         clear_all_caches()
 
-        server.pm_create_story("S", "b", acceptance_criteria="Alpha criterion")
-        server.pm_update("US-TST-1", acceptance_criteria="Alpha criterion,Beta criterion")
+        server.pm_create_story("S", "b", acceptance_criteria=["Alpha criterion"])
+        server.pm_update(
+            "US-TST-1", acceptance_criteria=["Alpha criterion", "Beta criterion"]
+        )
 
         clear_all_caches()
         fresh = Store(tmp_project)
@@ -472,10 +482,12 @@ class TestMcpLayer:
         clear_all_caches()
 
         server.pm_create_story(
-            "S", "b", acceptance_criteria="Alpha criterion,Beta criterion"
+            "S", "b", acceptance_criteria=["Alpha criterion", "Beta criterion"]
         )
         out = yaml.safe_load(
-            server.pm_update("US-TST-1", acceptance_criteria="Alpha criterion,Gamma one")
+            server.pm_update(
+                "US-TST-1", acceptance_criteria=["Alpha criterion", "Gamma one"]
+            )
         )
         assert out["test_tasks"]["created"] == ["US-TST-1-3"]
         assert out["test_tasks"]["orphaned"][0]["id"] == "US-TST-1-2"
@@ -492,11 +504,11 @@ class TestMcpLayer:
         server._store_cache.clear()
         clear_all_caches()
 
-        server.pm_create_story("S", "b", acceptance_criteria="Alpha criterion")
+        server.pm_create_story("S", "b", acceptance_criteria=["Alpha criterion"])
         out = yaml.safe_load(server.pm_update("US-TST-1", status="ready"))
         assert "test_tasks" not in out
         out = yaml.safe_load(
-            server.pm_update("US-TST-1", acceptance_criteria="Alpha criterion")
+            server.pm_update("US-TST-1", acceptance_criteria=["Alpha criterion"])
         )
         assert "test_tasks" not in out
 
@@ -816,9 +828,18 @@ class TestBlankCriteriaBreakBodySync:
         # Second identical update has nothing left to do.
         assert store.last_criteria_reconciliation is None
 
-    def test_trailing_comma_in_pm_update_does_not_breed_tasks(
+    def test_blank_list_entry_in_pm_update_does_not_breed_tasks(
         self, tmp_project, monkeypatch
     ):
+        """The MCP layer drops blank entries, so none ever reaches the store.
+
+        This used to read ``acceptance_criteria="Alpha criterion,"`` — a
+        trailing comma was enough to manufacture a blank criterion back when
+        the tool split on commas.  US-PM-18 removed the split, so the only
+        way to ask for a blank criterion now is to put one in the list, and
+        the tool drops it: one criterion, one test task, however many times
+        the same edit is replayed.
+        """
         from projectman import server
         from projectman.store import Store, clear_all_caches
 
@@ -826,13 +847,13 @@ class TestBlankCriteriaBreakBodySync:
         server._store_cache.clear()
         clear_all_caches()
 
-        server.pm_create_story("S", "b", acceptance_criteria="Alpha criterion")
+        server.pm_create_story("S", "b", acceptance_criteria=["Alpha criterion"])
         for _ in range(3):
-            server.pm_update("US-TST-1", acceptance_criteria="Alpha criterion,")
+            server.pm_update("US-TST-1", acceptance_criteria=["Alpha criterion", ""])
 
         clear_all_caches()
         fresh = Store(tmp_project)
-        assert len(fresh.list_tasks(story_id="US-TST-1", archived=None)) == 2
+        assert len(fresh.list_tasks(story_id="US-TST-1", archived=None)) == 1
 
 
 # =======================================================================
@@ -1313,10 +1334,12 @@ class TestArchivedTaskForALiveCriterionIsNotResurrectedByAnAdd:
         server._store_cache.clear()
         clear_all_caches()
 
-        server.pm_create_story("S", "b", acceptance_criteria="Alpha one")
+        server.pm_create_story("S", "b", acceptance_criteria=["Alpha one"])
         server.pm_update("US-TST-1-1", status="done")
         server.pm_archive("US-TST-1-1")
-        out = server.pm_update("US-TST-1", acceptance_criteria="Alpha one,Beta two")
+        out = server.pm_update(
+            "US-TST-1", acceptance_criteria=["Alpha one", "Beta two"]
+        )
         # Declining to act is still reported: the caller is told which
         # archived task stood in, so it can pm_restore if that is wanted.
         import yaml as _yaml

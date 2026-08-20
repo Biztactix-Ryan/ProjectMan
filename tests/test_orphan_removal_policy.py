@@ -306,8 +306,8 @@ class TestMcpSurface:
         import yaml
 
         server = self._setup(tmp_project, monkeypatch)
-        server.pm_create_story("S", "body text", acceptance_criteria="Alpha,Beta")
-        out = yaml.safe_load(server.pm_update("US-TST-1", acceptance_criteria="Alpha"))
+        server.pm_create_story("S", "body text", acceptance_criteria=["Alpha", "Beta"])
+        out = yaml.safe_load(server.pm_update("US-TST-1", acceptance_criteria=["Alpha"]))
         tt = out["test_tasks"]
         assert tt["archived"] == ["US-TST-1-2"]
         assert tt["flagged"] == []
@@ -319,9 +319,9 @@ class TestMcpSurface:
         import yaml
 
         server = self._setup(tmp_project, monkeypatch)
-        server.pm_create_story("S", "body text", acceptance_criteria="Alpha,Beta")
+        server.pm_create_story("S", "body text", acceptance_criteria=["Alpha", "Beta"])
         server.pm_update("US-TST-1-2", status="in-progress", assignee="ryan")
-        out = yaml.safe_load(server.pm_update("US-TST-1", acceptance_criteria="Alpha"))
+        out = yaml.safe_load(server.pm_update("US-TST-1", acceptance_criteria=["Alpha"]))
         tt = out["test_tasks"]
         assert tt["archived"] == []
         assert tt["flagged"] == ["US-TST-1-2"]
@@ -336,9 +336,9 @@ class TestMcpSurface:
         import yaml
 
         server = self._setup(tmp_project, monkeypatch)
-        server.pm_create_story("S", "body text", acceptance_criteria="Alpha,Beta,Gamma")
+        server.pm_create_story("S", "body text", acceptance_criteria=["Alpha", "Beta", "Gamma"])
         server.pm_update("US-TST-1-3", assignee="ryan")
-        out = yaml.safe_load(server.pm_update("US-TST-1", acceptance_criteria="Alpha"))
+        out = yaml.safe_load(server.pm_update("US-TST-1", acceptance_criteria=["Alpha"]))
         tt = out["test_tasks"]
         # archived and flagged partition orphaned, no overlap, no remainder.
         assert set(tt["archived"]) == {"US-TST-1-2"}
@@ -356,8 +356,8 @@ class TestMcpSurface:
         self, tmp_project, monkeypatch
     ):
         server = self._setup(tmp_project, monkeypatch)
-        server.pm_create_story("S", "body text", acceptance_criteria="Alpha,Beta")
-        server.pm_update("US-TST-1", acceptance_criteria="Alpha")
+        server.pm_create_story("S", "body text", acceptance_criteria=["Alpha", "Beta"])
+        server.pm_update("US-TST-1", acceptance_criteria=["Alpha"])
         clear_all_caches()
         store = Store(tmp_project)
         meta, body = store.get_task("US-TST-1-2")

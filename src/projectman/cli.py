@@ -413,11 +413,13 @@ def repair():
 )
 @click.option("--project", default=None, help="Project name (hub mode only)")
 def migrate_archived(apply_changes, project):
-    """Repair tasks archived under the old archive-as-done behaviour.
+    """Restore archived flags the log recorded but the task files have lost.
 
-    Archiving a task used to set it to 'done', so abandoned work counts as
-    delivered. This finds those tasks from the activity log, sets the archived
-    flag and restores the status they held before being archived.
+    Identification needs a positive archive signal in the log; a status
+    footprint is never enough. Applying sets the archived flag, and restores a
+    status only when the archive event itself recorded one — the migration
+    never moves a task out of 'done' on inferred evidence. Tasks that merely
+    look archive-shaped are listed under manual review and never written.
 
     Reports only by default; pass --apply to rewrite the task files.
     """

@@ -1,6 +1,6 @@
 # Project Audit Report
 
-**Errors:** 0 | **Warnings:** 0 | **Info:** 50
+**Errors:** 0 | **Warnings:** 0 | **Info:** 53
 
 - [INFO] Story US-PM-1 has 2pts but tasks sum to 5pts
 - [INFO] Story US-PM-11 has 3pts but tasks sum to 2pts
@@ -8,8 +8,11 @@
 - [INFO] Story US-PM-14 has 5pts but tasks sum to 2pts
 - [INFO] Story US-PM-15 has 3pts but tasks sum to 2pts
 - [INFO] Story US-PM-16 has 3pts but tasks sum to 10pts
-- [INFO] Story US-PM-17 has 5pts but tasks sum to 7pts
+- [INFO] Story US-PM-17 has 5pts but tasks sum to 12pts
+- [INFO] Story US-PM-18 has 5pts but tasks sum to 10pts
+- [INFO] Story US-PM-19 has 8pts but tasks sum to 9pts
 - [INFO] Story US-PM-2 has 5pts but tasks sum to 8pts
+- [INFO] Story US-PM-21 has 8pts but tasks sum to 10pts
 - [INFO] Story US-PM-3 has 3pts but tasks sum to 9pts
 - [INFO] Story US-PM-4 has 2pts but tasks sum to 6pts
 - [INFO] Story US-PM-5 has 5pts but tasks sum to 16pts

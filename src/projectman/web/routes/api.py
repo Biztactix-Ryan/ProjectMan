@@ -368,7 +368,14 @@ def grab_task(
             detail={"error": "task is not ready", "blockers": readiness["blockers"]},
         )
 
-    store.update(task_id, assignee=body.assignee, status="in-progress")
+    # Compare-and-swap, so this route cannot claim a task out from under a
+    # worker that won it between the readiness check and here.
+    won, current = store.claim_task(task_id, body.assignee)
+    if not won:
+        raise HTTPException(
+            status_code=409,
+            detail={"error": "task is already claimed", "holder": current.assignee},
+        )
     write_index(store)
     task_meta, task_body = store.get_task(task_id)
 

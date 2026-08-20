@@ -292,6 +292,9 @@ WIRED = [
     Wired("pm_run_log", "id", "task_id", "US-TST-1-1", echoes=False),
     # canonical typed name → `id`
     Wired("pm_grab", "task_id", "id", "US-TST-1-1", alias_ident="US-TST-1-2"),
+    # Releasing is idempotent — an already-unassigned task releases fine — so
+    # both spellings can be pointed at the same task.
+    Wired("pm_release", "task_id", "id", "US-TST-1-1"),
     # Completing a task twice is idempotent, but the *second* spelling must
     # still find a task to complete — so it is pointed at a second task, as
     # for the other mutating tools.
@@ -1632,6 +1635,7 @@ CONFLICT_PAIR = {
     "pm_scope": (ALPHA_STORY, BETA_STORY),
     "pm_run_log": (ALPHA_TASK, BETA_TASK),
     "pm_grab": (ALPHA_TASK, BETA_TASK),
+    "pm_release": (ALPHA_TASK, BETA_TASK),
     "pm_done_next": (ALPHA_TASK, BETA_TASK),
     "pm_get_sprint": (ALPHA_SPRINT, BETA_SPRINT),
     "pm_update_sprint": (ALPHA_SPRINT, BETA_SPRINT),
@@ -1658,6 +1662,14 @@ CONFLICT_EXTRA = {
     # Completes the task *and* files a run-log entry, so a resolver that ran
     # late would leave two separate traces behind.
     "pm_done_next": {"outcome": "success", "note": "MUST NEVER BE FILED"},
+    # A bare release of an unassigned task is a same-day no-op on disk, which
+    # would make its "nothing changed" case vacuous.  A status move plus a
+    # run-log entry gives it two distinct traces to fail to leave.
+    "pm_release": {
+        "status": "blocked",
+        "outcome": "blocked",
+        "note": "MUST NEVER BE FILED",
+    },
 }
 
 #: The wired tools that write.  Kept honest from two sides: the guard below
@@ -1669,6 +1681,7 @@ MUTATING = [
     "pm_update",
     "pm_archive",
     "pm_grab",
+    "pm_release",
     "pm_done_next",
     "pm_update_sprint",
     "pm_changeset_add_project",

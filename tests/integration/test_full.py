@@ -657,7 +657,10 @@ class TestAcceptanceCriteria:
             {
                 "title": "Login",
                 "description": "As a user I want to log in",
-                "acceptance_criteria": "Users can log in, Error shown on bad password",
+                "acceptance_criteria": [
+                    "Users can log in",
+                    "Error shown on bad password",
+                ],
             },
         )
         data = yaml.safe_load(result)

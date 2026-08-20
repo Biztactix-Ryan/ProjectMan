@@ -533,7 +533,7 @@ class TestThroughThePmAuditToolSurface:
         assert self._untested(audit(), meta.id)
         server._store_cache.clear()
         clear_all_caches()
-        server.pm_update(meta.id, acceptance_criteria="Alpha criterion,Beta criterion")
+        server.pm_update(meta.id, acceptance_criteria=["Alpha criterion", "Beta criterion"])
         report = audit()
         assert self._untested(report, meta.id) == []
 

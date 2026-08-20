@@ -1,4 +1,5 @@
 ---
+archived: true
 assignee: null
 created: '2026-07-29'
 depends_on: []
@@ -9,7 +10,7 @@ story_id: US-PM-1
 tags: []
 title: 'Test: Oversized notes are truncated server-side with a visible marker rather
   than rejected;The response carries a not...'
-updated: '2026-07-29'
+updated: '2026-08-20'
 ---
 
 Verify acceptance criterion for story US-PM-1:

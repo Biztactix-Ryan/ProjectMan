@@ -10,12 +10,12 @@ epic_id: EPIC-PM-1
 id: US-PM-1
 points: 2
 priority: must
-status: active
+status: done
 tags:
 - reliability
 - quick-win
 title: Stop rejecting oversized run-log notes
-updated: '2026-07-30'
+updated: '2026-08-20'
 ---
 
 As an agent completing a task, I want my run-log note accepted even when it exceeds the size limit, so that a long note never costs me the status write that came with it.

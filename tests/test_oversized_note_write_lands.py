@@ -23,9 +23,10 @@ covers what neither does, and what the criteria actually claim:
 * a combined write (status + points + assignee + depends_on + tags) alongside
   an oversized note lands *every* field, not just status.
 
-NOTE (port forward): ``pm_done_next`` does not exist in this checkout.  It is
-the higher-traffic note-bearing entry point upstream; mirror this module
-against it when these changes are ported onto a newer main.
+Scope: this module drives ``pm_update``, the tool the criteria name.
+``pm_done_next`` — the higher-traffic note-bearing entry point — is covered
+against the same contract by ``TestDoneNext`` in
+``tests/test_note_truncated_flag.py``.
 """
 
 import re

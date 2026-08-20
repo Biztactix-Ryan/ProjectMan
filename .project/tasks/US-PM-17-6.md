@@ -1,14 +1,14 @@
 ---
-assignee: null
+assignee: claude
 created: '2026-07-30'
 depends_on: []
 id: US-PM-17-6
 points: 2
-status: todo
+status: done
 story_id: US-PM-17
 tags: []
 title: Decide and document how an archive is positively identified
-updated: '2026-07-30'
+updated: '2026-08-20'
 ---
 
 The root cause is that the old archive left no distinguishing signal, so detection relies on a shape that genuine completion also produces. Settle the approach before touching code, and write it into the migrations module docstring.

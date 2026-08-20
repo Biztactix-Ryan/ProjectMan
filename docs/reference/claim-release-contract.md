@@ -77,14 +77,16 @@ one docstring line. Study D's failures run 2026-07-24 → 2026-07-28, three week
 docstring line sits at argument 5 of 14 and loses to the `null` prior. Nothing about
 that is fixable with more prose.
 
-**Port-forward hazard — verified, and not the same bug.** `2261a0d` is on `origin/main`
-but **is not an ancestor of this checkout's HEAD** (`git merge-base --is-ancestor
-2261a0d HEAD` → false; this tree is v0.8.9). The two baselines differ:
+**Port-forward hazard — resolved by the 0.8.15 rebase.** The analysis below was written
+when this tree was v0.8.9 and `2261a0d` was **not** an ancestor of HEAD. It is now: the
+tree is v0.8.15 and `store.py:1936` carries the `unassign = kwargs.get("assignee") == ""`
+normalisation, so only the `origin/main` column below still describes this checkout. The
+two baselines *as they stood then* differed:
 
 - **`origin/main`** normalises correctly — `store.py:969` `unassign = kwargs.get("assignee") == ""` → writes `None`.
-- **This checkout** has no such normalisation. `Store.update` applies
+- **This tree at v0.8.9** had no such normalisation. `Store.update` applied
   `if value is not None: post.metadata[key] = value` (`store.py:1763-1765`), so `""` is
-  written **literally**. Measured on a scratch store in this tree:
+  written **literally**. Measured on a scratch store in that tree:
 
   ```
   s.update(tid, assignee="", status="todo")
@@ -95,8 +97,8 @@ but **is not an ancestor of this checkout's HEAD** (`git merge-base --is-ancesto
   ```
 
   `readiness.py:23` tests `task_meta.assignee is not None`, and `''` is not `None`. So
-  in this tree the documented release sentinel does not merely fail to be spellable —
-  **when it is spelled correctly it bricks the task permanently.**
+  on that baseline the documented release sentinel did not merely fail to be spellable —
+  **when it was spelled correctly it bricked the task permanently.**
 
 `US-PM-7-8` must therefore land the `"" → None` normalisation *as well as* the new
 surface, and must not assume the upstream half is present. Whichever baseline the work

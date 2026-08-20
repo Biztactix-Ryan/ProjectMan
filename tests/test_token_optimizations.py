@@ -69,7 +69,7 @@ def test_pm_create_story_echo_is_minimal(tmp_project):
     from projectman.server import pm_create_story
     result = pm_create_story(
         "My Story", "Long description here",
-        acceptance_criteria="Can log in,Sees error",
+        acceptance_criteria=["Can log in", "Sees error"],
         tags="mvp",
     )
     data = yaml.safe_load(result)

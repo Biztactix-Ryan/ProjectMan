@@ -389,10 +389,10 @@ deliberately. US-PM-2-6 should assert it stays one.
 
 Written when this checkout was v0.8.9 and 12 commits behind `origin/main`: two
 error paths existed upstream but not here, and needed the same treatment when
-these changes were ported forward. §7.1 has since been ported — see its status
-list for the one item still outstanding.
+these changes were ported forward. §7.1 has since been ported in full — see its
+status list.
 
-### 7.1 `pm_done_next` — **ported, one item outstanding**
+### 7.1 `pm_done_next` — **ported, complete**
 
 The tool has since landed in this checkout. It is the highest-traffic
 note-bearing entry point (426 calls in the corpus; 338 calls / 25.1% soft-error
@@ -402,10 +402,11 @@ note path.
 
 Status of the three items this section called for:
 
-- ❌ **outstanding** — it must call `_note_truncation_fields()` and merge the
-  result into its response, exactly as `pm_update` does (still flagged in that
-  helper's docstring). An oversized note is currently truncated with no flag on
-  the highest-traffic note-bearing tool.
+- ✅ it calls `_note_truncation_fields()` and merges the result into its
+  response, exactly as `pm_update` does (US-PM-1-3). The record is consumed
+  immediately after the completion write, before the story-close and next-task
+  updates that would otherwise reset it, so the flag survives the busy path —
+  pinned by `TestDoneNext` in `tests/test_note_truncated_flag.py`.
 - ✅ its generic handler raises through `_failed()`, US-PM-2-3's treatment.
 - ✅ its "nothing ready follows" path is an **EXPECTED NEGATIVE** carrying
   `status: no_next_task`, US-PM-2-4's treatment — the shape §7.1 predicted, and
@@ -480,7 +481,7 @@ not error returns, but which US-PM-2-6 must assert stay non-error) gives the
 | 6 | 1 | `server.py:280` | `pm_docs` | **EXPECTED NEGATIVE** | yes |
 | 6= | 1 | `server.py:1350` (generic) | `pm_repair` | GENUINE FAILURE | yes |
 | 6= | 1 | `server.py:2202` (generic) | `pm_list_sprints` | GENUINE FAILURE | yes |
-| 6= | 1 | upstream `pm_done_next` | `pm_done_next` | GENUINE FAILURE | n/a — port forward |
+| 6= | 1 | `pm_done_next` generic handler | `pm_done_next` | GENUINE FAILURE | **no** — routes through `_failed` (§7.1) |
 
 ### Recommended order of work
 

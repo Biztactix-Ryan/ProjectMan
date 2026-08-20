@@ -785,14 +785,14 @@ def test_pm_done_next_no_next_task_is_not_counted_as_a_soft_error(tmp_project):
 
 
 def test_the_shape_pm_done_next_must_adopt_is_already_valid():
-    """The port-forward contract, executable today.
+    """The shape itself, composed directly from the helper.
 
-    Inventory 7.1: upstream, ``next: null`` with a ``next_info`` hint is the
-    highest-traffic negative of any tool. It is the same kind of answer as
-    ``not_ready`` -- the call worked, the answer is "none" -- so it adopts this
-    shape with ``status: no_next_task`` and the hint kept as detail. Asserted
-    here so the shape is known to accommodate it before the port, rather than
-    discovered not to afterwards.
+    Inventory 7.1: ``next: null`` with a ``next_info`` hint is the highest-
+    traffic negative of any tool. It is the same kind of answer as
+    ``not_ready`` -- the call worked, the answer is "none" -- so it carries this
+    shape with ``status: no_next_task`` and the hint kept as detail. The tool
+    path is exercised above; this pins the helper's own ability to carry an
+    explicit null and a nested hint, independently of ``pm_done_next``.
     """
     from projectman.server import _expected_negative
 

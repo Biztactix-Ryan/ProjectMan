@@ -351,9 +351,9 @@ projectman changeset push CS-PRJ-1
 
 ## projectman migrate-archived
 
-Repair tasks archived under the old archive-as-done behaviour.
+Repair tasks the activity log says were archived but whose files are not flagged archived.
 
-Before ProjectMan gave tasks an `archived` flag, archiving a task set its status to `done`. Abandoned work therefore counts as delivered in completion, burndown and velocity. This command finds those tasks in `activity.jsonl`, sets `archived: true`, and restores the status the task held before it was archived.
+Before ProjectMan gave tasks an `archived` flag, archiving a task set its status to `done`. Abandoned work therefore counts as delivered in completion, burndown and velocity. This command finds tasks whose `archived` flag went missing from disk — a dropped write, a hand-edited or restored frontmatter, a bad merge — and puts it back.
 
 ```bash
 # Report what would change — the default, writes nothing
@@ -373,14 +373,16 @@ projectman migrate-archived --apply
 **Safety:**
 
 - Dry run by default — `--apply` is the only thing that writes.
-- Idempotent: a migrated task is no longer `done` and carries `archived: true`, so re-running finds nothing.
+- Idempotent: a migrated task carries `archived: true`, so re-running finds nothing.
 - Never runs implicitly. No other command triggers it.
+- **The migration never moves a task out of `done` on inferred evidence.**
 
-**What it can and cannot detect.** The old archive was `update(status="done")`, so the activity log records it as an ordinary update — there is no distinct archive event. A task is only migrated when its last status change moved it to `done`, changed nothing but `status`, came from a status work never ran in (`todo` or `blocked`), and the task was never re-opened afterwards. Consequently:
+**What it can and cannot detect.** Identification requires a *positive archive signal*: an activity event that explicitly wrote `archived: true` for the task (a dedicated `archive` event counts equally), not later cleared. A candidate is a task carrying that signal whose file has lost the flag. Applying sets `archived: true`; it restores a status only when the signal event itself recorded a status change. Consequently:
 
-- A task archived from `in-progress` or `review` is **indistinguishable** from one that was genuinely finished, and is deliberately left alone.
-- A task that was archived, re-opened and then completed is reported as skipped rather than migrated.
-- If the log has no usable prior status, the task is listed under "need manual review" and left untouched — the migration never invents a status.
+- A task closed in a single `todo -> done` write is **not** a candidate. The pre-`archived`-flag archive was literally `update(status="done")`, which is byte-identical to routine completion, so that footprint is no longer evidence of anything. Those tasks are listed under "need manual review" and never written — see ADR-002 in `.project/DECISIONS.md`.
+- Archives made before the flag existed are unrecoverable by machine. The manual remedy is to archive by hand — the `pm_archive` MCP tool, or `Store.archive(task_id)` directly; no CLI subcommand exposes it today. Either sets the flag and leaves `status` alone, which fixes the metrics without claiming the work was never done.
+- A task whose status changed after the archive was recorded was picked back up; it is reported as skipped rather than migrated.
+- If a signal event's status payload is unusable, the task is listed under "need manual review" and left untouched — the migration never invents a status.
 
 Every ambiguous case is skipped rather than written: a missed archive is a metrics inaccuracy, whereas a wrongly restored task destroys the record of real completed work.
 

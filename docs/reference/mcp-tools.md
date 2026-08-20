@@ -27,6 +27,8 @@ even when it does not know the particular code.
 | Tool | `status` | Meaning | Extra fields |
 |---|---|---|---|
 | `pm_grab` | `not_ready` | The task failed its readiness check and was not claimed | `blockers` |
+| `pm_grab` | `already_claimed` | Another worker won the claim first — the task is untouched, take a different one | `holder`, `task_id` |
+| `pm_release` | `not_holder` | A guarded release lost: `expected_assignee` is no longer the holder, so nothing was released | `holder`, `expected` |
 | `pm_docs` | `not_created` | The requested document does not exist in this project | `doc`, `file` |
 | `pm_commit` | `nothing_to_commit` | `.project/` is already clean — an idempotent no-op | — |
 
@@ -126,7 +128,7 @@ Get epic details with story and task rollup.
 ### pm_create_story(title, description, priority?, points?, epic_id?, acceptance_criteria?, tags?, project?)
 Create a new user story.
 - **epic_id** (optional): Link story to an epic
-- **acceptance_criteria** (optional): Comma-separated acceptance criteria
+- **acceptance_criteria** (optional): List of acceptance criteria, one entry per criterion — e.g. `["Users can log in", "Error shown on invalid password"]`. Pass a JSON list, **not** a comma-joined string: criteria are natural language, so a comma inside one is punctuation and is never treated as a separator. A bare string is accepted and taken as exactly one criterion. Each criterion auto-generates a test task.
 - **tags** (optional): Comma-separated tags
 - **Returns**: Created story `id`/`title`/`status` plus any set fields, and `id`/`title` of auto-created test tasks
 
@@ -147,11 +149,14 @@ Create multiple tasks under a story in a single call.
 - **project** (optional): Project name for hub mode
 - **Returns**: List of created task `id`/`title` (plus set fields), count, and total points
 
-### pm_update(id, status?, points?, title?, assignee?, epic_id?, body?, acceptance_criteria?, tags?, depends_on?, outcome?, note?, project?)
+### pm_update(id, status?, points?, title?, assignee?, unassign?, clear?, epic_id?, body?, acceptance_criteria?, tags?, depends_on?, outcome?, note?, project?)
 Update an epic, story, or task.
 - **id**: Epic, story, or task ID (alias: `task_id`). `epic_id` is **not** an alias — it links a story to an epic.
+- **assignee** (optional): Assignee name (tasks only). To remove one, pass `unassign=true` — never an empty assignee.
+- **unassign** (optional, default `false`): Remove the assignee (tasks only). Changes nothing else — no status reset, no run-log entry; use `pm_release` for the whole hand-back. Passing `unassign=true` together with a non-empty `assignee` is an error.
+- **clear** (optional): Comma-separated **field names** to reset to empty — e.g. `"depends_on"`, `"tags"`, `"depends_on,tags"`. Valid names and what they clear to: `assignee` → null (tasks), `depends_on` → `[]` (tasks, stories), `tags` → `[]` (epics, stories, tasks), `points` → null, `epic_id` → null (stories). Clearing an already-empty field succeeds — `clear` states a desired end state. An unknown name, a name that does not apply to this item type, or naming a field here *and* setting it in the same call is an error.
 - **body** (optional): New markdown body/description content
-- **acceptance_criteria** (optional): Comma-separated acceptance criteria (stories only)
+- **acceptance_criteria** (optional): List of acceptance criteria, one entry per criterion (stories only) — e.g. `["Users can log in", "Error shown on invalid password"]`. Pass a JSON list, **not** a comma-joined string: criteria are natural language, so a comma inside one is punctuation and is never treated as a separator. A bare string is accepted and taken as exactly one criterion; an empty list clears the criteria. Editing criteria reconciles the auto-generated test tasks.
 - **tags** (optional): Comma-separated tags
 - **depends_on** (optional): Comma-separated sibling task IDs (tasks only)
 - **outcome** (optional): Run-log outcome — `success`, `partial`, `blocked`, `failed`, or `info`. When provided, appends a run-log entry for tracking work attempts.
@@ -160,6 +165,7 @@ Update an epic, story, or task.
 - Story status values: `backlog`, `ready`, `active`, `done`, `archived`
 - Task status values: `todo`, `in-progress`, `review`, `done`, `blocked`
 - **Returns**: `id`, current `status`, and the fields changed by this call (plus `run_log: <outcome>` when a run-log entry was appended) — not the full object
+- When — and only when — a supplied note had to be truncated, the response also carries `note_truncated: true`, `note_original_length`, `note_stored_length`, `note_dropped_chars` and `note_limit`, so a caller detects truncation without string-matching. Absence of the fields means the note was stored whole. Every note-writing tool (`pm_update`, `pm_release`, `pm_done_next`) reports it the same way.
 
 ### pm_archive(id)
 Archive an epic, story, or task.
@@ -170,9 +176,20 @@ Claim a task with readiness validation.
 - **task_id**: Task ID to claim (e.g. `US-PRJ-1-1`) (alias: `id`)
 - Sets assignee and status to `in-progress`
 - Validates task readiness before claiming
+- Claims by compare-and-swap on the on-disk assignee and status, under an exclusive lock on the task file — two concurrent workers cannot both win. The winner's response shape is unchanged; the loser gets `{outcome: expected_negative, status: already_claimed, message, holder, task_id}` and the task is left untouched. Re-claiming a task you already hold still succeeds.
 - Loads task context for implementation
 - **include_story** (optional, default `true`): Include the parent story body. Pass `false` when the story context is already known (e.g. grabbing a second task from the same story).
 - **Returns**: Task details and context — task frontmatter + body, story context, unfinished sibling tasks (with `sibling_tasks_total` / `sibling_tasks_done` counts), dependency status, readiness warnings. Returns an expected negative `{outcome: expected_negative, status: not_ready, message, blockers}` when the readiness check fails (the task is left untouched).
+
+### pm_release(task_id, status?, note?, outcome?, expected_assignee?, project?)
+Release a task — hand it back to the pool. The exact inverse of `pm_grab`, and the form to use whenever a task must stop being someone's: `pm_release("US-PRJ-1-1", note="worker stopped before finishing")`.
+- **task_id**: Task ID to release (alias: `id`). Tasks only — a story or epic id is an error, since `assignee` is a task-only field.
+- Clears the assignee, sets the status, and appends a run-log entry — one call, no empty values anywhere. There is no `assignee` parameter: releasing is said by the verb.
+- **status** (optional, default `todo`): Status to leave the task in
+- **note** / **outcome** (optional): Run-log entry, appended only when one of them is given; `outcome` defaults to `info`
+- **expected_assignee** (optional): Release only if this name still holds the task. Omit for an unguarded release. A mismatch is an expected negative (`status: not_holder`) and the task is left untouched.
+- Releasing an already-unassigned task **succeeds**, with `from_assignee: null` — a cleanup loop never has to branch on it.
+- **Returns**: `released:` with the full `task` and `from_assignee` (who held it before the call, or null), plus the `note_truncated` fields when the note had to be truncated (see `pm_update`)
 
 ### pm_done_next(task_id, outcome?, note?, assignee?, same_story_only?)
 Complete a task and claim the next ready one in a single call — the loop primitive for working through tasks.
@@ -181,7 +198,7 @@ Complete a task and claim the next ready one in a single call — the loop primi
 - Closes the parent story automatically if this was its last open task (`story_closed` in the response)
 - Grabs the next ready unassigned task — same-story siblings first (topological order), then other stories by priority. The story body is only included when the next task belongs to a different story.
 - **same_story_only** (optional, default `false`): Stop instead of crossing to another story
-- **Returns**: `completed` summary, optional `story_closed`, and `next` (a full grab payload). When nothing is ready the response is an expected negative — `{outcome: expected_negative, status: no_next_task, message, completed, next: null, next_info}` — the task was still completed; only the second half of the question has no answer.
+- **Returns**: `completed` summary, optional `story_closed`, and `next` (a full grab payload). When nothing is ready the response is an expected negative — `{outcome: expected_negative, status: no_next_task, message, completed, next: null, next_info}` — the task was still completed; only the second half of the question has no answer. The `note_truncated` fields (see `pm_update`) are present on both shapes when the note had to be truncated.
 
 ### pm_update_doc(doc, content, project?)
 Update a project documentation file.

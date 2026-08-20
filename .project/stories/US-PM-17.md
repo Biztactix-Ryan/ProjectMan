@@ -13,14 +13,14 @@ epic_id: EPIC-PM-1
 id: US-PM-17
 points: 5
 priority: must
-status: backlog
+status: done
 tags:
 - reliability
 - data-loss
 - migrations
 - found-in-review
 title: Stop the archived-as-done migration from demoting genuinely completed work
-updated: '2026-07-30'
+updated: '2026-08-20'
 ---
 
 As someone running the archived-as-done migration, I want it to leave real completed work alone, so that repairing a metrics bug cannot destroy a record of delivered work.
