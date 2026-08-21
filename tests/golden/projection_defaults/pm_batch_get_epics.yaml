@@ -1,0 +1,10 @@
+- id: EPIC-TST-1
+  title: Platform Epic
+  status: draft
+  priority: should
+  points: null
+  target_date: null
+  tags: []
+  created: <DATE>
+  updated: <DATE>
+  body: Epic body text that is long enough to matter.

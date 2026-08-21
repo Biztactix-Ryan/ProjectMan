@@ -24,6 +24,25 @@ histogram is the direct measure of the missing bulk-write path.
 exposes two-call habits that a single tool already collapses
 (``pm_grab -> pm_update`` where ``pm_done_next`` exists).
 
+**Completion run-log coverage** -- of the calls that *complete* work
+(``pm_update(status="done")``, ``pm_done_next``, ``pm_accept``), what share left
+no run-log entry behind. US-PM-8's acceptance criterion is that this share drops
+to zero; see :func:`completion_has_run_log` for the two counting rules.
+
+**Note length** -- how long the run-log notes callers actually write. US-PM-9's
+acceptance criterion is that the median drops *well below* the 4096-character
+cap, because structured ``evidence`` now carries the lists that used to be
+flattened into prose; see :func:`note_lengths`.
+
+**Guidance-tool usage** -- how often the read-only advisory tools
+(``pm_context``, ``pm_estimate``, ``pm_scope``) are actually called, and in how
+many distinct sessions. US-PM-13's acceptance criterion is that usage of
+``pm_context`` and ``pm_estimate`` is *visible in the next baseline*, so the
+numbers have to be first-class rather than buried in the 32-row ``by_tool``
+table -- including when they are zero. A zero that is printed is the "before"
+the next capture is argued against; a zero that is absent is indistinguishable
+from a tool nobody thought to measure. See :func:`guidance_tool_usage`.
+
 Boundaries
 ----------
 Runs and bigrams are computed **within one transcript file** and never across
@@ -87,6 +106,45 @@ CHARS_PER_TOKEN = 4
 #: Default number of bigrams / longest runs shown in the *text* report. The JSON
 #: output is never truncated -- see :meth:`UsageReport.as_dict`.
 DEFAULT_TOP = 20
+
+#: Tool calls that *complete* a unit of work. A completion is the moment the
+#: run-log exists to capture, so a completion with no entry behind it is the
+#: silent gap US-PM-8 exists to close ("13% of status=done writes carry no note
+#: or outcome").
+#:
+#: ``pm_update`` counts only when its arguments say ``status="done"``; the other
+#: two are completions by definition.
+COMPLETION_TOOLS: frozenset[str] = frozenset({"pm_update", "pm_done_next", "pm_accept"})
+
+#: Completion tools that write a run-log entry *server-side, unconditionally*,
+#: so the caller's arguments cannot suppress it: ``pm_accept`` requires a
+#: non-blank note and fixes the outcome structurally, and ``pm_done_next``
+#: substitutes the ``DONE_NEXT_NO_NOTE`` sentinel when no note is given. Calls
+#: to these tools are therefore counted as "has run log" whatever they carry.
+ALWAYS_LOGGING_COMPLETIONS: frozenset[str] = frozenset({"pm_done_next", "pm_accept"})
+
+#: Argument keys whose presence makes a ``pm_update`` completion write an entry.
+RUN_LOG_ARG_KEYS: tuple[str, ...] = ("note", "outcome")
+
+#: The argument :func:`note_lengths` samples. Any run-log-writing tool can carry
+#: one (``pm_update``, ``pm_done_next`` and the four verdict verbs), and the
+#: metric is about the *prose habit* rather than about any single tool, so every
+#: call carrying the key is sampled.
+NOTE_ARG_KEY = "note"
+
+#: The server's hard ceiling on a stored run-log note (``store.truncate_run_log_note``).
+#: Not a gate -- the gate lives in :mod:`tools.usage_telemetry.baseline` -- but the
+#: number the median is "well below", so the text report prints it beside them.
+NOTE_LENGTH_CAP = 4096
+
+#: The server's read-only *advisory* tools -- the ones that answer "how should I
+#: do this step" rather than returning a record. Restated here rather than
+#: imported because :mod:`tools.usage_telemetry` must not depend on the test
+#: suite; ``tests/test_skill_guidance_tools.py`` derives the same set from the
+#: live server's tool descriptions and
+#: ``test_the_telemetry_guidance_set_matches_the_set_the_skills_pin`` asserts the
+#: two are equal, so this tuple cannot drift away from the set the skills name.
+GUIDANCE_TOOLS: tuple[str, ...] = ("pm_context", "pm_estimate", "pm_scope")
 
 
 def percentile(values: Sequence[int | float], q: float) -> int | float | None:
@@ -225,6 +283,213 @@ def iter_bigrams(calls: Iterable[ToolCall]) -> Iterator[tuple[str, str]]:
         session_calls = grouped[session]
         for first, second in zip(session_calls, session_calls[1:]):
             yield (first.tool, second.tool)
+
+
+# ------------------------------------------------------- completion logging --
+
+
+def is_completion(call: ToolCall) -> bool:
+    """True when this call completes a unit of work.
+
+    ``pm_done_next`` and ``pm_accept`` always are. ``pm_update`` is one only
+    when its arguments carry ``status="done"`` -- every other update is an edit,
+    not a completion, and counting them would dilute the denominator with calls
+    no one expects a run-log entry from.
+
+    A call whose arguments never parsed (``__unparsedToolInput``) has no
+    readable ``status``, so a ``pm_update`` of that shape is *not* counted: its
+    intent is unknown and guessing it would move the metric on noise.
+    """
+    tool = call.tool
+    if tool in ALWAYS_LOGGING_COMPLETIONS:
+        return True
+    if tool != "pm_update":
+        return False
+    status = (call.input or {}).get("status")
+    return isinstance(status, str) and status.strip().lower() == "done"
+
+
+def completion_has_run_log(call: ToolCall) -> bool:
+    """True when this completion leaves a run-log entry behind.
+
+    Two rules, and the second is the one to read twice:
+
+    1. ``pm_update(status="done")`` writes an entry only when the caller also
+       passed ``note`` or ``outcome`` -- contract section 4 keeps the bare form
+       working for compatibility, and a bare one writes nothing.
+    2. ``pm_done_next`` and ``pm_accept`` are counted as *always* having one.
+       The server logs regardless of arguments (``pm_accept`` requires a
+       non-blank note; ``pm_done_next`` falls back to the
+       ``DONE_NEXT_NO_NOTE`` sentinel), so after US-PM-8 the entry is
+       structurally unavoidable and the call arguments do not decide it.
+    """
+    if call.tool in ALWAYS_LOGGING_COMPLETIONS:
+        return True
+    args = call.input or {}
+    return any(
+        isinstance(args.get(key), str) and args[key].strip() for key in RUN_LOG_ARG_KEYS
+    )
+
+
+@dataclass
+class CompletionLogging:
+    """How many completions left a run-log entry behind, and how many did not.
+
+    The rate is a **fraction** (0-1), like every other rate in this package;
+    :mod:`tools.usage_telemetry.baseline` converts to a percentage exactly once.
+    An empty sample rates 0.0 rather than ``None``, matching
+    :class:`~tools.usage_telemetry.classify.Classification`.
+    """
+
+    completions: int = 0
+    without_run_log: int = 0
+    by_tool: dict[str, dict[str, int]] = field(default_factory=dict)
+
+    @property
+    def with_run_log(self) -> int:
+        return self.completions - self.without_run_log
+
+    @property
+    def without_run_log_rate(self) -> float:
+        """Share of completions carrying no run-log entry. The AC's number."""
+        return self.without_run_log / self.completions if self.completions else 0.0
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "completions": self.completions,
+            "with_run_log": self.with_run_log,
+            "without_run_log": self.without_run_log,
+            "completions_without_run_log_rate": self.without_run_log_rate,
+            "by_tool": {
+                tool: dict(counts) for tool, counts in sorted(self.by_tool.items())
+            },
+        }
+
+
+def completion_logging(calls: Iterable[ToolCall]) -> CompletionLogging:
+    """Count completions and the ones lacking a run-log entry.
+
+    Public because the same definition has to be usable outside a full report --
+    ``tests/test_verdict_verbs_completion_logging.py`` computes the share over
+    the verdict verbs' own recorded calls with it, so the structural claim and
+    the corpus metric are the *same* arithmetic.
+    """
+    summary = CompletionLogging()
+    for call in calls:
+        if not is_completion(call):
+            continue
+        logged = completion_has_run_log(call)
+        summary.completions += 1
+        summary.without_run_log += 0 if logged else 1
+        row = summary.by_tool.setdefault(
+            call.tool, {"completions": 0, "without_run_log": 0}
+        )
+        row["completions"] += 1
+        row["without_run_log"] += 0 if logged else 1
+    return summary
+
+
+def note_lengths(calls: Iterable[ToolCall]) -> Distribution:
+    """Distribution of run-log note lengths, in characters.
+
+    Samples ``len(call.input["note"])`` over **every** call carrying a ``note``
+    argument, whatever the tool: US-PM-9's criterion is about how long the notes
+    people write are, and a note is a note whether it rode in on ``pm_update``
+    or on ``pm_accept``.
+
+    A note argument that is not a string (a malformed input, an explicit
+    ``null``) is not a note and is skipped rather than guessed at; an empty or
+    whitespace string *is* one the caller wrote, so it is sampled at its real
+    length. An empty sample yields ``Distribution.of([])`` -- count and total
+    zero, every percentile ``None`` -- never a misleading zero median.
+    """
+    lengths: list[int] = []
+    for call in calls:
+        note = (call.input or {}).get(NOTE_ARG_KEY)
+        if isinstance(note, str):
+            lengths.append(len(note))
+    return Distribution.of(lengths)
+
+
+# ------------------------------------------------------ guidance-tool usage --
+
+
+@dataclass
+class GuidanceToolUsage:
+    """Calls and reach of each guidance tool, over one corpus.
+
+    ``sessions`` is the corpus-wide session count -- the denominator -- and is
+    recorded even when every tool scores zero, because "0 calls across 484
+    sessions" and "0 calls across 3 sessions" are different claims.
+
+    Every tool in :data:`GUIDANCE_TOOLS` gets a row whether or not it was
+    called. That is the point of the metric: US-PM-13's "before" number is a
+    zero, and a zero can only move if it is printed.
+    """
+
+    sessions: int = 0
+    calls: dict[str, int] = field(default_factory=dict)
+    tool_sessions: dict[str, int] = field(default_factory=dict)
+
+    def session_rate(self, tool: str) -> float:
+        """Share of sessions (0-1) that called ``tool`` at least once.
+
+        A fraction, like every other rate in this package;
+        :mod:`tools.usage_telemetry.baseline` converts to a percentage exactly
+        once. An empty corpus rates 0.0 rather than dividing by zero.
+        """
+        if not self.sessions:
+            return 0.0
+        return self.tool_sessions.get(tool, 0) / self.sessions
+
+    def calls_per_100_sessions(self, tool: str) -> float:
+        """Call count normalised to a fixed corpus size.
+
+        The corpus grows between captures, so raw call counts are not
+        comparable across baselines -- 2 calls in 3 sessions is heavier usage
+        than 40 calls in 484. This is the number to compare.
+        """
+        if not self.sessions:
+            return 0.0
+        return round(100.0 * self.calls.get(tool, 0) / self.sessions, 4)
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "sessions": self.sessions,
+            "by_tool": {
+                tool: {
+                    "calls": self.calls.get(tool, 0),
+                    "sessions": self.tool_sessions.get(tool, 0),
+                    "session_rate": self.session_rate(tool),
+                    "calls_per_100_sessions": self.calls_per_100_sessions(tool),
+                }
+                for tool in GUIDANCE_TOOLS
+            },
+        }
+
+
+def guidance_tool_usage(calls: Iterable[ToolCall]) -> GuidanceToolUsage:
+    """Count guidance-tool calls, and the distinct sessions that made them.
+
+    The denominator is every session in ``calls``, not only the ones that
+    touched a guidance tool -- the question is "what share of working sessions
+    consulted the guidance", so sessions that never did are exactly the ones
+    that have to count against it.
+    """
+    calls = list(calls)
+    seen: dict[str, set[str]] = {tool: set() for tool in GUIDANCE_TOOLS}
+    counts: dict[str, int] = {tool: 0 for tool in GUIDANCE_TOOLS}
+    sessions: set[str] = set()
+    for call in calls:
+        sessions.add(call.session)
+        if call.tool in counts:
+            counts[call.tool] += 1
+            seen[call.tool].add(call.session)
+    return GuidanceToolUsage(
+        sessions=len(sessions),
+        calls=counts,
+        tool_sessions={tool: len(s) for tool, s in seen.items()},
+    )
 
 
 @dataclass
@@ -370,6 +635,21 @@ class UsageReport:
         )
 
     @property
+    def completions(self) -> CompletionLogging:
+        """Run-log coverage over completion writes. US-PM-8's acceptance number."""
+        return completion_logging(self.calls)
+
+    @property
+    def note_lengths(self) -> Distribution:
+        """Note-length distribution in characters. US-PM-9's acceptance number."""
+        return note_lengths(self.calls)
+
+    @property
+    def guidance_tools(self) -> GuidanceToolUsage:
+        """Guidance-tool calls and reach. US-PM-13's acceptance number."""
+        return guidance_tool_usage(self.calls)
+
+    @property
     def calls_per_session(self) -> Distribution:
         return Distribution.of(
             len(v) for v in group_by_session(self.calls).values()
@@ -446,6 +726,9 @@ class UsageReport:
             "bigrams": [
                 {"from": a, "to": b, "count": n} for a, b, n in self.top_bigrams()
             ],
+            "completions": self.completions.as_dict(),
+            "note_lengths": self.note_lengths.as_dict(),
+            "guidance_tools": self.guidance_tools.as_dict(),
         }
         if self.classification is not None:
             payload["failures"] = self.classification.as_dict()
@@ -557,6 +840,30 @@ def format_usage_report(report: UsageReport, top: int = DEFAULT_TOP) -> str:
             f"({MALFORMED_INPUT_KEY})",
             "  full breakdown      python -m tools.usage_telemetry.classify",
         ]
+
+    completions = report.completions
+    lines.append(
+        f"completions           {_n(completions.completions)} "
+        f"(done writes + pm_done_next + pm_accept), "
+        f"{_n(completions.without_run_log)} with no run-log entry "
+        f"({completions.without_run_log_rate:.2%})"
+    )
+
+    notes = report.note_lengths
+    lines.append(
+        f"note lengths          {_n(notes.count)} notes, "
+        f"median {_n(notes.median)}, p90 {_n(notes.p90)}, p95 {_n(notes.p95)} chars "
+        f"(cap {_n(NOTE_LENGTH_CAP)})"
+    )
+
+    guidance = report.guidance_tools
+    for tool in GUIDANCE_TOOLS:
+        lines.append(
+            f"guidance tool         {tool:<14} {_n(guidance.calls.get(tool, 0))} calls "
+            f"in {_n(guidance.tool_sessions.get(tool, 0))} of "
+            f"{_n(guidance.sessions)} sessions "
+            f"({guidance.calls_per_100_sessions(tool):.2f} per 100 sessions)"
+        )
 
     lines += [
         "",

@@ -1042,3 +1042,309 @@ def test_package_exports_the_report_api_lazily():
     assert "report" in dir(tx_pkg)
     with pytest.raises(AttributeError):
         tx_pkg.no_such_report_name
+
+
+# ------------------------------------------- completion run-log coverage --
+#
+# US-PM-8 AC: "Measured share of completions lacking a run-log entry drops to
+# zero." Before there was a metric there was only an assertion, so these pin
+# the definition: what counts as a completion, and what counts as logged.
+
+
+def _done(note=None, outcome=None, seq=0, session="sess-a"):
+    """A ``pm_update(status="done")`` completion, bare unless given args."""
+    args = {"id": "US-TST-1-1", "status": "done"}
+    if note is not None:
+        args["note"] = note
+    if outcome is not None:
+        args["outcome"] = outcome
+    return make_call(tool="pm_update", session=session, seq=seq, tool_input=args)
+
+
+def test_two_bare_done_writes_in_ten_completions_is_a_twenty_percent_gap():
+    """The shape of the pre-fix corpus, shrunk: 2 of 10 carry nothing."""
+    calls = [
+        _done(seq=0),
+        _done(seq=1),
+        _done(note="finished the parser", outcome="success", seq=2),
+        _done(outcome="success", seq=3),
+        _done(note="tests green", seq=4),
+        make_call(tool="pm_done_next", seq=5, tool_input={"task_id": "US-TST-1-2"}),
+        make_call(
+            tool="pm_done_next", seq=6, tool_input={"task_id": "US-TST-1-3", "note": "ok"}
+        ),
+        make_call(
+            tool="pm_accept", seq=7, tool_input={"task_id": "US-TST-1-4", "note": "ok"}
+        ),
+        make_call(
+            tool="pm_accept", seq=8, tool_input={"task_id": "US-TST-1-5", "note": "ok"}
+        ),
+        make_call(tool="pm_done_next", seq=9, tool_input={"task_id": "US-TST-1-6"}),
+    ]
+    summary = rp.completion_logging(calls)
+    assert summary.completions == 10
+    assert summary.without_run_log == 2
+    assert summary.with_run_log == 8
+    assert summary.without_run_log_rate == pytest.approx(0.20)
+    assert 100 * summary.without_run_log_rate == pytest.approx(20.0)
+
+
+def test_a_corpus_of_only_verbs_and_done_next_reports_zero():
+    """The post-fix shape: the server logs regardless, so the share is 0."""
+    calls = [
+        make_call(tool="pm_accept", seq=0, tool_input={"task_id": "A", "note": "n"}),
+        make_call(tool="pm_done_next", seq=1, tool_input={"task_id": "B"}),
+        make_call(tool="pm_done_next", seq=2, tool_input={"task_id": "C", "note": ""}),
+        make_call(tool="pm_accept", seq=3, tool_input={"task_id": "D", "note": "n"}),
+    ]
+    summary = rp.completion_logging(calls)
+    assert summary.completions == 4
+    assert summary.without_run_log == 0
+    assert summary.without_run_log_rate == 0.0
+
+
+def test_only_done_updates_count_as_completions():
+    """A status edit that is not a completion must not dilute the denominator."""
+    calls = [
+        make_call(tool="pm_update", seq=0, tool_input={"id": "X", "status": "active"}),
+        make_call(tool="pm_update", seq=1, tool_input={"id": "X", "points": 3}),
+        make_call(tool="pm_get", seq=2, tool_input={"id": "X"}),
+        _done(seq=3),
+    ]
+    summary = rp.completion_logging(calls)
+    assert summary.completions == 1
+    assert summary.without_run_log == 1
+    assert summary.without_run_log_rate == 1.0
+
+
+def test_a_blank_note_on_a_done_update_is_not_a_run_log_entry():
+    """Whitespace is not a note; the server writes nothing for it either."""
+    assert rp.completion_logging([_done(note="   ", seq=0)]).without_run_log == 1
+    assert rp.completion_logging([_done(note="x", seq=0)]).without_run_log == 0
+
+
+def test_an_unparsable_update_is_not_guessed_to_be_a_completion():
+    """No readable ``status``, so its intent is unknown -- it is left out."""
+    calls = [make_call(tool="pm_update", seq=0, tool_input={"__unparsedToolInput": "{"})]
+    assert rp.completion_logging(calls).completions == 0
+
+
+def test_an_empty_corpus_rates_zero_rather_than_dividing_by_zero():
+    assert rp.completion_logging([]).without_run_log_rate == 0.0
+
+
+def test_the_completion_metric_is_surfaced_in_the_json_report():
+    report = rp.build_report([_done(seq=0), _done(note="n", seq=1)])
+    section = report.as_dict()["completions"]
+    assert section["completions"] == 2
+    assert section["without_run_log"] == 1
+    assert section["completions_without_run_log_rate"] == pytest.approx(0.5)
+    assert section["by_tool"]["pm_update"] == {"completions": 2, "without_run_log": 1}
+
+
+def test_the_completion_metric_is_surfaced_in_the_text_report():
+    text = rp.format_usage_report(rp.build_report([_done(seq=0), _done(note="n", seq=1)]))
+    assert "completions" in text
+    assert "no run-log entry" in text
+    assert "50.00%" in text
+
+
+# ------------------------------------------------------- note length --
+#
+# US-PM-9 AC: "Median note length drops well below the cap." The metric has to
+# be right on a hand-computable sample before any claim about the live corpus
+# means anything, so these pin the sampling rule and the percentile arithmetic.
+
+
+def _noted(chars=None, seq=0, tool="pm_update", session="sess-a", note=None):
+    """A call carrying a ``note`` of ``chars`` characters (or none at all)."""
+    args = {"id": "US-TST-1-1", "status": "done"}
+    if chars is not None:
+        args["note"] = "n" * chars
+    if note is not None:
+        args["note"] = note
+    return make_call(tool=tool, session=session, seq=seq, tool_input=args)
+
+
+def test_note_lengths_are_hand_computable_on_a_three_note_corpus():
+    """100/200/900 -> median 200, and nearest-rank puts p90 and p95 at 900."""
+    calls = [_noted(100, seq=0), _noted(200, seq=1), _noted(900, seq=2)]
+    dist = rp.note_lengths(calls)
+    assert dist.count == 3
+    assert dist.total == 1200
+    assert dist.median == 200
+    assert dist.p90 == 900
+    assert dist.p95 == 900
+    assert dist.minimum == 100
+    assert dist.maximum == 900
+
+
+def test_calls_with_no_note_argument_are_not_sampled():
+    """A `pm_get` is not a zero-length note; it is not a note at all."""
+    calls = [
+        _noted(200, seq=0),
+        make_call(tool="pm_get", seq=1, tool_input={"id": "US-TST-1-1"}),
+        make_call(tool="pm_update", seq=2, tool_input={"id": "X", "status": "active"}),
+        _noted(200, seq=3),
+    ]
+    assert rp.note_lengths(calls).count == 2
+
+
+def test_a_non_string_note_is_skipped_rather_than_guessed_at():
+    calls = [
+        make_call(tool="pm_update", seq=0, tool_input={"id": "X", "note": None}),
+        make_call(tool="pm_update", seq=1, tool_input={"__unparsedToolInput": "{"}),
+        make_call(tool="pm_update", seq=2, tool_input={"id": "X", "note": 12}),
+    ]
+    assert rp.note_lengths(calls).count == 0
+
+
+def test_an_empty_note_is_still_a_note_the_caller_wrote():
+    assert rp.note_lengths([_noted(note="", seq=0)]).count == 1
+    assert rp.note_lengths([_noted(note="", seq=0)]).total == 0
+
+
+def test_notes_are_sampled_from_every_tool_not_only_completions():
+    """The metric is about the prose habit, so a verdict verb counts too."""
+    calls = [
+        make_call(tool="pm_accept", seq=0, tool_input={"task_id": "A", "note": "x" * 50}),
+        make_call(tool="pm_review", seq=1, tool_input={"task_id": "B", "note": "x" * 50}),
+        make_call(tool="pm_park", seq=2, tool_input={"task_id": "C", "note": "x" * 50}),
+    ]
+    assert rp.note_lengths(calls).count == 3
+    assert rp.note_lengths(calls).median == 50
+
+
+def test_an_empty_note_corpus_is_zeros_rather_than_a_crash():
+    """Count and total are zero; the percentiles are ``None`` per Distribution.
+
+    ``Distribution`` documents an empty sample as ``None`` quantiles rather than
+    a misleading zero median, and the note metric must not invent a different
+    convention for itself.
+    """
+    dist = rp.note_lengths([])
+    assert dist.count == 0
+    assert dist.total == 0
+    assert dist.median is None and dist.p90 is None and dist.p95 is None
+    assert dist.as_dict()["median"] is None
+
+
+def test_the_note_length_metric_is_surfaced_in_the_json_report():
+    report = rp.build_report([_noted(100, seq=0), _noted(200, seq=1), _noted(900, seq=2)])
+    section = report.as_dict()["note_lengths"]
+    assert section["count"] == 3
+    assert section["median"] == 200
+    assert section["p90"] == 900
+    assert section["p95"] == 900
+    assert json.loads(json.dumps(section)) == section
+
+
+def test_the_note_length_metric_is_surfaced_in_the_text_report():
+    text = rp.format_usage_report(rp.build_report([_noted(100, seq=0), _noted(300, seq=1)]))
+    assert "note lengths" in text
+    assert "median 100" in text
+    assert str(rp.NOTE_LENGTH_CAP) in text.replace(",", "")
+
+
+# ------------------------------------------------------ guidance-tool usage --
+#
+# US-PM-13 AC: "Usage of both tools is visible in the next telemetry baseline."
+# `pm_context` and `pm_estimate` sat at 1 call each in the pre-fix capture while
+# `pm_scope` -- the same shape of tool -- took 40. The metric that makes the
+# movement visible has to print a zero as a zero: an absent row is
+# indistinguishable from a tool nobody thought to measure.
+
+
+def _guidance_corpus():
+    """Three sessions; `pm_estimate` called in one of them, `pm_context` in none."""
+    return (
+        sequence("s1", ["pm_grab", "pm_estimate", "pm_update"])
+        + sequence("s2", ["pm_grab", "pm_update"])
+        + sequence("s3", ["pm_get"])
+    )
+
+
+def test_guidance_usage_counts_calls_and_the_sessions_that_made_them():
+    usage = rp.guidance_tool_usage(_guidance_corpus())
+    assert usage.sessions == 3
+    assert usage.calls["pm_estimate"] == 1
+    assert usage.tool_sessions["pm_estimate"] == 1
+
+
+def test_an_uncalled_guidance_tool_reports_a_visible_zero_not_an_absent_row():
+    """The whole point of the metric: the "before" number is a printed zero."""
+    usage = rp.guidance_tool_usage(_guidance_corpus())
+    assert "pm_context" in usage.as_dict()["by_tool"]
+    assert usage.calls["pm_context"] == 0
+    assert usage.session_rate("pm_context") == 0.0
+    assert usage.calls_per_100_sessions("pm_context") == 0.0
+
+
+def test_repeat_calls_in_one_session_count_once_towards_reach():
+    """Eight calls from one agent is not eight sessions consulting the guidance."""
+    calls = sequence("s1", ["pm_context"] * 8) + sequence("s2", ["pm_get"])
+    usage = rp.guidance_tool_usage(calls)
+    assert usage.calls["pm_context"] == 8
+    assert usage.tool_sessions["pm_context"] == 1
+    assert usage.session_rate("pm_context") == pytest.approx(0.5)
+
+
+def test_sessions_that_never_touch_a_guidance_tool_stay_in_the_denominator():
+    """"What share of working sessions consulted the guidance" needs all of them."""
+    usage = rp.guidance_tool_usage(_guidance_corpus())
+    assert usage.sessions == 3
+    assert usage.session_rate("pm_estimate") == pytest.approx(1 / 3)
+
+
+def test_calls_per_100_sessions_normalises_across_corpus_sizes():
+    """2 calls in 4 sessions is heavier usage than 40 in 484 -- the raw counts lie."""
+    small = rp.guidance_tool_usage(
+        sequence("s1", ["pm_scope", "pm_scope"])
+        + sequence("s2", ["pm_get"])
+        + sequence("s3", ["pm_get"])
+        + sequence("s4", ["pm_get"])
+    )
+    assert small.calls_per_100_sessions("pm_scope") == 50.0
+
+
+def test_the_guidance_metric_is_surfaced_in_the_json_report():
+    section = rp.build_report(_guidance_corpus()).as_dict()["guidance_tools"]
+    assert section["sessions"] == 3
+    assert set(section["by_tool"]) == set(rp.GUIDANCE_TOOLS)
+    assert section["by_tool"]["pm_estimate"] == {
+        "calls": 1,
+        "sessions": 1,
+        "session_rate": pytest.approx(1 / 3),
+        "calls_per_100_sessions": 33.3333,
+    }
+    assert section["by_tool"]["pm_context"]["calls"] == 0
+
+
+def test_the_guidance_metric_is_surfaced_in_the_text_report():
+    text = rp.format_usage_report(rp.build_report(_guidance_corpus()))
+    assert "pm_context" in text
+    assert "pm_estimate" in text
+    assert text.count("guidance tool") == len(rp.GUIDANCE_TOOLS)
+
+
+def test_an_empty_corpus_reports_zeros_rather_than_dividing_by_zero():
+    usage = rp.guidance_tool_usage([])
+    assert usage.sessions == 0
+    assert usage.session_rate("pm_context") == 0.0
+    assert usage.calls_per_100_sessions("pm_context") == 0.0
+    payload = rp.build_report([]).as_dict()["guidance_tools"]
+    assert set(payload["by_tool"]) == set(rp.GUIDANCE_TOOLS)
+    assert json.dumps(payload)
+
+
+def test_the_telemetry_guidance_set_matches_the_set_the_skills_pin():
+    """The metric must not measure a different set from the one the skills name.
+
+    ``tests/test_skill_guidance_tools.py`` derives its tuple from the live
+    server's read-only advisory tools and asserts every skill step names them;
+    this metric is what proves the steps moved the number. If the two sets ever
+    diverge, the telemetry silently measures something the sprint did not wire.
+    """
+    from tests.test_skill_guidance_tools import GUIDANCE_TOOLS as SKILL_GUIDANCE_TOOLS
+
+    assert set(rp.GUIDANCE_TOOLS) == set(SKILL_GUIDANCE_TOOLS)

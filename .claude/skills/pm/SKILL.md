@@ -40,10 +40,19 @@ Call `pm_status`, then `pm_active`, then `pm_list_sprints(status="active")`. Sug
 - `create epic "<title>" "<description>"` → `pm_create_epic`
 - `create story "<title>" "<description>"` → `pm_create_story` (optionally `epic <epic-id>`, `depends_on <ids>`)
 - `create task <story-id> "<title>" "<description>"` → `pm_create_task` (optionally `depends_on <ids>`)
-- `update <id> <field>=<value>` → `pm_update`
+- `update <id> <field>=<value>` → `pm_update` — writing `points=`? Run the `pm_estimate` calibration step (**Estimation**, below) first
 - `archive <id>` → `pm_archive`
 
 Note: sprints are updated via `pm_update_sprint` (statuses: planning/active/completed/cancelled), not `pm_update`.
+
+### Estimation — calibrate before writing points
+
+Every operation that writes a `points` value — `pm_create_story`, `pm_create_task` / `pm_create_tasks`, `pm_update(points=...)`, and the tasks you create after `pm_auto_scope` — has two named steps in front of it:
+
+- **Step 1 — Calibrate: `pm_estimate(<id>)`.** Call it on the item being sized, or for a not-yet-created item on the closest existing sibling story/task. Read the `estimation_guidance` it returns: the fibonacci scale, the 1/2/3/5/8/13 calibration bands, and this project's historical average points.
+- **Step 2 — Size and write.** Pick the fibonacci value whose calibration band matches the work, then write it via the create/update call.
+
+Do not skip step 1 and invent a number — the bands and the historical average are what keep points comparable across the backlog.
 
 ### Dependencies
 Stories and tasks support cross-item dependencies via `depends_on` — task→task (any story), story→story, task→story, story→task. Cycles are rejected at creation/update; `pm_audit` checks for orphans and cycles project-wide; `pm_grab` requires all dependencies done.
@@ -54,7 +63,7 @@ Examples:
 - `update US-PRJ-2 depends_on=US-PRJ-1,US-PRJ-1-5`
 
 ### Workflows
-- `scope <story-id>` → `pm_scope(id)`, propose task breakdown, create approved tasks, estimate each
+- `scope <story-id>` → `pm_scope(id)`, propose task breakdown, calibrate each estimate with `pm_estimate(<id>)` (**Estimation**, above), create approved tasks with their points
 - `autoscope` → redirect to `/pm-autoscope`
 - `audit` → `pm_audit`, review findings, suggest and execute approved fixes
 - `init [project]` → set up project documentation (wizard for new, import for existing)

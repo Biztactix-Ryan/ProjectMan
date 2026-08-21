@@ -13,8 +13,8 @@ from mcp.types import ToolAnnotations
 from .config import find_project_root, load_config
 from .event_bus import EventBus, NoOpEventBus
 from .indexer import build_index, write_index
-from .models import ChangesetStatus, ProjectIndex
-from .store import NothingToCommit, Store
+from .models import ChangesetStatus, Evidence, ProjectIndex
+from .store import NOTE_SUMMARY_RECOMMENDED, NothingToCommit, Store
 
 mcp = FastMCP("projectman")
 
@@ -99,6 +99,56 @@ def _note_truncation_fields(store: Store, note: Optional[str]) -> dict:
         "note_dropped_chars": record["dropped_chars"],
         "note_limit": record["limit"],
     }
+
+
+def _evidence_clamp_fields(store: Store, evidence: object) -> dict:
+    """Consume the clamp record left behind by ``store.update``.
+
+    The sibling of :func:`_note_truncation_fields`, with the same two guards
+    (only read when *this* call supplied evidence; cleared on the way out)
+    and the same rule: ``{}`` when nothing was clamped, so absence means the
+    evidence was stored whole.
+    """
+    record = store.last_evidence_clamp if evidence is not None else None
+    store.last_evidence_clamp = None
+    if not record or not record.get("clamped"):
+        return {}
+    return {"evidence_clamped": True, "evidence_dropped": record["dropped"]}
+
+
+def _note_length_fields(note: object, evidence: object) -> dict:
+    """Advise — never enforce — the one-line note length when evidence is present.
+
+    Once the lists live in ``evidence`` the note is meant to be a one-line
+    human summary, so a long one alongside evidence is a signal the caller is
+    still packing structure into prose.  Advisory only: no error, no extra
+    truncation (the 4096-char cap is unchanged), and absent entirely unless
+    both conditions hold, so the common response keeps its size.
+    """
+    if evidence is None or not isinstance(note, str):
+        return {}
+    if len(note) <= NOTE_SUMMARY_RECOMMENDED:
+        return {}
+    return {
+        "note_long": True,
+        "note_length": len(note),
+        "note_recommended": NOTE_SUMMARY_RECOMMENDED,
+    }
+
+
+def _evidence_arg(evidence: object) -> Optional[Evidence]:
+    """Normalise the wire-shaped ``evidence`` argument into an ``Evidence``.
+
+    Declared loosely on the tools (``Optional[dict]``) and validated here, per
+    ``docs/reference/evidence-contract.md`` §3's named fallback: identical
+    wire shape and identical validation, without depending on a nested
+    pydantic-model annotation surviving every client's schema handling.
+    """
+    if evidence is None:
+        return None
+    if isinstance(evidence, Evidence):
+        return evidence
+    return Evidence.model_validate(evidence)
 
 
 #: Discriminator value carried by every expected-negative response.  A caller
@@ -436,6 +486,144 @@ def _yaml_dump(data) -> str:
     )
 
 
+#: Top-level sections of a ``pm_grab`` payload.  Named in a ``fields``
+#: projection they are returned whole; unnamed ones are omitted.  Listed
+#: explicitly (rather than read off the payload) so ``warnings`` — which is
+#: omitted when there is nothing to warn about — is still a *valid* name.
+GRAB_SECTIONS = (
+    "task",
+    "body",
+    "story_context",
+    "sibling_tasks",
+    "sibling_tasks_total",
+    "sibling_tasks_done",
+    "dependency_status",
+    "warnings",
+)
+
+
+#: The fixed ``brief=True`` projection for items — epics, stories and tasks
+#: (US-PM-10-7).  These are the keys a planner or orchestrator scans a whole
+#: backlog *for*: identity, state, size and wiring.  Everything heavy and
+#: free-text — ``body``, ``acceptance_criteria``, any run log — is dropped,
+#: which is where essentially all of the bytes are.  Not every key exists on
+#: every type (an epic has no ``story_id``, a story no ``assignee``); the set
+#: is intersected with the item, never demanded of it.
+BRIEF_ITEM_FIELDS = (
+    "id",
+    "title",
+    "status",
+    "points",
+    "priority",
+    "story_id",
+    "epic_id",
+    "assignee",
+    "tags",
+    "depends_on",
+)
+
+#: The fixed ``brief=True`` projection for sprints (US-PM-10-7): identity,
+#: state, dates, the points rollup and the planned story IDs.  ``goal`` is the
+#: dropped one — it is a paragraph of prose per sprint, and a list of four
+#: completed sprints is mostly goals by weight.
+BRIEF_SPRINT_FIELDS = (
+    "id",
+    "name",
+    "status",
+    "start_date",
+    "end_date",
+    "planned_points",
+    "completed_points",
+    "planned_stories",
+)
+
+
+def _brief_item(item: dict, keys: tuple[str, ...]) -> dict:
+    """Keep only the brief keys an item actually has, in the item's own order.
+
+    Intersection, not selection: a missing key is simply absent from the
+    result rather than an error, so one preset serves epics, stories and
+    tasks alike.
+    """
+    wanted = set(keys)
+    return {k: v for k, v in item.items() if k in wanted}
+
+
+def _field_names(fields: Optional[str]) -> Optional[list[str]]:
+    """Parse a comma-separated ``fields`` argument (US-PM-10-6).
+
+    Returns ``None`` for "no projection requested" — ``None``, ``""`` and a
+    string of nothing but separators and whitespace all mean the same thing,
+    and all leave the response byte-identical to the unprojected one.
+    Whitespace around each name is stripped; duplicates are harmless.
+    """
+    if fields is None:
+        return None
+    names = [n.strip() for n in fields.split(",") if n.strip()]
+    return names or None
+
+
+def _reject_unknown_fields(names: list[str], valid: list[str], label: str) -> None:
+    """Fail loudly on a field name that does not exist (US-PM-10-6).
+
+    A silent empty projection is the dangerous outcome here: the orchestrator's
+    verification read exists to *distrust* a worker's self-report, and a typo'd
+    field name that quietly returned nothing would make that check vacuous
+    while still looking like it passed.  So an unknown name is a GENUINE
+    FAILURE, and the message carries the valid names for the item at hand.
+    """
+    unknown = [n for n in dict.fromkeys(names) if n not in set(valid)]
+    if unknown:
+        raise ToolError(
+            f"unknown field name(s) for {label}: {', '.join(unknown)} — "
+            f"valid names: {', '.join(valid)}"
+        )
+
+
+def _project_item(
+    item: dict,
+    names: list[str],
+    label: str,
+    extra_valid: tuple[str, ...] = (),
+) -> dict:
+    """Keep only the requested keys of one serialized item.
+
+    ``id`` is always kept so a multi-ID result stays addressable — a list of
+    bare ``status`` values would not tell the caller which item each belonged
+    to.  Key order follows the item, not the request.
+    """
+    valid = list(item.keys()) + [k for k in extra_valid if k not in item]
+    _reject_unknown_fields(names, valid, label)
+    keep = set(names) | {"id"}
+    return {k: v for k, v in item.items() if k in keep}
+
+
+def _project_grabbed(grabbed: dict, names: list[str]) -> dict:
+    """Project a ``pm_grab`` payload: task keys by name, sections by name.
+
+    A named section (``body``, ``story_context``, ``sibling_tasks``, …) comes
+    back whole; an unnamed one is dropped.  Everything else is read as a key of
+    the ``task`` dict, which is always present and always carries ``id``.  So
+    ``fields="status,assignee"`` yields ``{task: {id, status, assignee}}`` and
+    nothing more.  Projection is output-only — the claim itself already
+    happened and is unaffected.
+    """
+    task = grabbed.get("task", {})
+    valid = list(dict.fromkeys(list(GRAB_SECTIONS) + list(task.keys())))
+    _reject_unknown_fields(names, valid, "pm_grab")
+    wanted = set(names)
+    if "task" in wanted:
+        projected_task = task
+    else:
+        keep = wanted | {"id"}
+        projected_task = {k: v for k, v in task.items() if k in keep}
+    out = {"task": projected_task}
+    for key, value in grabbed.items():
+        if key != "task" and key in wanted:
+            out[key] = value
+    return out
+
+
 #: Acceptance criteria are the one list-shaped input on this surface whose
 #: entries are natural language, so — unlike tags, ids or field names — a
 #: comma inside one is ordinary punctuation, not a separator.  US-PM-18: the
@@ -527,30 +715,57 @@ def pm_get(
     include_log: bool = False,
     project: Optional[str] = None,
     task_id: Optional[str] = None,
+    fields: Optional[str] = None,
 ) -> str:
     """Get full details of epics, stories, or tasks by ID. Accepts multiple comma-separated IDs — always fetch related items in one call instead of repeated single-ID calls.
+
+    Pass `fields` when you only need a few keys — a verification read after a
+    worker reports done is `pm_get(task_id, fields="status,assignee")`, which
+    costs a small fraction of the full item.
 
     Args:
         id: One or more comma-separated IDs — epic (e.g. EPIC-PRJ-1), story (e.g. US-PRJ-1), or task (e.g. US-PRJ-1-1,US-PRJ-1-2) (alias: task_id)
         include_log: Include the 3 most recent run-log entries per item (default false; use pm_run_log for full history)
         project: Optional project name (hub mode only)
         task_id: Alias for id — either spelling works; passing both with different values is an error
+        fields: Comma-separated key names to return, e.g. "status,assignee" — everything else is omitted (`id` is always kept so multi-ID results stay addressable). Names are the item's own keys: status, assignee, points, title, story_id, depends_on, tags, body, acceptance_criteria, recent_run_log, … An unknown name is an error listing the valid ones. Omit for the full item — the default is unchanged.
     """
     try:
         id = _resolve_id("id", id, task_id=task_id)
         store = _store(project)
+        names = _field_names(fields)
 
         def _fetch(item_id: str) -> dict:
             meta, body = store.get(item_id)
             result = meta.model_dump(mode="json")
             result["body"] = body
-            if include_log:
+            # Don't pay for the run log and then project it away.
+            if include_log and (names is None or "recent_run_log" in names):
                 recent_log = store.get_run_log(item_id, limit=3)
                 if recent_log:
-                    result["recent_run_log"] = [
-                        e.model_dump(mode="json") for e in recent_log
-                    ]
-            return result
+                    # A compact marker, never the evidence object: pm_get is
+                    # the high-frequency context call, and embedding evidence
+                    # here spends the exact budget it was added to defend.
+                    # Full detail is one pm_run_log away.
+                    entries = []
+                    for e in recent_log:
+                        dumped = e.model_dump(mode="json", exclude={"evidence"})
+                        dumped["has_evidence"] = e.evidence is not None
+                        if e.evidence is not None:
+                            dumped["evidence_summary"] = e.evidence.summary()
+                        entries.append(dumped)
+                    result["recent_run_log"] = entries
+            if names is None:
+                return result
+            if store._is_epic_id(item_id):
+                kind = "epic"
+            elif store._is_task_id(item_id):
+                kind = "task"
+            else:
+                kind = "story"
+            return _project_item(
+                result, names, kind, extra_valid=("recent_run_log",)
+            )
 
         item_ids = [i.strip() for i in id.split(",") if i.strip()]
         if len(item_ids) == 1:
@@ -559,6 +774,11 @@ def pm_get(
         for item_id in item_ids:
             try:
                 items.append(_fetch(item_id))
+            except ToolError:
+                # A bad field name is the caller's mistake about the whole
+                # call, not a per-item "not found" — it must not be buried in
+                # one item's `error` key while the others look fine.
+                raise
             except Exception as e:
                 items.append({"id": item_id, "error": str(e)})
         return _yaml_dump(items)
@@ -574,16 +794,40 @@ def pm_batch_get(
     type: Optional[str] = None,
     ids: Optional[str] = None,
     project: Optional[str] = None,
+    brief: bool = False,
+    fields: Optional[str] = None,
 ) -> str:
     """Get every item of a type (or a specific ID list) with full data in a single call.
+
+    This is a list-*everything* call, so it is the most expensive read on the
+    surface: a backlog of stories comes back with every body and every
+    acceptance criterion. When you are scanning rather than reading, say so —
+    `pm_batch_get(type="stories", brief=True)` returns identity, state, size
+    and wiring only, a small fraction of the bytes. `fields` gives the same
+    per-key control as `pm_get` when the preset is not the cut you want.
 
     Args:
         type: Fetch all items of a type: "epics", "stories", or "tasks"
         ids: Comma-separated item IDs to fetch (e.g. "US-PRJ-1,US-PRJ-2-3,EPIC-PRJ-1"). Takes precedence over type.
         project: Optional project name (hub mode only)
+        brief: Drop the heavy free-text (default false). Keeps whichever of id, title, status, points, priority, story_id, epic_id, assignee, tags, depends_on the item type has, and omits body, acceptance_criteria and any run log. Use it to scan a backlog: pm_batch_get(type="stories", brief=True).
+        fields: Comma-separated key names to return, e.g. "status,points" — everything else is omitted and `id` is always kept, exactly as on pm_get. An unknown name is an error listing the valid ones. If both are given, `fields` wins — explicit beats preset. Omit both for the full items; the default is unchanged.
     """
     try:
         store = _store(project)
+        names = _field_names(fields)
+
+        def _shape(item: dict, kind: str) -> dict:
+            # Explicit beats preset: a caller who named keys gets exactly
+            # those, whatever `brief` says.
+            if names is not None:
+                # Valid names are the item's own keys, exactly as on pm_get —
+                # so `fields` means the same thing on both tools.
+                return _project_item(item, names, kind)
+            if brief:
+                return _brief_item(item, BRIEF_ITEM_FIELDS)
+            return item
+
         if ids:
             items = []
             for item_id in [i.strip() for i in ids.split(",") if i.strip()]:
@@ -591,14 +835,28 @@ def pm_batch_get(
                     meta, body = store.get(item_id)
                     item = meta.model_dump(mode="json")
                     item["body"] = body
-                    items.append(item)
+                    if store._is_epic_id(item_id):
+                        kind = "epic"
+                    elif store._is_task_id(item_id):
+                        kind = "task"
+                    else:
+                        kind = "story"
+                    items.append(_shape(item, kind))
+                except ToolError:
+                    # A bad field name is the caller's mistake about the whole
+                    # call, not one item's "not found" — it must not be buried
+                    # in an `error` key while the other items look fine.
+                    raise
                 except Exception as e:
                     items.append({"id": item_id, "error": str(e)})
             return _yaml_dump(items)
         if not type:
             raise ToolError("provide ids or type")
         items = store.list_all(type)
-        return _yaml_dump(items)
+        kind = {"epics": "epic", "stories": "story", "tasks": "task"}.get(
+            type, "item"
+        )
+        return _yaml_dump([_shape(item, kind) for item in items])
     except Exception as e:
         raise _failed(e) from e
 
@@ -1447,6 +1705,7 @@ def pm_update(
     note: Optional[str] = None,
     project: Optional[str] = None,
     task_id: Optional[str] = None,
+    evidence: Optional[Evidence] = None,
 ) -> str:
     """Update an epic, story, or task.
 
@@ -1470,6 +1729,7 @@ def pm_update(
         note: Run-log note describing what was accomplished or what blocked progress. Longer notes are truncated server-side (4096 chars) with a visible marker, never rejected — the status/outcome write always lands. Requires outcome.
         project: Optional project name (hub mode only)
         task_id: Alias for id — either spelling works; passing both with different values is an error. Note epic_id is NOT an alias: it links a story to an epic.
+        evidence: Structured proof for the run-log entry — an object with `files` (paths changed), `tests` (objects with `command`, `passed`, optional `summary`), `dod_met` and `dod_unmet` (criteria). Put lists here, never in the note; the note stays a one-line summary (recommended <= 200 chars). Evidence on its own appends an entry (outcome `info`, empty note) — no outcome required. Bounded and clamped, never rejected: files <= 40, tests <= 10, each DoD list <= 20, each string <= 160 chars; when a clamp fires the response carries `evidence_clamped` and `evidence_dropped`.
 
     Response: always `updated: <item>`.  When — and only when — a supplied note
     had to be truncated, the response additionally carries `note_truncated:
@@ -1538,6 +1798,9 @@ def pm_update(
             kwargs["outcome"] = outcome
         if note is not None:
             kwargs["note"] = note
+        evidence_arg = _evidence_arg(evidence)
+        if evidence_arg is not None:
+            kwargs["evidence"] = evidence_arg
 
         meta = store.update(id, clear=clear_fields, **kwargs)
         # Read the reconciliation record straight after the update that
@@ -1549,6 +1812,7 @@ def pm_update(
         # Read (and clear) the truncation record straight after the update that
         # produced it, before any later call can overwrite or inherit it.
         truncation = _note_truncation_fields(store, note)
+        clamp = _evidence_clamp_fields(store, evidence_arg)
         write_index(store)
 
         # Emit events for status changes
@@ -1580,10 +1844,16 @@ def pm_update(
             updated["body_chars"] = len(body)
         if outcome is not None:
             updated["run_log"] = outcome
+        elif evidence_arg is not None:
+            # Evidence alone still lands an entry — `info`, empty note — so
+            # the response says so rather than staying silent about a write.
+            updated["run_log"] = "info"
         result = {"updated": updated}
         # Present only when the note was actually truncated; absence means the
         # note was stored whole.  See _note_truncation_fields for why.
         result.update(truncation)
+        result.update(clamp)
+        result.update(_note_length_fields(note, evidence_arg))
         # Present only when editing acceptance criteria actually moved test
         # tasks around, so the caller learns about tasks it did not ask for.
         if reconciliation and (
@@ -1800,6 +2070,7 @@ def pm_grab(
     include_story: bool = True,
     project: Optional[str] = None,
     id: Optional[str] = None,
+    fields: Optional[str] = None,
 ) -> str:
     """Claim a task — validates readiness, assigns, sets in-progress, loads context.
 
@@ -1817,11 +2088,19 @@ def pm_grab(
         include_story: Include the parent story body (default true). Pass false when grabbing another task from a story whose context you already have.
         project: Optional project name (hub mode only)
         id: Alias for task_id — either spelling works; passing both with different values is an error
+        fields: Comma-separated key names to return, e.g. "status,assignee" — a re-claim used only to verify state is `pm_grab(task_id, fields="status,assignee")` and comes back as `grabbed: {task: {id, status, assignee}}`. Names are either keys of the task (status, assignee, points, title, story_id, depends_on, …) or whole top-level sections (body, story_context, sibling_tasks, sibling_tasks_total, sibling_tasks_done, dependency_status, warnings); unnamed sections are omitted and `id` is always kept. Projection is output-only — the claim is identical either way, and expected negatives come back in full. An unknown name is an error listing the valid ones. Omit for the full payload — the default is unchanged.
     """
     try:
         task_id = _resolve_id("task_id", task_id, id=id)
         store = _store(project)
-        return _yaml_dump(_do_grab(store, task_id, assignee, include_story))
+        names = _field_names(fields)
+        payload = _do_grab(store, task_id, assignee, include_story)
+        # Expected negatives (`already_claimed`, `not_ready`) are returned
+        # unprojected: they are already small, and their detail — `holder`,
+        # `blockers` — is the caller's whole recovery path.
+        if names is not None and "grabbed" in payload:
+            payload = {"grabbed": _project_grabbed(payload["grabbed"], names)}
+        return _yaml_dump(payload)
     except Exception as e:
         raise _failed(e) from e
 
@@ -1917,6 +2196,518 @@ def pm_release(
         raise _failed(e) from e
 
 
+# ─── Verdict verbs ──────────────────────────────────────────────
+#
+# docs/reference/verdict-verbs-contract.md is the binding design.  Its
+# governing rule is the sibling of the claim/release one:
+#
+#     A verdict is said by the verb, never by a values triple the caller
+#     must remember.
+#
+# pm-orchestrate step 19 has exactly four terminal moves — Accept, Retry,
+# Park, Accept-as-review — and each used to be a generic `pm_update` where
+# the model had to remember the right status + outcome + note triple.  The
+# measured result: 13% of `status=done` writes carried no run-log entry at
+# all, and the outcome vocabulary collapsed to ~90% `success`.  Here status
+# and outcome are *not parameters*: there is no way to call `pm_park` and
+# get `success`, nor to reach `done` without `success`, and because every
+# verb passes a fixed outcome and a required note, `Store.update` appends a
+# run-log entry unconditionally — the entry is structurally unavoidable.
+
+#: Substituted as the run-log note when `pm_done_next` is called without
+#: one (contract §3).  `pm_done_next` used to forward its outcome *only*
+#: when a note was given, which is exactly the 13% of `done` writes with no
+#: run log.  It now always forwards the outcome and logs this sentinel
+#: instead, so the omission stays visible in the data rather than vanishing
+#: — no signature change, and no rejected call.
+DONE_NEXT_NO_NOTE = "completed via pm_done_next (no note given)"
+
+#: status / outcome / response-key for the three non-accept verdicts.  The
+#: table is the contract's §1 table; keeping it as data is what makes
+#: "status and outcome are not parameters" true by construction.
+_VERDICTS = {
+    "pm_retry": ("todo", "failed", "retried"),
+    "pm_park": ("review", "blocked", "parked"),
+    "pm_review": ("review", "partial", "reviewed"),
+}
+
+
+def _require_note(verb: str, note: object) -> str:
+    """A terminal verdict may not land without a run-log note.
+
+    `note: str = ...` makes the parameter *required* in the tool schema, so
+    FastMCP rejects an omitted note before the body runs and nothing
+    half-written reaches disk.  This covers the two cases the schema cannot:
+    a blank/whitespace note, and a direct Python call that never went
+    through the schema at all (where the unfilled default arrives as
+    `Ellipsis`).  Both raise before the first write, so status and run log
+    are left untouched.
+    """
+    if note is None or note is ... or not str(note).strip():
+        raise ToolError(
+            f"{verb} requires a non-blank note — a verdict must leave a run-log "
+            "entry saying why it was reached (the note is what makes the "
+            "completion auditable). Pass note=\"...\"."
+        )
+    return str(note)
+
+
+def _verdict_target(verb: str, store: Store, task_id: str) -> None:
+    """A verdict applies to a task, never to a story or epic.
+
+    A genuine failure rather than an expected negative, exactly as in
+    `pm_release`: status *and* assignee are being set together here, and
+    assignee is a task-only field, so a story or epic id means the caller
+    meant something else entirely.
+    """
+    if store._is_epic_id(task_id) or not store._is_task_id(task_id):
+        raise ToolError(
+            f"{verb} applies to tasks only, got: {task_id} "
+            "(a verdict is passed on a task, not a story or epic)"
+        )
+
+
+def _do_verdict(
+    store: Store, verb: str, task_id: str, note: object, evidence: object = None
+) -> dict:
+    """Retry / park / review: one status+outcome write, assignee cleared.
+
+    All three accept **any** starting status, including `done` — the common
+    case is precisely a worker that self-reported done and failed
+    validation, and refusing it would leave the orchestrator with no way to
+    say so.  All three clear the assignee because the task is going back to
+    the pool (`retry`) or waiting on a human (`park`, `review`), and a stale
+    holder blocks the next `pm_grab`.  Only `pm_accept` guards.
+    """
+    status, outcome, key = _VERDICTS[verb]
+    _verdict_target(verb, store, task_id)
+    note = _require_note(verb, note)
+
+    current, _ = store.get_task(task_id)
+    from_assignee = current.assignee
+    from_status = current.status.value
+
+    evidence = _evidence_arg(evidence)
+    meta = store.update(
+        task_id,
+        status=status,
+        outcome=outcome,
+        note=note,
+        evidence=evidence,
+        clear=["assignee"],
+    )
+    # Read (and clear) the truncation and clamp records straight after the
+    # write — write_index and the event emit must not get between them.
+    truncation = _note_truncation_fields(store, note)
+    clamp = _evidence_clamp_fields(store, evidence)
+    write_index(store)
+    if from_status != status:
+        _emit_status_change(store, task_id, from_status, status, meta)
+
+    result = {
+        key: {
+            "task": meta.model_dump(mode="json"),
+            "from_status": from_status,
+            "from_assignee": from_assignee,
+        }
+    }
+    result.update(truncation)
+    result.update(clamp)
+    result.update(_note_length_fields(note, evidence))
+    return result
+
+
+def _do_accept(
+    store: Store,
+    task_id: str,
+    note: object,
+    *,
+    outcome: str = "success",
+    next_task: bool = True,
+    same_story_only: bool = True,
+    assignee: str = "claude",
+    guard_done: bool = False,
+    evidence: object = None,
+) -> dict:
+    """Complete a task, close its story if it was the last, grab the next.
+
+    The shared body behind `pm_accept` (the verdict-shaped front door) and
+    `pm_done_next` (a thin wrapper that keeps its own signature forever).
+    They are one call because they are one decision: "accepted" and "give me
+    the next one" are the same beat of the orchestrator loop, and the
+    measured failure is callers splitting them into `pm_grab` +
+    `pm_update(done)` — 512 such pairs against 387 `pm_done_next` calls.
+
+    `outcome` is internal, not a verdict parameter: `pm_accept` always fixes
+    it to `success`, and only `pm_done_next` — whose published signature
+    predates this contract — passes anything else.
+
+    Returns a dict; the callers render it.
+    """
+    from .deps import topological_sort
+    from .readiness import check_readiness
+
+    task_meta, _ = store.get_task(task_id)
+    story_id = task_meta.story_id
+    old_status = task_meta.status.value
+
+    if guard_done and old_status == "done":
+        # Expected negative, not a failure: the caller asked for a verdict
+        # that has already been recorded, and "it is already done" is a
+        # valid answer.  Nothing is written — a second run-log entry would
+        # double-count the completion, and a second story close or next
+        # grab would take work the caller has not asked to start.
+        return _expected_negative_payload(
+            "already_done",
+            f"{task_id} is already done",
+            task_id=task_id,
+        )
+
+    # 1. Complete the task.  The outcome and the note are both always
+    # present, so `Store.update` always appends a run-log entry — this is
+    # the mechanism behind "completions lacking a run-log entry drops to
+    # zero".  See DONE_NEXT_NO_NOTE for the pm_done_next case.
+    evidence = _evidence_arg(evidence)
+    meta = store.update(
+        task_id, status="done", outcome=outcome, note=note, evidence=evidence
+    )
+    # Read (and clear) the truncation and clamp records before anything else
+    # touches the Store: closing the parent story and grabbing the next task
+    # both call ``store.update``, and each of those resets them.
+    truncation = _note_truncation_fields(store, note)
+    clamp = _evidence_clamp_fields(store, evidence)
+    write_index(store)
+    if old_status != "done":
+        _emit_status_change(store, task_id, old_status, "done", meta)
+
+    result = {"completed": {"id": task_id, "status": "done", "run_log": outcome}}
+    # Present only when the note actually had to be truncated; absence
+    # means it was stored whole.  Same fields, same rule, as pm_update.
+    result.update(truncation)
+    result.update(clamp)
+    result.update(_note_length_fields(note, evidence))
+
+    # 2. Close the parent story if this was its last open task
+    siblings = store.list_tasks(story_id=story_id)
+    open_siblings = [s for s in siblings if s.status.value != "done"]
+    if not open_siblings:
+        try:
+            story_meta, _ = store.get_story(story_id)
+            if story_meta.status.value not in ("done", "archived"):
+                old_story_status = story_meta.status.value
+                story_meta = store.update(story_id, status="done")
+                write_index(store)
+                _emit_status_change(
+                    store, story_id, old_story_status, "done", story_meta
+                )
+            result["story_closed"] = story_id
+        except Exception as e:
+            result["story_close_error"] = str(e)
+
+    if not next_task:
+        # The non-orchestrator caller: complete, and claim nothing.  The
+        # `next` key is absent entirely rather than null — null means "I
+        # looked and there was none", which would be a lie here.
+        return result
+
+    # 3. Pick the next ready task: same story first (topological order),
+    # then other stories by priority > story > topological order > points
+    all_tasks = store.list_tasks()
+    story_priority = {}
+    priority_order = {"must": 0, "should": 1, "could": 2, "wont": 3}
+    for s in store.list_stories():
+        story_priority[s.id] = priority_order.get(s.priority.value, 1)
+
+    story_tasks: dict[str, list] = {}
+    for t in all_tasks:
+        story_tasks.setdefault(t.story_id, []).append(t)
+    topo_position: dict[str, int] = {}
+    for sid, tasks_in_story in story_tasks.items():
+        try:
+            sorted_tasks = topological_sort(tasks_in_story)
+        except Exception:
+            sorted_tasks = tasks_in_story
+        for idx, t in enumerate(sorted_tasks):
+            topo_position[t.id] = idx
+
+    candidates = [t for t in all_tasks if t.status.value == "todo" and not t.assignee]
+    if same_story_only:
+        candidates = [t for t in candidates if t.story_id == story_id]
+    candidates.sort(
+        key=lambda t: (
+            t.story_id != story_id,  # same story first
+            story_priority.get(t.story_id, 1),
+            t.story_id,
+            topo_position.get(t.id, 0),
+            t.points or 99,
+        )
+    )
+
+    # Readiness-check candidates lazily until one is grabbable
+    next_grab = None
+    not_ready_count = 0
+    for candidate in candidates:
+        _, cand_body = store.get_task(candidate.id)
+        if check_readiness(candidate, cand_body, store)["ready"]:
+            grab = _do_grab(
+                store,
+                candidate.id,
+                assignee,
+                include_story=candidate.story_id != story_id,
+            )
+            if "grabbed" in grab:
+                next_grab = grab["grabbed"]
+                break
+            not_ready_count += 1
+        else:
+            not_ready_count += 1
+
+    if next_grab:
+        result["next"] = next_grab
+    else:
+        # Expected negative, not a failure: the task really was completed,
+        # and "nothing follows it" is a valid answer to the second half of
+        # the question — 22% of calls, the normal case rather than an edge.
+        # The discriminator leads the payload so a caller branches on it
+        # before reading anything else; the `next_info` hint is kept
+        # verbatim as detail.  See _expected_negative.
+        scope_note = "in this story" if same_story_only else "in this project"
+        result = {
+            **_expected_negative_payload(
+                "no_next_task", f"no ready task follows {task_id}"
+            ),
+            **result,
+            "next": None,
+            "next_info": (
+                f"no ready unassigned tasks {scope_note} "
+                f"({len(candidates)} todo, {not_ready_count} blocked — see pm_board)"
+            ),
+        }
+    return result
+
+
+@mcp.tool(
+    title="Accept Task",
+    annotations=ToolAnnotations(
+        title="Accept Task", readOnlyHint=False, destructiveHint=False
+    ),
+)
+def pm_accept(
+    task_id: Optional[str] = None,
+    note: str = ...,
+    next_task: bool = True,
+    same_story_only: bool = True,
+    assignee: str = "claude",
+    project: Optional[str] = None,
+    id: Optional[str] = None,
+    evidence: Optional[Evidence] = None,
+) -> str:
+    """Accept a task's work — marks it done, logs why, and claims the next one.
+
+    The Accept verdict. Use this instead of pm_update(status="done") and
+    instead of pm_grab afterwards — one call is the orchestrator's whole beat:
+
+        pm_accept("US-PRJ-1-1", note="all DoD items met; 47 tests pass")
+
+    Status and outcome are not parameters: this is always done + success.
+    The note is required, so an accepted task can never land without a
+    run-log entry saying what was delivered.
+
+    The assignee is kept — a done task records who did it. Its siblings
+    pm_retry / pm_park / pm_review clear it instead.
+
+    Accepting an already-done task is an expected negative
+    (`status: already_done`), not a failure: nothing is written twice.
+    When nothing is ready to follow, the response is likewise an expected
+    negative (`status: no_next_task`) — the completion still landed, and
+    `next` is present and null with a `next_info` hint alongside it.
+
+    Args:
+        task_id: Task ID being accepted (e.g. US-PRJ-1-1) (alias: id)
+        note: Run-log note saying what was delivered. Required — a blank note is an error. Longer notes are truncated server-side (4096 chars), never rejected.
+        next_task: Claim the next ready task too (default true). Pass false to complete without claiming anything; the `next` key is then absent.
+        same_story_only: Only take a next task from the same story (default true). Pass false to fall through to other stories.
+        assignee: Who claims the next task (default "claude")
+        project: Optional project name (hub mode only)
+        id: Alias for task_id — either spelling works; passing both with different values is an error
+        evidence: Structured proof for the run-log entry — an object with `files` (paths changed), `tests` (objects with `command`, `passed`, optional `summary`), `dod_met` and `dod_unmet` (criteria). Put lists here, never in the note; the note stays a one-line summary (recommended <= 200 chars). Bounded and clamped, never rejected: files <= 40, tests <= 10, each DoD list <= 20, each string <= 160 chars; when a clamp fires the response carries `evidence_clamped` and `evidence_dropped`.
+
+    Response: `completed:` with the id, status and run_log outcome;
+    `story_closed:` when this was the story's last open task; and `next:`
+    with the newly claimed task. When — and only when — the note had to be
+    truncated, the response additionally carries `note_truncated: true`,
+    `note_original_length`, `note_stored_length`, `note_dropped_chars` and
+    `note_limit`, exactly as pm_update does.
+    """
+    try:
+        task_id = _resolve_id("task_id", task_id, id=id)
+        store = _store(project)
+        _verdict_target("pm_accept", store, task_id)
+        note = _require_note("pm_accept", note)
+        return _yaml_dump(
+            _do_accept(
+                store,
+                task_id,
+                note,
+                next_task=next_task,
+                same_story_only=same_story_only,
+                assignee=assignee,
+                guard_done=True,
+                evidence=evidence,
+            )
+        )
+    except Exception as e:
+        raise _failed(e) from e
+
+
+@mcp.tool(
+    title="Retry Task",
+    annotations=ToolAnnotations(
+        title="Retry Task", readOnlyHint=False, destructiveHint=False
+    ),
+)
+def pm_retry(
+    task_id: Optional[str] = None,
+    note: str = ...,
+    project: Optional[str] = None,
+    id: Optional[str] = None,
+    evidence: Optional[Evidence] = None,
+) -> str:
+    """Retry a task — the attempt failed, hand it back to the pool for another go.
+
+    The Retry verdict. One call resets the status to todo, clears the
+    assignee and records the failure:
+
+        pm_retry("US-PRJ-1-1", note="tests still red — the fixture never loads")
+
+    Status and outcome are not parameters: this is always todo + failed.
+    The note is required, so the next worker inherits the reason.
+
+    Any starting status is accepted, `done` included — the common case is
+    precisely a worker that self-reported done and failed validation.
+
+    Args:
+        task_id: Task ID to retry (e.g. US-PRJ-1-1) (alias: id)
+        note: Run-log note saying what failed. Required — a blank note is an error. Longer notes are truncated server-side, never rejected.
+        project: Optional project name (hub mode only)
+        id: Alias for task_id — either spelling works; passing both with different values is an error
+        evidence: Structured proof for the run-log entry — an object with `files` (paths changed), `tests` (objects with `command`, `passed`, optional `summary`), `dod_met` and `dod_unmet` (criteria). Put lists here, never in the note; the note stays a one-line summary (recommended <= 200 chars). Bounded and clamped, never rejected: files <= 40, tests <= 10, each DoD list <= 20, each string <= 160 chars; when a clamp fires the response carries `evidence_clamped` and `evidence_dropped`.
+
+    Response: `retried:` with the full `task`, `from_status` and
+    `from_assignee` — the status and holder before the call. When — and only
+    when — the note had to be truncated, the response additionally carries
+    `note_truncated: true`, `note_original_length`, `note_stored_length`,
+    `note_dropped_chars` and `note_limit`, exactly as pm_update does.
+    """
+    try:
+        task_id = _resolve_id("task_id", task_id, id=id)
+        store = _store(project)
+        return _yaml_dump(
+            _do_verdict(store, "pm_retry", task_id, note, evidence=evidence)
+        )
+    except Exception as e:
+        raise _failed(e) from e
+
+
+@mcp.tool(
+    title="Park Task",
+    annotations=ToolAnnotations(
+        title="Park Task", readOnlyHint=False, destructiveHint=False
+    ),
+)
+def pm_park(
+    task_id: Optional[str] = None,
+    note: str = ...,
+    project: Optional[str] = None,
+    id: Optional[str] = None,
+    evidence: Optional[Evidence] = None,
+) -> str:
+    """Park a task — it is blocked on something a human has to resolve.
+
+    The Park verdict. One call moves the task to review, clears the assignee
+    so it does not sit stale, and records the blocker:
+
+        pm_park("US-PRJ-1-1", note="needs the staging DB credentials")
+
+    Status and outcome are not parameters: this is always review + blocked.
+    The note is required — it is the whole handover to whoever unblocks it.
+
+    Any starting status is accepted, `done` included.
+
+    Args:
+        task_id: Task ID to park (e.g. US-PRJ-1-1) (alias: id)
+        note: Run-log note saying what it is blocked on. Required — a blank note is an error. Longer notes are truncated server-side, never rejected.
+        project: Optional project name (hub mode only)
+        id: Alias for task_id — either spelling works; passing both with different values is an error
+        evidence: Structured proof for the run-log entry — an object with `files` (paths changed), `tests` (objects with `command`, `passed`, optional `summary`), `dod_met` and `dod_unmet` (criteria). Put lists here, never in the note; the note stays a one-line summary (recommended <= 200 chars). Bounded and clamped, never rejected: files <= 40, tests <= 10, each DoD list <= 20, each string <= 160 chars; when a clamp fires the response carries `evidence_clamped` and `evidence_dropped`.
+
+    Response: `parked:` with the full `task`, `from_status` and
+    `from_assignee` — the status and holder before the call. When — and only
+    when — the note had to be truncated, the response additionally carries
+    `note_truncated: true`, `note_original_length`, `note_stored_length`,
+    `note_dropped_chars` and `note_limit`, exactly as pm_update does.
+    """
+    try:
+        task_id = _resolve_id("task_id", task_id, id=id)
+        store = _store(project)
+        return _yaml_dump(
+            _do_verdict(store, "pm_park", task_id, note, evidence=evidence)
+        )
+    except Exception as e:
+        raise _failed(e) from e
+
+
+@mcp.tool(
+    title="Accept Task As Review",
+    annotations=ToolAnnotations(
+        title="Accept Task As Review", readOnlyHint=False, destructiveHint=False
+    ),
+)
+def pm_review(
+    task_id: Optional[str] = None,
+    note: str = ...,
+    project: Optional[str] = None,
+    id: Optional[str] = None,
+    evidence: Optional[Evidence] = None,
+) -> str:
+    """Send a task to review — the work partly landed and a human should look.
+
+    The Accept-as-review verdict, the middle answer between pm_accept and
+    pm_retry. One call moves the task to review, clears the assignee and
+    records what is and is not there:
+
+        pm_review("US-PRJ-1-1", note="endpoint works; error paths untested")
+
+    Status and outcome are not parameters: this is always review + partial.
+    `partial` is the outcome the vocabulary keeps losing — 90% of run-log
+    entries say `success` — and this verb is how it gets said.
+
+    Any starting status is accepted, `done` included — a worker that
+    self-reported done and only half-delivered is exactly this verdict.
+
+    Args:
+        task_id: Task ID to send to review (e.g. US-PRJ-1-1) (alias: id)
+        note: Run-log note saying what landed and what did not. Required — a blank note is an error. Longer notes are truncated server-side, never rejected.
+        project: Optional project name (hub mode only)
+        id: Alias for task_id — either spelling works; passing both with different values is an error
+        evidence: Structured proof for the run-log entry — an object with `files` (paths changed), `tests` (objects with `command`, `passed`, optional `summary`), `dod_met` and `dod_unmet` (criteria). Put lists here, never in the note; the note stays a one-line summary (recommended <= 200 chars). Bounded and clamped, never rejected: files <= 40, tests <= 10, each DoD list <= 20, each string <= 160 chars; when a clamp fires the response carries `evidence_clamped` and `evidence_dropped`.
+
+    Response: `reviewed:` with the full `task`, `from_status` and
+    `from_assignee` — the status and holder before the call. When — and only
+    when — the note had to be truncated, the response additionally carries
+    `note_truncated: true`, `note_original_length`, `note_stored_length`,
+    `note_dropped_chars` and `note_limit`, exactly as pm_update does.
+    """
+    try:
+        task_id = _resolve_id("task_id", task_id, id=id)
+        store = _store(project)
+        return _yaml_dump(
+            _do_verdict(store, "pm_review", task_id, note, evidence=evidence)
+        )
+    except Exception as e:
+        raise _failed(e) from e
+
+
 @mcp.tool(
     title="Complete Task & Grab Next",
     annotations=ToolAnnotations(
@@ -1931,11 +2722,16 @@ def pm_done_next(
     same_story_only: bool = False,
     project: Optional[str] = None,
     id: Optional[str] = None,
+    evidence: Optional[Evidence] = None,
 ) -> str:
     """Complete a task and claim the next ready one in a single call — use this instead of pm_update + pm_grab when working through tasks.
 
-    Marks task_id done (appending a run-log entry when note is given), closes the
-    parent story automatically if this was its last open task, then grabs the next
+    `pm_accept` is the same call with the verdict said by the verb: the note
+    is required there, and status and outcome cannot be spelled wrong. This
+    spelling stays supported forever and is not deprecated.
+
+    Marks task_id done (always appending a run-log entry), closes the parent
+    story automatically if this was its last open task, then grabs the next
     ready task — preferring siblings in the same story. The story body is only
     included when the next task belongs to a different story.
 
@@ -1946,12 +2742,13 @@ def pm_done_next(
 
     Args:
         task_id: Task ID just finished (e.g. US-PRJ-1-1) (alias: id)
-        outcome: Run-log outcome for the completed task: success/partial/info (default success; only logged when note is given)
-        note: Run-log note describing what was accomplished. Longer notes are truncated server-side (4096 chars) with a visible marker, never rejected — the completion always lands.
+        outcome: Run-log outcome for the completed task: success/partial/info (default success)
+        note: Run-log note describing what was accomplished. Longer notes are truncated server-side (4096 chars) with a visible marker, never rejected — the completion always lands. Omitting it — or passing a blank one, which counts as omitted — logs a placeholder note instead; prefer pm_accept, which requires a real one.
         assignee: Who claims the next task (default "claude")
         same_story_only: Only grab a next task from the same story; report and stop otherwise (default false)
         project: Optional project name (hub mode only)
         id: Alias for task_id — either spelling works; passing both with different values is an error
+        evidence: Structured proof for the run-log entry — an object with `files` (paths changed), `tests` (objects with `command`, `passed`, optional `summary`), `dod_met` and `dod_unmet` (criteria). Put lists here, never in the note; the note stays a one-line summary (recommended <= 200 chars). Bounded and clamped, never rejected: files <= 40, tests <= 10, each DoD list <= 20, each string <= 160 chars; when a clamp fires the response carries `evidence_clamped` and `evidence_dropped`.
 
     When — and only when — a supplied note had to be truncated, the response
     additionally carries `note_truncated: true`, `note_original_length`,
@@ -1959,128 +2756,25 @@ def pm_done_next(
     `pm_update` does, so a caller detects truncation without string-matching.
     """
     try:
-        from .deps import topological_sort
-        from .readiness import check_readiness
-
         task_id = _resolve_id("task_id", task_id, id=id)
         store = _store(project)
-        task_meta, _ = store.get_task(task_id)
-        story_id = task_meta.story_id
-        old_status = task_meta.status.value
-
-        # 1. Complete the task (+ run log when a note is given)
-        kwargs = {"status": "done"}
-        if note is not None:
-            kwargs["outcome"] = outcome
-            kwargs["note"] = note
-        meta = store.update(task_id, **kwargs)
-        # Read (and clear) the truncation record before anything else touches
-        # the Store: closing the parent story and grabbing the next task both
-        # call ``store.update``, and each of those resets the record.
-        truncation = _note_truncation_fields(store, note)
-        write_index(store)
-        if old_status != "done":
-            _emit_status_change(store, task_id, old_status, "done", meta)
-
-        result = {"completed": {"id": task_id, "status": "done"}}
-        if note is not None:
-            result["completed"]["run_log"] = outcome
-        # Present only when the note actually had to be truncated; absence
-        # means it was stored whole.  Same fields, same rule, as pm_update.
-        result.update(truncation)
-
-        # 2. Close the parent story if this was its last open task
-        siblings = store.list_tasks(story_id=story_id)
-        open_siblings = [s for s in siblings if s.status.value != "done"]
-        if not open_siblings:
-            try:
-                story_meta, _ = store.get_story(story_id)
-                if story_meta.status.value not in ("done", "archived"):
-                    old_story_status = story_meta.status.value
-                    story_meta = store.update(story_id, status="done")
-                    write_index(store)
-                    _emit_status_change(
-                        store, story_id, old_story_status, "done", story_meta
-                    )
-                result["story_closed"] = story_id
-            except Exception as e:
-                result["story_close_error"] = str(e)
-
-        # 3. Pick the next ready task: same story first (topological order),
-        # then other stories by priority > story > topological order > points
-        all_tasks = store.list_tasks()
-        story_priority = {}
-        priority_order = {"must": 0, "should": 1, "could": 2, "wont": 3}
-        for s in store.list_stories():
-            story_priority[s.id] = priority_order.get(s.priority.value, 1)
-
-        story_tasks: dict[str, list] = {}
-        for t in all_tasks:
-            story_tasks.setdefault(t.story_id, []).append(t)
-        topo_position: dict[str, int] = {}
-        for sid, tasks_in_story in story_tasks.items():
-            try:
-                sorted_tasks = topological_sort(tasks_in_story)
-            except Exception:
-                sorted_tasks = tasks_in_story
-            for idx, t in enumerate(sorted_tasks):
-                topo_position[t.id] = idx
-
-        candidates = [
-            t for t in all_tasks if t.status.value == "todo" and not t.assignee
-        ]
-        if same_story_only:
-            candidates = [t for t in candidates if t.story_id == story_id]
-        candidates.sort(
-            key=lambda t: (
-                t.story_id != story_id,  # same story first
-                story_priority.get(t.story_id, 1),
-                t.story_id,
-                topo_position.get(t.id, 0),
-                t.points or 99,
+        return _yaml_dump(
+            _do_accept(
+                store,
+                task_id,
+                # The 13% hole, closed inside the wrapper: the outcome is now
+                # always forwarded, and a caller who gave no note — or a blank
+                # one, which is an omitted note by any reading — gets a fixed
+                # placeholder rather than no run-log entry at all.  The
+                # omission stays visible in the data instead of vanishing.
+                note if note is not None and note.strip() else DONE_NEXT_NO_NOTE,
+                outcome=outcome,
+                next_task=True,
+                same_story_only=same_story_only,
+                assignee=assignee,
+                evidence=evidence,
             )
         )
-
-        # Readiness-check candidates lazily until one is grabbable
-        next_grab = None
-        not_ready_count = 0
-        for candidate in candidates:
-            _, cand_body = store.get_task(candidate.id)
-            if check_readiness(candidate, cand_body, store)["ready"]:
-                grab = _do_grab(
-                    store,
-                    candidate.id,
-                    assignee,
-                    include_story=candidate.story_id != story_id,
-                )
-                if "grabbed" in grab:
-                    next_grab = grab["grabbed"]
-                    break
-                not_ready_count += 1
-            else:
-                not_ready_count += 1
-
-        if next_grab:
-            result["next"] = next_grab
-        else:
-            # Expected negative, not a failure: the task really was completed,
-            # and "nothing follows it" is a valid answer to the second half of
-            # the question.  The discriminator leads the payload so a caller
-            # branches on it before reading anything else; the `next_info` hint
-            # is kept verbatim as detail.  See _expected_negative.
-            scope_note = "in this story" if same_story_only else "in this project"
-            result = {
-                **_expected_negative_payload(
-                    "no_next_task", f"no ready task follows {task_id}"
-                ),
-                **result,
-                "next": None,
-                "next_info": (
-                    f"no ready unassigned tasks {scope_note} "
-                    f"({len(candidates)} todo, {not_ready_count} blocked — see pm_board)"
-                ),
-            }
-        return _yaml_dump(result)
     except Exception as e:
         raise _failed(e) from e
 
@@ -3071,22 +3765,36 @@ def pm_get_sprint(
 def pm_list_sprints(
     status: Optional[str] = None,
     project: Optional[str] = None,
+    brief: bool = False,
+    fields: Optional[str] = None,
 ) -> str:
     """List sprints, optionally filtered by status.
+
+    Every sprint comes back with its full goal, which on a long history is
+    most of the payload by weight. When you want the shape of the history
+    rather than its prose — `pm_list_sprints(status="completed", brief=True)`
+    returns dates, points and planned stories without the goals. `fields`
+    gives the same per-key control as `pm_get` when the preset is not the cut
+    you want.
 
     Args:
         status: Optional filter: planning, active, completed, cancelled
         project: Optional project name (hub mode only)
+        brief: Drop the free-text (default false). Keeps id, name, status, start_date, end_date, planned_points, completed_points and planned_stories, and omits goal. Use it to scan a sprint history: pm_list_sprints(status="completed", brief=True).
+        fields: Comma-separated key names to return, e.g. "status,completed_points" — everything else is omitted and `id` is always kept, exactly as on pm_get. An unknown name is an error listing the valid ones. If both are given, `fields` wins — explicit beats preset. Omit both for the full sprints; `count` is always present and the default is unchanged.
     """
     try:
         store = _store(project)
-        sprints = store.list_sprints(status=status)
-        return _yaml_dump(
-            {
-                "sprints": [s.model_dump(mode="json") for s in sprints],
-                "count": len(sprints),
-            }
-        )
+        names = _field_names(fields)
+        sprints = [s.model_dump(mode="json") for s in store.list_sprints(status=status)]
+        if names is not None:
+            # Explicit beats preset: `fields` wins over `brief`.
+            sprints = [
+                _project_item(s, names, "sprint") for s in sprints
+            ]
+        elif brief:
+            sprints = [_brief_item(s, BRIEF_SPRINT_FIELDS) for s in sprints]
+        return _yaml_dump({"sprints": sprints, "count": len(sprints)})
     except Exception as e:
         raise _failed(e) from e
 
@@ -3470,9 +4178,10 @@ def pm_run_log(
     offset: int = 0,
     project: Optional[str] = None,
     task_id: Optional[str] = None,
+    has_evidence: Optional[bool] = None,
 ) -> str:
     """Read the run log for an epic, story, or task. Returns a JSON array of log entries
-    showing previous work attempts, outcomes, and notes.
+    showing previous work attempts, outcomes, notes and any structured evidence.
 
     Args:
         id: Epic, story, or task ID (alias: task_id)
@@ -3480,14 +4189,28 @@ def pm_run_log(
         offset: Number of entries to skip
         project: Optional project name (hub mode only)
         task_id: Alias for id — either spelling works; passing both with different values is an error
+        has_evidence: Filter by structured evidence — true returns only entries carrying an `evidence` object, false only those without, omitted returns everything. "Did this completion prove anything" is this one call. An `evidence` present but with all lists empty counts as evidence: it explicitly says "nothing to show".
+
+    Each entry carries its `evidence` verbatim when it has one, and omits the
+    key entirely when it does not.
     """
     try:
         import json
 
         id = _resolve_id("id", id, task_id=task_id)
         store = _store(project)
-        entries = store.get_run_log(id, limit=limit, offset=offset)
-        result = [e.model_dump(mode="json") for e in entries]
+        entries = store.get_run_log(
+            id, limit=limit, offset=offset, has_evidence=has_evidence
+        )
+        # Every pre-existing key keeps its place and its null; only the new
+        # `evidence` key is dropped when absent, so an entry without evidence
+        # is byte-for-byte the response it was before this field existed.
+        result = []
+        for e in entries:
+            dumped = e.model_dump(mode="json")
+            if dumped.get("evidence") is None:
+                dumped.pop("evidence", None)
+            result.append(dumped)
         return json.dumps(result, indent=2, default=str)
     except Exception as e:
         raise _failed(e) from e

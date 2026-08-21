@@ -1,0 +1,27 @@
+sprints:
+- id: SPRINT-TST-1
+  name: Sprint One
+  status: completed
+  start_date: '2026-01-01'
+  end_date: '2026-01-14'
+  planned_stories:
+  - US-TST-1
+  planned_points: 3
+  completed_points: 0
+  goal: Ship the login flow end to end.
+  created: <DATE>
+  updated: <DATE>
+- id: SPRINT-TST-2
+  name: Sprint Two
+  status: active
+  start_date: '2026-01-15'
+  end_date: '2026-01-28'
+  planned_stories:
+  - US-TST-2
+  - US-TST-3
+  planned_points: 7
+  completed_points: 0
+  goal: Persist the data and clean up.
+  created: <DATE>
+  updated: <DATE>
+count: 2

@@ -43,6 +43,7 @@ from tools.usage_telemetry.extract import (
     TOOL_PREFIX,
     scan,
 )
+from tools.usage_telemetry import report as report_mod
 from tools.usage_telemetry.report import UsageReport, report_from_extraction
 
 #: Bumped only when the artifact layout changes incompatibly.
@@ -172,6 +173,55 @@ def _pct(fraction: float | int | None) -> float | None:
     return round(100.0 * float(fraction), 4)
 
 
+#: US-PM-9's note-length gate, from ``docs/reference/evidence-contract.md`` section 8,
+#: read against the server's 4096-character run-log cap. "Well below the cap" is
+#: made falsifiable here rather than in a unit assertion about live data: the live
+#: number cannot move until the rewritten ``pm-orchestrate`` skill accumulates
+#: traffic, so this is a *report* check over whatever corpus is captured.
+NOTE_LENGTH_GATE_MEDIAN = 300
+NOTE_LENGTH_GATE_P90 = 800
+
+
+def _note_length_gate_passed(notes: dict[str, Any]) -> bool | None:
+    """Whether a captured note-length distribution clears the gate.
+
+    ``None``, never ``False``, when there is nothing to judge -- a baseline
+    captured before the metric existed, or one whose corpus carries no notes at
+    all. A missing measurement is not a failed one, and a ``False`` here would
+    read as "the notes are too long" in every comparison against an old file.
+    """
+    median, p90 = notes.get("median"), notes.get("p90")
+    if median is None or p90 is None:
+        return None
+    return median <= NOTE_LENGTH_GATE_MEDIAN and p90 <= NOTE_LENGTH_GATE_P90
+
+
+#: US-PM-13's guidance tools, as :data:`tools.usage_telemetry.report.GUIDANCE_TOOLS`
+#: names them. Imported rather than restated so the headline cannot publish a
+#: different set from the one the report measured.
+GUIDANCE_TOOLS = report_mod.GUIDANCE_TOOLS
+
+
+def _guidance_calls(by_tool: dict[str, Any], tool: str) -> int | None:
+    """Call count for ``tool``; ``None`` only when the section is missing.
+
+    A baseline captured before the metric existed has nothing to say, so the
+    key reads ``None`` and no comparison row pretends to a delta. A baseline
+    that *has* the section but never saw the tool reports ``0`` -- a measured
+    zero, which is the number US-PM-13 exists to move.
+    """
+    if not by_tool:
+        return None
+    return (by_tool.get(tool) or {}).get("calls") or 0
+
+
+def _guidance_sessions_pct(by_tool: dict[str, Any], tool: str) -> float | None:
+    """Percentage of sessions that called ``tool`` at least once."""
+    if not by_tool:
+        return None
+    return _pct((by_tool.get(tool) or {}).get("session_rate") or 0.0)
+
+
 def headline_metrics(baseline: dict[str, Any]) -> dict[str, Any]:
     """The small set of numbers a comparison is actually argued from.
 
@@ -186,6 +236,17 @@ def headline_metrics(baseline: dict[str, Any]) -> dict[str, Any]:
     rates = failures.get("rates") or {}
     runs = report.get("runs") or {}
     longest = runs.get("longest") or []
+    # Absent from baselines captured before US-PM-8 added the metric; the keys
+    # stay in the dict as ``None`` so a diff against an older file still lines up.
+    completions = report.get("completions") or {}
+    # Likewise absent before US-PM-9 added the note-length metric.
+    notes = report.get("note_lengths") or {}
+    # Likewise absent before US-PM-13 added the guidance-tool metric. Note the
+    # two-level default: a *missing section* leaves the keys ``None`` so a diff
+    # against an older file lines up, but a *present section* reports a real 0
+    # for a tool nobody called. US-PM-13's "before" is a zero, and the whole
+    # criterion is that the zero is visible.
+    guidance = (report.get("guidance_tools") or {}).get("by_tool") or {}
 
     calls = totals.get("calls")
     return {
@@ -204,6 +265,19 @@ def headline_metrics(baseline: dict[str, Any]) -> dict[str, Any]:
         "soft_error_rate_pct": _pct(rates.get("soft_error")),
         "malformed_inputs": inclusive.get("malformed_input"),
         "malformed_input_rate_pct": _pct(rates.get("malformed_input")),
+        "completions": completions.get("completions"),
+        "completions_without_run_log": completions.get("without_run_log"),
+        "completions_without_run_log_rate_pct": _pct(
+            completions.get("completions_without_run_log_rate")
+        ),
+        "note_length_median": notes.get("median"),
+        "note_length_p90": notes.get("p90"),
+        "note_length_p95": notes.get("p95"),
+        "note_length_gate_passed": _note_length_gate_passed(notes),
+        "pm_context_calls": _guidance_calls(guidance, "pm_context"),
+        "pm_estimate_calls": _guidance_calls(guidance, "pm_estimate"),
+        "pm_context_sessions_pct": _guidance_sessions_pct(guidance, "pm_context"),
+        "pm_estimate_sessions_pct": _guidance_sessions_pct(guidance, "pm_estimate"),
         "runs_total": runs.get("total"),
         "longest_run": longest[0].get("length") if longest else None,
         "longest_run_tool": longest[0].get("tool") if longest else None,
@@ -234,7 +308,28 @@ LOWER_IS_BETTER = frozenset(
         "soft_error_rate_pct",
         "malformed_inputs",
         "malformed_input_rate_pct",
+        "completions_without_run_log",
+        "completions_without_run_log_rate_pct",
+        "note_length_median",
+        "note_length_p90",
+        "note_length_p95",
         "longest_run",
+    }
+)
+
+#: Metrics where a *larger* number is the improvement. ``compare`` used to leave
+#: every non-``LOWER_IS_BETTER`` key unlabelled rather than assuming a
+#: direction, which is right for a raw count like ``calls`` (the corpus grows;
+#: bigger is neither good nor bad). US-PM-13's guidance-tool numbers are the
+#: first metrics here with a genuine "up is the win" reading -- the story exists
+#: because they sit at 1 call each -- so they get their own set rather than an
+#: inverted reading of the lower-is-better one.
+HIGHER_IS_BETTER = frozenset(
+    {
+        "pm_context_calls",
+        "pm_estimate_calls",
+        "pm_context_sessions_pct",
+        "pm_estimate_sessions_pct",
     }
 )
 
@@ -254,12 +349,23 @@ def compare(old: dict[str, Any], new: dict[str, Any]) -> dict[str, Any]:
     for key in before:
         a, b = before.get(key), after.get(key)
         row: dict[str, Any] = {"before": a, "after": b}
-        if isinstance(a, (int, float)) and isinstance(b, (int, float)):
+        # ``bool`` is an ``int`` in Python, and a pass/fail gate has no delta or
+        # percentage change worth printing -- it flips or it does not.
+        numeric = (int, float)
+        if (
+            isinstance(a, numeric)
+            and isinstance(b, numeric)
+            and not isinstance(a, bool)
+            and not isinstance(b, bool)
+        ):
             delta = b - a
             row["delta"] = round(delta, 4) if isinstance(delta, float) else delta
             row["pct_change"] = _rate(delta, abs(a)) if a else None
-            if key in LOWER_IS_BETTER and delta != 0:
-                row["direction"] = "better" if delta < 0 else "worse"
+            if delta != 0:
+                if key in LOWER_IS_BETTER:
+                    row["direction"] = "better" if delta < 0 else "worse"
+                elif key in HIGHER_IS_BETTER:
+                    row["direction"] = "better" if delta > 0 else "worse"
         metrics[key] = row
 
     return {
@@ -396,6 +502,35 @@ def format_summary(baseline: dict[str, Any]) -> str:
         f"| longest consecutive run | {_fmt(m['longest_run'])}x "
         f"`{m['longest_run_tool']}` |",
         f"| consecutive runs total | {_fmt(m['runs_total'])} |",
+    ]
+    # Rendered only when the report carries the section: baselines captured
+    # before US-PM-8 added it must still re-render byte-for-byte identically.
+    if m["completions"] is not None:
+        lines.append(
+            f"| completions with no run-log entry | {_fmt(m['completions_without_run_log'])}"
+            f" of {_fmt(m['completions'])} "
+            f"({_fmt(m['completions_without_run_log_rate_pct'])}%) |"
+        )
+    # Same rule, same reason: a baseline captured before US-PM-9 added the
+    # note-length metric has no median to print and must re-render unchanged.
+    if m["note_length_median"] is not None:
+        gate = "pass" if m["note_length_gate_passed"] else "FAIL"
+        lines.append(
+            f"| run-log note length | median {_fmt(m['note_length_median'])}, "
+            f"p90 {_fmt(m['note_length_p90'])}, p95 {_fmt(m['note_length_p95'])} chars "
+            f"(gate: median <= {NOTE_LENGTH_GATE_MEDIAN}, p90 <= {NOTE_LENGTH_GATE_P90} "
+            f"-- {gate}) |"
+        )
+    # Same rule again for US-PM-13's guidance-tool usage. ``is not None`` and not
+    # a truthiness test: the number this row exists to publish is a zero.
+    if m["pm_context_calls"] is not None:
+        lines.append(
+            f"| guidance tool usage | `pm_context` {_fmt(m['pm_context_calls'])} calls "
+            f"in {_fmt(m['pm_context_sessions_pct'])}% of sessions, "
+            f"`pm_estimate` {_fmt(m['pm_estimate_calls'])} calls "
+            f"in {_fmt(m['pm_estimate_sessions_pct'])}% of sessions |"
+        )
+    lines += [
         "",
         "The three failure classes overlap (one call can be both malformed and a hard "
         "error), so they do not sum to the distinct failure count.",

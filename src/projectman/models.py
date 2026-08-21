@@ -289,6 +289,57 @@ class Outcome(str, Enum):
     info = "info"
 
 
+#: Caps on the bounded ``Evidence`` payload — see
+#: ``docs/reference/evidence-contract.md`` §1.  They are *clamped, never
+#: rejected*: an oversized payload keeps its first N entries rather than
+#: taking the status/outcome write down with it.  Worst case on the wire is
+#: ~16 KiB; the expected case is 300-600 bytes.
+EVIDENCE_MAX_FILES = 40
+EVIDENCE_MAX_TESTS = 10
+EVIDENCE_MAX_DOD = 20
+EVIDENCE_MAX_STRING = 160
+
+
+class EvidenceTest(BaseModel):
+    """One test command that was run, and whether it passed."""
+
+    command: str
+    passed: bool
+    summary: Optional[str] = None
+
+
+# The note says what happened; the evidence says what proves it.  Nothing
+# open-ended is added here on purpose — an ``extra`` dict is how this becomes
+# the next unbounded blob the note already was.  ``dod_unmet`` earns its
+# place: ``pm_review`` and ``pm_park`` exist to say *which* criteria are
+# outstanding, and without it that list goes straight back into the prose.
+#
+# The class docstring is the ``description`` in every tool schema that takes
+# an Evidence parameter, so it stays one line: six tools pay for it.
+class Evidence(BaseModel):
+    """Structured proof for a run-log entry: files changed, tests run, DoD criteria met/unmet. Over-long lists and strings are clamped, never rejected."""
+
+    files: list[str] = []
+    tests: list[EvidenceTest] = []
+    dod_met: list[str] = []
+    dod_unmet: list[str] = []
+
+    def summary(self) -> str:
+        """One compact line, e.g. ``"3 files, 1/1 tests passed, 2/2 DoD"``.
+
+        What ``pm_get(include_log=True)`` shows instead of the object: it is
+        the high-frequency context call, and embedding the full evidence
+        there spends the exact budget this contract defends.
+        """
+        passed = sum(1 for t in self.tests if t.passed)
+        dod_total = len(self.dod_met) + len(self.dod_unmet)
+        return (
+            f"{len(self.files)} files, "
+            f"{passed}/{len(self.tests)} tests passed, "
+            f"{len(self.dod_met)}/{dod_total} DoD"
+        )
+
+
 class RunLogEntry(BaseModel):
     """A single run-log entry recording an attempt or note on an item."""
 
@@ -297,6 +348,10 @@ class RunLogEntry(BaseModel):
     status: Optional[str] = None
     note: str
     actor: str
+    #: Optional structured evidence.  A field with a default is simply absent
+    #: from every pre-existing ``.jsonl`` line, so old logs parse to
+    #: ``evidence=None`` with no migration and no version marker.
+    evidence: Optional[Evidence] = None
 
 
 class EventType(str, Enum):

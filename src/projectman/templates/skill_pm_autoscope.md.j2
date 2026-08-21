@@ -27,8 +27,9 @@ Triggered when no epics or stories exist yet. The tool returns codebase signals 
    - **Set story dependencies**: If a story depends on another story being done first, use `depends_on`
 8. For each story, propose 2-6 tasks
 9. Present tasks to the user for quick approval
-10. Create approved tasks with `pm_create_task`
-11. Show summary: N epics, N stories, N tasks created, total points
+10. **Calibrate: `pm_estimate(<id>)`** — see *Estimation in bulk* below — before any `points` value is written
+11. Create approved tasks with `pm_create_task`, sizing each against the calibration from step 10
+12. Show summary: N epics, N stories, N tasks created, total points
 
 ## Incremental Mode (existing stories need tasks)
 
@@ -40,7 +41,8 @@ Triggered when stories exist but some have no tasks. This is the primary use cas
    a. Call `pm_scope(story_id)` to get full decomposition context
    b. Propose 2-6 tasks for the story based on its content
    c. Present the task list to the user for quick approval (yes/edit/skip)
-   d. Create approved tasks with `pm_create_task`
+   d. **Calibrate: `pm_estimate(<id>)`** — see *Estimation in bulk* below — before any `points` value is written
+   e. Create approved tasks with `pm_create_task`, sizing each against that calibration
 3. After all stories are scoped, show summary:
    - N stories scoped
    - N tasks created
@@ -55,6 +57,14 @@ Triggered when stories exist but some have no tasks. This is the primary use cas
 - First task in a story sets up the foundation
 - Last task handles integration/cleanup
 - Don't over-decompose — 2-6 tasks per story is the sweet spot
+
+## Estimation in bulk
+
+An autoscope run writes dozens of `points` values, so calibration is an explicit step in both workflows above, not an afterthought.
+
+**Calibrate: `pm_estimate(<id>)`.** Read the `estimation_guidance` it returns — the fibonacci scale, the 1/2/3/5/8/13 calibration bands, and this project's historical average points — and size against those bands rather than by feel.
+
+With many items, call `pm_estimate` on the representative (first) story of each size band you are proposing rather than on every item, then apply that calibration to the rest of the band. That trade-off keeps the cost of a large run bounded — a handful of calls instead of one per item — while still anchoring the whole batch to real project data.
 
 ## Dependencies: `depends_on`
 

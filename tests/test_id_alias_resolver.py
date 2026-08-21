@@ -299,6 +299,22 @@ WIRED = [
     # still find a task to complete — so it is pointed at a second task, as
     # for the other mutating tools.
     Wired("pm_done_next", "task_id", "id", "US-TST-1-1", alias_ident="US-TST-1-2"),
+    # The four verdict verbs.  Each requires a non-blank `note` — the whole
+    # point of the verb — so it travels in `extra`.  `pm_accept` completes its
+    # target, so the alias spelling is pointed at a second task like the other
+    # completing tools; retry/park/review accept any starting status, so a
+    # second call on the same task still has work to do.
+    Wired(
+        "pm_accept",
+        "task_id",
+        "id",
+        "US-TST-1-1",
+        alias_ident="US-TST-1-2",
+        extra={"note": "accepted by the alias sweep"},
+    ),
+    Wired("pm_retry", "task_id", "id", "US-TST-1-1", extra={"note": "retried by the alias sweep"}),
+    Wired("pm_park", "task_id", "id", "US-TST-1-1", extra={"note": "parked by the alias sweep"}),
+    Wired("pm_review", "task_id", "id", "US-TST-1-1", extra={"note": "reviewed by the alias sweep"}),
     Wired("pm_get_sprint", "sprint_id", "id", "SPRINT-TST-1", other="SPRINT-TST-9"),
     Wired("pm_update_sprint", "sprint_id", "id", "SPRINT-TST-1", other="SPRINT-TST-9"),
     Wired("pm_activity", "item_id", "id", "US-TST-1", other="US-TST-9", optional=True),
@@ -878,7 +894,11 @@ ABSENT_FOR_TYPED_PARAMETER = {
 
 #: Values for a discovered tool's *other* required parameters.  A tool that
 #: grows one this does not know about fails loudly rather than being skipped.
-SAMPLE_FOR_OTHER_REQUIRED_PARAMETER = {"name": "gamma"}
+SAMPLE_FOR_OTHER_REQUIRED_PARAMETER = {
+    "name": "gamma",
+    # The verdict verbs require a non-blank run-log note (US-PM-8-7).
+    "note": "exercised by the typed-id sweep",
+}
 
 
 def discover_typed_id_tools():
@@ -925,7 +945,11 @@ def other_required_arguments(tool_name):
 
     arguments = {}
     for name, parameter in inspect.signature(getattr(server, tool_name)).parameters.items():
-        if parameter.default is not inspect.Parameter.empty:
+        # `= ...` is how a parameter that must follow a defaulted one is still
+        # declared *required* in the tool schema (the verdict verbs' `note`).
+        # It is a Python default but not an optional argument, so the sweep
+        # has to supply it like any other required parameter.
+        if parameter.default is not inspect.Parameter.empty and parameter.default is not ...:
             continue
         if name == "id" or name in TYPED_ID_PARAMETERS:
             continue
@@ -1565,6 +1589,21 @@ def full_state(root, item_id):
     return on_disk(root, item_id)
 
 
+def item_trace(root, item_id):
+    """Everything one item carries: its file, *and* its run log.
+
+    ``full_state`` alone is not the whole of an item's state.  A verdict verb
+    whose target is already in the status it sets (``pm_retry`` on a task that
+    is already ``todo`` and unheld) leaves the frontmatter byte-identical while
+    still filing a run-log entry — which is the write that verb exists to make.
+    Observing both means "the item it was pointed at is the one that moved"
+    stays a real assertion for every mutator, and a strictly stronger one for
+    the tools that move both.
+    """
+    log = root / ".project" / "logs" / f"{item_id}.jsonl"
+    return full_state(root, item_id), log.read_bytes() if log.exists() else None
+
+
 def project_snapshot(root):
     """Every byte of every file under ``.project/``, keyed by relative path.
 
@@ -1637,6 +1676,10 @@ CONFLICT_PAIR = {
     "pm_grab": (ALPHA_TASK, BETA_TASK),
     "pm_release": (ALPHA_TASK, BETA_TASK),
     "pm_done_next": (ALPHA_TASK, BETA_TASK),
+    "pm_accept": (ALPHA_TASK, BETA_TASK),
+    "pm_retry": (ALPHA_TASK, BETA_TASK),
+    "pm_park": (ALPHA_TASK, BETA_TASK),
+    "pm_review": (ALPHA_TASK, BETA_TASK),
     "pm_get_sprint": (ALPHA_SPRINT, BETA_SPRINT),
     "pm_update_sprint": (ALPHA_SPRINT, BETA_SPRINT),
     "pm_activity": (ALPHA_TASK, BETA_TASK),
@@ -1662,6 +1705,13 @@ CONFLICT_EXTRA = {
     # Completes the task *and* files a run-log entry, so a resolver that ran
     # late would leave two separate traces behind.
     "pm_done_next": {"outcome": "success", "note": "MUST NEVER BE FILED"},
+    # Every verdict verb writes a status change *and* a run-log entry on every
+    # call, so each has two distinct traces to fail to leave.  The note is
+    # required, so it is not optional here either.
+    "pm_accept": {"note": "MUST NEVER BE FILED"},
+    "pm_retry": {"note": "MUST NEVER BE FILED"},
+    "pm_park": {"note": "MUST NEVER BE FILED"},
+    "pm_review": {"note": "MUST NEVER BE FILED"},
     # A bare release of an unassigned task is a same-day no-op on disk, which
     # would make its "nothing changed" case vacuous.  A status move plus a
     # run-log entry gives it two distinct traces to fail to leave.
@@ -1683,6 +1733,10 @@ MUTATING = [
     "pm_grab",
     "pm_release",
     "pm_done_next",
+    "pm_accept",
+    "pm_retry",
+    "pm_park",
+    "pm_review",
     "pm_update_sprint",
     "pm_changeset_add_project",
     "pm_changeset_push",
@@ -1858,7 +1912,7 @@ def test_the_same_call_without_the_conflict_really_does_change_the_project(
     two items, which is what makes "it left both alone" meaningful.
     """
     before = project_snapshot(conflict_twins)
-    before_state = full_state(conflict_twins, canonical_value)
+    before_state = item_trace(conflict_twins, canonical_value)
 
     is_error, body = call_over_the_wire(
         w.tool, {**CONFLICT_EXTRA.get(w.tool, {}), w.canonical: canonical_value}
@@ -1867,8 +1921,9 @@ def test_the_same_call_without_the_conflict_really_does_change_the_project(
     assert is_error is False, (w.tool, body)
     after = project_snapshot(conflict_twins)
     assert after != before, f"{w.tool} changed nothing — the conflict tests are vacuous"
-    # ...and specifically, the item it was pointed at is the one that moved.
-    assert full_state(conflict_twins, canonical_value) != before_state, (
+    # ...and specifically, the item it was pointed at is the one that moved —
+    # in its file, in its run log, or both.
+    assert item_trace(conflict_twins, canonical_value) != before_state, (
         w.tool,
         canonical_value,
     )

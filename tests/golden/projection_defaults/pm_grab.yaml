@@ -1,0 +1,43 @@
+grabbed:
+  task:
+    id: US-TST-3-2
+    story_id: US-TST-3
+    title: Grabbable task
+    status: in-progress
+    archived: false
+    points: 1
+    assignee: claude
+    tags: []
+    depends_on: []
+    created: <DATE>
+    updated: <DATE>
+  body: '## Implementation
+
+
+    Do the thing properly.
+
+
+    ## Testing
+
+
+    Test the thing properly.
+
+
+    ## Definition of Done
+
+
+    - [ ] Done'
+  story_context:
+    id: US-TST-3
+    title: Third Story
+    status: active
+    priority: should
+    body: Third story body, long enough to matter.
+  sibling_tasks:
+  - id: US-TST-3-1
+    title: Refactor module
+    status: todo
+    assignee: null
+  sibling_tasks_total: 1
+  sibling_tasks_done: 0
+  dependency_status: []

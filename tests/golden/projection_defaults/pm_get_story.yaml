@@ -1,0 +1,15 @@
+id: US-TST-1
+title: First Story
+status: active
+priority: should
+points: 3
+epic_id: EPIC-TST-1
+tags:
+- backend
+acceptance_criteria:
+- Users can log in
+- Errors are surfaced
+depends_on: []
+created: <DATE>
+updated: <DATE>
+body: First story body, long enough to matter.

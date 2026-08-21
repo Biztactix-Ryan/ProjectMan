@@ -1,0 +1,28 @@
+id: US-TST-1-1
+story_id: US-TST-1
+title: 'Test: Users can log in'
+status: done
+archived: false
+points: null
+assignee: alice
+tags: []
+depends_on: []
+created: <DATE>
+updated: <DATE>
+body: 'Verify acceptance criterion for story US-TST-1:
+
+
+  > Users can log in'
+recent_run_log:
+- timestamp: <TIMESTAMP>
+  outcome: info
+  status: done
+  note: Follow-up note about the login flow.
+  actor: <ACTOR>
+  has_evidence: false
+- timestamp: <TIMESTAMP>
+  outcome: success
+  status: done
+  note: Implemented and verified the login flow.
+  actor: <ACTOR>
+  has_evidence: false

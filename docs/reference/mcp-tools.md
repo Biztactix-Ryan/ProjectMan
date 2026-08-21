@@ -29,6 +29,8 @@ even when it does not know the particular code.
 | `pm_grab` | `not_ready` | The task failed its readiness check and was not claimed | `blockers` |
 | `pm_grab` | `already_claimed` | Another worker won the claim first — the task is untouched, take a different one | `holder`, `task_id` |
 | `pm_release` | `not_holder` | A guarded release lost: `expected_assignee` is no longer the holder, so nothing was released | `holder`, `expected` |
+| `pm_accept` | `already_done` | The task is already done — no second run-log entry, no second story close, no next grab | `task_id` |
+| `pm_accept` / `pm_done_next` | `no_next_task` | The completion landed, but nothing ready follows it | `completed`, `next: null`, `next_info` |
 | `pm_docs` | `not_created` | The requested document does not exist in this project | `doc`, `file` |
 | `pm_commit` | `nothing_to_commit` | `.project/` is already clean — an idempotent no-op | — |
 
@@ -64,18 +66,21 @@ Get project status summary.
 - **project** (optional): Project name for hub mode
 - **Returns**: Epic/story/task counts, points, completion percentage, status breakdown
 
-### pm_get(id, include_log?)
+### pm_get(id, include_log?, fields?)
 Get full details of one or more epics, stories, or tasks.
 - **id**: One or more comma-separated IDs — epic (e.g. `EPIC-PRJ-1`), story (e.g. `US-PRJ-1`), or task (e.g. `US-PRJ-1-1,US-PRJ-1-2`) (alias: `task_id`). Prefer one multi-ID call over repeated single-ID calls.
-- **include_log** (optional, default `false`): Include the 3 most recent run-log entries per item
+- **include_log** (optional, default `false`): Include the 3 most recent run-log entries per item. Each entry carries `has_evidence` and, when true, a compact one-line `evidence_summary` (e.g. `"3 files, 1/1 tests passed, 2/2 DoD"`) — **never the evidence object itself**; `pm_get` is the high-frequency context call, and the full detail is one `pm_run_log` away.
+- **fields** (optional): Comma-separated key names to return — everything else is omitted. `pm_get("US-PRJ-1-1", fields="status,assignee")` is the verification read after a worker reports done, and costs ~1.5% of the full item. Names are the item's own serialized keys (`status`, `assignee`, `points`, `title`, `story_id`, `depends_on`, `tags`, `body`, `acceptance_criteria`, `recent_run_log`, …), so each item type accepts its own; `id` is always returned so a multi-ID result stays addressable. Whitespace around names is stripped and duplicates are fine. An unknown name is a hard error listing the valid names for that item type — a typo must not silently return an empty projection that a verification read would read as a pass. `include_log=true` with a `fields` that does not name `recent_run_log` does not read the log at all. Omitting it (or passing an empty string) leaves the response byte-identical to before this parameter existed.
 - **Returns**: Full frontmatter + body content. A single ID returns one object; multiple IDs return a list (missing IDs become `{id, error}` entries).
 
-### pm_batch_get(type?, ids?, project?)
+### pm_batch_get(type?, ids?, project?, brief?, fields?)
 Get every item of a type (or a specific ID list) with full data in a single call.
 - **type**: Item type to fetch: `"epics"`, `"stories"`, or `"tasks"`
 - **ids** (optional): Comma-separated item IDs to fetch; takes precedence over `type`
 - **project** (optional): Project name for hub mode
-- **Returns**: Items with frontmatter and body content. Much faster than calling `pm_get` for each item individually.
+- **brief** (optional, default `false`): A fixed projection that drops the heavy free-text. Keeps whichever of `id`, `title`, `status`, `points`, `priority`, `story_id`, `epic_id`, `assignee`, `tags`, `depends_on` the item type has, and omits `body`, `acceptance_criteria` and any run log. `pm_batch_get(type="stories", brief=True)` is the scan-the-backlog call and costs a small fraction of the full listing — this is a list-*everything* tool, so full mode returns every body and every criterion in the project. Keys the type does not have are simply absent, never an error.
+- **fields** (optional): Comma-separated key names to return, with exactly the semantics it has on `pm_get` — everything else is omitted, `id` is always kept, whitespace is stripped, and an unknown name is a hard error listing the valid names for that item type. Valid names are the item's own serialized keys, so a heterogeneous `ids` list must name keys every listed item has. **If both are given, `fields` wins** — explicit beats preset.
+- **Returns**: Items with frontmatter and body content. Much faster than calling `pm_get` for each item individually. Omitting both `brief` and `fields` leaves the response byte-identical to before they existed. The `ids` path honours both the same way; a missing ID is still an `{id, error}` entry, but a bad field name fails the whole call rather than hiding in one entry.
 
 ### pm_docs(doc?, project?)
 Read project documentation files.
@@ -149,7 +154,7 @@ Create multiple tasks under a story in a single call.
 - **project** (optional): Project name for hub mode
 - **Returns**: List of created task `id`/`title` (plus set fields), count, and total points
 
-### pm_update(id, status?, points?, title?, assignee?, unassign?, clear?, epic_id?, body?, acceptance_criteria?, tags?, depends_on?, outcome?, note?, project?)
+### pm_update(id, status?, points?, title?, assignee?, unassign?, clear?, epic_id?, body?, acceptance_criteria?, tags?, depends_on?, outcome?, note?, project?, evidence?)
 Update an epic, story, or task.
 - **id**: Epic, story, or task ID (alias: `task_id`). `epic_id` is **not** an alias — it links a story to an epic.
 - **assignee** (optional): Assignee name (tasks only). To remove one, pass `unassign=true` — never an empty assignee.
@@ -161,17 +166,20 @@ Update an epic, story, or task.
 - **depends_on** (optional): Comma-separated sibling task IDs (tasks only)
 - **outcome** (optional): Run-log outcome — `success`, `partial`, `blocked`, `failed`, or `info`. When provided, appends a run-log entry for tracking work attempts.
 - **note** (optional): Run-log note describing what was accomplished or blocked. Notes longer than 4096 characters are truncated server-side with a visible `...[truncated N chars]` marker rather than rejected, so the status/outcome write always lands. Defaults outcome to `info` if outcome is omitted.
+- **evidence** (optional): Structured proof for the run-log entry — an object with `files` (paths changed), `tests` (`{command, passed, summary?}` objects), `dod_met` and `dod_unmet`. **Lists go here, never in the note**; the note stays a one-line human summary. See [Structured evidence](#structured-evidence) below.
+- Passing `evidence` alone — with neither `outcome` nor `note` — still appends an entry (`outcome: info`, empty note).
 - Epic status values: `draft`, `active`, `done`, `archived`
 - Story status values: `backlog`, `ready`, `active`, `done`, `archived`
 - Task status values: `todo`, `in-progress`, `review`, `done`, `blocked`
 - **Returns**: `id`, current `status`, and the fields changed by this call (plus `run_log: <outcome>` when a run-log entry was appended) — not the full object
-- When — and only when — a supplied note had to be truncated, the response also carries `note_truncated: true`, `note_original_length`, `note_stored_length`, `note_dropped_chars` and `note_limit`, so a caller detects truncation without string-matching. Absence of the fields means the note was stored whole. Every note-writing tool (`pm_update`, `pm_release`, `pm_done_next`) reports it the same way.
+- When — and only when — a supplied note had to be truncated, the response also carries `note_truncated: true`, `note_original_length`, `note_stored_length`, `note_dropped_chars` and `note_limit`, so a caller detects truncation without string-matching. Absence of the fields means the note was stored whole. Every note-writing tool (`pm_update`, `pm_release`, `pm_done_next`, `pm_accept`, `pm_retry`, `pm_park`, `pm_review`) reports it the same way.
+- When — and only when — an `evidence` cap actually fired, the response also carries `evidence_clamped: true` and `evidence_dropped` (see [Structured evidence](#structured-evidence)).
 
 ### pm_archive(id)
 Archive an epic, story, or task.
 - **id**: Epic, story, or task ID to archive (alias: `task_id`)
 
-### pm_grab(task_id, assignee?, include_story?)
+### pm_grab(task_id, assignee?, include_story?, fields?)
 Claim a task with readiness validation.
 - **task_id**: Task ID to claim (e.g. `US-PRJ-1-1`) (alias: `id`)
 - Sets assignee and status to `in-progress`
@@ -179,6 +187,7 @@ Claim a task with readiness validation.
 - Claims by compare-and-swap on the on-disk assignee and status, under an exclusive lock on the task file — two concurrent workers cannot both win. The winner's response shape is unchanged; the loser gets `{outcome: expected_negative, status: already_claimed, message, holder, task_id}` and the task is left untouched. Re-claiming a task you already hold still succeeds.
 - Loads task context for implementation
 - **include_story** (optional, default `true`): Include the parent story body. Pass `false` when the story context is already known (e.g. grabbing a second task from the same story).
+- **fields** (optional): Comma-separated key names to return. A name is either a key of the task (`status`, `assignee`, `points`, `title`, `story_id`, `depends_on`, …) or a whole top-level section (`body`, `story_context`, `sibling_tasks`, `sibling_tasks_total`, `sibling_tasks_done`, `dependency_status`, `warnings`, or `task` for the whole task). Named sections come back whole, unnamed ones are dropped, and the `task` dict is projected to the named task keys plus `id` — so `fields="status,assignee"` returns `grabbed: {task: {id, status, assignee}}` and nothing else, ~1.4% of the full payload. Projection is **output-only**: the claim (status write, assignee, index, event) is identical either way, and expected negatives (`already_claimed`, `not_ready`) are returned in full because their `holder` / `blockers` detail is the recovery path. Unknown names are a hard error listing the valid ones. Omit it for the full payload — the default is unchanged.
 - **Returns**: Task details and context — task frontmatter + body, story context, unfinished sibling tasks (with `sibling_tasks_total` / `sibling_tasks_done` counts), dependency status, readiness warnings. Returns an expected negative `{outcome: expected_negative, status: not_ready, message, blockers}` when the readiness check fails (the task is left untouched).
 
 ### pm_release(task_id, status?, note?, outcome?, expected_assignee?, project?)
@@ -191,14 +200,89 @@ Release a task — hand it back to the pool. The exact inverse of `pm_grab`, and
 - Releasing an already-unassigned task **succeeds**, with `from_assignee: null` — a cleanup loop never has to branch on it.
 - **Returns**: `released:` with the full `task` and `from_assignee` (who held it before the call, or null), plus the `note_truncated` fields when the note had to be truncated (see `pm_update`)
 
-### pm_done_next(task_id, outcome?, note?, assignee?, same_story_only?)
+### pm_done_next(task_id, outcome?, note?, assignee?, same_story_only?, evidence?)
 Complete a task and claim the next ready one in a single call — the loop primitive for working through tasks.
+`pm_accept` is the same call with the verdict said by the verb. This spelling stays supported forever and is not deprecated.
 - **task_id**: Task ID just finished (e.g. `US-PRJ-1-1`) (alias: `id`)
-- Marks `task_id` done; appends a run-log entry when `note` is given (`outcome` defaults to `success`)
+- Marks `task_id` done and **always** appends a run-log entry (`outcome` defaults to `success`). When no `note` is given (or a blank one is passed) a fixed placeholder — `completed via pm_done_next (no note given)` — is logged instead, so a completion is never silently unlogged; prefer `pm_accept`, which requires a real note.
 - Closes the parent story automatically if this was its last open task (`story_closed` in the response)
 - Grabs the next ready unassigned task — same-story siblings first (topological order), then other stories by priority. The story body is only included when the next task belongs to a different story.
 - **same_story_only** (optional, default `false`): Stop instead of crossing to another story
+- **evidence** (optional): Structured proof for the run-log entry — an object with `files` (paths changed), `tests` (`{command, passed, summary?}` objects), `dod_met` and `dod_unmet`. **Lists go here, never in the note**; the note stays a one-line human summary. See [Structured evidence](#structured-evidence) below.
 - **Returns**: `completed` summary, optional `story_closed`, and `next` (a full grab payload). When nothing is ready the response is an expected negative — `{outcome: expected_negative, status: no_next_task, message, completed, next: null, next_info}` — the task was still completed; only the second half of the question has no answer. The `note_truncated` fields (see `pm_update`) are present on both shapes when the note had to be truncated.
+
+### The verdict verbs — pm_accept / pm_retry / pm_park / pm_review
+
+The four terminal moves an orchestrator can make on a finished attempt, one
+verb each. **`status` and `outcome` are not parameters**: there is no way to
+call `pm_park` and get `success`, nor to reach `done` without `success`. The
+`note` is **required** on all four and must be non-blank — it is the whole
+mechanism behind "a completion cannot land without a run-log entry", since a
+fixed outcome plus a required note makes the entry structurally unavoidable.
+An omitted note is rejected by the schema before anything is written; a blank
+one is an error for the same reason. See
+`docs/reference/verdict-verbs-contract.md`.
+
+| Verb | Verdict | status | outcome | assignee |
+|---|---|---|---|---|
+| `pm_accept` | Accept | `done` | `success` | **kept** (a done task records who did it) |
+| `pm_retry` | Retry | `todo` | `failed` | cleared |
+| `pm_park` | Park | `review` | `blocked` | cleared |
+| `pm_review` | Accept-as-review | `review` | `partial` | cleared |
+
+`pm_retry`, `pm_park` and `pm_review` accept **any** starting status,
+including `done` — the common case is precisely a worker that self-reported
+done and failed validation. Only `pm_accept` guards. All four are tasks-only:
+a story or epic id is an error, not an expected negative.
+
+`pm_update(id, status=...)` keeps working exactly as before, including
+`status="done"` with no outcome or note. It is the generic escape hatch; the
+verdict verbs are purely additive.
+
+All four also take the optional `evidence` object — see
+[Structured evidence](#structured-evidence). In practice `pm_accept` and
+`pm_review` are where evidence exists, and `pm_retry`/`pm_park` carry the
+failing `tests` entries that justify the verdict.
+
+### pm_accept(task_id, note, next_task?, same_story_only?, assignee?, project?, evidence?)
+Accept a task's work — mark it done, log why, and claim the next one. The
+same call as `pm_done_next` with the verdict said by the verb, so it is the
+form to use in an orchestrator loop: `pm_accept("US-PRJ-1-1", note="all DoD items met; 47 tests pass")`.
+- **task_id**: Task ID being accepted (alias: `id`). Tasks only.
+- **note** (**required**): Run-log note saying what was delivered. Blank is an error; over 4096 characters is truncated server-side, never rejected.
+- Always writes `status: done` + `outcome: success` + the note, so a run-log entry is unavoidable. The assignee is **kept**.
+- Closes the parent story automatically if this was its last open task (`story_closed` in the response)
+- **next_task** (optional, default `true`): Also claim the next ready task. With `false` the `next` key is absent entirely.
+- **same_story_only** (optional, default `true`): Only take a next task from the same story
+- **assignee** (optional, default `claude`): Who claims the next task
+- **evidence** (optional): Structured proof for the run-log entry — an object with `files` (paths changed), `tests` (`{command, passed, summary?}` objects), `dod_met` and `dod_unmet`. **Lists go here, never in the note**; the note stays a one-line human summary. See [Structured evidence](#structured-evidence) below.
+- Accepting an already-done task is an expected negative (`status: already_done`) — nothing is written twice.
+- **Returns**: `completed` (with `id`, `status`, `run_log`), optional `story_closed`, and `next` (a full grab payload). When nothing is ready to follow, an expected negative `{outcome: expected_negative, status: no_next_task, message, completed, next: null, next_info}` — the completion still landed. Plus the `note_truncated` fields (see `pm_update`) when the note had to be truncated.
+
+### pm_retry(task_id, note, project?, evidence?)
+Retry a task — the attempt failed, hand it back to the pool for another go.
+- **task_id**: Task ID to retry (alias: `id`). Tasks only.
+- **note** (**required**): Run-log note saying what failed, so the next worker inherits the reason
+- **evidence** (optional): Structured proof for the run-log entry — an object with `files` (paths changed), `tests` (`{command, passed, summary?}` objects), `dod_met` and `dod_unmet`. **Lists go here, never in the note**; the note stays a one-line human summary. See [Structured evidence](#structured-evidence) below.
+- Always writes `status: todo` + `outcome: failed`, and clears the assignee
+- **Returns**: `retried:` with the full `task`, `from_status` and `from_assignee`, plus the `note_truncated` fields (see `pm_update`) when the note had to be truncated
+
+### pm_park(task_id, note, project?, evidence?)
+Park a task — it is blocked on something a human has to resolve.
+- **task_id**: Task ID to park (alias: `id`). Tasks only.
+- **note** (**required**): Run-log note saying what it is blocked on — the whole handover to whoever unblocks it
+- **evidence** (optional): Structured proof for the run-log entry — an object with `files` (paths changed), `tests` (`{command, passed, summary?}` objects), `dod_met` and `dod_unmet`. **Lists go here, never in the note**; the note stays a one-line human summary. See [Structured evidence](#structured-evidence) below.
+- Always writes `status: review` + `outcome: blocked`, and clears the assignee so it does not sit stale
+- **Returns**: `parked:` with the full `task`, `from_status` and `from_assignee`, plus the `note_truncated` fields (see `pm_update`) when the note had to be truncated
+
+### pm_review(task_id, note, project?, evidence?)
+Send a task to review — the work partly landed and a human should look. The
+middle answer between `pm_accept` and `pm_retry`.
+- **task_id**: Task ID to send to review (alias: `id`). Tasks only.
+- **note** (**required**): Run-log note saying what landed and what did not
+- **evidence** (optional): Structured proof for the run-log entry — an object with `files` (paths changed), `tests` (`{command, passed, summary?}` objects), `dod_met` and `dod_unmet`. **Lists go here, never in the note**; the note stays a one-line human summary. See [Structured evidence](#structured-evidence) below.
+- Always writes `status: review` + `outcome: partial`, and clears the assignee. `partial` is the outcome the vocabulary keeps losing — ~90% of run-log entries say `success` — and this verb is how it gets said.
+- **Returns**: `reviewed:` with the full `task`, `from_status` and `from_assignee`, plus the `note_truncated` fields (see `pm_update`) when the note had to be truncated
 
 ### pm_update_doc(doc, content, project?)
 Update a project documentation file.
@@ -221,10 +305,12 @@ View sprint details with live progress per story.
 - **sprint_id**: Sprint ID (e.g. `SPRINT-PRJ-1`) (alias: `id`)
 - **Returns**: Sprint metadata plus per-story rollup (task counts, points completed vs. remaining)
 
-### pm_list_sprints(status?, project?)
+### pm_list_sprints(status?, project?, brief?, fields?)
 List sprints, optionally filtered by status.
 - **status** (optional): Filter by `planning`, `active`, `completed`, or `cancelled`
-- **Returns**: Sprints with name, status, goal, and dates
+- **brief** (optional, default `false`): A fixed projection that drops the free-text. Keeps `id`, `name`, `status`, `start_date`, `end_date`, `planned_points`, `completed_points` and `planned_stories`, and omits `goal` — which on a long history is most of the payload by weight. `pm_list_sprints(status="completed", brief=True)` is the scan-the-history call.
+- **fields** (optional): Comma-separated key names to return, with the same semantics as on `pm_get` — everything else is omitted, `id` is always kept, and an unknown name is a hard error listing the valid sprint keys. **If both are given, `fields` wins** — explicit beats preset.
+- **Returns**: `sprints` (with name, status, goal, and dates) and `count`. `count` is present in every mode, and omitting both `brief` and `fields` leaves the response byte-identical to before they existed.
 
 ### pm_update_sprint(sprint_id, name?, status?, goal?, start_date?, end_date?, planned_stories?, project?)
 Update sprint fields (status, stories, dates, etc.).
@@ -252,7 +338,8 @@ Discover what needs scoping — returns codebase signals or undecomposed stories
 - **Returns**: Full scan returns documentation, build files, source tree, and creation guidance. Incremental returns a paginated batch of undecomposed story IDs/titles with `has_more` and `next_offset` for pagination.
 
 ### pm_audit(include_info?, project?)
-Run project audit for drift detection. Performs 17 checks covering stories, tasks, epics, documentation, hub docs, assignments, dependencies, and malformed files.
+Run project audit for drift detection. Performs 18 checks covering stories, tasks, epics, documentation, hub docs, assignments, dependencies, malformed files, and completion evidence.
+- Findings include `done-without-evidence` (warning): one aggregate finding listing every non-archived `done` task whose run log carries no entry with structured `evidence`. A done task with no run log at all qualifies; an `evidence` object with all lists empty does not (presence, never truthiness). It is a warning, not an error, so it never halts an orchestrator run — every task completed before evidence shipped trips it. Use `pm_run_log(id, has_evidence=false)` to see the evidence-less entries for one item.
 - **include_info** (optional, default `false`): Include info-level findings in the response. By default only errors and warnings are returned, with omitted info findings summarized as a count. The full report is always written to `DRIFT.md`.
 
 ### pm_reindex(project?)
@@ -363,14 +450,58 @@ Check PR merge status and update changeset status.
 
 ## Run Log
 
-### pm_run_log(id, limit?, offset?, project?)
+### pm_run_log(id, limit?, offset?, project?, has_evidence?)
 Read the run log for an epic, story, or task — shows previous work attempts, outcomes, and notes.
 - **id**: Epic, story, or task ID (alias: `task_id`)
 - **limit** (optional, default `20`): Max entries to return (most recent first)
 - **offset** (optional, default `0`): Starting index for pagination
-- **Returns**: JSON array of log entries, each with `timestamp`, `outcome`, `status`, `note`, `actor`
+- **has_evidence** (optional): Filter by structured evidence — `true` returns only entries carrying an `evidence` object, `false` only those without, omitted returns everything. This makes "did this completion prove anything" a one-call question. The filter is applied **before** `limit`/`offset`.
+- **Returns**: JSON array of log entries, each with `timestamp`, `outcome`, `status`, `note`, `actor`, and `evidence` **verbatim** when the entry has one. The `evidence` key is omitted entirely when absent, so an entry without evidence is byte-for-byte the response it always was.
 
-Run-log entries are created by passing `outcome` and/or `note` to `pm_update`. Stored as JSONL in `.project/logs/{item_id}.jsonl`.
+Run-log entries are created by passing `outcome`, `note` and/or `evidence` to `pm_update` or to any of the verdict verbs. Stored as JSONL in `.project/logs/{item_id}.jsonl`.
+
+### Structured evidence
+
+`docs/reference/evidence-contract.md` is the binding design. The rule:
+**the note says what happened; the evidence says what proves it — prose is
+never the container for a list.**
+
+`evidence` is an optional trailing object parameter on the six tools that can
+append a run-log entry: `pm_accept`, `pm_review`, `pm_retry`, `pm_park`,
+`pm_update` and `pm_done_next`.
+
+```json
+{"files": ["src/projectman/store.py", "tests/test_store.py"],
+ "tests": [{"command": "uv run pytest tests/test_store.py",
+            "passed": true, "summary": "47 passed"}],
+ "dod_met": ["evidence stored on entry", "old lines still parse"],
+ "dod_unmet": []}
+```
+
+| Field | Shape | Cap |
+|---|---|---|
+| `files` | list of paths changed | ≤ 40 items, each ≤ 160 chars |
+| `tests` | list of `{command, passed, summary?}` | ≤ 10 items, strings ≤ 160 chars |
+| `dod_met` | list of criteria evidenced | ≤ 20 items, each ≤ 160 chars |
+| `dod_unmet` | list of criteria still outstanding | ≤ 20 items, each ≤ 160 chars |
+
+- **Caps clamp, never reject.** An over-long list keeps its **first** N
+  entries and an over-long string is cut to 160 characters; the status/outcome
+  write always lands. When a clamp fires the response carries
+  `evidence_clamped: true` and `evidence_dropped` — items dropped per list,
+  plus `chars` for characters cut from over-long strings. Absence of both
+  fields means the evidence was stored whole.
+- **`note` is unchanged** — still required on the four verdict verbs, still
+  capped at 4096 characters. Its *recommended* length is now one line, ≤ 200
+  characters: when evidence is present and the note exceeds that, the response
+  carries `note_long: true`, `note_length` and `note_recommended`. Advisory
+  only — never an error, never extra truncation.
+- **Present-but-empty is evidence.** `{}` — four empty lists — explicitly says
+  "nothing to show", which is the genuinely non-code task. *Absent* evidence
+  is the gap, so `has_evidence` tests presence, never truthiness.
+- **Backwards compatible.** Every pre-existing `.jsonl` line parses to
+  `evidence: null` with no migration and no version marker, and an entry
+  written without evidence has no `evidence` key on disk at all.
 
 ## Activity Log
 

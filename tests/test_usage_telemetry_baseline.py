@@ -25,6 +25,7 @@ from pathlib import Path
 import pytest
 
 from tools.usage_telemetry import baseline as bl
+from tools.usage_telemetry import report as rp_mod
 from tools.usage_telemetry.report import build_report
 from tools.usage_telemetry.extract import ToolCall, ToolResult
 
@@ -842,3 +843,282 @@ def test_the_cli_compares_the_committed_baseline_against_a_stored_capture(
     assert diff["metrics"]["failure_rate_pct"]["before"] == 6.2646
     assert diff["metrics"]["failure_rate_pct"]["direction"] == "better"
     assert diff["corpus_grew"] is True
+
+
+# ------------------------------------------- completion run-log coverage --
+#
+# US-PM-8 AC: "Measured share of completions lacking a run-log entry drops to
+# zero." The report emits a fraction; the headline publishes the percentage.
+
+
+def _done_call(seq, note=None, session="sess-a"):
+    args = {"id": "US-TST-1-1", "status": "done"}
+    if note is not None:
+        args["note"] = note
+    return make_call(tool="pm_update", session=session, seq=seq, tool_input=args)
+
+
+def test_two_bare_done_writes_in_ten_completions_reach_the_headline_as_20_pct():
+    calls = [_done_call(0), _done_call(1)]
+    calls += [_done_call(i, note="logged") for i in range(2, 5)]
+    calls += [
+        make_call(tool="pm_done_next", seq=i, tool_input={"task_id": f"T{i}"})
+        for i in range(5, 8)
+    ]
+    calls += [
+        make_call(tool="pm_accept", seq=i, tool_input={"task_id": f"T{i}", "note": "n"})
+        for i in range(8, 10)
+    ]
+    m = bl.headline_metrics(sample_baseline(calls=calls))
+    assert m["completions"] == 10
+    assert m["completions_without_run_log"] == 2
+    assert m["completions_without_run_log_rate_pct"] == 20.0
+
+
+def test_a_verbs_only_corpus_publishes_a_zero_percent_gap():
+    calls = [
+        make_call(tool="pm_accept", seq=0, tool_input={"task_id": "A", "note": "n"}),
+        make_call(tool="pm_done_next", seq=1, tool_input={"task_id": "B"}),
+    ]
+    m = bl.headline_metrics(sample_baseline(calls=calls))
+    assert m["completions"] == 2
+    assert m["completions_without_run_log_rate_pct"] == 0.0
+
+
+def test_a_rising_completion_gap_is_labelled_worse():
+    """Lower is better, so the direction flag has to point the right way."""
+    before = sample_baseline(calls=[_done_call(0, note="logged")])
+    after = sample_baseline(calls=[_done_call(0)])
+    row = bl.compare(before, after)["metrics"]["completions_without_run_log_rate_pct"]
+    assert row["before"] == 0.0
+    assert row["after"] == 100.0
+    assert row["direction"] == "worse"
+
+
+def test_a_pre_metric_baseline_still_compares_without_the_completion_keys(committed):
+    """The committed pre-fix artifact predates the metric; keys read ``None``."""
+    m = bl.headline_metrics(committed)
+    assert "completions_without_run_log_rate_pct" in m
+    assert m["completions_without_run_log_rate_pct"] is None
+    assert "completions with no run-log entry" not in bl.format_summary(committed)
+
+
+def test_the_summary_publishes_the_completion_gap_when_the_report_has_one():
+    md = bl.format_summary(sample_baseline(calls=[_done_call(0), _done_call(1, note="n")]))
+    assert "completions with no run-log entry" in md
+    assert "50.0" in md
+
+
+# ------------------------------------------------------------ note length --
+#
+# US-PM-9 AC: "Median note length drops well below the cap." The gate lives here
+# rather than in a unit assertion about live data -- the corpus number cannot
+# move until the rewritten pm-orchestrate skill accumulates traffic -- so what
+# is pinned is that a captured baseline reports the distribution and judges it.
+
+
+def _note_call(chars, seq=0, session="sess-a"):
+    """A `pm_update` completion whose note is ``chars`` characters long."""
+    return make_call(
+        tool="pm_update",
+        session=session,
+        seq=seq,
+        tool_input={"id": "US-TST-1-1", "status": "done", "note": "n" * chars},
+    )
+
+
+def _notes_baseline(*sizes):
+    return sample_baseline(calls=[_note_call(n, seq=i) for i, n in enumerate(sizes)])
+
+
+def test_the_note_length_distribution_reaches_the_headline():
+    m = bl.headline_metrics(_notes_baseline(100, 200, 900))
+    assert m["note_length_median"] == 200
+    assert m["note_length_p90"] == 900
+    assert m["note_length_p95"] == 900
+
+
+def test_the_gate_passes_when_the_median_and_p90_are_well_below_the_cap():
+    m = bl.headline_metrics(_notes_baseline(150, 200, 250, 300))
+    assert m["note_length_median"] <= bl.NOTE_LENGTH_GATE_MEDIAN
+    assert m["note_length_p90"] <= bl.NOTE_LENGTH_GATE_P90
+    assert m["note_length_gate_passed"] is True
+
+
+def test_the_gate_fails_when_the_median_is_over_the_threshold():
+    """The pre-fix shape: prose packed to the cap, so the median blows the gate."""
+    m = bl.headline_metrics(_notes_baseline(900, 950, 1000))
+    assert m["note_length_median"] == 950
+    assert m["note_length_gate_passed"] is False
+
+
+def test_the_gate_fails_on_p90_alone_even_with_a_fine_median():
+    """A tail of packed notes is still the habit this story exists to end."""
+    m = bl.headline_metrics(_notes_baseline(*([100] * 8 + [1500, 1500])))
+    assert m["note_length_median"] == 100
+    assert m["note_length_p90"] == 1500
+    assert m["note_length_gate_passed"] is False
+
+
+def test_the_gate_thresholds_are_the_documented_ones():
+    assert (bl.NOTE_LENGTH_GATE_MEDIAN, bl.NOTE_LENGTH_GATE_P90) == (300, 800)
+
+
+def test_a_corpus_with_no_notes_reports_no_gate_rather_than_a_failed_one():
+    """A missing measurement is not a failed one."""
+    m = bl.headline_metrics(sample_baseline())
+    assert m["note_length_median"] is None
+    assert m["note_length_gate_passed"] is None
+
+
+def test_a_falling_median_note_length_is_labelled_better():
+    row = bl.compare(_notes_baseline(900, 950, 1000), _notes_baseline(100, 150, 200))[
+        "metrics"
+    ]["note_length_median"]
+    assert row["before"] == 950 and row["after"] == 150
+    assert row["direction"] == "better"
+
+
+def test_the_gate_flag_compares_without_pretending_to_have_a_delta():
+    """``bool`` is an ``int``; a pass/fail flip is not a numeric movement."""
+    row = bl.compare(_notes_baseline(900, 950, 1000), _notes_baseline(100, 150, 200))[
+        "metrics"
+    ]["note_length_gate_passed"]
+    assert row["before"] is False and row["after"] is True
+    assert "delta" not in row
+
+
+def test_a_pre_metric_baseline_still_compares_without_the_note_length_keys(committed):
+    """The committed pre-fix capture predates the metric and must still render."""
+    m = bl.headline_metrics(committed)
+    assert "note_length_median" in m
+    assert m["note_length_median"] is None
+    assert m["note_length_gate_passed"] is None
+    assert "run-log note length" not in bl.format_summary(committed)
+
+
+def test_the_summary_publishes_the_note_lengths_when_the_report_has_them():
+    md = bl.format_summary(_notes_baseline(100, 200, 900))
+    assert "run-log note length" in md
+    assert "median 200" in md
+    assert "FAIL" in md
+
+
+def test_the_summary_marks_a_passing_gate_as_a_pass():
+    md = bl.format_summary(_notes_baseline(150, 200, 250))
+    assert "run-log note length" in md
+    assert "FAIL" not in md
+    assert "pass" in md
+
+
+# ------------------------------------------------------ guidance-tool usage --
+#
+# US-PM-13 AC: "Usage of both tools is visible in the next telemetry baseline."
+# Visible means a *headline* number, not a row buried in a 32-tool table -- and
+# visible when it is zero, because zero is the "before" the next capture is
+# argued against.
+
+
+def _guidance_baseline(*tools_per_session):
+    """One session per argument; each argument is that session's tool sequence."""
+    calls = []
+    for index, tools in enumerate(tools_per_session):
+        session = f"sess-{index}"
+        calls += [
+            make_call(tool=tool, session=session, seq=seq)
+            for seq, tool in enumerate(tools)
+        ]
+    return sample_baseline(calls=calls)
+
+
+def test_guidance_calls_and_reach_reach_the_headline():
+    """Three sessions, `pm_estimate` in one of them -> a third of the corpus."""
+    m = bl.headline_metrics(
+        _guidance_baseline(
+            ["pm_grab", "pm_estimate", "pm_update"], ["pm_grab", "pm_update"], ["pm_get"]
+        )
+    )
+    assert m["pm_estimate_calls"] == 1
+    assert m["pm_estimate_sessions_pct"] == 33.3333
+
+
+def test_an_unused_guidance_tool_publishes_a_visible_zero_not_a_missing_key():
+    """A printed 0 is a measurement; an absent key is an unasked question."""
+    m = bl.headline_metrics(
+        _guidance_baseline(["pm_grab", "pm_estimate"], ["pm_update"], ["pm_get"])
+    )
+    assert m["pm_context_calls"] == 0
+    assert m["pm_context_sessions_pct"] == 0.0
+
+
+def test_repeat_calls_inside_one_session_raise_calls_but_not_reach():
+    m = bl.headline_metrics(_guidance_baseline(["pm_context"] * 5, ["pm_get"]))
+    assert m["pm_context_calls"] == 5
+    assert m["pm_context_sessions_pct"] == 50.0
+
+
+def test_more_guidance_calls_is_labelled_better_not_worse():
+    """Higher is the win here -- the story exists because these sit near zero."""
+    before = _guidance_baseline(["pm_grab", "pm_update"], ["pm_get"])
+    after = _guidance_baseline(["pm_grab", "pm_estimate", "pm_update"], ["pm_estimate"])
+    metrics = bl.compare(before, after)["metrics"]
+    assert metrics["pm_estimate_calls"]["before"] == 0
+    assert metrics["pm_estimate_calls"]["after"] == 2
+    assert metrics["pm_estimate_calls"]["direction"] == "better"
+    assert metrics["pm_estimate_sessions_pct"]["direction"] == "better"
+
+
+def test_guidance_usage_falling_back_to_zero_is_labelled_worse():
+    before = _guidance_baseline(["pm_context"], ["pm_context"])
+    after = _guidance_baseline(["pm_get"], ["pm_get"])
+    row = bl.compare(before, after)["metrics"]["pm_context_calls"]
+    assert row["before"] == 2 and row["after"] == 0
+    assert row["direction"] == "worse"
+
+
+def test_the_higher_is_better_set_is_exactly_the_guidance_headline_keys():
+    assert bl.HIGHER_IS_BETTER == {
+        "pm_context_calls",
+        "pm_estimate_calls",
+        "pm_context_sessions_pct",
+        "pm_estimate_sessions_pct",
+    }
+    assert not (bl.HIGHER_IS_BETTER & bl.LOWER_IS_BETTER)
+
+
+def test_the_headline_measures_the_same_guidance_set_the_report_defines():
+    assert bl.GUIDANCE_TOOLS == rp_mod.GUIDANCE_TOOLS
+
+
+def test_a_pre_metric_baseline_still_compares_without_the_guidance_keys(committed):
+    """The committed pre-fix capture predates the metric; keys read ``None``."""
+    m = bl.headline_metrics(committed)
+    assert "pm_context_calls" in m and "pm_estimate_calls" in m
+    assert m["pm_context_calls"] is None
+    assert m["pm_estimate_sessions_pct"] is None
+    assert "guidance tool usage" not in bl.format_summary(committed)
+
+
+def test_comparing_a_pre_metric_baseline_forward_does_not_invent_a_delta(committed):
+    row = bl.compare(committed, _guidance_baseline(["pm_estimate"]))["metrics"][
+        "pm_estimate_calls"
+    ]
+    assert row["before"] is None and row["after"] == 1
+    assert "delta" not in row and "direction" not in row
+
+
+def test_the_summary_publishes_the_guidance_usage_when_the_report_has_it():
+    md = bl.format_summary(
+        _guidance_baseline(["pm_estimate", "pm_context"], ["pm_get"], ["pm_get"])
+    )
+    assert "guidance tool usage" in md
+    assert "`pm_context` 1 calls" in md
+    assert "`pm_estimate` 1 calls" in md
+
+
+def test_an_empty_corpus_publishes_zeros_rather_than_crashing():
+    m = bl.headline_metrics(sample_baseline(calls=[]))
+    assert m["pm_context_calls"] == 0
+    assert m["pm_estimate_calls"] == 0
+    assert m["pm_context_sessions_pct"] == 0.0
+    assert m["pm_estimate_sessions_pct"] == 0.0

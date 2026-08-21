@@ -11,6 +11,58 @@ from .deps import build_combined_dep_graph, detect_cycle
 from .store import Store
 
 
+def check_completions_without_evidence(store: Store) -> list[dict]:
+    """Find ``done`` tasks whose run log proves nothing (US-PM-9-8).
+
+    A completion without evidence is a task with ``status == done`` whose run
+    log contains no entry whose ``evidence`` is not ``None``.  A done task with
+    no run log at all qualifies — that is the 13% of completions the telemetry
+    could not see.
+
+    Presence, never truthiness: ``Evidence()`` with four empty lists explicitly
+    says "nothing to show" — the genuinely non-code task (docs, a config
+    decision) that pm-orchestrate step 17 already carves out of the empty-diff
+    rule.  *Absent* evidence is the gap, so this tests ``evidence is not None``
+    and never the truthiness of the lists.  ``Store.get_run_log`` applies the
+    ``has_evidence`` filter before ``limit``, so asking for one evidence-bearing
+    entry is an existence probe: one pass over the log per done task, and no
+    re-parse of anything the other checks already read.
+
+    Archived tasks are skipped — an archived task is abandoned history, not a
+    completion anyone is still standing behind.
+
+    One aggregate finding, the shape of ``done-story-incomplete-tasks``, so
+    DRIFT.md gets one line rather than one per task.
+
+    SEVERITY: warning, not error, for the reason written at Check 17 below.
+    /pm-orchestrate halts a sprint on any error-level finding, so error is
+    reserved for structural contradictions — a done story with open tasks, a
+    dependency cycle.  This is a coverage gap: nothing is lost and nothing is
+    unreachable.  Decisively, every task completed before evidence shipped has
+    none, so at error level the first audit after release would brick the
+    orchestrator on every existing project (this repo alone has ~330 such
+    tasks).  Firing broadly on legacy completions is expected, and is exactly
+    why it is a warning.
+    """
+    offenders = [
+        task.id
+        for task in store.list_tasks(status="done", archived=False)
+        # limit=1: existence probe, not a fetch — see docstring.
+        if not store.get_run_log(task.id, limit=1, has_evidence=True)
+    ]
+    if not offenders:
+        return []
+    return [{
+        "severity": "warning",
+        "check": "done-without-evidence",
+        "message": (
+            f"{len(offenders)} done task(s) have no structured evidence on any "
+            f"run-log entry — record files/tests/dod_met with the verdict"
+        ),
+        "items": offenders,
+    }]
+
+
 def run_audit(
     root: Path, project_dir: Optional[Path] = None, include_info: bool = True
 ) -> str:
@@ -382,6 +434,11 @@ def run_audit(
                 ),
                 "items": [e["task_id"] for e in drift["stale"]],
             })
+
+    # Check 18: Completions carrying no evidence (US-PM-9-8).  Warning, not
+    # error, for the same reason as Check 17 — see the docstring on
+    # check_completions_without_evidence.
+    findings.extend(check_completions_without_evidence(store))
 
     # Generate report
     error_count = sum(1 for f in findings if f["severity"] == "error")

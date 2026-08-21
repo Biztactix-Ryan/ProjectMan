@@ -46,6 +46,12 @@ _cache_debug: bool = bool(os.environ.get("PROJECTMAN_CACHE_DEBUG"))
 # ~1.4x headroom over the observed maximum while staying bounded.
 RUN_LOG_NOTE_LIMIT = 4096
 
+# The *recommended* note length once structured evidence carries the lists.
+# Advisory only — never an error, never extra truncation.  SKILL.md already
+# asks for a one-line human summary; this is the number that says so, and it
+# is what the `note_long` response flag is measured against.
+NOTE_SUMMARY_RECOMMENDED = 200
+
 # The fields `Store.update` can be told to *clear*, mapped to the empty value
 # each one clears to and the item types it exists on.  See §3 of
 # docs/reference/claim-release-contract.md.
@@ -340,6 +346,10 @@ def _exclusive_file_lock(path: Path):
 
 from .config import load_config
 from .models import (
+    EVIDENCE_MAX_DOD,
+    EVIDENCE_MAX_FILES,
+    EVIDENCE_MAX_STRING,
+    EVIDENCE_MAX_TESTS,
     ChangesetEntry,
     ChangesetFrontmatter,
     ChangesetStatus,
@@ -351,6 +361,8 @@ from .models import (
     ProjectConfig,
     EpicFrontmatter,
     EpicStatus,
+    Evidence,
+    EvidenceTest,
     Priority,
     RunLogEntry,
     SprintFrontmatter,
@@ -361,6 +373,68 @@ from .models import (
     TaskStatus,
     is_archived,
 )
+
+
+def clamp_evidence(
+    evidence: "Evidence | dict | None",
+) -> tuple["Evidence | None", bool, dict[str, int]]:
+    """Clamp an ``Evidence`` payload to its caps, marking what was dropped.
+
+    Returns ``(evidence, was_clamped, dropped)``.  ``None`` and payloads that
+    already fit pass through untouched (``dropped`` empty).
+
+    The sibling of :func:`truncate_run_log_note`, and clamping for the same
+    reason: raising on an oversized payload would take the status/outcome
+    write down with it, and a caller that only checks ``is_error`` would
+    silently lose the state change.  Over-long lists keep their **first** N
+    entries; over-long strings are cut to ``EVIDENCE_MAX_STRING``.
+
+    ``dropped`` counts *items* removed per list plus, under ``"chars"``, the
+    total characters cut from over-long strings.  Keys that dropped nothing
+    are absent, so an empty dict means nothing was clamped.
+    """
+    if evidence is None:
+        return None, False, {}
+    if not isinstance(evidence, Evidence):
+        evidence = Evidence.model_validate(evidence)
+
+    dropped: dict[str, int] = {}
+    chars = 0
+
+    def _clamp_str(value: str) -> str:
+        nonlocal chars
+        if len(value) > EVIDENCE_MAX_STRING:
+            chars += len(value) - EVIDENCE_MAX_STRING
+            return value[:EVIDENCE_MAX_STRING]
+        return value
+
+    def _clamp_list(values: list, cap: int, name: str) -> list:
+        if len(values) > cap:
+            dropped[name] = len(values) - cap
+            return values[:cap]
+        return list(values)
+
+    files = [_clamp_str(f) for f in _clamp_list(evidence.files, EVIDENCE_MAX_FILES, "files")]
+    tests = [
+        EvidenceTest(
+            command=_clamp_str(t.command),
+            passed=t.passed,
+            summary=_clamp_str(t.summary) if t.summary is not None else None,
+        )
+        for t in _clamp_list(evidence.tests, EVIDENCE_MAX_TESTS, "tests")
+    ]
+    dod_met = [
+        _clamp_str(d) for d in _clamp_list(evidence.dod_met, EVIDENCE_MAX_DOD, "dod_met")
+    ]
+    dod_unmet = [
+        _clamp_str(d)
+        for d in _clamp_list(evidence.dod_unmet, EVIDENCE_MAX_DOD, "dod_unmet")
+    ]
+    if chars:
+        dropped["chars"] = chars
+
+    clamped = Evidence(files=files, tests=tests, dod_met=dod_met, dod_unmet=dod_unmet)
+    return clamped, bool(dropped), dropped
 
 
 class Store:
@@ -379,6 +453,10 @@ class Store:
         # None until an update with a note runs.  Read by the MCP layer so the
         # response can tell the caller their note was clamped.
         self.last_note_truncation: dict | None = None
+        #: Set by ``update`` whenever an evidence payload was clamped to
+        #: its caps, so the tool layer can report it.  Sibling of
+        #: ``last_note_truncation``; read-and-clear, same rules.
+        self.last_evidence_clamp: dict | None = None
         # Result of the most recent acceptance-criteria/test-task
         # reconciliation performed by update().  None until a story update
         # actually changes acceptance_criteria.  Its "orphaned" bucket is the
@@ -541,6 +619,7 @@ class Store:
         outcome: str | Outcome,
         note: str,
         status: str | None = None,
+        evidence: Evidence | None = None,
     ) -> None:
         """Append a run-log entry for an item. Failures are silently swallowed."""
         import json as _json
@@ -554,10 +633,15 @@ class Store:
                 status=status,
                 note=note,
                 actor=self._resolve_actor(),
+                evidence=evidence,
             )
             log_path = logs_dir / f"{item_id}.jsonl"
             with open(log_path, "a") as f:
-                f.write(entry.model_dump_json() + "\n")
+                # exclude_none so entries without evidence do not each gain a
+                # permanent `"evidence": null`.  `status` is the only other
+                # nullable field and it also has a default, so both directions
+                # round-trip.
+                f.write(entry.model_dump_json(exclude_none=True) + "\n")
                 f.flush()
         except Exception:
             logger.debug("run log: failed to append for %s", item_id)
@@ -585,8 +669,19 @@ class Store:
         item_id: str,
         limit: int = 20,
         offset: int = 0,
+        has_evidence: bool | None = None,
     ) -> list[RunLogEntry]:
-        """Read run-log entries for an item, most recent first."""
+        """Read run-log entries for an item, most recent first.
+
+        ``has_evidence`` filters to entries that carry structured evidence
+        (``True``) or that do not (``False``); ``None`` returns everything.
+        The filter is applied *before* ``limit``/``offset``, so asking for 20
+        evidence-bearing entries returns up to 20 of them rather than
+        whatever survives a slice of the raw log.
+
+        Presence, never truthiness: ``Evidence()`` with four empty lists
+        explicitly says "nothing to show" and counts as evidence.
+        """
         import json as _json
 
         log_path = self.project_dir / "logs" / f"{item_id}.jsonl"
@@ -602,6 +697,8 @@ class Store:
             except Exception:
                 logger.debug("run log: skipping malformed line in %s", item_id)
         entries.reverse()
+        if has_evidence is not None:
+            entries = [e for e in entries if (e.evidence is not None) == has_evidence]
         return entries[offset : offset + limit]
 
     def create_story(
@@ -1947,7 +2044,8 @@ class Store:
         commit_parts = []
         for k, v in kwargs.items():
             if v is not None:
-                commit_parts.append(f"{k}={v}" if k != "body" else "body")
+                # body and evidence are big; name them rather than inline them
+                commit_parts.append(k if k in ("body", "evidence") else f"{k}={v}")
         if unassign:
             commit_parts.append("assignee=none")
         if cleared:
@@ -1956,6 +2054,7 @@ class Store:
         # Pop run-log fields — they don't go into frontmatter
         outcome = kwargs.pop("outcome", None)
         note = kwargs.pop("note", None)
+        evidence = kwargs.pop("evidence", None)
 
         # An oversized note is truncated, never rejected.  Raising here would
         # take the status/outcome write down with it — a caller that only
@@ -1977,6 +2076,16 @@ class Store:
                     item_id,
                     original_length,
                     dropped,
+                )
+        # An oversized evidence payload is clamped, never rejected — same
+        # reasoning as the note directly above.
+        self.last_evidence_clamp = None
+        if evidence is not None:
+            evidence, was_clamped, dropped = clamp_evidence(evidence)
+            self.last_evidence_clamp = {"clamped": was_clamped, "dropped": dropped}
+            if was_clamped:
+                logger.warning(
+                    "run log: clamped evidence for %s (dropped %s)", item_id, dropped
                 )
         if outcome is not None:
             Outcome(outcome)  # validate enum value
@@ -2088,8 +2197,10 @@ class Store:
         )
         self._emit_log(EventType.update, item_id, item_type, changes=changes)
 
-        # Append run-log entry if outcome or note provided
-        if outcome is not None or note is not None:
+        # Append run-log entry if outcome, note or evidence provided.  Evidence
+        # widens the condition so `update(id, evidence=...)` alone still lands
+        # an entry (`info`, empty note).
+        if outcome is not None or note is not None or evidence is not None:
             self._append_run_log(
                 item_id,
                 outcome=outcome or Outcome.info,
@@ -2097,6 +2208,7 @@ class Store:
                 status=str(meta.status.value)
                 if hasattr(meta.status, "value")
                 else str(meta.status),
+                evidence=evidence,
             )
 
         suffix = " ".join(commit_parts)

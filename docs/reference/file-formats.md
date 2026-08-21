@@ -434,4 +434,4 @@ Severity levels:
 - **WARNING** — likely needs action (undecomposed stories, stale items, orphaned references, malformed files)
 - **INFO** — suggestions (thin descriptions, point mismatches, stale drafts, stale documentation)
 
-The audit runs 17 checks covering stories, tasks, epics, documentation, hub docs, assignments, dependencies, and malformed files.
+The audit runs 18 checks covering stories, tasks, epics, documentation, hub docs, assignments, dependencies, malformed files, and completion evidence.

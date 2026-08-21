@@ -1,0 +1,154 @@
+- id: US-TST-1-1
+  story_id: US-TST-1
+  title: 'Test: Users can log in'
+  status: done
+  archived: false
+  points: null
+  assignee: alice
+  tags: []
+  depends_on: []
+  created: <DATE>
+  updated: <DATE>
+  body: 'Verify acceptance criterion for story US-TST-1:
+
+
+    > Users can log in'
+- id: US-TST-1-2
+  story_id: US-TST-1
+  title: 'Test: Errors are surfaced'
+  status: blocked
+  archived: false
+  points: null
+  assignee: null
+  tags: []
+  depends_on: []
+  created: <DATE>
+  updated: <DATE>
+  body: 'Verify acceptance criterion for story US-TST-1:
+
+
+    > Errors are surfaced'
+- id: US-TST-1-3
+  story_id: US-TST-1
+  title: Implement login
+  status: in-progress
+  archived: false
+  points: 2
+  assignee: bob
+  tags:
+  - auth
+  depends_on: []
+  created: <DATE>
+  updated: <DATE>
+  body: '## Implementation
+
+
+    Do the thing properly.
+
+
+    ## Testing
+
+
+    Test the thing properly.
+
+
+    ## Definition of Done
+
+
+    - [ ] Done'
+- id: US-TST-2-1
+  story_id: US-TST-2
+  title: 'Test: Data is persisted'
+  status: review
+  archived: false
+  points: null
+  assignee: null
+  tags: []
+  depends_on: []
+  created: <DATE>
+  updated: <DATE>
+  body: 'Verify acceptance criterion for story US-TST-2:
+
+
+    > Data is persisted'
+- id: US-TST-2-2
+  story_id: US-TST-2
+  title: Wire persistence
+  status: done
+  archived: false
+  points: 1
+  assignee: alice
+  tags: []
+  depends_on: []
+  created: <DATE>
+  updated: <DATE>
+  body: '## Implementation
+
+
+    Do the thing properly.
+
+
+    ## Testing
+
+
+    Test the thing properly.
+
+
+    ## Definition of Done
+
+
+    - [ ] Done'
+- id: US-TST-3-1
+  story_id: US-TST-3
+  title: Refactor module
+  status: todo
+  archived: false
+  points: 1
+  assignee: null
+  tags: []
+  depends_on: []
+  created: <DATE>
+  updated: <DATE>
+  body: '## Implementation
+
+
+    Do the thing properly.
+
+
+    ## Testing
+
+
+    Test the thing properly.
+
+
+    ## Definition of Done
+
+
+    - [ ] Done'
+- id: US-TST-3-2
+  story_id: US-TST-3
+  title: Grabbable task
+  status: todo
+  archived: false
+  points: 1
+  assignee: null
+  tags: []
+  depends_on: []
+  created: <DATE>
+  updated: <DATE>
+  body: '## Implementation
+
+
+    Do the thing properly.
+
+
+    ## Testing
+
+
+    Test the thing properly.
+
+
+    ## Definition of Done
+
+
+    - [ ] Done'

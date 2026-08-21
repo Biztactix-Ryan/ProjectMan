@@ -307,15 +307,28 @@ def test_pm_done_next_same_story_only_stops(tmp_project):
     assert "next_info" in result
 
 
-def test_pm_done_next_without_note_skips_run_log(tmp_project):
-    from projectman.server import pm_grab, pm_done_next
+def test_pm_done_next_without_note_logs_the_sentinel(tmp_project):
+    """Was `..._skips_run_log`; inverted deliberately by US-PM-8-7.
+
+    Skipping the entry *was* the behaviour, and it was the measured defect:
+    13% of `status=done` writes carried no run-log entry at all, because
+    pm_done_next forwarded its outcome only when a note happened to be given.
+    Per `docs/reference/verdict-verbs-contract.md` §3 the outcome is now
+    always forwarded and a fixed sentinel note stands in, so the omission
+    stays visible in the data instead of vanishing from it.  The response
+    grows one short `run_log:` line, which is the cost of that visibility.
+    """
+    from projectman.server import DONE_NEXT_NO_NOTE, pm_grab, pm_done_next
     from projectman.store import Store
     _story_with_tasks(2)
     pm_grab("US-TST-1-1")
     result = yaml.safe_load(pm_done_next("US-TST-1-1"))
-    assert "run_log" not in result["completed"]
+    assert result["completed"]["run_log"] == "success"
     store = Store(tmp_project)
-    assert store.get_run_log("US-TST-1-1") == []
+    entries = store.get_run_log("US-TST-1-1")
+    assert len(entries) == 1
+    assert entries[0].note == DONE_NEXT_NO_NOTE
+    assert entries[0].outcome.value == "success"
 
 
 # ─── serialization ───────────────────────────────────────────────
