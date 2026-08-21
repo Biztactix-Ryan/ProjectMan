@@ -130,7 +130,7 @@ entries:
 - id: US-PM-10
   title: Field projection on pm_get and pm_grab
   type: story
-  status: backlog
+  status: done
   points: 5
   story_id: null
   epic_id: EPIC-PM-2
@@ -154,7 +154,7 @@ entries:
 - id: US-PM-13
   title: Wire pm_context and pm_estimate into the workflows that need them
   type: story
-  status: active
+  status: done
   points: 2
   story_id: null
   epic_id: EPIC-PM-2
@@ -276,7 +276,7 @@ entries:
 - id: US-PM-8
   title: Verdict verbs for the orchestrator state machine
   type: story
-  status: ready
+  status: done
   points: 8
   story_id: null
   epic_id: EPIC-PM-2
@@ -284,7 +284,7 @@ entries:
 - id: US-PM-9
   title: Structured evidence on run-log entries
   type: story
-  status: active
+  status: done
   points: 5
   story_id: null
   epic_id: EPIC-PM-2
@@ -532,7 +532,7 @@ entries:
 - id: US-PRJ-37
   title: Eliminate deep copy overhead on cached reads
   type: story
-  status: active
+  status: backlog
   points: 5
   story_id: null
   epic_id: EPIC-PRJ-7
@@ -684,7 +684,7 @@ entries:
 - id: US-PRJ-54
   title: Create CHANGELOG.md with version history
   type: story
-  status: active
+  status: backlog
   points: 3
   story_id: null
   epic_id: EPIC-PRJ-10
@@ -853,8 +853,8 @@ entries:
 - id: US-PM-10-1
   title: 'Test: pm_get and pm_grab accept a fields parameter selecting returned keys'
   type: task
-  status: todo
-  points: null
+  status: done
+  points: 1
   story_id: US-PM-10
   epic_id: null
   tags: []
@@ -862,39 +862,39 @@ entries:
   title: 'Test: A status-only verification fetch costs a small fraction of the full
     payload'
   type: task
-  status: todo
-  points: null
+  status: done
+  points: 1
   story_id: US-PM-10
   epic_id: null
   tags: []
 - id: US-PM-10-3
   title: 'Test: pm_batch_get and pm_list_sprints support a brief or projected mode'
   type: task
-  status: todo
-  points: null
+  status: done
+  points: 1
   story_id: US-PM-10
   epic_id: null
   tags: []
 - id: US-PM-10-4
   title: 'Test: Default behaviour is unchanged when no projection is requested'
   type: task
-  status: todo
-  points: null
+  status: done
+  points: 1
   story_id: US-PM-10
   epic_id: null
   tags: []
 - id: US-PM-10-5
   title: 'Test: pm-orchestrate uses projection for its validation read'
   type: task
-  status: todo
-  points: null
+  status: done
+  points: 1
   story_id: US-PM-10
   epic_id: null
   tags: []
 - id: US-PM-10-6
   title: Add a fields parameter to pm_get and pm_grab
   type: task
-  status: todo
+  status: done
   points: 3
   story_id: US-PM-10
   epic_id: null
@@ -902,7 +902,7 @@ entries:
 - id: US-PM-10-7
   title: Add a brief mode to pm_batch_get and pm_list_sprints
   type: task
-  status: todo
+  status: done
   points: 2
   story_id: US-PM-10
   epic_id: null
@@ -910,8 +910,8 @@ entries:
 - id: US-PM-10-8
   title: Use projection for the orchestrator validation read
   type: task
-  status: todo
-  points: null
+  status: done
+  points: 1
   story_id: US-PM-10
   epic_id: null
   tags: []
@@ -1041,7 +1041,7 @@ entries:
 - id: US-PM-13-1
   title: 'Test: The worker prompt template includes project architecture context'
   type: task
-  status: todo
+  status: done
   points: 1
   story_id: US-PM-13
   epic_id: null
@@ -1050,7 +1050,7 @@ entries:
   title: 'Test: The scoping and estimation workflows consult pm_estimate before writing
     points'
   type: task
-  status: todo
+  status: done
   points: 1
   story_id: US-PM-13
   epic_id: null
@@ -1058,7 +1058,7 @@ entries:
 - id: US-PM-13-3
   title: 'Test: Skill files name the step at which each guidance tool is called'
   type: task
-  status: todo
+  status: done
   points: 1
   story_id: US-PM-13
   epic_id: null
@@ -1066,7 +1066,7 @@ entries:
 - id: US-PM-13-4
   title: 'Test: Usage of both tools is visible in the next telemetry baseline'
   type: task
-  status: todo
+  status: done
   points: 1
   story_id: US-PM-13
   epic_id: null
@@ -1074,7 +1074,7 @@ entries:
 - id: US-PM-13-5
   title: Add project context to the worker prompt template
   type: task
-  status: todo
+  status: done
   points: 1
   story_id: US-PM-13
   epic_id: null
@@ -1082,7 +1082,7 @@ entries:
 - id: US-PM-13-6
   title: Call pm_estimate before writing points in the scoping workflows
   type: task
-  status: todo
+  status: done
   points: 1
   story_id: US-PM-13
   epic_id: null
@@ -1988,7 +1988,7 @@ entries:
   title: 'Test: Each of the four verdicts has a verb that sets status and outcome
     structurally'
   type: task
-  status: todo
+  status: done
   points: 1
   story_id: US-PM-8
   epic_id: null
@@ -1996,7 +1996,7 @@ entries:
 - id: US-PM-8-2
   title: 'Test: Outcome cannot be omitted on a terminal verdict'
   type: task
-  status: todo
+  status: done
   points: 1
   story_id: US-PM-8
   epic_id: null
@@ -2004,7 +2004,7 @@ entries:
 - id: US-PM-8-3
   title: 'Test: pm-orchestrate SKILL.md uses the verdict verbs throughout'
   type: task
-  status: todo
+  status: done
   points: 1
   story_id: US-PM-8
   epic_id: null
@@ -2012,7 +2012,7 @@ entries:
 - id: US-PM-8-4
   title: 'Test: Existing pm_update status writes keep working for backwards compatibility'
   type: task
-  status: todo
+  status: done
   points: 1
   story_id: US-PM-8
   epic_id: null
@@ -2020,7 +2020,7 @@ entries:
 - id: US-PM-8-5
   title: 'Test: Measured share of completions lacking a run-log entry drops to zero'
   type: task
-  status: todo
+  status: done
   points: 1
   story_id: US-PM-8
   epic_id: null
@@ -2028,7 +2028,7 @@ entries:
 - id: US-PM-8-6
   title: Specify the four verdict verbs
   type: task
-  status: todo
+  status: done
   points: 2
   story_id: US-PM-8
   epic_id: null
@@ -2036,7 +2036,7 @@ entries:
 - id: US-PM-8-7
   title: Implement the verdict verbs
   type: task
-  status: todo
+  status: done
   points: 3
   story_id: US-PM-8
   epic_id: null
@@ -2044,7 +2044,7 @@ entries:
 - id: US-PM-8-8
   title: Keep generic pm_update working for compatibility
   type: task
-  status: todo
+  status: done
   points: 2
   story_id: US-PM-8
   epic_id: null
@@ -2052,7 +2052,7 @@ entries:
 - id: US-PM-8-9
   title: Rewrite pm-orchestrate to use the verdict verbs
   type: task
-  status: todo
+  status: done
   points: 2
   story_id: US-PM-8
   epic_id: null
@@ -2061,7 +2061,7 @@ entries:
   title: 'Test: Run-log entries accept structured evidence separate from the prose
     note'
   type: task
-  status: todo
+  status: done
   points: 1
   story_id: US-PM-9
   epic_id: null
@@ -2070,7 +2070,7 @@ entries:
   title: 'Test: Evidence records files changed and tests run with results and DoD
     items met'
   type: task
-  status: todo
+  status: done
   points: 1
   story_id: US-PM-9
   epic_id: null
@@ -2078,7 +2078,7 @@ entries:
 - id: US-PM-9-3
   title: 'Test: Completions carrying no evidence are detectable via query or audit'
   type: task
-  status: todo
+  status: done
   points: 1
   story_id: US-PM-9
   epic_id: null
@@ -2086,7 +2086,7 @@ entries:
 - id: US-PM-9-4
   title: 'Test: pm-orchestrate records evidence structurally rather than in the note'
   type: task
-  status: todo
+  status: done
   points: 1
   story_id: US-PM-9
   epic_id: null
@@ -2094,7 +2094,7 @@ entries:
 - id: US-PM-9-5
   title: 'Test: Median note length drops well below the cap'
   type: task
-  status: todo
+  status: done
   points: 1
   story_id: US-PM-9
   epic_id: null
@@ -2102,7 +2102,7 @@ entries:
 - id: US-PM-9-6
   title: Design the evidence schema
   type: task
-  status: todo
+  status: done
   points: 2
   story_id: US-PM-9
   epic_id: null
@@ -2110,7 +2110,7 @@ entries:
 - id: US-PM-9-7
   title: Store and return evidence on run-log entries
   type: task
-  status: todo
+  status: done
   points: 3
   story_id: US-PM-9
   epic_id: null
@@ -2118,7 +2118,7 @@ entries:
 - id: US-PM-9-8
   title: Detect completions with no evidence
   type: task
-  status: todo
+  status: done
   points: 2
   story_id: US-PM-9
   epic_id: null
@@ -2126,7 +2126,7 @@ entries:
 - id: US-PM-9-9
   title: Update pm-orchestrate to record evidence structurally
   type: task
-  status: todo
+  status: done
   points: 2
   story_id: US-PM-9
   epic_id: null
@@ -5153,8 +5153,8 @@ entries:
   story_id: US-PRJ-9
   epic_id: null
   tags: []
-total_points: 947
-completed_points: 646
+total_points: 953
+completed_points: 711
 story_count: 85
 task_count: 538
 epic_count: 15

@@ -11,13 +11,13 @@ epic_id: EPIC-PM-2
 id: US-PM-10
 points: 5
 priority: should
-status: backlog
+status: done
 tags:
 - context-cost
 - orchestrator
 - api-design
 title: Field projection on pm_get and pm_grab
-updated: '2026-07-29'
+updated: '2026-08-21'
 ---
 
 As an orchestrator verifying a worker's claim, I want to fetch one field cheaply, so that distrusting the worker does not cost thousands of tokens.

@@ -1,14 +1,14 @@
 ---
-assignee: null
+assignee: claude
 created: '2026-07-29'
 depends_on: []
 id: US-PM-8-6
 points: 2
-status: todo
+status: done
 story_id: US-PM-8
 tags: []
 title: Specify the four verdict verbs
-updated: '2026-07-29'
+updated: '2026-08-21'
 ---
 
 Map each of SKILL.md step 19's verdicts to a verb and fix its status and outcome:

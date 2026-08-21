@@ -3,10 +3,10 @@
 | ID | Title | Status | Priority | Points | Tags | Epic | ACs | Tasks |
 | -- | ----- | ------ | -------- | ------ | ---- | ---- | --- | ----- |
 | [US-PM-1](stories/US-PM-1.md) | Stop rejecting oversized run-log notes | ✅ done | must | 2 | reliability, quick-win | [EPIC-PM-1](epics/EPIC-PM-1.md) | 4 | 6 |
-| [US-PM-10](stories/US-PM-10.md) | Field projection on pm_get and pm_grab | 📋 backlog | should | 5 | context-cost, orchestrator, api-design | [EPIC-PM-2](epics/EPIC-PM-2.md) | 5 | 8 |
+| [US-PM-10](stories/US-PM-10.md) | Field projection on pm_get and pm_grab | ✅ done | should | 5 | context-cost, orchestrator, api-design | [EPIC-PM-2](epics/EPIC-PM-2.md) | 5 | 8 |
 | [US-PM-11](stories/US-PM-11.md) | Change detection for pm_audit | 📋 backlog | should | 3 | context-cost, orchestrator, audit | [EPIC-PM-2](epics/EPIC-PM-2.md) | 4 | 7 |
 | [US-PM-12](stories/US-PM-12.md) | Bulk write verbs for update and archive | 📋 backlog | should | 5 | workflow, api-design, safety | [EPIC-PM-2](epics/EPIC-PM-2.md) | 5 | 8 |
-| [US-PM-13](stories/US-PM-13.md) | Wire pm_context and pm_estimate into the workflows that need them | 🏃 active | should | 2 | orchestrator, skills, quality, docs | [EPIC-PM-2](epics/EPIC-PM-2.md) | 4 | 6 |
+| [US-PM-13](stories/US-PM-13.md) | Wire pm_context and pm_estimate into the workflows that need them | ✅ done | should | 2 | orchestrator, skills, quality, docs | [EPIC-PM-2](epics/EPIC-PM-2.md) | 4 | 6 |
 | [US-PM-14](stories/US-PM-14.md) | Activity-backed resume and recovery for orchestrator runs | 📋 backlog | could | 5 | orchestrator, recovery, activity-log | [EPIC-PM-2](epics/EPIC-PM-2.md) | 4 | 8 |
 | [US-PM-15](stories/US-PM-15.md) | Gate the unused tool families behind config flags | 📋 backlog | could | 3 | context-cost, config, api-surface | [EPIC-PM-2](epics/EPIC-PM-2.md) | 4 | 7 |
 | [US-PM-16](stories/US-PM-16.md) | Archiving a task should not mark it done | ✅ done | must | 3 | reliability, metrics, found-in-planning | [EPIC-PM-1](epics/EPIC-PM-1.md) | 4 | 7 |
@@ -21,8 +21,8 @@
 | [US-PM-5](stories/US-PM-5.md) | Reconcile test tasks when acceptance criteria change | ✅ done | should | 5 | reliability, audit, found-in-planning | [EPIC-PM-1](epics/EPIC-PM-1.md) | 4 | 10 |
 | [US-PM-6](stories/US-PM-6.md) | Repeatable usage-telemetry analysis script | ✅ done | should | 3 | observability, measurement, tooling | [EPIC-PM-1](epics/EPIC-PM-1.md) | 5 | 9 |
 | [US-PM-7](stories/US-PM-7.md) | Atomic task claim and release primitive | ✅ done | must | 8 | workflow, orchestrator, concurrency, blocker | [EPIC-PM-2](epics/EPIC-PM-2.md) | 5 | 9 |
-| [US-PM-8](stories/US-PM-8.md) | Verdict verbs for the orchestrator state machine | 🟢 ready | must | 8 | workflow, orchestrator, api-design | [EPIC-PM-2](epics/EPIC-PM-2.md) | 5 | 9 |
-| [US-PM-9](stories/US-PM-9.md) | Structured evidence on run-log entries | 🏃 active | should | 5 | workflow, orchestrator, run-log | [EPIC-PM-2](epics/EPIC-PM-2.md) | 5 | 9 |
+| [US-PM-8](stories/US-PM-8.md) | Verdict verbs for the orchestrator state machine | ✅ done | must | 8 | workflow, orchestrator, api-design | [EPIC-PM-2](epics/EPIC-PM-2.md) | 5 | 9 |
+| [US-PM-9](stories/US-PM-9.md) | Structured evidence on run-log entries | ✅ done | should | 5 | workflow, orchestrator, run-log | [EPIC-PM-2](epics/EPIC-PM-2.md) | 5 | 9 |
 | [US-PRJ-1](stories/US-PRJ-1.md) | Audit & document current hub git workflow pain points | ✅ done | must | 3 |  | [EPIC-PRJ-1](epics/EPIC-PRJ-1.md) | 3 | 7 |
 | [US-PRJ-10](stories/US-PRJ-10.md) | Add cross-repo changesets for grouped multi-project changes | ✅ done | should | 13 |  | [EPIC-PRJ-1](epics/EPIC-PRJ-1.md) | 5 | 11 |
 | [US-PRJ-11](stories/US-PRJ-11.md) | Handle hub submodule ref conflicts between developers | ✅ done | must | 8 |  | [EPIC-PRJ-1](epics/EPIC-PRJ-1.md) | 5 | 10 |
@@ -53,7 +53,7 @@
 | [US-PRJ-34](stories/US-PRJ-34.md) | Parallelize hub rollup | 📋 backlog | should | 3 | tier-2, performance, hub | [EPIC-PRJ-6](epics/EPIC-PRJ-6.md) | 4 | 6 |
 | [US-PRJ-35](stories/US-PRJ-35.md) | Add vector index for embedding search | 📋 backlog | could | 5 | tier-2, performance, search | [EPIC-PRJ-6](epics/EPIC-PRJ-6.md) | 4 | 7 |
 | [US-PRJ-36](stories/US-PRJ-36.md) | Cache and documentation polish | 📋 backlog | could | 3 | tier-3, caching, polish | [EPIC-PRJ-6](epics/EPIC-PRJ-6.md) | 4 | 8 |
-| [US-PRJ-37](stories/US-PRJ-37.md) | Eliminate deep copy overhead on cached reads | 🏃 active | must | 5 | performance, caching | [EPIC-PRJ-7](epics/EPIC-PRJ-7.md) | 4 | 6 |
+| [US-PRJ-37](stories/US-PRJ-37.md) | Eliminate deep copy overhead on cached reads | 📋 backlog | must | 5 | performance, caching | [EPIC-PRJ-7](epics/EPIC-PRJ-7.md) | 4 | 6 |
 | [US-PRJ-38](stories/US-PRJ-38.md) | Replace brute-force embedding search with vectorized operations | 📋 backlog | must | 5 | performance, search | [EPIC-PRJ-7](epics/EPIC-PRJ-7.md) | 4 | 4 |
 | [US-PRJ-39](stories/US-PRJ-39.md) | Add secondary index for O(1) cache lookups by ID | 📋 backlog | should | 3 | performance, caching | [EPIC-PRJ-7](epics/EPIC-PRJ-7.md) | 3 | 3 |
 | [US-PRJ-4](stories/US-PRJ-4.md) | Add coordinated multi-project push command | ✅ done | must | 8 |  | [EPIC-PRJ-1](epics/EPIC-PRJ-1.md) | 5 | 10 |
@@ -72,7 +72,7 @@
 | [US-PRJ-51](stories/US-PRJ-51.md) | Fix ChangesetEntry status type inconsistency | 📋 backlog | should | 2 | quality, models | [EPIC-PRJ-9](epics/EPIC-PRJ-9.md) | 3 | 3 |
 | [US-PRJ-52](stories/US-PRJ-52.md) | Improve activity log event coverage and change tracking | 📋 backlog | could | 5 | quality, logging | [EPIC-PRJ-9](epics/EPIC-PRJ-9.md) | 4 | 4 |
 | [US-PRJ-53](stories/US-PRJ-53.md) | Fix installation.md wrong package reference | ✅ done | must | 1 | docs | [EPIC-PRJ-10](epics/EPIC-PRJ-10.md) | 2 | 2 |
-| [US-PRJ-54](stories/US-PRJ-54.md) | Create CHANGELOG.md with version history | 🏃 active | should | 3 | docs | [EPIC-PRJ-10](epics/EPIC-PRJ-10.md) | 3 | 5 |
+| [US-PRJ-54](stories/US-PRJ-54.md) | Create CHANGELOG.md with version history | 📋 backlog | should | 3 | docs | [EPIC-PRJ-10](epics/EPIC-PRJ-10.md) | 3 | 5 |
 | [US-PRJ-55](stories/US-PRJ-55.md) | Add hub-mode troubleshooting guide | 📋 backlog | could | 3 | docs, hub | [EPIC-PRJ-10](epics/EPIC-PRJ-10.md) | 4 | 4 |
 | [US-PRJ-56](stories/US-PRJ-56.md) | Clarify skill routing and CLI vs MCP in docs | 📋 backlog | could | 2 | docs, skills | [EPIC-PRJ-10](epics/EPIC-PRJ-10.md) | 3 | 3 |
 | [US-PRJ-57](stories/US-PRJ-57.md) | Fix pm skill references to non-existent tools | 📋 backlog | must | 2 | skills, mcp | [EPIC-PRJ-11](epics/EPIC-PRJ-11.md) | 3 | 3 |

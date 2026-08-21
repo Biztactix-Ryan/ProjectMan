@@ -1,14 +1,14 @@
 ---
-assignee: null
+assignee: claude
 created: '2026-07-29'
 depends_on: []
 id: US-PM-13-5
 points: 1
-status: todo
+status: done
 story_id: US-PM-13
 tags: []
 title: Add project context to the worker prompt template
-updated: '2026-07-29'
+updated: '2026-08-21'
 ---
 
 pm-orchestrate's Worker Prompt Template currently inlines only story context and the DoD checklist. Workers implement code having never seen the project's architecture or security docs.

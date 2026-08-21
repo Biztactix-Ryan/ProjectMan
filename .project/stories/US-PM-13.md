@@ -10,14 +10,14 @@ epic_id: EPIC-PM-2
 id: US-PM-13
 points: 2
 priority: should
-status: active
+status: done
 tags:
 - orchestrator
 - skills
 - quality
 - docs
 title: Wire pm_context and pm_estimate into the workflows that need them
-updated: '2026-07-30'
+updated: '2026-08-21'
 ---
 
 As a worker agent, I want the project's architecture and estimation guidance available at the moment I need it, so that I am not implementing or sizing blind.

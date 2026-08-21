@@ -8,14 +8,14 @@
 | [US-PM-1-4](tasks/US-PM-1-4.md) | Test: oversized note truncates and the status write still lands | ✅ done | 1 |  | claude | US-PM-1-2 | [US-PM-1](stories/US-PM-1.md) |
 | [US-PM-1-5](tasks/US-PM-1-5.md) | Test: note_truncated flag and boundary lengths | ✅ done | 1 |  | claude | US-PM-1-3 | [US-PM-1](stories/US-PM-1.md) |
 | [US-PM-1-6](tasks/US-PM-1-6.md) | Clear the stale port-forward markers left by the 0.8.15 rebase | ✅ done | 1 |  | claude | — | [US-PM-1](stories/US-PM-1.md) |
-| [US-PM-10-1](tasks/US-PM-10-1.md) | Test: pm_get and pm_grab accept a fields parameter selecting returned keys | ⚪ todo | — |  | — | — | [US-PM-10](stories/US-PM-10.md) |
-| [US-PM-10-2](tasks/US-PM-10-2.md) | Test: A status-only verification fetch costs a small fraction of the full payload | ⚪ todo | — |  | — | — | [US-PM-10](stories/US-PM-10.md) |
-| [US-PM-10-3](tasks/US-PM-10-3.md) | Test: pm_batch_get and pm_list_sprints support a brief or projected mode | ⚪ todo | — |  | — | — | [US-PM-10](stories/US-PM-10.md) |
-| [US-PM-10-4](tasks/US-PM-10-4.md) | Test: Default behaviour is unchanged when no projection is requested | ⚪ todo | — |  | — | — | [US-PM-10](stories/US-PM-10.md) |
-| [US-PM-10-5](tasks/US-PM-10-5.md) | Test: pm-orchestrate uses projection for its validation read | ⚪ todo | — |  | — | — | [US-PM-10](stories/US-PM-10.md) |
-| [US-PM-10-6](tasks/US-PM-10-6.md) | Add a fields parameter to pm_get and pm_grab | ⚪ todo | 3 |  | — | — | [US-PM-10](stories/US-PM-10.md) |
-| [US-PM-10-7](tasks/US-PM-10-7.md) | Add a brief mode to pm_batch_get and pm_list_sprints | ⚪ todo | 2 |  | — | — | [US-PM-10](stories/US-PM-10.md) |
-| [US-PM-10-8](tasks/US-PM-10-8.md) | Use projection for the orchestrator validation read | ⚪ todo | — |  | — | US-PM-10-6 | [US-PM-10](stories/US-PM-10.md) |
+| [US-PM-10-1](tasks/US-PM-10-1.md) | Test: pm_get and pm_grab accept a fields parameter selecting returned keys | ✅ done | 1 |  | claude | US-PM-10-6 | [US-PM-10](stories/US-PM-10.md) |
+| [US-PM-10-2](tasks/US-PM-10-2.md) | Test: A status-only verification fetch costs a small fraction of the full payload | ✅ done | 1 |  | claude | US-PM-10-6 | [US-PM-10](stories/US-PM-10.md) |
+| [US-PM-10-3](tasks/US-PM-10-3.md) | Test: pm_batch_get and pm_list_sprints support a brief or projected mode | ✅ done | 1 |  | claude | US-PM-10-7 | [US-PM-10](stories/US-PM-10.md) |
+| [US-PM-10-4](tasks/US-PM-10-4.md) | Test: Default behaviour is unchanged when no projection is requested | ✅ done | 1 |  | claude | US-PM-10-6, US-PM-10-7 | [US-PM-10](stories/US-PM-10.md) |
+| [US-PM-10-5](tasks/US-PM-10-5.md) | Test: pm-orchestrate uses projection for its validation read | ✅ done | 1 |  | claude | US-PM-10-8 | [US-PM-10](stories/US-PM-10.md) |
+| [US-PM-10-6](tasks/US-PM-10-6.md) | Add a fields parameter to pm_get and pm_grab | ✅ done | 3 |  | claude | — | [US-PM-10](stories/US-PM-10.md) |
+| [US-PM-10-7](tasks/US-PM-10-7.md) | Add a brief mode to pm_batch_get and pm_list_sprints | ✅ done | 2 |  | claude | — | [US-PM-10](stories/US-PM-10.md) |
+| [US-PM-10-8](tasks/US-PM-10-8.md) | Use projection for the orchestrator validation read | ✅ done | 1 |  | claude | US-PM-10-6 | [US-PM-10](stories/US-PM-10.md) |
 | [US-PM-11-1](tasks/US-PM-11-1.md) | Test: pm_audit returns a digest identifying the current project state | ⚪ todo | — |  | — | — | [US-PM-11](stories/US-PM-11.md) |
 | [US-PM-11-2](tasks/US-PM-11-2.md) | Test: pm_audit accepts a since parameter and answers cheaply when nothing changed | ⚪ todo | — |  | — | — | [US-PM-11](stories/US-PM-11.md) |
 | [US-PM-11-3](tasks/US-PM-11-3.md) | Test: The health check still detects new ERROR-level findings promptly | ⚪ todo | — |  | — | — | [US-PM-11](stories/US-PM-11.md) |
@@ -31,12 +31,12 @@
 | [US-PM-12-6](tasks/US-PM-12-6.md) | Add pm_update_many | ⚪ todo | 3 |  | — | — | [US-PM-12](stories/US-PM-12.md) |
 | [US-PM-12-7](tasks/US-PM-12-7.md) | Add bulk archive with an explicit ID list | ⚪ todo | 2 |  | — | — | [US-PM-12](stories/US-PM-12.md) |
 | [US-PM-12-8](tasks/US-PM-12-8.md) | Define partial-failure semantics | ⚪ todo | — |  | — | US-PM-12-6, US-PM-12-7 | [US-PM-12](stories/US-PM-12.md) |
-| [US-PM-13-1](tasks/US-PM-13-1.md) | Test: The worker prompt template includes project architecture context | ⚪ todo | 1 |  | — | US-PM-13-5 | [US-PM-13](stories/US-PM-13.md) |
-| [US-PM-13-2](tasks/US-PM-13-2.md) | Test: The scoping and estimation workflows consult pm_estimate before writing points | ⚪ todo | 1 |  | — | US-PM-13-6 | [US-PM-13](stories/US-PM-13.md) |
-| [US-PM-13-3](tasks/US-PM-13-3.md) | Test: Skill files name the step at which each guidance tool is called | ⚪ todo | 1 |  | — | US-PM-13-5, US-PM-13-6 | [US-PM-13](stories/US-PM-13.md) |
-| [US-PM-13-4](tasks/US-PM-13-4.md) | Test: Usage of both tools is visible in the next telemetry baseline | ⚪ todo | 1 |  | — | US-PM-13-5, US-PM-13-6 | [US-PM-13](stories/US-PM-13.md) |
-| [US-PM-13-5](tasks/US-PM-13-5.md) | Add project context to the worker prompt template | ⚪ todo | 1 |  | — | — | [US-PM-13](stories/US-PM-13.md) |
-| [US-PM-13-6](tasks/US-PM-13-6.md) | Call pm_estimate before writing points in the scoping workflows | ⚪ todo | 1 |  | — | — | [US-PM-13](stories/US-PM-13.md) |
+| [US-PM-13-1](tasks/US-PM-13-1.md) | Test: The worker prompt template includes project architecture context | ✅ done | 1 |  | claude | US-PM-13-5 | [US-PM-13](stories/US-PM-13.md) |
+| [US-PM-13-2](tasks/US-PM-13-2.md) | Test: The scoping and estimation workflows consult pm_estimate before writing points | ✅ done | 1 |  | claude | US-PM-13-6 | [US-PM-13](stories/US-PM-13.md) |
+| [US-PM-13-3](tasks/US-PM-13-3.md) | Test: Skill files name the step at which each guidance tool is called | ✅ done | 1 |  | claude | US-PM-13-5, US-PM-13-6 | [US-PM-13](stories/US-PM-13.md) |
+| [US-PM-13-4](tasks/US-PM-13-4.md) | Test: Usage of both tools is visible in the next telemetry baseline | ✅ done | 1 |  | claude | US-PM-13-5, US-PM-13-6 | [US-PM-13](stories/US-PM-13.md) |
+| [US-PM-13-5](tasks/US-PM-13-5.md) | Add project context to the worker prompt template | ✅ done | 1 |  | claude | — | [US-PM-13](stories/US-PM-13.md) |
+| [US-PM-13-6](tasks/US-PM-13-6.md) | Call pm_estimate before writing points in the scoping workflows | ✅ done | 1 |  | claude | — | [US-PM-13](stories/US-PM-13.md) |
 | [US-PM-14-1](tasks/US-PM-14-1.md) | Test: An interrupted run can identify which claims it owned | ⚪ todo | — |  | — | — | [US-PM-14](stories/US-PM-14.md) |
 | [US-PM-14-2](tasks/US-PM-14-2.md) | Test: Stale claims are identifiable without asking a human | ⚪ todo | — |  | — | — | [US-PM-14](stories/US-PM-14.md) |
 | [US-PM-14-3](tasks/US-PM-14-3.md) | Test: The final report is built from the activity log rather than from memory | ⚪ todo | — |  | — | — | [US-PM-14](stories/US-PM-14.md) |
@@ -146,24 +146,24 @@
 | [US-PM-7-7](tasks/US-PM-7-7.md) | Implement compare-and-swap claiming in the store | ✅ done | 3 |  | claude | US-PM-7-6 | [US-PM-7](stories/US-PM-7.md) |
 | [US-PM-7-8](tasks/US-PM-7-8.md) | Implement release and the field-clear affordances | ✅ done | 3 |  | claude | US-PM-7-6 | [US-PM-7](stories/US-PM-7.md) |
 | [US-PM-7-9](tasks/US-PM-7-9.md) | Rewrite the SKILL.md release instructions | ✅ done | 1 |  | claude | US-PM-7-8 | [US-PM-7](stories/US-PM-7.md) |
-| [US-PM-8-1](tasks/US-PM-8-1.md) | Test: Each of the four verdicts has a verb that sets status and outcome structurally | ⚪ todo | 1 |  | — | US-PM-8-7 | [US-PM-8](stories/US-PM-8.md) |
-| [US-PM-8-2](tasks/US-PM-8-2.md) | Test: Outcome cannot be omitted on a terminal verdict | ⚪ todo | 1 |  | — | US-PM-8-7 | [US-PM-8](stories/US-PM-8.md) |
-| [US-PM-8-3](tasks/US-PM-8-3.md) | Test: pm-orchestrate SKILL.md uses the verdict verbs throughout | ⚪ todo | 1 |  | — | US-PM-8-9 | [US-PM-8](stories/US-PM-8.md) |
-| [US-PM-8-4](tasks/US-PM-8-4.md) | Test: Existing pm_update status writes keep working for backwards compatibility | ⚪ todo | 1 |  | — | US-PM-8-8 | [US-PM-8](stories/US-PM-8.md) |
-| [US-PM-8-5](tasks/US-PM-8-5.md) | Test: Measured share of completions lacking a run-log entry drops to zero | ⚪ todo | 1 |  | — | US-PM-8-9 | [US-PM-8](stories/US-PM-8.md) |
-| [US-PM-8-6](tasks/US-PM-8-6.md) | Specify the four verdict verbs | ⚪ todo | 2 |  | — | — | [US-PM-8](stories/US-PM-8.md) |
-| [US-PM-8-7](tasks/US-PM-8-7.md) | Implement the verdict verbs | ⚪ todo | 3 |  | — | US-PM-8-6, US-PM-7-7 | [US-PM-8](stories/US-PM-8.md) |
-| [US-PM-8-8](tasks/US-PM-8-8.md) | Keep generic pm_update working for compatibility | ⚪ todo | 2 |  | — | — | [US-PM-8](stories/US-PM-8.md) |
-| [US-PM-8-9](tasks/US-PM-8-9.md) | Rewrite pm-orchestrate to use the verdict verbs | ⚪ todo | 2 |  | — | US-PM-8-7 | [US-PM-8](stories/US-PM-8.md) |
-| [US-PM-9-1](tasks/US-PM-9-1.md) | Test: Run-log entries accept structured evidence separate from the prose note | ⚪ todo | 1 |  | — | US-PM-9-7 | [US-PM-9](stories/US-PM-9.md) |
-| [US-PM-9-2](tasks/US-PM-9-2.md) | Test: Evidence records files changed and tests run with results and DoD items met | ⚪ todo | 1 |  | — | US-PM-9-7 | [US-PM-9](stories/US-PM-9.md) |
-| [US-PM-9-3](tasks/US-PM-9-3.md) | Test: Completions carrying no evidence are detectable via query or audit | ⚪ todo | 1 |  | — | US-PM-9-8 | [US-PM-9](stories/US-PM-9.md) |
-| [US-PM-9-4](tasks/US-PM-9-4.md) | Test: pm-orchestrate records evidence structurally rather than in the note | ⚪ todo | 1 |  | — | US-PM-9-9 | [US-PM-9](stories/US-PM-9.md) |
-| [US-PM-9-5](tasks/US-PM-9-5.md) | Test: Median note length drops well below the cap | ⚪ todo | 1 |  | — | US-PM-9-9 | [US-PM-9](stories/US-PM-9.md) |
-| [US-PM-9-6](tasks/US-PM-9-6.md) | Design the evidence schema | ⚪ todo | 2 |  | — | — | [US-PM-9](stories/US-PM-9.md) |
-| [US-PM-9-7](tasks/US-PM-9-7.md) | Store and return evidence on run-log entries | ⚪ todo | 3 |  | — | US-PM-9-6 | [US-PM-9](stories/US-PM-9.md) |
-| [US-PM-9-8](tasks/US-PM-9-8.md) | Detect completions with no evidence | ⚪ todo | 2 |  | — | US-PM-9-7 | [US-PM-9](stories/US-PM-9.md) |
-| [US-PM-9-9](tasks/US-PM-9-9.md) | Update pm-orchestrate to record evidence structurally | ⚪ todo | 2 |  | — | US-PM-8-9 | [US-PM-9](stories/US-PM-9.md) |
+| [US-PM-8-1](tasks/US-PM-8-1.md) | Test: Each of the four verdicts has a verb that sets status and outcome structurally | ✅ done | 1 |  | claude | US-PM-8-7 | [US-PM-8](stories/US-PM-8.md) |
+| [US-PM-8-2](tasks/US-PM-8-2.md) | Test: Outcome cannot be omitted on a terminal verdict | ✅ done | 1 |  | claude | US-PM-8-7 | [US-PM-8](stories/US-PM-8.md) |
+| [US-PM-8-3](tasks/US-PM-8-3.md) | Test: pm-orchestrate SKILL.md uses the verdict verbs throughout | ✅ done | 1 |  | claude | US-PM-8-9 | [US-PM-8](stories/US-PM-8.md) |
+| [US-PM-8-4](tasks/US-PM-8-4.md) | Test: Existing pm_update status writes keep working for backwards compatibility | ✅ done | 1 |  | claude | US-PM-8-8 | [US-PM-8](stories/US-PM-8.md) |
+| [US-PM-8-5](tasks/US-PM-8-5.md) | Test: Measured share of completions lacking a run-log entry drops to zero | ✅ done | 1 |  | claude | US-PM-8-9 | [US-PM-8](stories/US-PM-8.md) |
+| [US-PM-8-6](tasks/US-PM-8-6.md) | Specify the four verdict verbs | ✅ done | 2 |  | claude | — | [US-PM-8](stories/US-PM-8.md) |
+| [US-PM-8-7](tasks/US-PM-8-7.md) | Implement the verdict verbs | ✅ done | 3 |  | claude | US-PM-8-6, US-PM-7-7 | [US-PM-8](stories/US-PM-8.md) |
+| [US-PM-8-8](tasks/US-PM-8-8.md) | Keep generic pm_update working for compatibility | ✅ done | 2 |  | claude | — | [US-PM-8](stories/US-PM-8.md) |
+| [US-PM-8-9](tasks/US-PM-8-9.md) | Rewrite pm-orchestrate to use the verdict verbs | ✅ done | 2 |  | claude | US-PM-8-7 | [US-PM-8](stories/US-PM-8.md) |
+| [US-PM-9-1](tasks/US-PM-9-1.md) | Test: Run-log entries accept structured evidence separate from the prose note | ✅ done | 1 |  | claude | US-PM-9-7 | [US-PM-9](stories/US-PM-9.md) |
+| [US-PM-9-2](tasks/US-PM-9-2.md) | Test: Evidence records files changed and tests run with results and DoD items met | ✅ done | 1 |  | claude | US-PM-9-7 | [US-PM-9](stories/US-PM-9.md) |
+| [US-PM-9-3](tasks/US-PM-9-3.md) | Test: Completions carrying no evidence are detectable via query or audit | ✅ done | 1 |  | claude | US-PM-9-8 | [US-PM-9](stories/US-PM-9.md) |
+| [US-PM-9-4](tasks/US-PM-9-4.md) | Test: pm-orchestrate records evidence structurally rather than in the note | ✅ done | 1 |  | claude | US-PM-9-9 | [US-PM-9](stories/US-PM-9.md) |
+| [US-PM-9-5](tasks/US-PM-9-5.md) | Test: Median note length drops well below the cap | ✅ done | 1 |  | claude | US-PM-9-9 | [US-PM-9](stories/US-PM-9.md) |
+| [US-PM-9-6](tasks/US-PM-9-6.md) | Design the evidence schema | ✅ done | 2 |  | claude | — | [US-PM-9](stories/US-PM-9.md) |
+| [US-PM-9-7](tasks/US-PM-9-7.md) | Store and return evidence on run-log entries | ✅ done | 3 |  | claude | US-PM-9-6 | [US-PM-9](stories/US-PM-9.md) |
+| [US-PM-9-8](tasks/US-PM-9-8.md) | Detect completions with no evidence | ✅ done | 2 |  | claude | US-PM-9-7 | [US-PM-9](stories/US-PM-9.md) |
+| [US-PM-9-9](tasks/US-PM-9-9.md) | Update pm-orchestrate to record evidence structurally | ✅ done | 2 |  | claude | US-PM-8-9 | [US-PM-9](stories/US-PM-9.md) |
 | [US-PRJ-1-1](tasks/US-PRJ-1-1.md) | Test: Pain points documented with concrete scenarios | ✅ done | — |  | claude | — | [US-PRJ-1](stories/US-PRJ-1.md) |
 | [US-PRJ-1-2](tasks/US-PRJ-1-2.md) | Test: Current workflow steps listed end-to-end | ✅ done | — |  | claude | — | [US-PRJ-1](stories/US-PRJ-1.md) |
 | [US-PRJ-1-3](tasks/US-PRJ-1-3.md) | Test: Failure modes catalogued with severity | ✅ done | — |  | claude | — | [US-PRJ-1](stories/US-PRJ-1.md) |

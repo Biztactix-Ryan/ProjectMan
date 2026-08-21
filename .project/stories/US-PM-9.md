@@ -12,13 +12,13 @@ epic_id: EPIC-PM-2
 id: US-PM-9
 points: 5
 priority: should
-status: active
+status: done
 tags:
 - workflow
 - orchestrator
 - run-log
 title: Structured evidence on run-log entries
-updated: '2026-07-30'
+updated: '2026-08-21'
 ---
 
 As an orchestrator validating a worker, I want to record evidence as structured fields, so that verification is queryable and notes stop hitting a prose cap.

@@ -12,13 +12,13 @@ epic_id: EPIC-PM-2
 id: US-PM-8
 points: 8
 priority: must
-status: ready
+status: done
 tags:
 - workflow
 - orchestrator
 - api-design
 title: Verdict verbs for the orchestrator state machine
-updated: '2026-07-30'
+updated: '2026-08-21'
 ---
 
 As an orchestrator, I want each of my four verdicts to have its own verb, so that status and outcome cannot be spelled wrong or forgotten.
