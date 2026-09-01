@@ -32,19 +32,134 @@ def cli():
     pass
 
 
+def _attachable_root(start: Path, branch: str = "projectman"):
+    """The repo root when `start` is a clone whose PM store wants attaching.
+
+    Returns None — meaning "scaffold as usual" — unless all of:
+
+    * `start` is inside a git repo;
+    * that repo knows `origin/<branch>` or a local `<branch>` branch (local ref
+      storage only: this never fetches, exactly like `projectman attach`);
+    * the repo root's `<root>/.project` is absent, an empty directory, or
+      already a git worktree (the friendly no-op case).
+
+    A `.project/` that is a plain directory with content — or a file — is left
+    to the scaffolding path's "already exists" refusal, so an unmigrated store
+    is never mounted over.
+    """
+    from projectman.worktree import (
+        MigrationError,
+        branch_exists,
+        is_worktree,
+        remote_branch_exists,
+        repo_root,
+    )
+
+    try:
+        root = repo_root(start)
+    except MigrationError:
+        return None
+    if not (remote_branch_exists(root, branch) or branch_exists(root, branch)):
+        return None
+
+    target = root / ".project"
+    if is_worktree(target):
+        return root
+    if not target.exists():
+        return root
+    if target.is_dir() and not any(target.iterdir()):
+        return root
+    return None
+
+
+def _init_attach(root: Path, name, prefix, description, hub, branch: str = "projectman") -> None:
+    """Run the attach flow from `init`, reporting why and what was ignored.
+
+    Exits 1 with the attach refusal on stderr when the mount cannot be made;
+    scaffolding is never attempted as a fallback, because a `projectman`
+    branch means the store exists and a second one would be wrong.
+    """
+    from projectman.worktree import (
+        MigrationError,
+        attach_worktree,
+        format_attach_result,
+        remote_branch_exists,
+    )
+
+    found = (
+        f"origin/{branch}"
+        if remote_branch_exists(root, branch)
+        else f"local branch '{branch}'"
+    )
+    click.echo(
+        f"Found {found} — attaching the existing PM store instead of "
+        "scaffolding a new one."
+    )
+
+    ignored = [
+        flag
+        for flag, passed in (
+            ("--name", name is not None),
+            ("--prefix", prefix != "PRJ"),
+            ("--description", bool(description)),
+            ("--hub", hub),
+        )
+        if passed
+    ]
+    for flag in ignored:
+        click.echo(f"{flag} ignored: attaching existing store", err=True)
+
+    try:
+        result = attach_worktree(root, branch=branch)
+    except MigrationError as e:
+        click.echo(f"Error: {e}", err=True)
+        raise SystemExit(1)
+
+    click.echo(format_attach_result(result))
+
+
 @cli.command()
-@click.option("--name", prompt="Project name", help="Name for the project")
+@click.option("--name", default=None, help="Name for the project (prompted when a store is scaffolded)")
 @click.option("--prefix", default="PRJ", help="ID prefix (uppercase letters)")
 @click.option("--description", default="", help="Project description")
 @click.option("--hub", is_flag=True, help="Initialize as hub (multi-repo)")
-def init(name, prefix, description, hub):
-    """Initialize a new .project/ directory."""
+@click.option("--no-attach", "no_attach", is_flag=True, help="Scaffold a fresh store even when a projectman branch exists")
+def init(name, prefix, description, hub, no_attach):
+    """Initialize a new .project/ directory — or attach an existing store.
+
+    On a fresh clone of a repo whose PM state lives on the `projectman` branch
+    (see `projectman migrate-worktree`), there is nothing to scaffold: the
+    store already exists, it just is not mounted. So init first looks for a
+    `projectman` branch — `origin/projectman` or a local one, read from local
+    ref storage only, never fetched — and when it finds one it runs the
+    `projectman attach` flow instead, mounting `.project/` as a worktree of
+    that branch. No new files are written and .gitignore is left alone.
+
+    `.project/` already being a worktree of the branch is a friendly no-op
+    (exit 0) rather than the "already exists" error, so re-running init on a
+    clone is safe. A `.project/` that is a plain directory with content still
+    gets the "already exists" refusal (exit 1, nothing touched).
+
+    Without such a branch — including outside a git repo — the scaffolding is
+    exactly as it always was. `--no-attach` forces that path even when the
+    branch exists. In the attach case --prefix/--description/--hub/--name
+    describe a store that is not being created, so they are ignored with a
+    warning.
+    """
     root = Path.cwd()
     proj = root / ".project"
+
+    attach_root = None if no_attach else _attachable_root(root)
+    if attach_root is not None:
+        _init_attach(attach_root, name, prefix, description, hub)
+        return
 
     if proj.exists():
         click.echo("Error: .project/ already exists", err=True)
         raise SystemExit(1)
+
+    if name is None:
+        name = click.prompt("Project name")
 
     # Create directory structure
     proj.mkdir()
@@ -504,6 +619,108 @@ def migrate_archived(apply_changes, project):
 
     report = migrate_archived_as_done(store, apply=apply_changes)
     click.echo(format_report(report))
+
+
+@cli.command("migrate-worktree")
+@click.option("--branch", default="projectman", help="Orphan branch to create and mount (default: projectman)")
+@click.option("--no-push", "no_push", is_flag=True, help="Migrate locally only; never push, even when an origin remote exists")
+def migrate_worktree(branch, no_push):
+    """Move .project/ onto an orphan branch mounted as a worktree.
+
+    One-time migration. It creates an empty orphan `projectman` branch (root
+    commit "ProjectMan root"), untracks .project on the current branch, adds a
+    `.project/` entry to .gitignore, commits that, then mounts the branch at
+    .project with `git worktree add` and commits the PM files there.
+
+    The PM files are stashed to a temp directory for the swap and are only
+    deleted once the worktree commit has succeeded; any failure puts them back.
+
+    It refuses (exit 1, nothing changed) when the branch already exists locally
+    or as origin/<branch> — use `projectman attach` for that — when .project/ is
+    already a worktree or missing, or when the working tree is dirty. Dirty
+    means a staged or unstaged change to a tracked file anywhere, or an
+    untracked file under .project/ when .project is already partly tracked;
+    untracked files elsewhere are left alone and do not block.
+
+    \b
+    Remote handling
+    ---------------
+    When an `origin` remote is configured, the new branch is pushed with
+    `git push -u origin <branch>` twice: once right after the branch is created
+    and once after the import commit, so origin/<branch> ends at the import
+    commit and the local branch tracks it. Only that branch is pushed — the
+    commit made on your current branch is yours to push.
+
+    A failure of the *first* push is fatal: the branch is deleted and nothing is
+    migrated, so you can fix the remote and re-run (or use --no-push). A failure
+    of the *second* push leaves the finished local migration alone and only
+    warns — re-run `git -C .project push` when the remote is reachable.
+
+    With no origin remote the pushes are skipped with an informational message
+    and the migration still succeeds. `--no-push` skips them even when a remote
+    exists.
+
+    \b
+    Snapshot import vs. history-preserving import
+    ---------------------------------------------
+    Snapshot import is the default and the only mode this command implements:
+    the projectman branch starts from an empty root commit and gets one commit
+    holding .project/ as it stands now. The history of those files stays where
+    it always was, on the branch you migrated from.
+
+    To carry that history across instead, use the history-preserving variant
+    from ADR-001 ("Store PM data on an orphan branch mounted as a worktree", in
+    .project/DECISIONS.md), which records: "Migration is a snapshot import by
+    default; `git filter-repo --subdirectory-filter .project` is the
+    history-preserving variant." Run that filter on a clone to rewrite it down
+    to just .project/, push the result as the projectman branch, then use
+    `projectman attach` to mount it instead of running this command.
+    """
+    from projectman.worktree import MigrationError, format_result, migrate_to_worktree
+
+    try:
+        result = migrate_to_worktree(Path.cwd(), branch=branch, push=not no_push)
+    except MigrationError as e:
+        click.echo(f"Error: {e}", err=True)
+        raise SystemExit(1)
+
+    click.echo(format_result(result))
+
+
+@cli.command("attach")
+@click.option("--branch", default="projectman", help="Branch to mount at .project (default: projectman)")
+def attach(branch):
+    """Mount the projectman branch at .project — the fresh-clone counterpart.
+
+    A clone of a migrated repo arrives with origin/projectman but no .project/,
+    because the PM state lives on its own branch. This runs the git incantation
+    that mounts it: `git worktree add --track -b projectman .project
+    origin/projectman` when only the remote branch exists, or plain
+    `git worktree add .project projectman` when the local branch is already
+    there (it is never recreated).
+
+    \b
+    Idempotent and clobber-safe
+    ---------------------------
+    Attaching twice is fine: when .project/ is already a worktree of the branch
+    the command says so and exits 0 without touching anything. It refuses (exit
+    1, nothing changed) when .project/ is a worktree of a *different* branch, or
+    when .project/ is a plain directory with content — that is either an
+    unmigrated store, which wants `projectman migrate-worktree`, or files that
+    are not ours to delete. An empty .project/ is fine and is mounted over.
+
+    Only local refs are read — attach never fetches. If the branch was pushed
+    since your last `git fetch origin`, fetch and re-run.
+    """
+    from projectman.worktree import MigrationError, attach_worktree, format_attach_result
+
+    try:
+        result = attach_worktree(Path.cwd(), branch=branch)
+    except MigrationError as e:
+        click.echo(f"Error: {e}", err=True)
+        raise SystemExit(1)
+
+    click.echo(format_attach_result(result))
 
 
 @cli.command()

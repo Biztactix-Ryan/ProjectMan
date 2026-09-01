@@ -11,6 +11,8 @@ projectman init --name "My App" --prefix APP
 
 This creates `.project/` with config, story/task directories, and documentation templates.
 
+On a clone of a repo whose PM store already lives on the `projectman` branch, there is nothing to create: `projectman init` spots `origin/projectman` and mounts the existing store at `.project/` instead of scaffolding a new one (the same thing [`projectman attach`](reference/cli.md#projectman-attach) does). Run it with no options there — `--name` and friends are ignored when it attaches.
+
 ### 2. Install Claude Code Integration
 
 ```bash

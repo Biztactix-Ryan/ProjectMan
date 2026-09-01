@@ -27,6 +27,8 @@ pipx install "projectman[all] @ git+https://github.com/Biztactix-Ryan/ProjectMan
 # 3. Initialize your project
 cd your-repo
 projectman init --name "My Project" --prefix MP
+#    On a clone whose PM store is already on the `projectman` branch, plain
+#    `projectman init` attaches that store instead of scaffolding a new one.
 
 # 4. Install Claude Code integration
 projectman setup-claude
