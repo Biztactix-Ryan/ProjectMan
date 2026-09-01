@@ -96,15 +96,21 @@
 | [US-PM-20-4](tasks/US-PM-20-4.md) | Test: Attach fails with an actionable message when .project holds untracked content instead of clobbering it | ✅ done | 1 |  | claude | US-PM-20-5 | [US-PM-20](stories/US-PM-20.md) |
 | [US-PM-20-5](tasks/US-PM-20-5.md) | Implement projectman attach command | ✅ done | 3 |  | claude | US-PM-19-7 | [US-PM-20](stories/US-PM-20.md) |
 | [US-PM-20-6](tasks/US-PM-20-6.md) | Teach projectman init to detect origin/projectman and attach | ✅ done | 2 |  | claude | US-PM-20-5 | [US-PM-20](stories/US-PM-20.md) |
-| [US-PM-21-1](tasks/US-PM-21-1.md) | Test: pm_commit lands commits on the projectman branch without dirtying main | ⚪ todo | — |  | — | US-PM-21-7 | [US-PM-21](stories/US-PM-21.md) |
-| [US-PM-21-2](tasks/US-PM-21-2.md) | Test: pm_push pushes only the projectman branch | ⚪ todo | — |  | — | US-PM-21-7 | [US-PM-21](stories/US-PM-21.md) |
-| [US-PM-21-3](tasks/US-PM-21-3.md) | Test: pm_git_status reports the .project worktree state distinctly from main | ⚪ todo | — |  | — | US-PM-21-7 | [US-PM-21](stories/US-PM-21.md) |
-| [US-PM-21-4](tasks/US-PM-21-4.md) | Test: Hub mode introduces no submodule-pointer noise in the parent repo | ⚪ todo | — |  | — | US-PM-21-8 | [US-PM-21](stories/US-PM-21.md) |
-| [US-PM-21-5](tasks/US-PM-21-5.md) | Test: Docs cover git clean behaviour and the ignored-but-precious nature of .project | ⚪ todo | — |  | — | US-PM-21-9 | [US-PM-21](stories/US-PM-21.md) |
-| [US-PM-21-6](tasks/US-PM-21-6.md) | Test: Docs describe the private sibling-repo variant for public repos | ⚪ todo | — |  | — | US-PM-21-9 | [US-PM-21](stories/US-PM-21.md) |
-| [US-PM-21-7](tasks/US-PM-21-7.md) | Integration tests: pm git ops against a worktree-mounted .project | ⚪ todo | 5 |  | — | US-PM-19-7 | [US-PM-21](stories/US-PM-21.md) |
-| [US-PM-21-8](tasks/US-PM-21-8.md) | Hub-mode regression check for worktree stores | ⚪ todo | 3 |  | — | US-PM-21-7 | [US-PM-21](stories/US-PM-21.md) |
-| [US-PM-21-9](tasks/US-PM-21-9.md) | Document worktree rough edges and the private sibling-repo variant | ⚪ todo | 2 |  | — | US-PM-19-7 | [US-PM-21](stories/US-PM-21.md) |
+| [US-PM-21-1](tasks/US-PM-21-1.md) | Test: pm_commit lands commits on the projectman branch without dirtying main | ✅ done | — |  | claude | US-PM-21-7 | [US-PM-21](stories/US-PM-21.md) |
+| [US-PM-21-10](tasks/US-PM-21-10.md) | Store git-state helper and root-side push in worktree.py | ✅ done | 1 | git, storage | claude | — | [US-PM-21](stories/US-PM-21.md) |
+| [US-PM-21-11](tasks/US-PM-21-11.md) | Non-hub commit and push target the mounted projectman branch | ✅ done | 2 | git, storage, mcp | claude | — | [US-PM-21](stories/US-PM-21.md) |
+| [US-PM-21-12](tasks/US-PM-21-12.md) | Hub pm_commit and push_hub honour a worktree-mounted store | ✅ done | 2 | git, hub, mcp | claude | — | [US-PM-21](stories/US-PM-21.md) |
+| [US-PM-21-13](tasks/US-PM-21-13.md) | pm_git_status and git-status CLI report the PM store distinctly | ✅ done | 1 | git, mcp, cli | claude | — | [US-PM-21](stories/US-PM-21.md) |
+| [US-PM-21-14](tasks/US-PM-21-14.md) | Worktree git-ops test suite and worktree.py coverage gaps | ✅ done | 1 | tests, git | — | — | [US-PM-21](stories/US-PM-21.md) |
+| [US-PM-21-15](tasks/US-PM-21-15.md) | Document worktree rough edges and the private sibling-repo variant | ✅ done | 1 | docs, git | — | — | [US-PM-21](stories/US-PM-21.md) |
+| [US-PM-21-2](tasks/US-PM-21-2.md) | Test: pm_push pushes only the projectman branch | ✅ done | — |  | claude | US-PM-21-7 | [US-PM-21](stories/US-PM-21.md) |
+| [US-PM-21-3](tasks/US-PM-21-3.md) | Test: pm_git_status reports the .project worktree state distinctly from main | ✅ done | — |  | claude | US-PM-21-7 | [US-PM-21](stories/US-PM-21.md) |
+| [US-PM-21-4](tasks/US-PM-21-4.md) | Test: Hub mode introduces no submodule-pointer noise in the parent repo | ✅ done | — |  | claude | US-PM-21-8 | [US-PM-21](stories/US-PM-21.md) |
+| [US-PM-21-5](tasks/US-PM-21-5.md) | Test: Docs cover git clean behaviour and the ignored-but-precious nature of .project | ✅ done | — |  | claude | US-PM-21-9 | [US-PM-21](stories/US-PM-21.md) |
+| [US-PM-21-6](tasks/US-PM-21-6.md) | Test: Docs describe the private sibling-repo variant for public repos | ✅ done | — |  | claude | US-PM-21-9 | [US-PM-21](stories/US-PM-21.md) |
+| [US-PM-21-7](tasks/US-PM-21-7.md) | Integration tests: pm git ops against a worktree-mounted .project | ✅ done | 5 |  | claude | US-PM-19-7 | [US-PM-21](stories/US-PM-21.md) |
+| [US-PM-21-8](tasks/US-PM-21-8.md) | Hub-mode regression check for worktree stores | ✅ done | 3 |  | claude | US-PM-21-7 | [US-PM-21](stories/US-PM-21.md) |
+| [US-PM-21-9](tasks/US-PM-21-9.md) | Document worktree rough edges and the private sibling-repo variant | ✅ done | 2 |  | claude | US-PM-19-7 | [US-PM-21](stories/US-PM-21.md) |
 | [US-PM-3-1](tasks/US-PM-3-1.md) | Test: Every tool taking a typed ID also accepts the generic id parameter | ✅ done | 1 |  | claude | US-PM-3-6 | [US-PM-3](stories/US-PM-3.md) |
 | [US-PM-3-2](tasks/US-PM-3-2.md) | Test: Tools taking id also accept the typed alias where one exists | ✅ done | 1 |  | claude | US-PM-3-6 | [US-PM-3](stories/US-PM-3.md) |
 | [US-PM-3-3](tasks/US-PM-3-3.md) | Test: Passing both a typed ID and id with conflicting values is a clear error | ✅ done | 1 |  | claude | US-PM-3-5 | [US-PM-3](stories/US-PM-3.md) |

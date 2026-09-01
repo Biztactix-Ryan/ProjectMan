@@ -15,7 +15,7 @@
 | [US-PM-19](stories/US-PM-19.md) | Migration command: move .project onto an orphan projectman branch worktree | ✅ done | should | 8 | git, storage, cli | [EPIC-PM-3](epics/EPIC-PM-3.md) | 6 | 9 |
 | [US-PM-2](stories/US-PM-2.md) | Surface soft errors as genuine MCP errors | ✅ done | must | 5 | reliability, observability, blocker | [EPIC-PM-1](epics/EPIC-PM-1.md) | 4 | 6 |
 | [US-PM-20](stories/US-PM-20.md) | Attach on clone: auto-mount the projectman branch in init plus an attach command | ✅ done | should | 5 | git, storage, cli, dx | [EPIC-PM-3](epics/EPIC-PM-3.md) | 4 | 6 |
-| [US-PM-21](stories/US-PM-21.md) | Worktree compatibility: verify pm git ops against a worktree-mounted .project and document the rough edges | 📋 backlog | should | 8 | git, storage, mcp, docs | [EPIC-PM-3](epics/EPIC-PM-3.md) | 6 | 9 |
+| [US-PM-21](stories/US-PM-21.md) | Worktree compatibility: verify pm git ops against a worktree-mounted .project and document the rough edges | ✅ done | should | 8 | git, storage, mcp, docs | [EPIC-PM-3](epics/EPIC-PM-3.md) | 6 | 15 |
 | [US-PM-22](stories/US-PM-22.md) | API Authentication | 📋 backlog | should | — | api | — | 0 | 0 |
 | [US-PM-3](stories/US-PM-3.md) | Accept id and task_id as aliases on every tool | ✅ done | must | 3 | reliability, quick-win, ergonomics | [EPIC-PM-1](epics/EPIC-PM-1.md) | 4 | 7 |
 | [US-PM-4](stories/US-PM-4.md) | Remove the always-on readiness warnings | ✅ done | should | 2 | context-cost, quick-win | [EPIC-PM-1](epics/EPIC-PM-1.md) | 4 | 6 |

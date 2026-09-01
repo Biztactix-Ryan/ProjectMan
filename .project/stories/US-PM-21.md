@@ -13,7 +13,7 @@ epic_id: EPIC-PM-3
 id: US-PM-21
 points: 8
 priority: should
-status: backlog
+status: done
 tags:
 - git
 - storage
@@ -21,7 +21,7 @@ tags:
 - docs
 title: 'Worktree compatibility: verify pm git ops against a worktree-mounted .project
   and document the rough edges'
-updated: '2026-08-20'
+updated: '2026-09-02'
 ---
 
 As a ProjectMan maintainer, I want pm_commit / pm_push / pm_git_status proven correct when .project is a worktree so that the migration is safe to recommend.

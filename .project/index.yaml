@@ -228,7 +228,7 @@ entries:
   title: 'Worktree compatibility: verify pm git ops against a worktree-mounted .project
     and document the rough edges'
   type: story
-  status: backlog
+  status: done
   points: 8
   story_id: null
   epic_id: EPIC-PM-3
@@ -1584,15 +1584,63 @@ entries:
   title: 'Test: pm_commit lands commits on the projectman branch without dirtying
     main'
   type: task
-  status: todo
+  status: done
   points: null
+  story_id: US-PM-21
+  epic_id: null
+  tags: []
+- id: US-PM-21-10
+  title: Store git-state helper and root-side push in worktree.py
+  type: task
+  status: done
+  points: 1
+  story_id: US-PM-21
+  epic_id: null
+  tags: []
+- id: US-PM-21-11
+  title: Non-hub commit and push target the mounted projectman branch
+  type: task
+  status: done
+  points: 2
+  story_id: US-PM-21
+  epic_id: null
+  tags: []
+- id: US-PM-21-12
+  title: Hub pm_commit and push_hub honour a worktree-mounted store
+  type: task
+  status: done
+  points: 2
+  story_id: US-PM-21
+  epic_id: null
+  tags: []
+- id: US-PM-21-13
+  title: pm_git_status and git-status CLI report the PM store distinctly
+  type: task
+  status: done
+  points: 1
+  story_id: US-PM-21
+  epic_id: null
+  tags: []
+- id: US-PM-21-14
+  title: Worktree git-ops test suite and worktree.py coverage gaps
+  type: task
+  status: done
+  points: 1
+  story_id: US-PM-21
+  epic_id: null
+  tags: []
+- id: US-PM-21-15
+  title: Document worktree rough edges and the private sibling-repo variant
+  type: task
+  status: done
+  points: 1
   story_id: US-PM-21
   epic_id: null
   tags: []
 - id: US-PM-21-2
   title: 'Test: pm_push pushes only the projectman branch'
   type: task
-  status: todo
+  status: done
   points: null
   story_id: US-PM-21
   epic_id: null
@@ -1601,7 +1649,7 @@ entries:
   title: 'Test: pm_git_status reports the .project worktree state distinctly from
     main'
   type: task
-  status: todo
+  status: done
   points: null
   story_id: US-PM-21
   epic_id: null
@@ -1609,7 +1657,7 @@ entries:
 - id: US-PM-21-4
   title: 'Test: Hub mode introduces no submodule-pointer noise in the parent repo'
   type: task
-  status: todo
+  status: done
   points: null
   story_id: US-PM-21
   epic_id: null
@@ -1618,7 +1666,7 @@ entries:
   title: 'Test: Docs cover git clean behaviour and the ignored-but-precious nature
     of .project'
   type: task
-  status: todo
+  status: done
   points: null
   story_id: US-PM-21
   epic_id: null
@@ -1626,7 +1674,7 @@ entries:
 - id: US-PM-21-6
   title: 'Test: Docs describe the private sibling-repo variant for public repos'
   type: task
-  status: todo
+  status: done
   points: null
   story_id: US-PM-21
   epic_id: null
@@ -1634,7 +1682,7 @@ entries:
 - id: US-PM-21-7
   title: 'Integration tests: pm git ops against a worktree-mounted .project'
   type: task
-  status: todo
+  status: done
   points: 5
   story_id: US-PM-21
   epic_id: null
@@ -1642,7 +1690,7 @@ entries:
 - id: US-PM-21-8
   title: Hub-mode regression check for worktree stores
   type: task
-  status: todo
+  status: done
   points: 3
   story_id: US-PM-21
   epic_id: null
@@ -1650,7 +1698,7 @@ entries:
 - id: US-PM-21-9
   title: Document worktree rough edges and the private sibling-repo variant
   type: task
-  status: todo
+  status: done
   points: 2
   story_id: US-PM-21
   epic_id: null
@@ -5242,8 +5290,8 @@ entries:
   story_id: US-PRJ-9
   epic_id: null
   tags: []
-total_points: 1030
-completed_points: 883
+total_points: 1038
+completed_points: 909
 story_count: 86
-task_count: 548
+task_count: 554
 epic_count: 15

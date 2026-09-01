@@ -38,7 +38,7 @@ Applying sets `archived: true`. It restores a `status` only when the signal even
 **Decision.** Move `.project/` onto a dedicated orphan branch (`projectman`) mounted back into the repo root as a git worktree. Locally nothing changes — the files sit where they always have — but commits made inside `.project/` land on the `projectman` branch with its own history. `main` gitignores `.project/` and never sees a task update again.
 
 Key properties:
-- Git commands run inside `.project/` automatically target the `projectman` branch, so `pm_commit`/`pm_push` shelling out to git in the store directory may need zero changes (verified under US-PM-21, not assumed).
+- Git commands run inside `.project/` automatically target the `projectman` branch. **Verified under US-PM-21 (2026-09-02): the "zero changes" hope was false** — `pm_commit`/`pm_push` shelled out from the repo *root*, where `git add .project` refuses the ignored worktree path and `git status .project/` is silent. They now run inside the store (`store_git_state` in `worktree.py` is the single source of truth), and `pm_git_status` reports the store separately. Rough edges are documented in `docs/reference/cli.md` ("Living with the projectman worktree").
 - Forgejo syncs, browses, renders, and backs up the branch with the same remote and permissions; Forgejo Actions can hang off it later (e.g. burndown regeneration on push).
 - `git clone --single-branch` and shallow CI clones never pull PM data.
 - Migration is a snapshot import by default; `git filter-repo --subdirectory-filter .project` is the history-preserving variant.

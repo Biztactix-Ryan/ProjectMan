@@ -1,15 +1,15 @@
 ---
-assignee: null
+assignee: claude
 created: '2026-08-20'
 depends_on:
 - US-PM-21-7
 id: US-PM-21-1
 points: null
-status: todo
+status: done
 story_id: US-PM-21
 tags: []
 title: 'Test: pm_commit lands commits on the projectman branch without dirtying main'
-updated: '2026-08-20'
+updated: '2026-09-02'
 ---
 
 Verify acceptance criterion for story US-PM-21:
