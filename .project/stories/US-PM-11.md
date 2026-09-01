@@ -10,13 +10,13 @@ epic_id: EPIC-PM-2
 id: US-PM-11
 points: 3
 priority: should
-status: backlog
+status: done
 tags:
 - context-cost
 - orchestrator
 - audit
 title: Change detection for pm_audit
-updated: '2026-07-29'
+updated: '2026-08-21'
 ---
 
 As an orchestrator polling project health, I want an unchanged audit to answer cheaply, so that my health check is not a byte-for-byte repeat.

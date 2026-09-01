@@ -11,13 +11,13 @@ epic_id: EPIC-PM-2
 id: US-PM-15
 points: 3
 priority: could
-status: backlog
+status: done
 tags:
 - context-cost
 - config
 - api-surface
 title: Gate the unused tool families behind config flags
-updated: '2026-07-29'
+updated: '2026-08-22'
 ---
 
 As an agent loading the ProjectMan tool list, I want only the tools this project actually uses, so that schema tokens are not spent on dead surface in every request.

@@ -138,7 +138,7 @@ entries:
 - id: US-PM-11
   title: Change detection for pm_audit
   type: story
-  status: backlog
+  status: done
   points: 3
   story_id: null
   epic_id: EPIC-PM-2
@@ -146,7 +146,7 @@ entries:
 - id: US-PM-12
   title: Bulk write verbs for update and archive
   type: story
-  status: backlog
+  status: ready
   points: 5
   story_id: null
   epic_id: EPIC-PM-2
@@ -162,7 +162,7 @@ entries:
 - id: US-PM-14
   title: Activity-backed resume and recovery for orchestrator runs
   type: story
-  status: backlog
+  status: done
   points: 5
   story_id: null
   epic_id: EPIC-PM-2
@@ -170,7 +170,7 @@ entries:
 - id: US-PM-15
   title: Gate the unused tool families behind config flags
   type: story
-  status: backlog
+  status: done
   points: 3
   story_id: null
   epic_id: EPIC-PM-2
@@ -202,7 +202,7 @@ entries:
 - id: US-PM-19
   title: 'Migration command: move .project onto an orphan projectman branch worktree'
   type: story
-  status: backlog
+  status: done
   points: 8
   story_id: null
   epic_id: EPIC-PM-3
@@ -219,7 +219,7 @@ entries:
   title: 'Attach on clone: auto-mount the projectman branch in init plus an attach
     command'
   type: story
-  status: backlog
+  status: done
   points: 5
   story_id: null
   epic_id: EPIC-PM-3
@@ -232,6 +232,14 @@ entries:
   points: 8
   story_id: null
   epic_id: EPIC-PM-3
+  tags: []
+- id: US-PM-22
+  title: API Authentication
+  type: story
+  status: backlog
+  points: null
+  story_id: null
+  epic_id: null
   tags: []
 - id: US-PM-3
   title: Accept id and task_id as aliases on every tool
@@ -476,7 +484,7 @@ entries:
 - id: US-PRJ-30
   title: Add config caching with TTL
   type: story
-  status: backlog
+  status: done
   points: 2
   story_id: null
   epic_id: EPIC-PRJ-6
@@ -492,7 +500,7 @@ entries:
 - id: US-PRJ-32
   title: Reduce pm_board N+1 I/O pattern
   type: story
-  status: backlog
+  status: archived
   points: 5
   story_id: null
   epic_id: EPIC-PRJ-6
@@ -500,7 +508,7 @@ entries:
 - id: US-PRJ-33
   title: "Batch list_tasks in pm_epic to eliminate N\xB2 queries"
   type: story
-  status: backlog
+  status: archived
   points: 3
   story_id: null
   epic_id: EPIC-PRJ-6
@@ -532,7 +540,7 @@ entries:
 - id: US-PRJ-37
   title: Eliminate deep copy overhead on cached reads
   type: story
-  status: backlog
+  status: done
   points: 5
   story_id: null
   epic_id: EPIC-PRJ-7
@@ -540,7 +548,7 @@ entries:
 - id: US-PRJ-38
   title: Replace brute-force embedding search with vectorized operations
   type: story
-  status: backlog
+  status: done
   points: 5
   story_id: null
   epic_id: EPIC-PRJ-7
@@ -588,7 +596,7 @@ entries:
 - id: US-PRJ-43
   title: Fix N+1 patterns in pm_board, pm_epic, pm_search
   type: story
-  status: backlog
+  status: done
   points: 5
   story_id: null
   epic_id: EPIC-PRJ-8
@@ -596,7 +604,7 @@ entries:
 - id: US-PRJ-44
   title: Implement pm_batch_update MCP tool
   type: story
-  status: backlog
+  status: archived
   points: 5
   story_id: null
   epic_id: EPIC-PRJ-8
@@ -604,7 +612,7 @@ entries:
 - id: US-PRJ-45
   title: Implement pm_batch_archive MCP tool
   type: story
-  status: backlog
+  status: archived
   points: 3
   story_id: null
   epic_id: EPIC-PRJ-8
@@ -620,7 +628,7 @@ entries:
 - id: US-PRJ-47
   title: Fix shell injection risk in changeset PR command generation
   type: story
-  status: backlog
+  status: done
   points: 3
   story_id: null
   epic_id: EPIC-PRJ-9
@@ -708,7 +716,7 @@ entries:
 - id: US-PRJ-57
   title: Fix pm skill references to non-existent tools
   type: story
-  status: backlog
+  status: done
   points: 2
   story_id: null
   epic_id: EPIC-PRJ-11
@@ -748,7 +756,7 @@ entries:
 - id: US-PRJ-61
   title: Commit pending cache test files
   type: story
-  status: backlog
+  status: done
   points: 1
   story_id: null
   epic_id: EPIC-PRJ-12
@@ -764,7 +772,7 @@ entries:
 - id: US-PRJ-63
   title: Add N+1 regression tests for board and epic views
   type: story
-  status: backlog
+  status: done
   points: 3
   story_id: null
   epic_id: EPIC-PRJ-12
@@ -918,8 +926,8 @@ entries:
 - id: US-PM-11-1
   title: 'Test: pm_audit returns a digest identifying the current project state'
   type: task
-  status: todo
-  points: null
+  status: done
+  points: 1
   story_id: US-PM-11
   epic_id: null
   tags: []
@@ -927,31 +935,31 @@ entries:
   title: 'Test: pm_audit accepts a since parameter and answers cheaply when nothing
     changed'
   type: task
-  status: todo
-  points: null
+  status: done
+  points: 1
   story_id: US-PM-11
   epic_id: null
   tags: []
 - id: US-PM-11-3
   title: 'Test: The health check still detects new ERROR-level findings promptly'
   type: task
-  status: todo
-  points: null
+  status: done
+  points: 1
   story_id: US-PM-11
   epic_id: null
   tags: []
 - id: US-PM-11-4
   title: 'Test: pm-orchestrate passes the previous digest on its periodic health check'
   type: task
-  status: todo
-  points: null
+  status: done
+  points: 1
   story_id: US-PM-11
   epic_id: null
   tags: []
 - id: US-PM-11-5
   title: Return a state digest from pm_audit
   type: task
-  status: todo
+  status: done
   points: 2
   story_id: US-PM-11
   epic_id: null
@@ -959,16 +967,16 @@ entries:
 - id: US-PM-11-6
   title: Accept a since parameter and short-circuit when unchanged
   type: task
-  status: todo
-  points: null
+  status: done
+  points: 1
   story_id: US-PM-11
   epic_id: null
   tags: []
 - id: US-PM-11-7
   title: Pass the previous digest from the orchestrator health check
   type: task
-  status: todo
-  points: null
+  status: done
+  points: 1
   story_id: US-PM-11
   epic_id: null
   tags: []
@@ -976,32 +984,32 @@ entries:
   title: 'Test: A bulk update accepts either a uniform patch over an ID list or per-item
     patches'
   type: task
-  status: todo
-  points: null
+  status: done
+  points: 1
   story_id: US-PM-12
   epic_id: null
   tags: []
 - id: US-PM-12-2
   title: 'Test: Bulk archive accepts an explicit ID list'
   type: task
-  status: todo
-  points: null
+  status: done
+  points: 1
   story_id: US-PM-12
   epic_id: null
   tags: []
 - id: US-PM-12-3
   title: 'Test: Partial failure reports which IDs succeeded and which did not'
   type: task
-  status: todo
-  points: null
+  status: done
+  points: 1
   story_id: US-PM-12
   epic_id: null
   tags: []
 - id: US-PM-12-4
   title: 'Test: The four measured bulk patterns are each expressible in one call'
   type: task
-  status: todo
-  points: null
+  status: done
+  points: 1
   story_id: US-PM-12
   epic_id: null
   tags: []
@@ -1009,15 +1017,15 @@ entries:
   title: 'Test: Longest consecutive-run length drops sharply in the next telemetry
     baseline'
   type: task
-  status: todo
-  points: null
+  status: review
+  points: 1
   story_id: US-PM-12
   epic_id: null
   tags: []
 - id: US-PM-12-6
   title: Add pm_update_many
   type: task
-  status: todo
+  status: done
   points: 3
   story_id: US-PM-12
   epic_id: null
@@ -1025,7 +1033,7 @@ entries:
 - id: US-PM-12-7
   title: Add bulk archive with an explicit ID list
   type: task
-  status: todo
+  status: done
   points: 2
   story_id: US-PM-12
   epic_id: null
@@ -1033,8 +1041,8 @@ entries:
 - id: US-PM-12-8
   title: Define partial-failure semantics
   type: task
-  status: todo
-  points: null
+  status: done
+  points: 2
   story_id: US-PM-12
   epic_id: null
   tags: []
@@ -1090,39 +1098,39 @@ entries:
 - id: US-PM-14-1
   title: 'Test: An interrupted run can identify which claims it owned'
   type: task
-  status: todo
-  points: null
+  status: done
+  points: 1
   story_id: US-PM-14
   epic_id: null
   tags: []
 - id: US-PM-14-2
   title: 'Test: Stale claims are identifiable without asking a human'
   type: task
-  status: todo
-  points: null
+  status: done
+  points: 1
   story_id: US-PM-14
   epic_id: null
   tags: []
 - id: US-PM-14-3
   title: 'Test: The final report is built from the activity log rather than from memory'
   type: task
-  status: todo
-  points: null
+  status: done
+  points: 1
   story_id: US-PM-14
   epic_id: null
   tags: []
 - id: US-PM-14-4
   title: 'Test: pm-orchestrate has a documented resume path'
   type: task
-  status: todo
-  points: null
+  status: done
+  points: 1
   story_id: US-PM-14
   epic_id: null
   tags: []
 - id: US-PM-14-5
   title: Add claim ownership and staleness metadata
   type: task
-  status: todo
+  status: done
   points: 2
   story_id: US-PM-14
   epic_id: null
@@ -1130,32 +1138,32 @@ entries:
 - id: US-PM-14-6
   title: Replace the Phase 1 ownership guess with an activity query
   type: task
-  status: todo
-  points: null
+  status: done
+  points: 2
   story_id: US-PM-14
   epic_id: null
   tags: []
 - id: US-PM-14-7
   title: Build the final report from the activity log
   type: task
-  status: todo
-  points: null
+  status: done
+  points: 2
   story_id: US-PM-14
   epic_id: null
   tags: []
 - id: US-PM-14-8
   title: Document a resume path in pm-orchestrate
   type: task
-  status: todo
-  points: null
+  status: done
+  points: 1
   story_id: US-PM-14
   epic_id: null
   tags: []
 - id: US-PM-15-1
   title: 'Test: Changeset and web tool families are hidden unless enabled by config'
   type: task
-  status: todo
-  points: null
+  status: done
+  points: 1
   story_id: US-PM-15
   epic_id: null
   tags: []
@@ -1163,31 +1171,31 @@ entries:
   title: 'Test: Repair and restore tooling is hidden from the agent tool list but
     reachable via CLI'
   type: task
-  status: todo
-  points: null
+  status: done
+  points: 1
   story_id: US-PM-15
   epic_id: null
   tags: []
 - id: US-PM-15-3
   title: 'Test: pm_activity and pm_context and pm_estimate remain exposed'
   type: task
-  status: todo
-  points: null
+  status: done
+  points: 1
   story_id: US-PM-15
   epic_id: null
   tags: []
 - id: US-PM-15-4
   title: 'Test: Tool-list payload size drops measurably with default config'
   type: task
-  status: todo
-  points: null
+  status: done
+  points: 1
   story_id: US-PM-15
   epic_id: null
   tags: []
 - id: US-PM-15-5
   title: Add config flags for the changeset and web tool families
   type: task
-  status: todo
+  status: done
   points: 2
   story_id: US-PM-15
   epic_id: null
@@ -1195,16 +1203,16 @@ entries:
 - id: US-PM-15-6
   title: Move repair and restore tooling off the agent tool list
   type: task
-  status: todo
-  points: null
+  status: done
+  points: 1
   story_id: US-PM-15
   epic_id: null
   tags: []
 - id: US-PM-15-7
   title: Measure the tool-list payload reduction
   type: task
-  status: todo
-  points: null
+  status: done
+  points: 1
   story_id: US-PM-15
   epic_id: null
   tags: []
@@ -1402,32 +1410,32 @@ entries:
   title: 'Test: Running the migration leaves .project mounted as a worktree on an
     orphan projectman branch'
   type: task
-  status: todo
-  points: null
+  status: done
+  points: 1
   story_id: US-PM-19
   epic_id: null
   tags: []
 - id: US-PM-19-2
   title: 'Test: main stops tracking .project and gains a .gitignore entry for it'
   type: task
-  status: todo
-  points: null
+  status: done
+  points: 1
   story_id: US-PM-19
   epic_id: null
   tags: []
 - id: US-PM-19-3
   title: 'Test: All existing PM files survive the migration intact'
   type: task
-  status: todo
-  points: null
+  status: done
+  points: 1
   story_id: US-PM-19
   epic_id: null
   tags: []
 - id: US-PM-19-4
   title: 'Test: Migration refuses to run on a dirty working tree'
   type: task
-  status: todo
-  points: null
+  status: done
+  points: 1
   story_id: US-PM-19
   epic_id: null
   tags: []
@@ -1435,23 +1443,23 @@ entries:
   title: 'Test: Migration refuses when a projectman branch already exists and points
     at attach'
   type: task
-  status: todo
-  points: null
+  status: done
+  points: 1
   story_id: US-PM-19
   epic_id: null
   tags: []
 - id: US-PM-19-6
   title: 'Test: The projectman branch is pushed to origin when a remote exists'
   type: task
-  status: todo
-  points: null
+  status: done
+  points: 1
   story_id: US-PM-19
   epic_id: null
   tags: []
 - id: US-PM-19-7
   title: Implement migrate-worktree command core
   type: task
-  status: todo
+  status: done
   points: 5
   story_id: US-PM-19
   epic_id: null
@@ -1459,7 +1467,7 @@ entries:
 - id: US-PM-19-8
   title: 'Add safety rails: dirty-tree and existing-branch refusal'
   type: task
-  status: todo
+  status: done
   points: 2
   story_id: US-PM-19
   epic_id: null
@@ -1467,7 +1475,7 @@ entries:
 - id: US-PM-19-9
   title: Handle remotes and document the history-preserving variant
   type: task
-  status: todo
+  status: done
   points: 2
   story_id: US-PM-19
   epic_id: null
@@ -1525,8 +1533,8 @@ entries:
   title: 'Test: projectman attach mounts the projectman branch as the .project worktree
     on a fresh clone'
   type: task
-  status: todo
-  points: null
+  status: done
+  points: 1
   story_id: US-PM-20
   epic_id: null
   tags: []
@@ -1534,16 +1542,16 @@ entries:
   title: 'Test: projectman init detects origin/projectman and attaches instead of
     scaffolding a new store'
   type: task
-  status: todo
-  points: null
+  status: done
+  points: 1
   story_id: US-PM-20
   epic_id: null
   tags: []
 - id: US-PM-20-3
   title: 'Test: Attach is a friendly no-op when the worktree is already mounted'
   type: task
-  status: todo
-  points: null
+  status: done
+  points: 1
   story_id: US-PM-20
   epic_id: null
   tags: []
@@ -1551,15 +1559,15 @@ entries:
   title: 'Test: Attach fails with an actionable message when .project holds untracked
     content instead of clobbering it'
   type: task
-  status: todo
-  points: null
+  status: done
+  points: 1
   story_id: US-PM-20
   epic_id: null
   tags: []
 - id: US-PM-20-5
   title: Implement projectman attach command
   type: task
-  status: todo
+  status: done
   points: 3
   story_id: US-PM-20
   epic_id: null
@@ -1567,7 +1575,7 @@ entries:
 - id: US-PM-20-6
   title: Teach projectman init to detect origin/projectman and attach
   type: task
-  status: todo
+  status: done
   points: 2
   story_id: US-PM-20
   epic_id: null
@@ -3455,47 +3463,47 @@ entries:
 - id: US-PRJ-30-1
   title: 'Test: load_config() uses module-level cache'
   type: task
-  status: todo
-  points: null
+  status: done
+  points: 1
   story_id: US-PRJ-30
   epic_id: null
   tags: []
 - id: US-PRJ-30-2
   title: 'Test: Cache has TTL or explicit invalidation on config write'
   type: task
-  status: todo
-  points: null
+  status: done
+  points: 1
   story_id: US-PRJ-30
   epic_id: null
   tags: []
 - id: US-PRJ-30-3
   title: 'Test: Repeated calls in same process return cached result'
   type: task
-  status: todo
-  points: null
+  status: done
+  points: 1
   story_id: US-PRJ-30
   epic_id: null
   tags: []
 - id: US-PRJ-30-4
   title: 'Test: _save_config() invalidates the cache'
   type: task
-  status: todo
-  points: null
+  status: done
+  points: 1
   story_id: US-PRJ-30
   epic_id: null
   tags: []
 - id: US-PRJ-30-5
   title: 'Test: All existing tests pass'
   type: task
-  status: todo
-  points: null
+  status: done
+  points: 1
   story_id: US-PRJ-30
   epic_id: null
   tags: []
 - id: US-PRJ-30-6
   title: Add module-level config cache to config.py
   type: task
-  status: todo
+  status: done
   points: 1
   story_id: US-PRJ-30
   epic_id: null
@@ -3503,7 +3511,7 @@ entries:
 - id: US-PRJ-30-7
   title: Invalidate config cache on _save_config()
   type: task
-  status: todo
+  status: done
   points: 1
   story_id: US-PRJ-30
   epic_id: null
@@ -3511,7 +3519,7 @@ entries:
 - id: US-PRJ-30-8
   title: Add tests for config cache hit and invalidation
   type: task
-  status: todo
+  status: done
   points: 1
   story_id: US-PRJ-30
   epic_id: null
@@ -3560,7 +3568,7 @@ entries:
 - id: US-PRJ-32-1
   title: 'Test: pm_board avoids per-task get_task() body reads where possible'
   type: task
-  status: todo
+  status: done
   points: null
   story_id: US-PRJ-32
   epic_id: null
@@ -3568,7 +3576,7 @@ entries:
 - id: US-PRJ-32-10
   title: Wire pre-loaded context through pm_board readiness loop
   type: task
-  status: todo
+  status: done
   points: 1
   story_id: US-PRJ-32
   epic_id: null
@@ -3576,7 +3584,7 @@ entries:
 - id: US-PRJ-32-11
   title: Add performance test for 100+ task board
   type: task
-  status: todo
+  status: done
   points: 1
   story_id: US-PRJ-32
   epic_id: null
@@ -3585,7 +3593,7 @@ entries:
   title: 'Test: Readiness checks use pre-loaded story and sibling data instead of
     per-task lookups'
   type: task
-  status: todo
+  status: done
   points: null
   story_id: US-PRJ-32
   epic_id: null
@@ -3593,7 +3601,7 @@ entries:
 - id: US-PRJ-32-3
   title: 'Test: Total file I/O for 100 tasks reduced by at least 50%'
   type: task
-  status: todo
+  status: done
   points: null
   story_id: US-PRJ-32
   epic_id: null
@@ -3601,7 +3609,7 @@ entries:
 - id: US-PRJ-32-4
   title: 'Test: All board tests pass with same output'
   type: task
-  status: todo
+  status: done
   points: null
   story_id: US-PRJ-32
   epic_id: null
@@ -3609,7 +3617,7 @@ entries:
 - id: US-PRJ-32-5
   title: 'Test: Performance test added for 100+ task board'
   type: task
-  status: todo
+  status: done
   points: null
   story_id: US-PRJ-32
   epic_id: null
@@ -3617,7 +3625,7 @@ entries:
 - id: US-PRJ-32-6
   title: Pre-load all task bodies in pm_board instead of per-task get_task()
   type: task
-  status: todo
+  status: done
   points: 2
   story_id: US-PRJ-32
   epic_id: null
@@ -3625,7 +3633,7 @@ entries:
 - id: US-PRJ-32-7
   title: Refactor check_readiness to accept pre-loaded context
   type: task
-  status: todo
+  status: done
   points: 2
   story_id: US-PRJ-32
   epic_id: null
@@ -3633,7 +3641,7 @@ entries:
 - id: US-PRJ-32-8
   title: Pre-load all task bodies in pm_board instead of per-task get_task()
   type: task
-  status: todo
+  status: done
   points: 2
   story_id: US-PRJ-32
   epic_id: null
@@ -3641,7 +3649,7 @@ entries:
 - id: US-PRJ-32-9
   title: Refactor check_readiness to accept pre-loaded context
   type: task
-  status: todo
+  status: done
   points: 2
   story_id: US-PRJ-32
   epic_id: null
@@ -3649,7 +3657,7 @@ entries:
 - id: US-PRJ-33-1
   title: 'Test: pm_epic loads all tasks once then filters by story_id in memory'
   type: task
-  status: todo
+  status: done
   points: null
   story_id: US-PRJ-33
   epic_id: null
@@ -3657,7 +3665,7 @@ entries:
 - id: US-PRJ-33-2
   title: 'Test: File I/O reduced from N list_tasks calls to 1'
   type: task
-  status: todo
+  status: done
   points: null
   story_id: US-PRJ-33
   epic_id: null
@@ -3665,7 +3673,7 @@ entries:
 - id: US-PRJ-33-3
   title: 'Test: All epic tests pass'
   type: task
-  status: todo
+  status: done
   points: null
   story_id: US-PRJ-33
   epic_id: null
@@ -3673,7 +3681,7 @@ entries:
 - id: US-PRJ-33-4
   title: 'Test: Performance acceptable for epics with 20+ stories'
   type: task
-  status: todo
+  status: done
   points: null
   story_id: US-PRJ-33
   epic_id: null
@@ -3681,7 +3689,7 @@ entries:
 - id: US-PRJ-33-5
   title: Refactor pm_epic to load all tasks once then filter by story_id
   type: task
-  status: todo
+  status: done
   points: 2
   story_id: US-PRJ-33
   epic_id: null
@@ -3689,7 +3697,7 @@ entries:
 - id: US-PRJ-33-6
   title: Add performance test for epic with 20+ stories
   type: task
-  status: todo
+  status: done
   points: 1
   story_id: US-PRJ-33
   epic_id: null
@@ -3881,23 +3889,23 @@ entries:
 - id: US-PRJ-37-3
   title: 'Test: No mutation side effects from removing deep copy'
   type: task
-  status: todo
-  points: null
+  status: done
+  points: 1
   story_id: US-PRJ-37
   epic_id: null
   tags: []
 - id: US-PRJ-37-4
   title: 'Test: Regression tests confirm cache integrity'
   type: task
-  status: todo
-  points: null
+  status: done
+  points: 1
   story_id: US-PRJ-37
   epic_id: null
   tags: []
 - id: US-PRJ-37-5
   title: Audit cached-read call sites for caller mutation risk
   type: task
-  status: todo
+  status: done
   points: 2
   story_id: US-PRJ-37
   epic_id: null
@@ -3905,7 +3913,7 @@ entries:
 - id: US-PRJ-37-6
   title: Add cache-integrity regression tests for list/get returns
   type: task
-  status: todo
+  status: done
   points: 3
   story_id: US-PRJ-37
   epic_id: null
@@ -3913,32 +3921,56 @@ entries:
 - id: US-PRJ-38-1
   title: 'Test: Vectors batch-decoded into numpy array once'
   type: task
-  status: todo
-  points: null
+  status: done
+  points: 1
   story_id: US-PRJ-38
   epic_id: null
   tags: []
 - id: US-PRJ-38-2
   title: 'Test: Cosine similarity uses np.dot(Q; all_vecs.T) instead of loop'
   type: task
-  status: todo
-  points: null
+  status: done
+  points: 1
   story_id: US-PRJ-38
   epic_id: null
   tags: []
 - id: US-PRJ-38-3
   title: 'Test: First search lazy-loads and caches decoded vectors'
   type: task
-  status: todo
-  points: null
+  status: done
+  points: 1
   story_id: US-PRJ-38
   epic_id: null
   tags: []
 - id: US-PRJ-38-4
   title: 'Test: 10x+ improvement for 1000-item projects'
   type: task
-  status: todo
-  points: null
+  status: done
+  points: 1
+  story_id: US-PRJ-38
+  epic_id: null
+  tags: []
+- id: US-PRJ-38-5
+  title: Batch-decode embedding rows into one cached numpy matrix
+  type: task
+  status: done
+  points: 2
+  story_id: US-PRJ-38
+  epic_id: null
+  tags: []
+- id: US-PRJ-38-6
+  title: Replace the per-row similarity loop with a vectorised top-k
+  type: task
+  status: done
+  points: 2
+  story_id: US-PRJ-38
+  epic_id: null
+  tags: []
+- id: US-PRJ-38-7
+  title: Invalidate the cached vector matrix on index writes and stale databases
+  type: task
+  status: done
+  points: 1
   story_id: US-PRJ-38
   epic_id: null
   tags: []
@@ -4138,39 +4170,71 @@ entries:
   title: 'Test: pm_board uses list_all or cache for task bodies instead of per-task
     get'
   type: task
-  status: todo
-  points: null
+  status: done
+  points: 1
   story_id: US-PRJ-43
   epic_id: null
   tags: []
 - id: US-PRJ-43-2
   title: 'Test: pm_epic pre-fetches all tasks and partitions by story_id locally'
   type: task
-  status: todo
-  points: null
+  status: done
+  points: 1
   story_id: US-PRJ-43
   epic_id: null
   tags: []
 - id: US-PRJ-43-3
   title: 'Test: pm_search tag filter batch-loads metadata instead of individual gets'
   type: task
-  status: todo
-  points: null
+  status: done
+  points: 1
   story_id: US-PRJ-43
   epic_id: null
   tags: []
 - id: US-PRJ-43-4
   title: 'Test: pm_active removes redundant list_stories call on line 252'
   type: task
-  status: todo
-  points: null
+  status: done
+  points: 1
+  story_id: US-PRJ-43
+  epic_id: null
+  tags: []
+- id: US-PRJ-43-5
+  title: Load task bodies once in pm_board instead of get_task per task
+  type: task
+  status: done
+  points: 2
+  story_id: US-PRJ-43
+  epic_id: null
+  tags: []
+- id: US-PRJ-43-6
+  title: Let check_readiness accept pre-loaded context and pass it from pm_board
+  type: task
+  status: done
+  points: 2
+  story_id: US-PRJ-43
+  epic_id: null
+  tags: []
+- id: US-PRJ-43-7
+  title: Partition one list_tasks call by story_id in pm_epic
+  type: task
+  status: done
+  points: 1
+  story_id: US-PRJ-43
+  epic_id: null
+  tags: []
+- id: US-PRJ-43-8
+  title: Batch the pm_search tag filter and drop the redundant list_stories in pm_active
+  type: task
+  status: done
+  points: 1
   story_id: US-PRJ-43
   epic_id: null
   tags: []
 - id: US-PRJ-44-1
   title: 'Test: pm_batch_update accepts JSON array of update dicts'
   type: task
-  status: todo
+  status: done
   points: null
   story_id: US-PRJ-44
   epic_id: null
@@ -4178,7 +4242,7 @@ entries:
 - id: US-PRJ-44-2
   title: 'Test: Each update applied via store.update with validation'
   type: task
-  status: todo
+  status: done
   points: null
   story_id: US-PRJ-44
   epic_id: null
@@ -4186,7 +4250,7 @@ entries:
 - id: US-PRJ-44-3
   title: 'Test: Single auto-commit for entire batch'
   type: task
-  status: todo
+  status: done
   points: null
   story_id: US-PRJ-44
   epic_id: null
@@ -4194,7 +4258,7 @@ entries:
 - id: US-PRJ-44-4
   title: 'Test: Returns list of updated items or per-item errors'
   type: task
-  status: todo
+  status: done
   points: null
   story_id: US-PRJ-44
   epic_id: null
@@ -4202,7 +4266,7 @@ entries:
 - id: US-PRJ-44-5
   title: 'Test: Proper MCP annotations (destructive=false)'
   type: task
-  status: todo
+  status: done
   points: null
   story_id: US-PRJ-44
   epic_id: null
@@ -4210,7 +4274,7 @@ entries:
 - id: US-PRJ-45-1
   title: 'Test: pm_batch_archive accepts comma-separated or list of IDs'
   type: task
-  status: todo
+  status: done
   points: null
   story_id: US-PRJ-45
   epic_id: null
@@ -4218,7 +4282,7 @@ entries:
 - id: US-PRJ-45-2
   title: 'Test: Archives all items with single commit'
   type: task
-  status: todo
+  status: done
   points: null
   story_id: US-PRJ-45
   epic_id: null
@@ -4226,7 +4290,7 @@ entries:
 - id: US-PRJ-45-3
   title: 'Test: Reports per-item success/failure'
   type: task
-  status: todo
+  status: done
   points: null
   story_id: US-PRJ-45
   epic_id: null
@@ -4234,7 +4298,7 @@ entries:
 - id: US-PRJ-45-4
   title: 'Test: Proper destructive=true annotation'
   type: task
-  status: todo
+  status: done
   points: null
   story_id: US-PRJ-45
   epic_id: null
@@ -4266,32 +4330,40 @@ entries:
 - id: US-PRJ-47-1
   title: 'Test: PR commands use subprocess list args or shlex.quote for all user input'
   type: task
-  status: todo
-  points: null
+  status: done
+  points: 1
   story_id: US-PRJ-47
   epic_id: null
   tags: []
 - id: US-PRJ-47-2
   title: 'Test: Cross-ref block renders newlines correctly in GitHub'
   type: task
-  status: todo
-  points: null
+  status: done
+  points: 1
   story_id: US-PRJ-47
   epic_id: null
   tags: []
 - id: US-PRJ-47-3
   title: 'Test: Titles and descriptions with quotes/backticks/semicolons are safe'
   type: task
-  status: todo
-  points: null
+  status: done
+  points: 1
   story_id: US-PRJ-47
   epic_id: null
   tags: []
 - id: US-PRJ-47-4
   title: 'Test: Tests cover special character edge cases'
   type: task
-  status: todo
-  points: null
+  status: done
+  points: 1
+  story_id: US-PRJ-47
+  epic_id: null
+  tags: []
+- id: US-PRJ-47-5
+  title: Build changeset PR commands from argv lists with shlex quoting
+  type: task
+  status: done
+  points: 2
   story_id: US-PRJ-47
   epic_id: null
   tags: []
@@ -4627,7 +4699,7 @@ entries:
 - id: US-PRJ-57-1
   title: 'Test: All tool references in pm skill correspond to actual MCP tools'
   type: task
-  status: todo
+  status: done
   points: null
   story_id: US-PRJ-57
   epic_id: null
@@ -4635,7 +4707,7 @@ entries:
 - id: US-PRJ-57-2
   title: 'Test: Non-existent tool references either implemented or removed'
   type: task
-  status: todo
+  status: done
   points: null
   story_id: US-PRJ-57
   epic_id: null
@@ -4643,7 +4715,7 @@ entries:
 - id: US-PRJ-57-3
   title: 'Test: Skill tested to verify all routing targets exist'
   type: task
-  status: todo
+  status: done
   points: null
   story_id: US-PRJ-57
   epic_id: null
@@ -4796,7 +4868,7 @@ entries:
 - id: US-PRJ-61-1
   title: 'Test: All 6 cache test files committed and tracked'
   type: task
-  status: todo
+  status: done
   points: null
   story_id: US-PRJ-61
   epic_id: null
@@ -4804,7 +4876,7 @@ entries:
 - id: US-PRJ-61-2
   title: 'Test: Tests pass in CI'
   type: task
-  status: todo
+  status: done
   points: null
   story_id: US-PRJ-61
   epic_id: null
@@ -4812,7 +4884,7 @@ entries:
 - id: US-PRJ-61-3
   title: 'Test: No duplicate test names or conflicts'
   type: task
-  status: todo
+  status: done
   points: null
   story_id: US-PRJ-61
   epic_id: null
@@ -4852,32 +4924,49 @@ entries:
 - id: US-PRJ-63-1
   title: 'Test: test_performance_n1.py created'
   type: task
-  status: todo
-  points: null
+  status: done
+  points: 1
   story_id: US-PRJ-63
   epic_id: null
   tags: []
 - id: US-PRJ-63-2
   title: 'Test: Tests verify pm_board uses batch loads not per-task fetches'
   type: task
-  status: todo
-  points: null
+  status: done
+  points: 1
   story_id: US-PRJ-63
   epic_id: null
   tags: []
 - id: US-PRJ-63-3
   title: 'Test: Tests verify pm_epic uses single list_tasks call'
   type: task
-  status: todo
-  points: null
+  status: done
+  points: 1
   story_id: US-PRJ-63
   epic_id: null
   tags: []
 - id: US-PRJ-63-4
   title: 'Test: Tests verify pm_search tag filter uses batch metadata loading'
   type: task
-  status: todo
-  points: null
+  status: done
+  points: 1
+  story_id: US-PRJ-63
+  epic_id: null
+  tags: []
+- id: US-PRJ-63-5
+  title: Create test_performance_n1.py with a call-counting Store spy and a 100-task
+    fixture
+  type: task
+  status: done
+  points: 1
+  story_id: US-PRJ-63
+  epic_id: null
+  tags: []
+- id: US-PRJ-63-6
+  title: Assert pm_board, pm_epic and pm_search make batch loads, not per-item calls
+  type: task
+  status: done
+  points: 2
   story_id: US-PRJ-63
   epic_id: null
   tags: []
@@ -5153,8 +5242,8 @@ entries:
   story_id: US-PRJ-9
   epic_id: null
   tags: []
-total_points: 953
-completed_points: 711
-story_count: 85
-task_count: 538
+total_points: 1030
+completed_points: 883
+story_count: 86
+task_count: 548
 epic_count: 15

@@ -8,11 +8,11 @@ epic_id: EPIC-PRJ-12
 id: US-PRJ-61
 points: 1
 priority: must
-status: backlog
+status: done
 tags:
 - testing
 title: Commit pending cache test files
-updated: '2026-03-09'
+updated: '2026-08-21'
 ---
 
 As a developer, I want all test files tracked in git so that CI runs them. 6 untracked test files exist: test_cache_bounded_memory.py, test_cache_hit_sequential.py, test_cache_invalidation.py, test_cache_performance.py, test_mutation_sequence.py, test_write_index_cache.py. All are high-quality and production-ready.

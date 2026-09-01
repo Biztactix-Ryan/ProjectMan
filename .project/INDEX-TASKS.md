@@ -16,42 +16,42 @@
 | [US-PM-10-6](tasks/US-PM-10-6.md) | Add a fields parameter to pm_get and pm_grab | ✅ done | 3 |  | claude | — | [US-PM-10](stories/US-PM-10.md) |
 | [US-PM-10-7](tasks/US-PM-10-7.md) | Add a brief mode to pm_batch_get and pm_list_sprints | ✅ done | 2 |  | claude | — | [US-PM-10](stories/US-PM-10.md) |
 | [US-PM-10-8](tasks/US-PM-10-8.md) | Use projection for the orchestrator validation read | ✅ done | 1 |  | claude | US-PM-10-6 | [US-PM-10](stories/US-PM-10.md) |
-| [US-PM-11-1](tasks/US-PM-11-1.md) | Test: pm_audit returns a digest identifying the current project state | ⚪ todo | — |  | — | — | [US-PM-11](stories/US-PM-11.md) |
-| [US-PM-11-2](tasks/US-PM-11-2.md) | Test: pm_audit accepts a since parameter and answers cheaply when nothing changed | ⚪ todo | — |  | — | — | [US-PM-11](stories/US-PM-11.md) |
-| [US-PM-11-3](tasks/US-PM-11-3.md) | Test: The health check still detects new ERROR-level findings promptly | ⚪ todo | — |  | — | — | [US-PM-11](stories/US-PM-11.md) |
-| [US-PM-11-4](tasks/US-PM-11-4.md) | Test: pm-orchestrate passes the previous digest on its periodic health check | ⚪ todo | — |  | — | — | [US-PM-11](stories/US-PM-11.md) |
-| [US-PM-11-5](tasks/US-PM-11-5.md) | Return a state digest from pm_audit | ⚪ todo | 2 |  | — | — | [US-PM-11](stories/US-PM-11.md) |
-| [US-PM-11-6](tasks/US-PM-11-6.md) | Accept a since parameter and short-circuit when unchanged | ⚪ todo | — |  | — | US-PM-11-5 | [US-PM-11](stories/US-PM-11.md) |
-| [US-PM-11-7](tasks/US-PM-11-7.md) | Pass the previous digest from the orchestrator health check | ⚪ todo | — |  | — | US-PM-11-6 | [US-PM-11](stories/US-PM-11.md) |
-| [US-PM-12-1](tasks/US-PM-12-1.md) | Test: A bulk update accepts either a uniform patch over an ID list or per-item patches | ⚪ todo | — |  | — | — | [US-PM-12](stories/US-PM-12.md) |
-| [US-PM-12-2](tasks/US-PM-12-2.md) | Test: Bulk archive accepts an explicit ID list | ⚪ todo | — |  | — | — | [US-PM-12](stories/US-PM-12.md) |
-| [US-PM-12-3](tasks/US-PM-12-3.md) | Test: Partial failure reports which IDs succeeded and which did not | ⚪ todo | — |  | — | — | [US-PM-12](stories/US-PM-12.md) |
-| [US-PM-12-4](tasks/US-PM-12-4.md) | Test: The four measured bulk patterns are each expressible in one call | ⚪ todo | — |  | — | — | [US-PM-12](stories/US-PM-12.md) |
-| [US-PM-12-5](tasks/US-PM-12-5.md) | Test: Longest consecutive-run length drops sharply in the next telemetry baseline | ⚪ todo | — |  | — | — | [US-PM-12](stories/US-PM-12.md) |
-| [US-PM-12-6](tasks/US-PM-12-6.md) | Add pm_update_many | ⚪ todo | 3 |  | — | — | [US-PM-12](stories/US-PM-12.md) |
-| [US-PM-12-7](tasks/US-PM-12-7.md) | Add bulk archive with an explicit ID list | ⚪ todo | 2 |  | — | — | [US-PM-12](stories/US-PM-12.md) |
-| [US-PM-12-8](tasks/US-PM-12-8.md) | Define partial-failure semantics | ⚪ todo | — |  | — | US-PM-12-6, US-PM-12-7 | [US-PM-12](stories/US-PM-12.md) |
+| [US-PM-11-1](tasks/US-PM-11-1.md) | Test: pm_audit returns a digest identifying the current project state | ✅ done | 1 |  | claude | — | [US-PM-11](stories/US-PM-11.md) |
+| [US-PM-11-2](tasks/US-PM-11-2.md) | Test: pm_audit accepts a since parameter and answers cheaply when nothing changed | ✅ done | 1 |  | claude | — | [US-PM-11](stories/US-PM-11.md) |
+| [US-PM-11-3](tasks/US-PM-11-3.md) | Test: The health check still detects new ERROR-level findings promptly | ✅ done | 1 |  | claude | — | [US-PM-11](stories/US-PM-11.md) |
+| [US-PM-11-4](tasks/US-PM-11-4.md) | Test: pm-orchestrate passes the previous digest on its periodic health check | ✅ done | 1 |  | claude | — | [US-PM-11](stories/US-PM-11.md) |
+| [US-PM-11-5](tasks/US-PM-11-5.md) | Return a state digest from pm_audit | ✅ done | 2 |  | claude | — | [US-PM-11](stories/US-PM-11.md) |
+| [US-PM-11-6](tasks/US-PM-11-6.md) | Accept a since parameter and short-circuit when unchanged | ✅ done | 1 |  | claude | US-PM-11-5 | [US-PM-11](stories/US-PM-11.md) |
+| [US-PM-11-7](tasks/US-PM-11-7.md) | Pass the previous digest from the orchestrator health check | ✅ done | 1 |  | claude | US-PM-11-6 | [US-PM-11](stories/US-PM-11.md) |
+| [US-PM-12-1](tasks/US-PM-12-1.md) | Test: A bulk update accepts either a uniform patch over an ID list or per-item patches | ✅ done | 1 |  | claude | — | [US-PM-12](stories/US-PM-12.md) |
+| [US-PM-12-2](tasks/US-PM-12-2.md) | Test: Bulk archive accepts an explicit ID list | ✅ done | 1 |  | claude | — | [US-PM-12](stories/US-PM-12.md) |
+| [US-PM-12-3](tasks/US-PM-12-3.md) | Test: Partial failure reports which IDs succeeded and which did not | ✅ done | 1 |  | claude | — | [US-PM-12](stories/US-PM-12.md) |
+| [US-PM-12-4](tasks/US-PM-12-4.md) | Test: The four measured bulk patterns are each expressible in one call | ✅ done | 1 |  | claude | — | [US-PM-12](stories/US-PM-12.md) |
+| [US-PM-12-5](tasks/US-PM-12-5.md) | Test: Longest consecutive-run length drops sharply in the next telemetry baseline | 🔍 review | 1 |  | claude | — | [US-PM-12](stories/US-PM-12.md) |
+| [US-PM-12-6](tasks/US-PM-12-6.md) | Add pm_update_many | ✅ done | 3 |  | claude | — | [US-PM-12](stories/US-PM-12.md) |
+| [US-PM-12-7](tasks/US-PM-12-7.md) | Add bulk archive with an explicit ID list | ✅ done | 2 |  | claude | — | [US-PM-12](stories/US-PM-12.md) |
+| [US-PM-12-8](tasks/US-PM-12-8.md) | Define partial-failure semantics | ✅ done | 2 |  | claude | US-PM-12-6, US-PM-12-7 | [US-PM-12](stories/US-PM-12.md) |
 | [US-PM-13-1](tasks/US-PM-13-1.md) | Test: The worker prompt template includes project architecture context | ✅ done | 1 |  | claude | US-PM-13-5 | [US-PM-13](stories/US-PM-13.md) |
 | [US-PM-13-2](tasks/US-PM-13-2.md) | Test: The scoping and estimation workflows consult pm_estimate before writing points | ✅ done | 1 |  | claude | US-PM-13-6 | [US-PM-13](stories/US-PM-13.md) |
 | [US-PM-13-3](tasks/US-PM-13-3.md) | Test: Skill files name the step at which each guidance tool is called | ✅ done | 1 |  | claude | US-PM-13-5, US-PM-13-6 | [US-PM-13](stories/US-PM-13.md) |
 | [US-PM-13-4](tasks/US-PM-13-4.md) | Test: Usage of both tools is visible in the next telemetry baseline | ✅ done | 1 |  | claude | US-PM-13-5, US-PM-13-6 | [US-PM-13](stories/US-PM-13.md) |
 | [US-PM-13-5](tasks/US-PM-13-5.md) | Add project context to the worker prompt template | ✅ done | 1 |  | claude | — | [US-PM-13](stories/US-PM-13.md) |
 | [US-PM-13-6](tasks/US-PM-13-6.md) | Call pm_estimate before writing points in the scoping workflows | ✅ done | 1 |  | claude | — | [US-PM-13](stories/US-PM-13.md) |
-| [US-PM-14-1](tasks/US-PM-14-1.md) | Test: An interrupted run can identify which claims it owned | ⚪ todo | — |  | — | — | [US-PM-14](stories/US-PM-14.md) |
-| [US-PM-14-2](tasks/US-PM-14-2.md) | Test: Stale claims are identifiable without asking a human | ⚪ todo | — |  | — | — | [US-PM-14](stories/US-PM-14.md) |
-| [US-PM-14-3](tasks/US-PM-14-3.md) | Test: The final report is built from the activity log rather than from memory | ⚪ todo | — |  | — | — | [US-PM-14](stories/US-PM-14.md) |
-| [US-PM-14-4](tasks/US-PM-14-4.md) | Test: pm-orchestrate has a documented resume path | ⚪ todo | — |  | — | — | [US-PM-14](stories/US-PM-14.md) |
-| [US-PM-14-5](tasks/US-PM-14-5.md) | Add claim ownership and staleness metadata | ⚪ todo | 2 |  | — | — | [US-PM-14](stories/US-PM-14.md) |
-| [US-PM-14-6](tasks/US-PM-14-6.md) | Replace the Phase 1 ownership guess with an activity query | ⚪ todo | — |  | — | US-PM-14-5 | [US-PM-14](stories/US-PM-14.md) |
-| [US-PM-14-7](tasks/US-PM-14-7.md) | Build the final report from the activity log | ⚪ todo | — |  | — | — | [US-PM-14](stories/US-PM-14.md) |
-| [US-PM-14-8](tasks/US-PM-14-8.md) | Document a resume path in pm-orchestrate | ⚪ todo | — |  | — | US-PM-14-6 | [US-PM-14](stories/US-PM-14.md) |
-| [US-PM-15-1](tasks/US-PM-15-1.md) | Test: Changeset and web tool families are hidden unless enabled by config | ⚪ todo | — |  | — | — | [US-PM-15](stories/US-PM-15.md) |
-| [US-PM-15-2](tasks/US-PM-15-2.md) | Test: Repair and restore tooling is hidden from the agent tool list but reachable via CLI | ⚪ todo | — |  | — | — | [US-PM-15](stories/US-PM-15.md) |
-| [US-PM-15-3](tasks/US-PM-15-3.md) | Test: pm_activity and pm_context and pm_estimate remain exposed | ⚪ todo | — |  | — | — | [US-PM-15](stories/US-PM-15.md) |
-| [US-PM-15-4](tasks/US-PM-15-4.md) | Test: Tool-list payload size drops measurably with default config | ⚪ todo | — |  | — | — | [US-PM-15](stories/US-PM-15.md) |
-| [US-PM-15-5](tasks/US-PM-15-5.md) | Add config flags for the changeset and web tool families | ⚪ todo | 2 |  | — | — | [US-PM-15](stories/US-PM-15.md) |
-| [US-PM-15-6](tasks/US-PM-15-6.md) | Move repair and restore tooling off the agent tool list | ⚪ todo | — |  | — | — | [US-PM-15](stories/US-PM-15.md) |
-| [US-PM-15-7](tasks/US-PM-15-7.md) | Measure the tool-list payload reduction | ⚪ todo | — |  | — | — | [US-PM-15](stories/US-PM-15.md) |
+| [US-PM-14-1](tasks/US-PM-14-1.md) | Test: An interrupted run can identify which claims it owned | ✅ done | 1 |  | claude | — | [US-PM-14](stories/US-PM-14.md) |
+| [US-PM-14-2](tasks/US-PM-14-2.md) | Test: Stale claims are identifiable without asking a human | ✅ done | 1 |  | claude | — | [US-PM-14](stories/US-PM-14.md) |
+| [US-PM-14-3](tasks/US-PM-14-3.md) | Test: The final report is built from the activity log rather than from memory | ✅ done | 1 |  | claude | — | [US-PM-14](stories/US-PM-14.md) |
+| [US-PM-14-4](tasks/US-PM-14-4.md) | Test: pm-orchestrate has a documented resume path | ✅ done | 1 |  | claude | — | [US-PM-14](stories/US-PM-14.md) |
+| [US-PM-14-5](tasks/US-PM-14-5.md) | Add claim ownership and staleness metadata | ✅ done | 2 |  | claude | — | [US-PM-14](stories/US-PM-14.md) |
+| [US-PM-14-6](tasks/US-PM-14-6.md) | Replace the Phase 1 ownership guess with an activity query | ✅ done | 2 |  | claude | US-PM-14-5 | [US-PM-14](stories/US-PM-14.md) |
+| [US-PM-14-7](tasks/US-PM-14-7.md) | Build the final report from the activity log | ✅ done | 2 |  | claude | — | [US-PM-14](stories/US-PM-14.md) |
+| [US-PM-14-8](tasks/US-PM-14-8.md) | Document a resume path in pm-orchestrate | ✅ done | 1 |  | claude | US-PM-14-6 | [US-PM-14](stories/US-PM-14.md) |
+| [US-PM-15-1](tasks/US-PM-15-1.md) | Test: Changeset and web tool families are hidden unless enabled by config | ✅ done | 1 |  | claude | — | [US-PM-15](stories/US-PM-15.md) |
+| [US-PM-15-2](tasks/US-PM-15-2.md) | Test: Repair and restore tooling is hidden from the agent tool list but reachable via CLI | ✅ done | 1 |  | claude | — | [US-PM-15](stories/US-PM-15.md) |
+| [US-PM-15-3](tasks/US-PM-15-3.md) | Test: pm_activity and pm_context and pm_estimate remain exposed | ✅ done | 1 |  | claude | — | [US-PM-15](stories/US-PM-15.md) |
+| [US-PM-15-4](tasks/US-PM-15-4.md) | Test: Tool-list payload size drops measurably with default config | ✅ done | 1 |  | claude | — | [US-PM-15](stories/US-PM-15.md) |
+| [US-PM-15-5](tasks/US-PM-15-5.md) | Add config flags for the changeset and web tool families | ✅ done | 2 |  | claude | — | [US-PM-15](stories/US-PM-15.md) |
+| [US-PM-15-6](tasks/US-PM-15-6.md) | Move repair and restore tooling off the agent tool list | ✅ done | 1 |  | claude | — | [US-PM-15](stories/US-PM-15.md) |
+| [US-PM-15-7](tasks/US-PM-15-7.md) | Measure the tool-list payload reduction | ✅ done | 1 |  | claude | — | [US-PM-15](stories/US-PM-15.md) |
 | [US-PM-16-1](tasks/US-PM-16-1.md) | Test: Archiving a task no longer sets its status to done | ✅ done | 1 |  | claude | US-PM-16-5 | [US-PM-16](stories/US-PM-16.md) |
 | [US-PM-16-2](tasks/US-PM-16-2.md) | Test: Archived tasks are excluded from completion percentage and burndown | ✅ done | 1 |  | claude | US-PM-16-6 | [US-PM-16](stories/US-PM-16.md) |
 | [US-PM-16-3](tasks/US-PM-16-3.md) | Test: Sprint velocity counts only genuinely completed points | ✅ done | 1 |  | claude | US-PM-16-6 | [US-PM-16](stories/US-PM-16.md) |
@@ -75,27 +75,27 @@
 | [US-PM-18-5](tasks/US-PM-18-5.md) | Test: Regression tests cover comma-bearing criteria on both tools | ✅ done | 1 |  | claude | US-PM-18-7 | [US-PM-18](stories/US-PM-18.md) |
 | [US-PM-18-6](tasks/US-PM-18-6.md) | Switch acceptance_criteria params to list input in pm_create_story and pm_update | ✅ done | 3 |  | claude | — | [US-PM-18](stories/US-PM-18.md) |
 | [US-PM-18-7](tasks/US-PM-18-7.md) | Add regression tests for comma-bearing acceptance criteria | ✅ done | 2 |  | claude | US-PM-18-6 | [US-PM-18](stories/US-PM-18.md) |
-| [US-PM-19-1](tasks/US-PM-19-1.md) | Test: Running the migration leaves .project mounted as a worktree on an orphan projectman branch | ⚪ todo | — |  | — | US-PM-19-7 | [US-PM-19](stories/US-PM-19.md) |
-| [US-PM-19-2](tasks/US-PM-19-2.md) | Test: main stops tracking .project and gains a .gitignore entry for it | ⚪ todo | — |  | — | US-PM-19-7 | [US-PM-19](stories/US-PM-19.md) |
-| [US-PM-19-3](tasks/US-PM-19-3.md) | Test: All existing PM files survive the migration intact | ⚪ todo | — |  | — | US-PM-19-7 | [US-PM-19](stories/US-PM-19.md) |
-| [US-PM-19-4](tasks/US-PM-19-4.md) | Test: Migration refuses to run on a dirty working tree | ⚪ todo | — |  | — | US-PM-19-8 | [US-PM-19](stories/US-PM-19.md) |
-| [US-PM-19-5](tasks/US-PM-19-5.md) | Test: Migration refuses when a projectman branch already exists and points at attach | ⚪ todo | — |  | — | US-PM-19-8 | [US-PM-19](stories/US-PM-19.md) |
-| [US-PM-19-6](tasks/US-PM-19-6.md) | Test: The projectman branch is pushed to origin when a remote exists | ⚪ todo | — |  | — | US-PM-19-9 | [US-PM-19](stories/US-PM-19.md) |
-| [US-PM-19-7](tasks/US-PM-19-7.md) | Implement migrate-worktree command core | ⚪ todo | 5 |  | — | — | [US-PM-19](stories/US-PM-19.md) |
-| [US-PM-19-8](tasks/US-PM-19-8.md) | Add safety rails: dirty-tree and existing-branch refusal | ⚪ todo | 2 |  | — | US-PM-19-7 | [US-PM-19](stories/US-PM-19.md) |
-| [US-PM-19-9](tasks/US-PM-19-9.md) | Handle remotes and document the history-preserving variant | ⚪ todo | 2 |  | — | US-PM-19-7 | [US-PM-19](stories/US-PM-19.md) |
+| [US-PM-19-1](tasks/US-PM-19-1.md) | Test: Running the migration leaves .project mounted as a worktree on an orphan projectman branch | ✅ done | 1 |  | claude | US-PM-19-7 | [US-PM-19](stories/US-PM-19.md) |
+| [US-PM-19-2](tasks/US-PM-19-2.md) | Test: main stops tracking .project and gains a .gitignore entry for it | ✅ done | 1 |  | claude | US-PM-19-7 | [US-PM-19](stories/US-PM-19.md) |
+| [US-PM-19-3](tasks/US-PM-19-3.md) | Test: All existing PM files survive the migration intact | ✅ done | 1 |  | claude | US-PM-19-7 | [US-PM-19](stories/US-PM-19.md) |
+| [US-PM-19-4](tasks/US-PM-19-4.md) | Test: Migration refuses to run on a dirty working tree | ✅ done | 1 |  | claude | US-PM-19-8 | [US-PM-19](stories/US-PM-19.md) |
+| [US-PM-19-5](tasks/US-PM-19-5.md) | Test: Migration refuses when a projectman branch already exists and points at attach | ✅ done | 1 |  | claude | US-PM-19-8 | [US-PM-19](stories/US-PM-19.md) |
+| [US-PM-19-6](tasks/US-PM-19-6.md) | Test: The projectman branch is pushed to origin when a remote exists | ✅ done | 1 |  | claude | US-PM-19-9 | [US-PM-19](stories/US-PM-19.md) |
+| [US-PM-19-7](tasks/US-PM-19-7.md) | Implement migrate-worktree command core | ✅ done | 5 |  | claude | — | [US-PM-19](stories/US-PM-19.md) |
+| [US-PM-19-8](tasks/US-PM-19-8.md) | Add safety rails: dirty-tree and existing-branch refusal | ✅ done | 2 |  | claude | US-PM-19-7 | [US-PM-19](stories/US-PM-19.md) |
+| [US-PM-19-9](tasks/US-PM-19-9.md) | Handle remotes and document the history-preserving variant | ✅ done | 2 |  | claude | US-PM-19-7 | [US-PM-19](stories/US-PM-19.md) |
 | [US-PM-2-1](tasks/US-PM-2-1.md) | Test: Tool failures raise a real MCP error rather than returning an error string body;is_error is set on every failur... | ✅ done | — |  | — | — | [US-PM-2](stories/US-PM-2.md) |
 | [US-PM-2-2](tasks/US-PM-2-2.md) | Inventory every error-string return path | ✅ done | 2 |  | claude | — | [US-PM-2](stories/US-PM-2.md) |
 | [US-PM-2-3](tasks/US-PM-2-3.md) | Raise genuine failures as real MCP errors | ✅ done | 2 |  | claude | US-PM-2-2 | [US-PM-2](stories/US-PM-2.md) |
 | [US-PM-2-4](tasks/US-PM-2-4.md) | Keep expected-negative results as successful responses | ✅ done | 2 |  | claude | US-PM-2-2 | [US-PM-2](stories/US-PM-2.md) |
 | [US-PM-2-5](tasks/US-PM-2-5.md) | Test: every known failure class sets is_error | ✅ done | 1 |  | claude | US-PM-2-3 | [US-PM-2](stories/US-PM-2.md) |
 | [US-PM-2-6](tasks/US-PM-2-6.md) | Test: expected negatives are not errors | ✅ done | 1 |  | claude | US-PM-2-4 | [US-PM-2](stories/US-PM-2.md) |
-| [US-PM-20-1](tasks/US-PM-20-1.md) | Test: projectman attach mounts the projectman branch as the .project worktree on a fresh clone | ⚪ todo | — |  | — | US-PM-20-5 | [US-PM-20](stories/US-PM-20.md) |
-| [US-PM-20-2](tasks/US-PM-20-2.md) | Test: projectman init detects origin/projectman and attaches instead of scaffolding a new store | ⚪ todo | — |  | — | US-PM-20-6 | [US-PM-20](stories/US-PM-20.md) |
-| [US-PM-20-3](tasks/US-PM-20-3.md) | Test: Attach is a friendly no-op when the worktree is already mounted | ⚪ todo | — |  | — | US-PM-20-5 | [US-PM-20](stories/US-PM-20.md) |
-| [US-PM-20-4](tasks/US-PM-20-4.md) | Test: Attach fails with an actionable message when .project holds untracked content instead of clobbering it | ⚪ todo | — |  | — | US-PM-20-5 | [US-PM-20](stories/US-PM-20.md) |
-| [US-PM-20-5](tasks/US-PM-20-5.md) | Implement projectman attach command | ⚪ todo | 3 |  | — | US-PM-19-7 | [US-PM-20](stories/US-PM-20.md) |
-| [US-PM-20-6](tasks/US-PM-20-6.md) | Teach projectman init to detect origin/projectman and attach | ⚪ todo | 2 |  | — | US-PM-20-5 | [US-PM-20](stories/US-PM-20.md) |
+| [US-PM-20-1](tasks/US-PM-20-1.md) | Test: projectman attach mounts the projectman branch as the .project worktree on a fresh clone | ✅ done | 1 |  | claude | US-PM-20-5 | [US-PM-20](stories/US-PM-20.md) |
+| [US-PM-20-2](tasks/US-PM-20-2.md) | Test: projectman init detects origin/projectman and attaches instead of scaffolding a new store | ✅ done | 1 |  | claude | US-PM-20-6 | [US-PM-20](stories/US-PM-20.md) |
+| [US-PM-20-3](tasks/US-PM-20-3.md) | Test: Attach is a friendly no-op when the worktree is already mounted | ✅ done | 1 |  | claude | US-PM-20-5 | [US-PM-20](stories/US-PM-20.md) |
+| [US-PM-20-4](tasks/US-PM-20-4.md) | Test: Attach fails with an actionable message when .project holds untracked content instead of clobbering it | ✅ done | 1 |  | claude | US-PM-20-5 | [US-PM-20](stories/US-PM-20.md) |
+| [US-PM-20-5](tasks/US-PM-20-5.md) | Implement projectman attach command | ✅ done | 3 |  | claude | US-PM-19-7 | [US-PM-20](stories/US-PM-20.md) |
+| [US-PM-20-6](tasks/US-PM-20-6.md) | Teach projectman init to detect origin/projectman and attach | ✅ done | 2 |  | claude | US-PM-20-5 | [US-PM-20](stories/US-PM-20.md) |
 | [US-PM-21-1](tasks/US-PM-21-1.md) | Test: pm_commit lands commits on the projectman branch without dirtying main | ⚪ todo | — |  | — | US-PM-21-7 | [US-PM-21](stories/US-PM-21.md) |
 | [US-PM-21-2](tasks/US-PM-21-2.md) | Test: pm_push pushes only the projectman branch | ⚪ todo | — |  | — | US-PM-21-7 | [US-PM-21](stories/US-PM-21.md) |
 | [US-PM-21-3](tasks/US-PM-21-3.md) | Test: pm_git_status reports the .project worktree state distinctly from main | ⚪ todo | — |  | — | US-PM-21-7 | [US-PM-21](stories/US-PM-21.md) |
@@ -328,36 +328,36 @@
 | [US-PRJ-3-6](tasks/US-PRJ-3-6.md) | Implement pm_push() with scope and validation | ✅ done | 2 |  | claude | — | [US-PRJ-3](stories/US-PRJ-3.md) |
 | [US-PRJ-3-7](tasks/US-PRJ-3-7.md) | Register pm_commit and pm_push as MCP tools and CLI commands | ✅ done | 2 |  | claude | — | [US-PRJ-3](stories/US-PRJ-3.md) |
 | [US-PRJ-3-8](tasks/US-PRJ-3-8.md) | Write tests for pm_commit and pm_push | ✅ done | 2 |  | claude | — | [US-PRJ-3](stories/US-PRJ-3.md) |
-| [US-PRJ-30-1](tasks/US-PRJ-30-1.md) | Test: load_config() uses module-level cache | ⚪ todo | — |  | — | — | [US-PRJ-30](stories/US-PRJ-30.md) |
-| [US-PRJ-30-2](tasks/US-PRJ-30-2.md) | Test: Cache has TTL or explicit invalidation on config write | ⚪ todo | — |  | — | — | [US-PRJ-30](stories/US-PRJ-30.md) |
-| [US-PRJ-30-3](tasks/US-PRJ-30-3.md) | Test: Repeated calls in same process return cached result | ⚪ todo | — |  | — | — | [US-PRJ-30](stories/US-PRJ-30.md) |
-| [US-PRJ-30-4](tasks/US-PRJ-30-4.md) | Test: _save_config() invalidates the cache | ⚪ todo | — |  | — | — | [US-PRJ-30](stories/US-PRJ-30.md) |
-| [US-PRJ-30-5](tasks/US-PRJ-30-5.md) | Test: All existing tests pass | ⚪ todo | — |  | — | — | [US-PRJ-30](stories/US-PRJ-30.md) |
-| [US-PRJ-30-6](tasks/US-PRJ-30-6.md) | Add module-level config cache to config.py | ⚪ todo | 1 |  | — | — | [US-PRJ-30](stories/US-PRJ-30.md) |
-| [US-PRJ-30-7](tasks/US-PRJ-30-7.md) | Invalidate config cache on _save_config() | ⚪ todo | 1 |  | — | — | [US-PRJ-30](stories/US-PRJ-30.md) |
-| [US-PRJ-30-8](tasks/US-PRJ-30-8.md) | Add tests for config cache hit and invalidation | ⚪ todo | 1 |  | — | — | [US-PRJ-30](stories/US-PRJ-30.md) |
+| [US-PRJ-30-1](tasks/US-PRJ-30-1.md) | Test: load_config() uses module-level cache | ✅ done | 1 |  | claude | US-PRJ-30-6 | [US-PRJ-30](stories/US-PRJ-30.md) |
+| [US-PRJ-30-2](tasks/US-PRJ-30-2.md) | Test: Cache has TTL or explicit invalidation on config write | ✅ done | 1 |  | claude | US-PRJ-30-7 | [US-PRJ-30](stories/US-PRJ-30.md) |
+| [US-PRJ-30-3](tasks/US-PRJ-30-3.md) | Test: Repeated calls in same process return cached result | ✅ done | 1 |  | claude | US-PRJ-30-6 | [US-PRJ-30](stories/US-PRJ-30.md) |
+| [US-PRJ-30-4](tasks/US-PRJ-30-4.md) | Test: _save_config() invalidates the cache | ✅ done | 1 |  | claude | US-PRJ-30-7 | [US-PRJ-30](stories/US-PRJ-30.md) |
+| [US-PRJ-30-5](tasks/US-PRJ-30-5.md) | Test: All existing tests pass | ✅ done | 1 |  | claude | US-PRJ-30-6, US-PRJ-30-7, US-PRJ-30-8 | [US-PRJ-30](stories/US-PRJ-30.md) |
+| [US-PRJ-30-6](tasks/US-PRJ-30-6.md) | Add module-level config cache to config.py | ✅ done | 1 |  | claude | — | [US-PRJ-30](stories/US-PRJ-30.md) |
+| [US-PRJ-30-7](tasks/US-PRJ-30-7.md) | Invalidate config cache on _save_config() | ✅ done | 1 |  | claude | — | [US-PRJ-30](stories/US-PRJ-30.md) |
+| [US-PRJ-30-8](tasks/US-PRJ-30-8.md) | Add tests for config cache hit and invalidation | ✅ done | 1 |  | claude | — | [US-PRJ-30](stories/US-PRJ-30.md) |
 | [US-PRJ-31-1](tasks/US-PRJ-31-1.md) | Test: pm_board output includes note distinguishing blocked vs not_ready | ⚪ todo | — |  | — | — | [US-PRJ-31](stories/US-PRJ-31.md) |
 | [US-PRJ-31-2](tasks/US-PRJ-31-2.md) | Test: Board tool docstring clarifies the distinction | ⚪ todo | — |  | — | — | [US-PRJ-31](stories/US-PRJ-31.md) |
 | [US-PRJ-31-3](tasks/US-PRJ-31-3.md) | Test: Forward references in batch create are documented in pm_create_tasks docstring | ⚪ todo | — |  | — | — | [US-PRJ-31](stories/US-PRJ-31.md) |
 | [US-PRJ-31-4](tasks/US-PRJ-31-4.md) | Add blocked vs not_ready note to pm_board output | ⚪ todo | 1 |  | — | — | [US-PRJ-31](stories/US-PRJ-31.md) |
 | [US-PRJ-31-5](tasks/US-PRJ-31-5.md) | Document forward references and blocked semantics in docstrings | ⚪ todo | 1 |  | — | — | [US-PRJ-31](stories/US-PRJ-31.md) |
-| [US-PRJ-32-1](tasks/US-PRJ-32-1.md) | Test: pm_board avoids per-task get_task() body reads where possible | ⚪ todo | — |  | — | — | [US-PRJ-32](stories/US-PRJ-32.md) |
-| [US-PRJ-32-10](tasks/US-PRJ-32-10.md) | Wire pre-loaded context through pm_board readiness loop | ⚪ todo | 1 |  | — | US-PRJ-32-8, US-PRJ-32-9 | [US-PRJ-32](stories/US-PRJ-32.md) |
-| [US-PRJ-32-11](tasks/US-PRJ-32-11.md) | Add performance test for 100+ task board | ⚪ todo | 1 |  | — | — | [US-PRJ-32](stories/US-PRJ-32.md) |
-| [US-PRJ-32-2](tasks/US-PRJ-32-2.md) | Test: Readiness checks use pre-loaded story and sibling data instead of per-task lookups | ⚪ todo | — |  | — | — | [US-PRJ-32](stories/US-PRJ-32.md) |
-| [US-PRJ-32-3](tasks/US-PRJ-32-3.md) | Test: Total file I/O for 100 tasks reduced by at least 50% | ⚪ todo | — |  | — | — | [US-PRJ-32](stories/US-PRJ-32.md) |
-| [US-PRJ-32-4](tasks/US-PRJ-32-4.md) | Test: All board tests pass with same output | ⚪ todo | — |  | — | — | [US-PRJ-32](stories/US-PRJ-32.md) |
-| [US-PRJ-32-5](tasks/US-PRJ-32-5.md) | Test: Performance test added for 100+ task board | ⚪ todo | — |  | — | — | [US-PRJ-32](stories/US-PRJ-32.md) |
-| [US-PRJ-32-6](tasks/US-PRJ-32-6.md) | Pre-load all task bodies in pm_board instead of per-task get_task() | ⚪ todo | 2 |  | — | — | [US-PRJ-32](stories/US-PRJ-32.md) |
-| [US-PRJ-32-7](tasks/US-PRJ-32-7.md) | Refactor check_readiness to accept pre-loaded context | ⚪ todo | 2 |  | — | — | [US-PRJ-32](stories/US-PRJ-32.md) |
-| [US-PRJ-32-8](tasks/US-PRJ-32-8.md) | Pre-load all task bodies in pm_board instead of per-task get_task() | ⚪ todo | 2 |  | — | — | [US-PRJ-32](stories/US-PRJ-32.md) |
-| [US-PRJ-32-9](tasks/US-PRJ-32-9.md) | Refactor check_readiness to accept pre-loaded context | ⚪ todo | 2 |  | — | — | [US-PRJ-32](stories/US-PRJ-32.md) |
-| [US-PRJ-33-1](tasks/US-PRJ-33-1.md) | Test: pm_epic loads all tasks once then filters by story_id in memory | ⚪ todo | — |  | — | — | [US-PRJ-33](stories/US-PRJ-33.md) |
-| [US-PRJ-33-2](tasks/US-PRJ-33-2.md) | Test: File I/O reduced from N list_tasks calls to 1 | ⚪ todo | — |  | — | — | [US-PRJ-33](stories/US-PRJ-33.md) |
-| [US-PRJ-33-3](tasks/US-PRJ-33-3.md) | Test: All epic tests pass | ⚪ todo | — |  | — | — | [US-PRJ-33](stories/US-PRJ-33.md) |
-| [US-PRJ-33-4](tasks/US-PRJ-33-4.md) | Test: Performance acceptable for epics with 20+ stories | ⚪ todo | — |  | — | — | [US-PRJ-33](stories/US-PRJ-33.md) |
-| [US-PRJ-33-5](tasks/US-PRJ-33-5.md) | Refactor pm_epic to load all tasks once then filter by story_id | ⚪ todo | 2 |  | — | — | [US-PRJ-33](stories/US-PRJ-33.md) |
-| [US-PRJ-33-6](tasks/US-PRJ-33-6.md) | Add performance test for epic with 20+ stories | ⚪ todo | 1 |  | — | — | [US-PRJ-33](stories/US-PRJ-33.md) |
+| [US-PRJ-32-1](tasks/US-PRJ-32-1.md) | Test: pm_board avoids per-task get_task() body reads where possible | ✅ done | — |  | — | — | [US-PRJ-32](stories/US-PRJ-32.md) |
+| [US-PRJ-32-10](tasks/US-PRJ-32-10.md) | Wire pre-loaded context through pm_board readiness loop | ✅ done | 1 |  | — | US-PRJ-32-8, US-PRJ-32-9 | [US-PRJ-32](stories/US-PRJ-32.md) |
+| [US-PRJ-32-11](tasks/US-PRJ-32-11.md) | Add performance test for 100+ task board | ✅ done | 1 |  | — | — | [US-PRJ-32](stories/US-PRJ-32.md) |
+| [US-PRJ-32-2](tasks/US-PRJ-32-2.md) | Test: Readiness checks use pre-loaded story and sibling data instead of per-task lookups | ✅ done | — |  | — | — | [US-PRJ-32](stories/US-PRJ-32.md) |
+| [US-PRJ-32-3](tasks/US-PRJ-32-3.md) | Test: Total file I/O for 100 tasks reduced by at least 50% | ✅ done | — |  | — | — | [US-PRJ-32](stories/US-PRJ-32.md) |
+| [US-PRJ-32-4](tasks/US-PRJ-32-4.md) | Test: All board tests pass with same output | ✅ done | — |  | — | — | [US-PRJ-32](stories/US-PRJ-32.md) |
+| [US-PRJ-32-5](tasks/US-PRJ-32-5.md) | Test: Performance test added for 100+ task board | ✅ done | — |  | — | — | [US-PRJ-32](stories/US-PRJ-32.md) |
+| [US-PRJ-32-6](tasks/US-PRJ-32-6.md) | Pre-load all task bodies in pm_board instead of per-task get_task() | ✅ done | 2 |  | — | — | [US-PRJ-32](stories/US-PRJ-32.md) |
+| [US-PRJ-32-7](tasks/US-PRJ-32-7.md) | Refactor check_readiness to accept pre-loaded context | ✅ done | 2 |  | — | — | [US-PRJ-32](stories/US-PRJ-32.md) |
+| [US-PRJ-32-8](tasks/US-PRJ-32-8.md) | Pre-load all task bodies in pm_board instead of per-task get_task() | ✅ done | 2 |  | — | — | [US-PRJ-32](stories/US-PRJ-32.md) |
+| [US-PRJ-32-9](tasks/US-PRJ-32-9.md) | Refactor check_readiness to accept pre-loaded context | ✅ done | 2 |  | — | — | [US-PRJ-32](stories/US-PRJ-32.md) |
+| [US-PRJ-33-1](tasks/US-PRJ-33-1.md) | Test: pm_epic loads all tasks once then filters by story_id in memory | ✅ done | — |  | — | — | [US-PRJ-33](stories/US-PRJ-33.md) |
+| [US-PRJ-33-2](tasks/US-PRJ-33-2.md) | Test: File I/O reduced from N list_tasks calls to 1 | ✅ done | — |  | — | — | [US-PRJ-33](stories/US-PRJ-33.md) |
+| [US-PRJ-33-3](tasks/US-PRJ-33-3.md) | Test: All epic tests pass | ✅ done | — |  | — | — | [US-PRJ-33](stories/US-PRJ-33.md) |
+| [US-PRJ-33-4](tasks/US-PRJ-33-4.md) | Test: Performance acceptable for epics with 20+ stories | ✅ done | — |  | — | — | [US-PRJ-33](stories/US-PRJ-33.md) |
+| [US-PRJ-33-5](tasks/US-PRJ-33-5.md) | Refactor pm_epic to load all tasks once then filter by story_id | ✅ done | 2 |  | — | — | [US-PRJ-33](stories/US-PRJ-33.md) |
+| [US-PRJ-33-6](tasks/US-PRJ-33-6.md) | Add performance test for epic with 20+ stories | ✅ done | 1 |  | — | — | [US-PRJ-33](stories/US-PRJ-33.md) |
 | [US-PRJ-34-1](tasks/US-PRJ-34-1.md) | Test: rollup() uses ThreadPoolExecutor for parallel project scanning | ⚪ todo | — |  | — | — | [US-PRJ-34](stories/US-PRJ-34.md) |
 | [US-PRJ-34-2](tasks/US-PRJ-34-2.md) | Test: Max workers capped similar to git_status_all (min(projects 16)) | ⚪ todo | — |  | — | — | [US-PRJ-34](stories/US-PRJ-34.md) |
 | [US-PRJ-34-3](tasks/US-PRJ-34-3.md) | Test: Results identical to sequential version | ⚪ todo | — |  | — | — | [US-PRJ-34](stories/US-PRJ-34.md) |
@@ -381,14 +381,17 @@
 | [US-PRJ-36-8](tasks/US-PRJ-36-8.md) | Add depends_on deduplication in TaskFrontmatter validator | ⚪ todo | 1 |  | — | — | [US-PRJ-36](stories/US-PRJ-36.md) |
 | [US-PRJ-37-1](tasks/US-PRJ-37-1.md) | Test: Deep copies removed from all list/get cache returns | ✅ done | 2 |  | claude | — | [US-PRJ-37](stories/US-PRJ-37.md) |
 | [US-PRJ-37-2](tasks/US-PRJ-37-2.md) | Test: Benchmark shows 10x+ improvement for 1000-item lists | ✅ done | 2 |  | claude | — | [US-PRJ-37](stories/US-PRJ-37.md) |
-| [US-PRJ-37-3](tasks/US-PRJ-37-3.md) | Test: No mutation side effects from removing deep copy | ⚪ todo | — |  | — | — | [US-PRJ-37](stories/US-PRJ-37.md) |
-| [US-PRJ-37-4](tasks/US-PRJ-37-4.md) | Test: Regression tests confirm cache integrity | ⚪ todo | — |  | — | — | [US-PRJ-37](stories/US-PRJ-37.md) |
-| [US-PRJ-37-5](tasks/US-PRJ-37-5.md) | Audit cached-read call sites for caller mutation risk | ⚪ todo | 2 |  | — | — | [US-PRJ-37](stories/US-PRJ-37.md) |
-| [US-PRJ-37-6](tasks/US-PRJ-37-6.md) | Add cache-integrity regression tests for list/get returns | ⚪ todo | 3 |  | — | — | [US-PRJ-37](stories/US-PRJ-37.md) |
-| [US-PRJ-38-1](tasks/US-PRJ-38-1.md) | Test: Vectors batch-decoded into numpy array once | ⚪ todo | — |  | — | — | [US-PRJ-38](stories/US-PRJ-38.md) |
-| [US-PRJ-38-2](tasks/US-PRJ-38-2.md) | Test: Cosine similarity uses np.dot(Q; all_vecs.T) instead of loop | ⚪ todo | — |  | — | — | [US-PRJ-38](stories/US-PRJ-38.md) |
-| [US-PRJ-38-3](tasks/US-PRJ-38-3.md) | Test: First search lazy-loads and caches decoded vectors | ⚪ todo | — |  | — | — | [US-PRJ-38](stories/US-PRJ-38.md) |
-| [US-PRJ-38-4](tasks/US-PRJ-38-4.md) | Test: 10x+ improvement for 1000-item projects | ⚪ todo | — |  | — | — | [US-PRJ-38](stories/US-PRJ-38.md) |
+| [US-PRJ-37-3](tasks/US-PRJ-37-3.md) | Test: No mutation side effects from removing deep copy | ✅ done | 1 |  | claude | US-PRJ-37-5 | [US-PRJ-37](stories/US-PRJ-37.md) |
+| [US-PRJ-37-4](tasks/US-PRJ-37-4.md) | Test: Regression tests confirm cache integrity | ✅ done | 1 |  | claude | US-PRJ-37-6 | [US-PRJ-37](stories/US-PRJ-37.md) |
+| [US-PRJ-37-5](tasks/US-PRJ-37-5.md) | Audit cached-read call sites for caller mutation risk | ✅ done | 2 |  | claude | — | [US-PRJ-37](stories/US-PRJ-37.md) |
+| [US-PRJ-37-6](tasks/US-PRJ-37-6.md) | Add cache-integrity regression tests for list/get returns | ✅ done | 3 |  | claude | US-PRJ-37-5 | [US-PRJ-37](stories/US-PRJ-37.md) |
+| [US-PRJ-38-1](tasks/US-PRJ-38-1.md) | Test: Vectors batch-decoded into numpy array once | ✅ done | 1 |  | claude | US-PRJ-38-5 | [US-PRJ-38](stories/US-PRJ-38.md) |
+| [US-PRJ-38-2](tasks/US-PRJ-38-2.md) | Test: Cosine similarity uses np.dot(Q; all_vecs.T) instead of loop | ✅ done | 1 |  | claude | US-PRJ-38-6 | [US-PRJ-38](stories/US-PRJ-38.md) |
+| [US-PRJ-38-3](tasks/US-PRJ-38-3.md) | Test: First search lazy-loads and caches decoded vectors | ✅ done | 1 |  | claude | US-PRJ-38-5, US-PRJ-38-7 | [US-PRJ-38](stories/US-PRJ-38.md) |
+| [US-PRJ-38-4](tasks/US-PRJ-38-4.md) | Test: 10x+ improvement for 1000-item projects | ✅ done | 1 |  | claude | US-PRJ-38-6 | [US-PRJ-38](stories/US-PRJ-38.md) |
+| [US-PRJ-38-5](tasks/US-PRJ-38-5.md) | Batch-decode embedding rows into one cached numpy matrix | ✅ done | 2 |  | claude | — | [US-PRJ-38](stories/US-PRJ-38.md) |
+| [US-PRJ-38-6](tasks/US-PRJ-38-6.md) | Replace the per-row similarity loop with a vectorised top-k | ✅ done | 2 |  | claude | US-PRJ-38-5 | [US-PRJ-38](stories/US-PRJ-38.md) |
+| [US-PRJ-38-7](tasks/US-PRJ-38-7.md) | Invalidate the cached vector matrix on index writes and stale databases | ✅ done | 1 |  | claude | US-PRJ-38-5 | [US-PRJ-38](stories/US-PRJ-38.md) |
 | [US-PRJ-39-1](tasks/US-PRJ-39-1.md) | Test: Secondary dict index maintained alongside cache list | ⚪ todo | — |  | — | — | [US-PRJ-39](stories/US-PRJ-39.md) |
 | [US-PRJ-39-2](tasks/US-PRJ-39-2.md) | Test: Cache update/invalidation is O(1) by ID | ⚪ todo | — |  | — | — | [US-PRJ-39](stories/US-PRJ-39.md) |
 | [US-PRJ-39-3](tasks/US-PRJ-39-3.md) | Test: Index stays consistent across append/update/invalidate operations | ⚪ todo | — |  | — | — | [US-PRJ-39](stories/US-PRJ-39.md) |
@@ -413,26 +416,31 @@
 | [US-PRJ-42-2](tasks/US-PRJ-42-2.md) | Test: 15 checks run against pre-loaded data | ⚪ todo | — |  | — | — | [US-PRJ-42](stories/US-PRJ-42.md) |
 | [US-PRJ-42-3](tasks/US-PRJ-42-3.md) | Test: No repeated list_stories or get_story calls | ⚪ todo | — |  | — | — | [US-PRJ-42](stories/US-PRJ-42.md) |
 | [US-PRJ-42-4](tasks/US-PRJ-42-4.md) | Test: Duplicate doc check logic extracted to shared function | ⚪ todo | — |  | — | — | [US-PRJ-42](stories/US-PRJ-42.md) |
-| [US-PRJ-43-1](tasks/US-PRJ-43-1.md) | Test: pm_board uses list_all or cache for task bodies instead of per-task get | ⚪ todo | — |  | — | — | [US-PRJ-43](stories/US-PRJ-43.md) |
-| [US-PRJ-43-2](tasks/US-PRJ-43-2.md) | Test: pm_epic pre-fetches all tasks and partitions by story_id locally | ⚪ todo | — |  | — | — | [US-PRJ-43](stories/US-PRJ-43.md) |
-| [US-PRJ-43-3](tasks/US-PRJ-43-3.md) | Test: pm_search tag filter batch-loads metadata instead of individual gets | ⚪ todo | — |  | — | — | [US-PRJ-43](stories/US-PRJ-43.md) |
-| [US-PRJ-43-4](tasks/US-PRJ-43-4.md) | Test: pm_active removes redundant list_stories call on line 252 | ⚪ todo | — |  | — | — | [US-PRJ-43](stories/US-PRJ-43.md) |
-| [US-PRJ-44-1](tasks/US-PRJ-44-1.md) | Test: pm_batch_update accepts JSON array of update dicts | ⚪ todo | — |  | — | — | [US-PRJ-44](stories/US-PRJ-44.md) |
-| [US-PRJ-44-2](tasks/US-PRJ-44-2.md) | Test: Each update applied via store.update with validation | ⚪ todo | — |  | — | — | [US-PRJ-44](stories/US-PRJ-44.md) |
-| [US-PRJ-44-3](tasks/US-PRJ-44-3.md) | Test: Single auto-commit for entire batch | ⚪ todo | — |  | — | — | [US-PRJ-44](stories/US-PRJ-44.md) |
-| [US-PRJ-44-4](tasks/US-PRJ-44-4.md) | Test: Returns list of updated items or per-item errors | ⚪ todo | — |  | — | — | [US-PRJ-44](stories/US-PRJ-44.md) |
-| [US-PRJ-44-5](tasks/US-PRJ-44-5.md) | Test: Proper MCP annotations (destructive=false) | ⚪ todo | — |  | — | — | [US-PRJ-44](stories/US-PRJ-44.md) |
-| [US-PRJ-45-1](tasks/US-PRJ-45-1.md) | Test: pm_batch_archive accepts comma-separated or list of IDs | ⚪ todo | — |  | — | — | [US-PRJ-45](stories/US-PRJ-45.md) |
-| [US-PRJ-45-2](tasks/US-PRJ-45-2.md) | Test: Archives all items with single commit | ⚪ todo | — |  | — | — | [US-PRJ-45](stories/US-PRJ-45.md) |
-| [US-PRJ-45-3](tasks/US-PRJ-45-3.md) | Test: Reports per-item success/failure | ⚪ todo | — |  | — | — | [US-PRJ-45](stories/US-PRJ-45.md) |
-| [US-PRJ-45-4](tasks/US-PRJ-45-4.md) | Test: Proper destructive=true annotation | ⚪ todo | — |  | — | — | [US-PRJ-45](stories/US-PRJ-45.md) |
+| [US-PRJ-43-1](tasks/US-PRJ-43-1.md) | Test: pm_board uses list_all or cache for task bodies instead of per-task get | ✅ done | 1 |  | claude | US-PRJ-43-5, US-PRJ-43-6 | [US-PRJ-43](stories/US-PRJ-43.md) |
+| [US-PRJ-43-2](tasks/US-PRJ-43-2.md) | Test: pm_epic pre-fetches all tasks and partitions by story_id locally | ✅ done | 1 |  | claude | US-PRJ-43-7 | [US-PRJ-43](stories/US-PRJ-43.md) |
+| [US-PRJ-43-3](tasks/US-PRJ-43-3.md) | Test: pm_search tag filter batch-loads metadata instead of individual gets | ✅ done | 1 |  | claude | US-PRJ-43-8 | [US-PRJ-43](stories/US-PRJ-43.md) |
+| [US-PRJ-43-4](tasks/US-PRJ-43-4.md) | Test: pm_active removes redundant list_stories call on line 252 | ✅ done | 1 |  | claude | US-PRJ-43-8 | [US-PRJ-43](stories/US-PRJ-43.md) |
+| [US-PRJ-43-5](tasks/US-PRJ-43-5.md) | Load task bodies once in pm_board instead of get_task per task | ✅ done | 2 |  | claude | — | [US-PRJ-43](stories/US-PRJ-43.md) |
+| [US-PRJ-43-6](tasks/US-PRJ-43-6.md) | Let check_readiness accept pre-loaded context and pass it from pm_board | ✅ done | 2 |  | claude | US-PRJ-43-5 | [US-PRJ-43](stories/US-PRJ-43.md) |
+| [US-PRJ-43-7](tasks/US-PRJ-43-7.md) | Partition one list_tasks call by story_id in pm_epic | ✅ done | 1 |  | claude | — | [US-PRJ-43](stories/US-PRJ-43.md) |
+| [US-PRJ-43-8](tasks/US-PRJ-43-8.md) | Batch the pm_search tag filter and drop the redundant list_stories in pm_active | ✅ done | 1 |  | claude | — | [US-PRJ-43](stories/US-PRJ-43.md) |
+| [US-PRJ-44-1](tasks/US-PRJ-44-1.md) | Test: pm_batch_update accepts JSON array of update dicts | ✅ done | — |  | — | — | [US-PRJ-44](stories/US-PRJ-44.md) |
+| [US-PRJ-44-2](tasks/US-PRJ-44-2.md) | Test: Each update applied via store.update with validation | ✅ done | — |  | — | — | [US-PRJ-44](stories/US-PRJ-44.md) |
+| [US-PRJ-44-3](tasks/US-PRJ-44-3.md) | Test: Single auto-commit for entire batch | ✅ done | — |  | — | — | [US-PRJ-44](stories/US-PRJ-44.md) |
+| [US-PRJ-44-4](tasks/US-PRJ-44-4.md) | Test: Returns list of updated items or per-item errors | ✅ done | — |  | — | — | [US-PRJ-44](stories/US-PRJ-44.md) |
+| [US-PRJ-44-5](tasks/US-PRJ-44-5.md) | Test: Proper MCP annotations (destructive=false) | ✅ done | — |  | — | — | [US-PRJ-44](stories/US-PRJ-44.md) |
+| [US-PRJ-45-1](tasks/US-PRJ-45-1.md) | Test: pm_batch_archive accepts comma-separated or list of IDs | ✅ done | — |  | — | — | [US-PRJ-45](stories/US-PRJ-45.md) |
+| [US-PRJ-45-2](tasks/US-PRJ-45-2.md) | Test: Archives all items with single commit | ✅ done | — |  | — | — | [US-PRJ-45](stories/US-PRJ-45.md) |
+| [US-PRJ-45-3](tasks/US-PRJ-45-3.md) | Test: Reports per-item success/failure | ✅ done | — |  | — | — | [US-PRJ-45](stories/US-PRJ-45.md) |
+| [US-PRJ-45-4](tasks/US-PRJ-45-4.md) | Test: Proper destructive=true annotation | ✅ done | — |  | — | — | [US-PRJ-45](stories/US-PRJ-45.md) |
 | [US-PRJ-46-1](tasks/US-PRJ-46-1.md) | Test: _next_task_id uses directory glob count instead of list_tasks | ⚪ todo | — |  | — | — | [US-PRJ-46](stories/US-PRJ-46.md) |
 | [US-PRJ-46-2](tasks/US-PRJ-46-2.md) | Test: Batch create_tasks generates IDs without N list_tasks calls | ⚪ todo | — |  | — | — | [US-PRJ-46](stories/US-PRJ-46.md) |
 | [US-PRJ-46-3](tasks/US-PRJ-46-3.md) | Test: Existing tests still pass | ⚪ todo | — |  | — | — | [US-PRJ-46](stories/US-PRJ-46.md) |
-| [US-PRJ-47-1](tasks/US-PRJ-47-1.md) | Test: PR commands use subprocess list args or shlex.quote for all user input | ⚪ todo | — |  | — | — | [US-PRJ-47](stories/US-PRJ-47.md) |
-| [US-PRJ-47-2](tasks/US-PRJ-47-2.md) | Test: Cross-ref block renders newlines correctly in GitHub | ⚪ todo | — |  | — | — | [US-PRJ-47](stories/US-PRJ-47.md) |
-| [US-PRJ-47-3](tasks/US-PRJ-47-3.md) | Test: Titles and descriptions with quotes/backticks/semicolons are safe | ⚪ todo | — |  | — | — | [US-PRJ-47](stories/US-PRJ-47.md) |
-| [US-PRJ-47-4](tasks/US-PRJ-47-4.md) | Test: Tests cover special character edge cases | ⚪ todo | — |  | — | — | [US-PRJ-47](stories/US-PRJ-47.md) |
+| [US-PRJ-47-1](tasks/US-PRJ-47-1.md) | Test: PR commands use subprocess list args or shlex.quote for all user input | ✅ done | 1 |  | claude | US-PRJ-47-5 | [US-PRJ-47](stories/US-PRJ-47.md) |
+| [US-PRJ-47-2](tasks/US-PRJ-47-2.md) | Test: Cross-ref block renders newlines correctly in GitHub | ✅ done | 1 |  | claude | US-PRJ-47-5 | [US-PRJ-47](stories/US-PRJ-47.md) |
+| [US-PRJ-47-3](tasks/US-PRJ-47-3.md) | Test: Titles and descriptions with quotes/backticks/semicolons are safe | ✅ done | 1 |  | claude | US-PRJ-47-5 | [US-PRJ-47](stories/US-PRJ-47.md) |
+| [US-PRJ-47-4](tasks/US-PRJ-47-4.md) | Test: Tests cover special character edge cases | ✅ done | 1 |  | claude | US-PRJ-47-5 | [US-PRJ-47](stories/US-PRJ-47.md) |
+| [US-PRJ-47-5](tasks/US-PRJ-47-5.md) | Build changeset PR commands from argv lists with shlex quoting | ✅ done | 2 | security, changesets | claude | — | [US-PRJ-47](stories/US-PRJ-47.md) |
 | [US-PRJ-48-1](tasks/US-PRJ-48-1.md) | Test: Specific exception types caught where appropriate (FileNotFoundError; ValueError; etc.) | ⚪ todo | — |  | — | — | [US-PRJ-48](stories/US-PRJ-48.md) |
 | [US-PRJ-48-2](tasks/US-PRJ-48-2.md) | Test: Error responses include error_code and message fields | ⚪ todo | — |  | — | — | [US-PRJ-48](stories/US-PRJ-48.md) |
 | [US-PRJ-48-3](tasks/US-PRJ-48-3.md) | Test: Generic catch-all still exists as fallback | ⚪ todo | — |  | — | — | [US-PRJ-48](stories/US-PRJ-48.md) |
@@ -474,9 +482,9 @@
 | [US-PRJ-56-1](tasks/US-PRJ-56-1.md) | Test: Skills docs clarify all operations route through /pm | ⚪ todo | — |  | — | — | [US-PRJ-56](stories/US-PRJ-56.md) |
 | [US-PRJ-56-2](tasks/US-PRJ-56-2.md) | Test: Quick reference table mapping operations to CLI/MCP/skill access | ⚪ todo | — |  | — | — | [US-PRJ-56](stories/US-PRJ-56.md) |
 | [US-PRJ-56-3](tasks/US-PRJ-56-3.md) | Test: Daily workflow doc updated to remove standalone /pm scope references | ⚪ todo | — |  | — | — | [US-PRJ-56](stories/US-PRJ-56.md) |
-| [US-PRJ-57-1](tasks/US-PRJ-57-1.md) | Test: All tool references in pm skill correspond to actual MCP tools | ⚪ todo | — |  | — | — | [US-PRJ-57](stories/US-PRJ-57.md) |
-| [US-PRJ-57-2](tasks/US-PRJ-57-2.md) | Test: Non-existent tool references either implemented or removed | ⚪ todo | — |  | — | — | [US-PRJ-57](stories/US-PRJ-57.md) |
-| [US-PRJ-57-3](tasks/US-PRJ-57-3.md) | Test: Skill tested to verify all routing targets exist | ⚪ todo | — |  | — | — | [US-PRJ-57](stories/US-PRJ-57.md) |
+| [US-PRJ-57-1](tasks/US-PRJ-57-1.md) | Test: All tool references in pm skill correspond to actual MCP tools | ✅ done | — |  | — | — | [US-PRJ-57](stories/US-PRJ-57.md) |
+| [US-PRJ-57-2](tasks/US-PRJ-57-2.md) | Test: Non-existent tool references either implemented or removed | ✅ done | — |  | — | — | [US-PRJ-57](stories/US-PRJ-57.md) |
+| [US-PRJ-57-3](tasks/US-PRJ-57-3.md) | Test: Skill tested to verify all routing targets exist | ✅ done | — |  | — | — | [US-PRJ-57](stories/US-PRJ-57.md) |
 | [US-PRJ-58-1](tasks/US-PRJ-58-1.md) | Test: List-type params accepted alongside comma-separated strings for backwards compat | ⚪ todo | — |  | — | — | [US-PRJ-58](stories/US-PRJ-58.md) |
 | [US-PRJ-58-2](tasks/US-PRJ-58-2.md) | Test: pm_create_story acceptance_criteria accepts list | ⚪ todo | — |  | — | — | [US-PRJ-58](stories/US-PRJ-58.md) |
 | [US-PRJ-58-3](tasks/US-PRJ-58-3.md) | Test: pm_changeset_create projects accepts list | ⚪ todo | — |  | — | — | [US-PRJ-58](stories/US-PRJ-58.md) |
@@ -495,17 +503,19 @@
 | [US-PRJ-60-2](tasks/US-PRJ-60-2.md) | Test: pm_rename_tag tool renames a tag across all items | ⚪ todo | — |  | — | — | [US-PRJ-60](stories/US-PRJ-60.md) |
 | [US-PRJ-60-3](tasks/US-PRJ-60-3.md) | Test: pm_export tool exports to JSON format | ⚪ todo | — |  | — | — | [US-PRJ-60](stories/US-PRJ-60.md) |
 | [US-PRJ-60-4](tasks/US-PRJ-60-4.md) | Test: All new tools have proper annotations and error handling | ⚪ todo | — |  | — | — | [US-PRJ-60](stories/US-PRJ-60.md) |
-| [US-PRJ-61-1](tasks/US-PRJ-61-1.md) | Test: All 6 cache test files committed and tracked | ⚪ todo | — |  | — | — | [US-PRJ-61](stories/US-PRJ-61.md) |
-| [US-PRJ-61-2](tasks/US-PRJ-61-2.md) | Test: Tests pass in CI | ⚪ todo | — |  | — | — | [US-PRJ-61](stories/US-PRJ-61.md) |
-| [US-PRJ-61-3](tasks/US-PRJ-61-3.md) | Test: No duplicate test names or conflicts | ⚪ todo | — |  | — | — | [US-PRJ-61](stories/US-PRJ-61.md) |
+| [US-PRJ-61-1](tasks/US-PRJ-61-1.md) | Test: All 6 cache test files committed and tracked | ✅ done | — |  | — | — | [US-PRJ-61](stories/US-PRJ-61.md) |
+| [US-PRJ-61-2](tasks/US-PRJ-61-2.md) | Test: Tests pass in CI | ✅ done | — |  | — | — | [US-PRJ-61](stories/US-PRJ-61.md) |
+| [US-PRJ-61-3](tasks/US-PRJ-61-3.md) | Test: No duplicate test names or conflicts | ✅ done | — |  | — | — | [US-PRJ-61](stories/US-PRJ-61.md) |
 | [US-PRJ-62-1](tasks/US-PRJ-62-1.md) | Test: test_search.py created with direct keyword_search tests | ⚪ todo | — |  | — | — | [US-PRJ-62](stories/US-PRJ-62.md) |
 | [US-PRJ-62-2](tasks/US-PRJ-62-2.md) | Test: Snippet generation tested with various content lengths | ⚪ todo | — |  | — | — | [US-PRJ-62](stories/US-PRJ-62.md) |
 | [US-PRJ-62-3](tasks/US-PRJ-62-3.md) | Test: Score calculation verified (title match vs content match) | ⚪ todo | — |  | — | — | [US-PRJ-62](stories/US-PRJ-62.md) |
 | [US-PRJ-62-4](tasks/US-PRJ-62-4.md) | Test: Empty results and case-insensitive matching tested | ⚪ todo | — |  | — | — | [US-PRJ-62](stories/US-PRJ-62.md) |
-| [US-PRJ-63-1](tasks/US-PRJ-63-1.md) | Test: test_performance_n1.py created | ⚪ todo | — |  | — | — | [US-PRJ-63](stories/US-PRJ-63.md) |
-| [US-PRJ-63-2](tasks/US-PRJ-63-2.md) | Test: Tests verify pm_board uses batch loads not per-task fetches | ⚪ todo | — |  | — | — | [US-PRJ-63](stories/US-PRJ-63.md) |
-| [US-PRJ-63-3](tasks/US-PRJ-63-3.md) | Test: Tests verify pm_epic uses single list_tasks call | ⚪ todo | — |  | — | — | [US-PRJ-63](stories/US-PRJ-63.md) |
-| [US-PRJ-63-4](tasks/US-PRJ-63-4.md) | Test: Tests verify pm_search tag filter uses batch metadata loading | ⚪ todo | — |  | — | — | [US-PRJ-63](stories/US-PRJ-63.md) |
+| [US-PRJ-63-1](tasks/US-PRJ-63-1.md) | Test: test_performance_n1.py created | ✅ done | 1 |  | claude | US-PRJ-63-5 | [US-PRJ-63](stories/US-PRJ-63.md) |
+| [US-PRJ-63-2](tasks/US-PRJ-63-2.md) | Test: Tests verify pm_board uses batch loads not per-task fetches | ✅ done | 1 |  | claude | US-PRJ-63-6 | [US-PRJ-63](stories/US-PRJ-63.md) |
+| [US-PRJ-63-3](tasks/US-PRJ-63-3.md) | Test: Tests verify pm_epic uses single list_tasks call | ✅ done | 1 |  | claude | US-PRJ-63-6 | [US-PRJ-63](stories/US-PRJ-63.md) |
+| [US-PRJ-63-4](tasks/US-PRJ-63-4.md) | Test: Tests verify pm_search tag filter uses batch metadata loading | ✅ done | 1 |  | claude | US-PRJ-63-6 | [US-PRJ-63](stories/US-PRJ-63.md) |
+| [US-PRJ-63-5](tasks/US-PRJ-63-5.md) | Create test_performance_n1.py with a call-counting Store spy and a 100-task fixture | ✅ done | 1 |  | claude | — | [US-PRJ-63](stories/US-PRJ-63.md) |
+| [US-PRJ-63-6](tasks/US-PRJ-63-6.md) | Assert pm_board, pm_epic and pm_search make batch loads, not per-item calls | ✅ done | 2 |  | claude | US-PRJ-63-5, US-PRJ-43-5, US-PRJ-43-6, US-PRJ-43-7, US-PRJ-43-8 | [US-PRJ-63](stories/US-PRJ-63.md) |
 | [US-PRJ-64-1](tasks/US-PRJ-64-1.md) | Test: Estimator tests cover empty history edge case | ⚪ todo | — |  | — | — | [US-PRJ-64](stories/US-PRJ-64.md) |
 | [US-PRJ-64-2](tasks/US-PRJ-64-2.md) | Test: Large history (20+ items) tested | ⚪ todo | — |  | — | — | [US-PRJ-64](stories/US-PRJ-64.md) |
 | [US-PRJ-64-3](tasks/US-PRJ-64-3.md) | Test: Mixed status combinations tested | ⚪ todo | — |  | — | — | [US-PRJ-64](stories/US-PRJ-64.md) |

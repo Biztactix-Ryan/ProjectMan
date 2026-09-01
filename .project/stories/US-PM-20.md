@@ -14,14 +14,14 @@ epic_id: EPIC-PM-3
 id: US-PM-20
 points: 5
 priority: should
-status: backlog
+status: done
 tags:
 - git
 - storage
 - cli
 - dx
 title: 'Attach on clone: auto-mount the projectman branch in init plus an attach command'
-updated: '2026-08-20'
+updated: '2026-09-01'
 ---
 
 As a developer on a fresh clone, I want the PM data to appear without manual git worktree commands so that clones stay zero-friction.

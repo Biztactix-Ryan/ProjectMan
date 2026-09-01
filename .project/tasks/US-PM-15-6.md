@@ -1,14 +1,14 @@
 ---
-assignee: null
+assignee: claude
 created: '2026-07-29'
 depends_on: []
 id: US-PM-15-6
-points: null
-status: todo
+points: 1
+status: done
 story_id: US-PM-15
 tags: []
 title: Move repair and restore tooling off the agent tool list
-updated: '2026-07-29'
+updated: '2026-08-22'
 ---
 
 pm_repair, pm_restore, pm_validate_branches, pm_fix_malformed, pm_push_all are human break-glass tools. Keep them reachable via CLI; hide them from the agent-facing tool list.

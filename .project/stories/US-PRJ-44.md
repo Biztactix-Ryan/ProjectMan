@@ -10,12 +10,12 @@ epic_id: EPIC-PRJ-8
 id: US-PRJ-44
 points: 5
 priority: must
-status: backlog
+status: archived
 tags:
 - batch
 - mcp
 title: Implement pm_batch_update MCP tool
-updated: '2026-03-09'
+updated: '2026-08-22'
 ---
 
 As a project manager, I want to update multiple items in a single call so that sprint-level operations (mass status changes, bulk reassignment, batch tag updates) are efficient. Currently only single-item pm_update exists. Add pm_batch_update that accepts a JSON array of {id, ...fields} and applies all updates with a single auto-commit.

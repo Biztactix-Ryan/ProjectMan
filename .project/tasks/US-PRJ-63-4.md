@@ -1,14 +1,15 @@
 ---
-assignee: null
+assignee: claude
 created: '2026-03-09'
-depends_on: []
+depends_on:
+- US-PRJ-63-6
 id: US-PRJ-63-4
-points: null
-status: todo
+points: 1
+status: done
 story_id: US-PRJ-63
 tags: []
 title: 'Test: Tests verify pm_search tag filter uses batch metadata loading'
-updated: '2026-03-09'
+updated: '2026-08-22'
 ---
 
 Verify acceptance criterion for story US-PRJ-63:

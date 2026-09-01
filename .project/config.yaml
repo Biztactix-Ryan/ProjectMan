@@ -5,8 +5,8 @@ hub: false
 name: ProjectMan
 next_changeset_id: 1
 next_epic_id: 4
-next_sprint_id: 5
-next_story_id: 22
+next_sprint_id: 8
+next_story_id: 23
 prefix: PM
 projects: []
 repo: ''

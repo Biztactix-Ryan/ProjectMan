@@ -9,12 +9,12 @@ epic_id: EPIC-PRJ-12
 id: US-PRJ-63
 points: 3
 priority: should
-status: backlog
+status: done
 tags:
 - testing
 - performance
 title: Add N+1 regression tests for board and epic views
-updated: '2026-03-09'
+updated: '2026-08-22'
 ---
 
 As a developer, I want regression tests that detect N+1 query patterns so that performance improvements aren't accidentally reverted. Add tests that verify pm_board doesn't call get_task per task, pm_epic doesn't call list_tasks per story, and pm_search doesn't call get per result.

@@ -4,11 +4,11 @@ created: '2026-03-09'
 depends_on: []
 id: US-PRJ-44-2
 points: null
-status: todo
+status: done
 story_id: US-PRJ-44
 tags: []
 title: 'Test: Each update applied via store.update with validation'
-updated: '2026-03-09'
+updated: '2026-08-22'
 ---
 
 Verify acceptance criterion for story US-PRJ-44:

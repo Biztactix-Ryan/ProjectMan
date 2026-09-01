@@ -13,13 +13,13 @@ epic_id: EPIC-PM-3
 id: US-PM-19
 points: 8
 priority: should
-status: backlog
+status: done
 tags:
 - git
 - storage
 - cli
 title: 'Migration command: move .project onto an orphan projectman branch worktree'
-updated: '2026-08-20'
+updated: '2026-09-01'
 ---
 
 As a ProjectMan user, I want a one-time `projectman migrate-worktree` command so that .project/ moves onto a dedicated orphan branch mounted as a worktree without me hand-running the git incantation.

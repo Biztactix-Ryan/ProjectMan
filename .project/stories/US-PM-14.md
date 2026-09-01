@@ -11,13 +11,13 @@ epic_id: EPIC-PM-2
 id: US-PM-14
 points: 5
 priority: could
-status: backlog
+status: done
 tags:
 - orchestrator
 - recovery
 - activity-log
 title: Activity-backed resume and recovery for orchestrator runs
-updated: '2026-07-29'
+updated: '2026-08-22'
 ---
 
 As an orchestrator restarting after a crash, I want to reconstruct what the previous run did, so that abandoned claims do not require a human to untangle.

@@ -9,12 +9,12 @@ epic_id: EPIC-PRJ-8
 id: US-PRJ-45
 points: 3
 priority: should
-status: backlog
+status: archived
 tags:
 - batch
 - mcp
 title: Implement pm_batch_archive MCP tool
-updated: '2026-03-09'
+updated: '2026-08-22'
 ---
 
 As a project manager, I want to archive multiple items in a single call so that sprint cleanup is efficient. Add pm_batch_archive that accepts a list of IDs and archives them all with a single commit. Should handle cascading (archiving a story archives its tasks).

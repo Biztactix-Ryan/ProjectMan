@@ -1,15 +1,15 @@
 ---
-assignee: null
+assignee: claude
 created: '2026-07-29'
 depends_on:
 - US-PM-11-6
 id: US-PM-11-7
-points: null
-status: todo
+points: 1
+status: done
 story_id: US-PM-11
 tags: []
 title: Pass the previous digest from the orchestrator health check
-updated: '2026-07-29'
+updated: '2026-08-21'
 ---
 
 SKILL.md step 21 re-runs pm_audit every 3 accepted tasks. Thread the previous digest through so unchanged health checks are nearly free.
