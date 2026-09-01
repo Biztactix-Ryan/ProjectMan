@@ -1,13 +1,19 @@
 """Pydantic models for ProjectMan data structures."""
 
+import math
 import re
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from enum import Enum
 from typing import Any, Optional
 
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, Field, field_validator
 
 FIBONACCI_POINTS = {1, 2, 3, 5, 8, 13}
+
+#: Default claim-staleness threshold, in hours (US-PM-14-5).  Named once so
+#: the field default and the fallback a malformed config value lands on cannot
+#: drift apart.
+DEFAULT_STALE_CLAIM_HOURS = 2.0
 
 
 class StoryStatus(str, Enum):
@@ -138,6 +144,23 @@ class TaskFrontmatter(BaseModel):
     archived: bool = False
     points: Optional[int] = None
     assignee: Optional[str] = None
+    # --- Claim ownership (US-PM-14-5) --------------------------------
+    # `assignee` says *who* holds the task; these two say *which run* took
+    # it and *when*.  That is the difference between "claimed by claude" --
+    # true of every task any agent ever touched -- and "claimed by the run
+    # that died forty minutes ago", which is the question a restarting
+    # orchestrator actually has to answer.
+    #
+    # Both default to None so every task file written before this field
+    # existed still parses, and a claim with no `claimed_at` is treated as
+    # *unknown age*, never as stale: inferring staleness from a missing
+    # timestamp would silently steal live work from an older writer.
+    #
+    # Cleared on release and on done -- see store.CLEARABLE_FIELDS.  They
+    # describe a claim in force, not a historical fact; `assignee` is what
+    # records who did the work on a finished task.
+    claimed_at: Optional[datetime] = None
+    claimed_by_run: Optional[str] = None
     tags: list[str] = []
     depends_on: list[str] = []
     created: date
@@ -151,6 +174,24 @@ class TaskFrontmatter(BaseModel):
                 f"Points must be fibonacci: {sorted(FIBONACCI_POINTS)}"
             )
         return v
+
+    @field_validator("claimed_at")
+    @classmethod
+    def normalize_claimed_at(cls, v: Optional[datetime]) -> Optional[datetime]:
+        """Normalise to a UTC-aware datetime.
+
+        The value round-trips through YAML frontmatter, which hands back
+        either a string or a naive ``datetime`` depending on how the file was
+        written.  A naive value is read as UTC rather than as local time:
+        claims are written from ``datetime.now(timezone.utc)``, and guessing
+        local here would make a claim look hours old -- or hours in the
+        future -- purely from the reader's zone.
+        """
+        if v is None:
+            return None
+        if v.tzinfo is None:
+            return v.replace(tzinfo=timezone.utc)
+        return v.astimezone(timezone.utc)
 
     @field_validator("id")
     @classmethod
@@ -236,6 +277,34 @@ class ChangesetFrontmatter(BaseModel):
         return v
 
 
+class ToolFlags(BaseModel):
+    """Opt-in switches for the tool families hidden from the agent tool list.
+
+    Every field defaults to "off" for a plain single-project repo: the
+    families behind these flags were called zero times across ~14,200
+    recorded tool calls, so their schemas were pure token cost in every
+    request (US-PM-15).  The functions are untouched and stay importable —
+    only their MCP registration is conditional.
+
+    ``changesets`` is deliberately tri-state.  ``None`` (the default, and
+    what an untouched ``config.yaml`` yields) means *follow hub mode*: a
+    changeset groups a change across several projects, which only a hub
+    has, so a hub gets the family and a single-project repo does not.  An
+    explicit ``true``/``false`` always wins over that inference.
+
+    ``maintenance`` is the break-glass cluster — ``pm_repair``,
+    ``pm_restore``, ``pm_validate_branches``, ``pm_fix_malformed`` and
+    ``pm_push_all``.  These are human recovery tools, not agent work, and
+    every one has a ``projectman`` CLI equivalent, so hiding them from the
+    tool list costs nobody reach.  Plain ``bool``: no hub inference,
+    because a hub needs repairing no more routinely than a leaf repo does.
+    """
+
+    changesets: Optional[bool] = None
+    maintenance: bool = False
+    web: bool = False
+
+
 class ProjectConfig(BaseModel):
     name: str
     prefix: str = "PRJ"
@@ -249,6 +318,14 @@ class ProjectConfig(BaseModel):
     next_changeset_id: int = 1
     next_sprint_id: int = 1
     projects: list[str] = []
+    tools: ToolFlags = Field(default_factory=ToolFlags)
+    #: How long a claim may sit untouched before `pm_active` / `pm_board`
+    #: flag it `stale: true` (US-PM-14-5).  Two hours is roughly four times
+    #: the longest single task in the corpus, so a task still being worked
+    #: is not accused, while a run that died is visible well inside the next
+    #: orchestrator loop.  A float so a fast pool can say `0.25`; set it
+    #: high rather than to 0 to disable -- 0 would flag every live claim.
+    stale_claim_hours: float = DEFAULT_STALE_CLAIM_HOURS
 
     @field_validator("prefix")
     @classmethod
@@ -256,6 +333,35 @@ class ProjectConfig(BaseModel):
         if not v.isalpha() or not v.isupper():
             raise ValueError("Prefix must be uppercase letters")
         return v
+
+    @field_validator("stale_claim_hours", mode="before")
+    @classmethod
+    def tolerate_a_junk_threshold(cls, v: object) -> float:
+        """A malformed `stale_claim_hours` falls back to the default (US-PM-14-2).
+
+        Every other field here describes the project; this one only tunes an
+        *annotation* on two read tools.  Raising on it would take the whole
+        config load down -- and with it every tool in the server, since
+        `load_config` builds this model once for the store -- so a typo in an
+        optional tuning knob would look like a broken project.  Falling back
+        keeps staleness answerable at the documented default instead.
+
+        Rejected and replaced: anything `float()` refuses, NaN/infinity (no
+        claim could ever cross an infinite threshold, and NaN compares false
+        against everything, so both silently disable staleness), and a
+        negative value (which would flag every live claim).  Zero is *kept* --
+        it is a meaningful, if aggressive, setting, and the field's own doc
+        comment tells a reader what it does.
+        """
+        if v is None:
+            return DEFAULT_STALE_CLAIM_HOURS
+        try:
+            parsed = float(v)  # type: ignore[arg-type]
+        except (TypeError, ValueError):
+            return DEFAULT_STALE_CLAIM_HOURS
+        if not math.isfinite(parsed) or parsed < 0:
+            return DEFAULT_STALE_CLAIM_HOURS
+        return parsed
 
 
 class IndexEntry(BaseModel):
@@ -385,3 +491,11 @@ class LogEntry(BaseModel):
     timestamp: datetime
     actor: str
     source: LogSource
+    #: Which orchestrator run made this mutation, when the mutation is one
+    #: that has an owner -- claim, release, verdict (US-PM-14-5).  ``actor``
+    #: is too coarse for recovery: every run of every agent on a machine
+    #: shares one actor, so "what did *my* previous run claim" cannot be
+    #: answered from it.  Left None on the ordinary edits that belong to no
+    #: run in particular, which is also what every pre-existing log line
+    #: parses to -- an absent field with a default needs no migration.
+    run_id: Optional[str] = None

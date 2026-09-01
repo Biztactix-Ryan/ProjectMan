@@ -20,8 +20,8 @@ other side of the transport sees.  Both are run for every case.
 Beyond the per-class sweep there are three whole-surface checks:
 
 * :func:`test_no_registered_tool_can_return_an_error_prefixed_body` — a static
-  scan of every ``return`` in every one of the 52 registered tools;
-* two dynamic sweeps that *drive* all 52 tools (in a broken environment and
+  scan of every ``return`` in every one of the 53 registered tools;
+* two dynamic sweeps that *drive* all 54 tools (in a broken environment and
   against hostile arguments) and assert no response body begins with ``error:``;
 * :func:`test_the_instrument_scores_every_converted_failure_as_a_hard_error` —
   the epic's own instrument, ``tools/usage_telemetry/classify.py``, run over the
@@ -55,6 +55,15 @@ from tools.usage_telemetry import classify as cf
 from tools.usage_telemetry.extract import ToolCall, ToolResult
 
 SERVER_PY = Path(__file__).resolve().parents[1] / "src" / "projectman" / "server.py"
+
+
+#: The changeset and web families are hidden from ``tools/list`` by default
+#: (US-PM-15-5), but their failure paths are catalogued in the error-paths
+#: inventory and driven by :data:`CASES` below, and the whole-surface checks
+#: count all 54 tools.  Gating them out here would shrink the sweep rather
+#: than test the gate, so this module sweeps the full surface;
+#: ``tests/test_tool_gating.py`` asserts the gate.
+pytestmark = pytest.mark.usefixtures("all_tool_families")
 
 READY_BODY = (
     "## Implementation\n\nDo the thing properly.\n\n"
@@ -549,7 +558,7 @@ def test_no_registered_tool_can_return_an_error_prefixed_body():
     assert set(tools) == registered_tool_names(), set(tools).symmetric_difference(
         registered_tool_names()
     )
-    assert len(tools) == 52, len(tools)
+    assert len(tools) == 54, len(tools)
 
     # 2. Every return in every tool.
     checked_returns = 0
@@ -621,7 +630,7 @@ def sweep_every_tool() -> tuple[dict[str, tuple[bool, str]], int]:
 
 def assert_sweep_is_clean(responses: dict[str, tuple[bool, str]], total: int):
     assert len(responses) == total, (len(responses), total)
-    assert total == 52, total
+    assert total == 54, total
     for name, (is_error, text) in responses.items():
         assert not text.lstrip().startswith("error:"), (name, text[:200])
         if not is_error:
@@ -636,7 +645,7 @@ def assert_sweep_is_clean(responses: dict[str, tuple[bool, str]], total: int):
 
 
 def test_driving_every_tool_in_a_broken_environment_yields_no_error_body(worlds):
-    """AC 4 driven, not inferred: all 52 tools, in a directory with no project.
+    """AC 4 driven, not inferred: all 54 tools, in a directory with no project.
 
     Every tool's generic handler is reached here — that is 47 of the 63
     ``server.py`` sites in one sweep — and every response is checked.  The two
@@ -651,7 +660,7 @@ def test_driving_every_tool_in_a_broken_environment_yields_no_error_body(worlds)
     # The sweep really did exercise the failure paths, rather than finding a
     # working project by accident.
     errored = [name for name, (is_error, _) in responses.items() if is_error]
-    assert len(errored) == 50, sorted(set(responses) - set(errored))
+    assert len(errored) == 52, sorted(set(responses) - set(errored))
 
 
 def test_driving_every_tool_with_hostile_arguments_yields_no_error_body(worlds):

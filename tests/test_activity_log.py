@@ -213,7 +213,11 @@ class TestAppendLogEntry:
         append_log_entry(log_file, entry)
 
         parsed = json.loads(log_file.read_text().strip())
-        expected_keys = {"event_type", "item_id", "item_type", "changes", "timestamp", "actor", "source"}
+        # `run_id` joined the schema in US-PM-14-5: which orchestrator run
+        # owned this mutation, so a restarted run can find its own claims.
+        # Serialised even when null — a fixed key set is what makes this
+        # assertion a contract rather than a sample.
+        expected_keys = {"event_type", "item_id", "item_type", "changes", "timestamp", "actor", "source", "run_id"}
         assert expected_keys == set(parsed.keys())
 
 

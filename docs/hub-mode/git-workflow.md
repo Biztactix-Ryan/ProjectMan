@@ -185,7 +185,22 @@ When you run `changeset create-prs`, each generated PR body includes cross-refer
 - web (ref: feature/auth-ui)
 ```
 
-This makes it easy for reviewers to find related PRs across repos.
+This makes it easy for reviewers to find related PRs across repos.  The
+block uses real newlines, so GitHub renders one bullet per project.
+
+### Command Safety
+
+PR commands are assembled as argument lists, never as shell strings.  The
+MCP tool `pm_changeset_create_prs` returns both forms per project:
+
+- `argv` — `["gh", "pr", "create", "--title", …, "--body", …, "--head", ref]`,
+  the form to execute (`subprocess.run(argv, cwd=project)`, no shell).
+- `command` — the same call rendered with `shlex.quote`/`shlex.join` for a
+  human to read or paste: `cd <project> && gh pr create …`.
+
+A changeset title, description or branch ref containing `"`, backticks,
+`$(…)`, `;`, `&&`, `|` or a newline is quoted rather than interpreted, so
+it can never break out of its argument and run as a command.
 
 ### Status Tracking
 

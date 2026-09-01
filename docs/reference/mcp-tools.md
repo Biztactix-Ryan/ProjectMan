@@ -1,5 +1,37 @@
 # MCP Tools Reference
 
+`server.py` defines 54 tools; a default single-project install registers 41 of
+them. Three families are gated behind `tools.changesets` /
+`tools.maintenance` / `tools.web` in `.project/config.yaml` — off by default,
+one line to turn on, nothing deleted:
+
+- [Changeset](#changeset-tools) (5) — `tools.changesets`, which follows `hub` when unset
+- [Break-glass](#break-glass-tools) (5) — `tools.maintenance`; every one reachable from the CLI
+- [Web Dashboard](#web-dashboard-tools) (3) — `tools.web`
+
+Gating the 13 removes **11,828 bytes (12.66%)** from every `tools/list` —
+measured, not estimated: see
+[telemetry/tool-list-size.md](../telemetry/tool-list-size.md) for the numbers,
+the per-family breakdown and the command that reproduces them.
+
+See [file-formats.md § tools](file-formats.md#tools--gated-tool-families).
+
+## Break-glass tools
+
+> **Off by default.** `pm_repair`, `pm_restore`, `pm_validate_branches`,
+> `pm_fix_malformed` and `pm_push_all` are registered only when
+> `.project/config.yaml` sets `tools.maintenance: true`. Otherwise they do
+> not appear in `tools/list` and calling one returns `Unknown tool: <name>`
+> with `is_error` set.
+>
+> These five are hidden for a different reason from the other two families.
+> They are not unwanted — they are human recovery tools, and every one has a
+> CLI equivalent that works whether or not the tool is registered:
+> `projectman repair`, `projectman restore <filename>`,
+> `projectman validate-branches`, `projectman fix-malformed <filename> --id
+> ID --title T --type story|task`, and `projectman push-all [--dry-run]`.
+> Each is documented in its own section below.
+
 ## Expected-negative responses
 
 Some questions have a legitimate "no". A task that is not ready to grab, an
@@ -42,6 +74,78 @@ Note the boundary: `pm_docs("nonsense")` is *not* an expected negative.
 Asking for an absent-but-valid document is a lookup over an optional set;
 naming a document that does not exist at all is a bad argument, and stays an
 error.
+
+## Partial failure
+
+The bulk write verbs — `pm_update_many` and `pm_archive_many` — touch many
+items in one call, so "did it work" has more than two answers. Both obey one
+contract, stated here once; their entries below link back to it, and their
+docstrings say the same thing. `_bulk_result` in `src/projectman/server.py`
+is the single code path that builds the shape, so the two cannot drift.
+
+**Fail-soft per item.** A failing item is recorded and the sweep continues.
+It never stops the items after it. A call over 50 items where 3 fail writes
+the other 47 and reports all three failures.
+
+**No rollback.** The items that landed stay landed. There is no transaction
+and none is wanted: a caller told exactly which IDs changed can act, while a
+caller handed a rollback has to guess what state it was left in.
+
+**Call-level rejection is a different thing from item-level failure.** A
+malformed *call* raises before the loop starts, so **nothing at all** is
+written and `is_error` is set. Only a well-formed call reaches the per-item
+stage, where a bad item is soft.
+
+| | Rejected up front (nothing written, `is_error`) | Soft per item (`failed` entry) |
+|---|---|---|
+| `pm_update_many` | unknown key in an entry, entry with no `id`, `updates` not a list, no items at all, `ids` with no patch field, an entry with nothing to change, more than 250 items | unknown ID, an item whose own write is invalid (bad status value, `unassign` with an `assignee`, …) |
+| `pm_archive_many` | no IDs, a **duplicate** ID, more than 250 items | unknown ID, an item whose archive fails |
+
+The duplicate-ID rejection is `pm_archive_many`'s alone. Repeating an
+idempotent patch is harmless; a list that archives the same item twice is not
+the list its author thinks it is, and archiving is not something to guess
+about.
+
+**The result keys, and exactly when they are present.**
+
+| Key | Type | Present |
+|---|---|---|
+| `updated` / `archived` | list of per-item objects | always (the written half) |
+| `count` | int | always — `len` of that list |
+| `failed` | list of `{id: str, error: str}`, **in input order** | only when ≥ 1 item failed |
+| `failed_count` | int | only when ≥ 1 item failed |
+| `succeeded` | list of str — the IDs that landed, **in input order** | only when ≥ 1 item failed |
+| `partial` | `true` (never `false`) | only when ≥ 1 item failed |
+
+A clean sweep carries none of the bottom four. Their **absence** is the
+positive statement that every item landed, so branch on `"partial" in result`
+rather than comparing `count` against the length of the list you sent.
+`partial: true` also covers the all-failed sweep, which reports `count: 0`
+with every ID in `failed`.
+
+```yaml
+archived:                    # 47 entries, the successes, in input order
+  - {id: US-PRJ-1-1, status: done, archived: true}
+  # ...
+count: 47
+failed:
+  - {id: US-PRJ-1-9, error: 'Item not found: US-PRJ-1-9'}
+  - {id: US-PRJ-1-30, error: 'Item not found: US-PRJ-1-30'}
+  - {id: US-PRJ-1-88, error: 'Item not found: US-PRJ-1-88'}
+failed_count: 3
+succeeded: [US-PRJ-1-1, ...]   # the 47 IDs
+partial: true
+```
+
+**A partial failure is not a failed call.** `is_error` is never set for one,
+and the body never begins with `error:` — the same boundary the
+[expected-negative responses](#expected-negative-responses) above draw. The
+call did what it was asked to do; the outcome is reported per item.
+
+**To retry**, re-issue the same call with `ids` set to the `failed` IDs only.
+The successes are already durable, so re-sending them only repeats work — and
+for `pm_archive_many` it would be a second archive of an already-archived
+item.
 
 ## ID argument aliases
 
@@ -88,12 +192,13 @@ Read project documentation files.
 - **project** (optional): Project name for hub mode
 - **Returns**: Document content, or an expected negative `{outcome: expected_negative, status: not_created, message, doc, file}` when that document has not been created
 
-### pm_active(project?, tag?, limit?, offset?)
-List active/in-progress items.
+### pm_active(project?, tag?, limit?, offset?, stale_after?)
+List active/in-progress items, flagging stale claims.
 - **tag** (optional): Filter items by tag
 - **limit** (optional, default `20`): Max items per list
 - **offset** (optional, default `0`): Starting index for pagination
-- **Returns**: Active stories and in-progress tasks with totals and `has_more` pagination flag
+- **stale_after** (optional): Hours a claim may sit before it is flagged. Omit to use the project's `stale_claim_hours` (default `2`).
+- **Returns**: Active stories and in-progress tasks with totals and `has_more` pagination flag, plus [claim staleness](#claim-staleness) — `claim_age` / `claimed_by_run` / `stale: true` on each in-progress task, a `stale_tasks` id list and the `stale_after_hours` in force
 
 ### pm_search(query, project?, tag?)
 Search by keyword or semantic similarity.
@@ -101,13 +206,37 @@ Search by keyword or semantic similarity.
 - **tag** (optional): Filter results by tag
 - **Returns**: Ranked results with scores
 
-### pm_board(project?, assignee?, tag?, limit?)
+### pm_board(project?, assignee?, tag?, limit?, stale_after?)
 Get the task board grouped by workflow state.
 - **project** (optional): Project name for hub mode
 - **assignee** (optional): Filter by assignee
 - **tag** (optional): Filter tasks by tag
 - **limit** (optional, default `10`): Max items per board group. Totals are always shown in the summary.
-- **Returns**: Tasks grouped by `available`, `not_ready`, `in_progress`, `in_review`, `blocked` with readiness checks, suitability hints, and per-group totals
+- **stale_after** (optional): Hours a claim may sit before it is flagged. Omit to use the project's `stale_claim_hours` (default `2`).
+- **Returns**: Tasks grouped by `available`, `not_ready`, `in_progress`, `in_review`, `blocked` with readiness checks, suitability hints, and per-group totals. `in_progress` entries carry [claim staleness](#claim-staleness); `stale_tasks` (ids, untruncated by `limit`) and `stale_after_hours` sit beside `summary`, which keeps its five-group count shape.
+
+### Claim staleness
+
+`assignee` cannot answer "is anyone still working on this?" — every agent
+claim is `claude`. `claimed_at` and `claimed_by_run` (see
+[file-formats](file-formats.md#claim-ownership--claimed_at--claimed_by_run))
+can, and `pm_active` / `pm_board` are where a caller reads them, because that
+is where in-progress work is already being listed. No separate tool.
+
+Per in-progress task, added **only when they say something**:
+
+| Key | When present | Meaning |
+|---|---|---|
+| `claim_age` | `claimed_at` is known | Seconds since the claim was taken |
+| `claimed_by_run` | the claim has a run id | Which run holds it |
+| `stale` | and only when `true` | `claim_age` is past the threshold |
+
+A task claimed before this metadata existed has neither `claim_age` nor
+`stale`: unknown age is not old age. The threshold is `stale_claim_hours` in
+`config.yaml` (default `2`), overridable per call with `stale_after`.
+
+A stale claim is an abandoned one. Release it — `pm_release(id, note="stale
+claim from a previous run")` — rather than waiting on it.
 
 ### pm_burndown(project?)
 Get burndown data.
@@ -154,7 +283,7 @@ Create multiple tasks under a story in a single call.
 - **project** (optional): Project name for hub mode
 - **Returns**: List of created task `id`/`title` (plus set fields), count, and total points
 
-### pm_update(id, status?, points?, title?, assignee?, unassign?, clear?, epic_id?, body?, acceptance_criteria?, tags?, depends_on?, outcome?, note?, project?, evidence?)
+### pm_update(id, status?, points?, title?, assignee?, unassign?, clear?, epic_id?, body?, acceptance_criteria?, tags?, depends_on?, outcome?, note?, project?, run_id?, evidence?)
 Update an epic, story, or task.
 - **id**: Epic, story, or task ID (alias: `task_id`). `epic_id` is **not** an alias — it links a story to an epic.
 - **assignee** (optional): Assignee name (tasks only). To remove one, pass `unassign=true` — never an empty assignee.
@@ -168,6 +297,7 @@ Update an epic, story, or task.
 - **note** (optional): Run-log note describing what was accomplished or blocked. Notes longer than 4096 characters are truncated server-side with a visible `...[truncated N chars]` marker rather than rejected, so the status/outcome write always lands. Defaults outcome to `info` if outcome is omitted.
 - **evidence** (optional): Structured proof for the run-log entry — an object with `files` (paths changed), `tests` (`{command, passed, summary?}` objects), `dod_met` and `dod_unmet`. **Lists go here, never in the note**; the note stays a one-line human summary. See [Structured evidence](#structured-evidence) below.
 - Passing `evidence` alone — with neither `outcome` nor `note` — still appends an entry (`outcome: info`, empty note).
+- **run_id** (optional): Opaque id of the orchestrator run making this edit, stamped on the activity-log event so [`pm_activity(run_id=...)`](#pm_activityitem_id-event_type-from_date-to_date-actor-run_id-limit-offset-project) returns it beside that run's claims and verdicts. Never written to frontmatter, and never a claim — use `pm_grab` for that. Omit on ordinary edits: they belong to no run.
 - Epic status values: `draft`, `active`, `done`, `archived`
 - Story status values: `backlog`, `ready`, `active`, `done`, `archived`
 - Task status values: `todo`, `in-progress`, `review`, `done`, `blocked`
@@ -175,11 +305,32 @@ Update an epic, story, or task.
 - When — and only when — a supplied note had to be truncated, the response also carries `note_truncated: true`, `note_original_length`, `note_stored_length`, `note_dropped_chars` and `note_limit`, so a caller detects truncation without string-matching. Absence of the fields means the note was stored whole. Every note-writing tool (`pm_update`, `pm_release`, `pm_done_next`, `pm_accept`, `pm_retry`, `pm_park`, `pm_review`) reports it the same way.
 - When — and only when — an `evidence` cap actually fired, the response also carries `evidence_clamped: true` and `evidence_dropped` (see [Structured evidence](#structured-evidence)).
 
+### pm_update_many(ids?, updates?, status?, points?, title?, assignee?, unassign?, clear?, body?, tags?, depends_on?, outcome?, note?, run_id?, evidence?, project?)
+Update many items in one call — the bulk form of `pm_update`, shaped like `pm_create_tasks`. Every field means exactly what it means on `pm_update`, and the same code performs each item's write, so nothing behaves differently for being in a batch.
+- **ids** (optional): Comma-separated item IDs the uniform patch applies to (e.g. `"US-PRJ-1-1,US-PRJ-1-2"`). Epics, stories and tasks may be mixed. Passing `ids` with no patch field is an error.
+- **updates** (optional): Per-item patches — a list of objects, each with `id` (alias: `task_id`) plus any of `status`, `points`, `title`, `assignee`, `unassign`, `clear`, `epic_id`, `body`, `acceptance_criteria`, `tags`, `depends_on`, `outcome`, `note`, `evidence`. An unknown key is an error naming the valid ones, raised **before** anything is written.
+- Top-level patch fields given alongside `updates` are defaults each entry may override — e.g. `updates=[{"id": "a", "note": "..."}, ...], status="done", outcome="success"` is one status flip with per-item notes.
+- Up to 250 items per call.
+- **run_id** (optional): Stamped on every activity-log event this call emits, exactly as on `pm_update`. A property of the whole call, like `project` — not a per-item field inside `updates`.
+- **Returns**: `updated:` — one entry per item written, each shaped like `pm_update`'s `updated` block and carrying that item's own extras (`note_truncated`, `test_tasks`, ...) — plus `count`.
+- On partial failure the response also carries `failed:` (each with `id` and `error`), `failed_count`, `succeeded:` (the IDs that landed) and `partial: true`. A failing item never stops the ones after it and nothing already written is rolled back; a malformed *call* (unknown key, missing `id`, no items, nothing to change, over 250) is rejected up front, before any write. The full contract — key types, presence rules, why `is_error` stays unset, how to retry — is [Partial failure](#partial-failure) above, and it is identical for `pm_archive_many`.
+- Prefer this over a run of single `pm_update` calls: a long tail of identical writes reads as runaway behaviour, while one declared call with an explicit ID list is one reviewable intent.
+
 ### pm_archive(id)
 Archive an epic, story, or task.
 - **id**: Epic, story, or task ID to archive (alias: `task_id`)
+- Archiving more than one item? Use `pm_archive_many` — one declared call, not a run of these.
 
-### pm_grab(task_id, assignee?, include_story?, fields?)
+### pm_archive_many(ids, project?)
+Archive many items in one call, from an explicit ID list — the bulk form of `pm_archive`, shaped like `pm_update_many`. The same code performs each item's write, so nothing behaves differently for being in a batch.
+- **ids**: Comma-separated item IDs to archive (e.g. `"US-PRJ-1-1,US-PRJ-1-2"`). Epics, stories and tasks may be mixed.
+- The list is the whole input — there is **no criteria or sweep form** and no default. This tool never decides for itself what to archive, so what it touches is exactly what the caller wrote down. An empty list is an error, never a no-op, and a duplicate ID is rejected before any write.
+- Up to 250 items per call.
+- **Returns**: `archived:` — one entry per item written, each with `id`, the `status` it ends up with and `archived: true` — plus `count`. A task keeps the status the work really reached (archiving sets an orthogonal flag); epics and stories move to `archived`.
+- On partial failure the response also carries `failed:` (each with `id` and `error`), `failed_count`, `succeeded:` (the IDs that landed) and `partial: true` — the same keys `pm_update_many` uses. A failing item never stops the ones after it and the archives that landed are not rolled back; a malformed *call* (no IDs, a duplicate ID, more than 250 items) is rejected up front, before any write. The full contract — key types, presence rules, why `is_error` stays unset, how to retry — is [Partial failure](#partial-failure) above, and it is identical for `pm_update_many` apart from the duplicate-ID rejection, which is this verb's alone.
+- Prefer this over a run of single `pm_archive` calls: a long tail of identical destructive writes reads as runaway behaviour and has been denied mid-sweep by permission tooling, while one declared call with an explicit ID list is one reviewable intent.
+
+### pm_grab(task_id, assignee?, include_story?, run_id?, fields?)
 Claim a task with readiness validation.
 - **task_id**: Task ID to claim (e.g. `US-PRJ-1-1`) (alias: `id`)
 - Sets assignee and status to `in-progress`
@@ -187,20 +338,22 @@ Claim a task with readiness validation.
 - Claims by compare-and-swap on the on-disk assignee and status, under an exclusive lock on the task file — two concurrent workers cannot both win. The winner's response shape is unchanged; the loser gets `{outcome: expected_negative, status: already_claimed, message, holder, task_id}` and the task is left untouched. Re-claiming a task you already hold still succeeds.
 - Loads task context for implementation
 - **include_story** (optional, default `true`): Include the parent story body. Pass `false` when the story context is already known (e.g. grabbing a second task from the same story).
+- **run_id** (optional): Opaque id of the run making the claim, written to the task as `claimed_by_run` and stamped on the activity-log event. Use a value stable across one orchestrator run and different across runs, so a restarted run can ask `pm_activity` what its predecessor claimed. Omit and the MCP server's own per-process id is used — every claim has an owner either way. A win also records `claimed_at`; re-claiming your own task under the **same** `run_id` leaves that timestamp alone, so a claim's age keeps running.
 - **fields** (optional): Comma-separated key names to return. A name is either a key of the task (`status`, `assignee`, `points`, `title`, `story_id`, `depends_on`, …) or a whole top-level section (`body`, `story_context`, `sibling_tasks`, `sibling_tasks_total`, `sibling_tasks_done`, `dependency_status`, `warnings`, or `task` for the whole task). Named sections come back whole, unnamed ones are dropped, and the `task` dict is projected to the named task keys plus `id` — so `fields="status,assignee"` returns `grabbed: {task: {id, status, assignee}}` and nothing else, ~1.4% of the full payload. Projection is **output-only**: the claim (status write, assignee, index, event) is identical either way, and expected negatives (`already_claimed`, `not_ready`) are returned in full because their `holder` / `blockers` detail is the recovery path. Unknown names are a hard error listing the valid ones. Omit it for the full payload — the default is unchanged.
 - **Returns**: Task details and context — task frontmatter + body, story context, unfinished sibling tasks (with `sibling_tasks_total` / `sibling_tasks_done` counts), dependency status, readiness warnings. Returns an expected negative `{outcome: expected_negative, status: not_ready, message, blockers}` when the readiness check fails (the task is left untouched).
 
-### pm_release(task_id, status?, note?, outcome?, expected_assignee?, project?)
+### pm_release(task_id, status?, note?, outcome?, expected_assignee?, project?, run_id?)
 Release a task — hand it back to the pool. The exact inverse of `pm_grab`, and the form to use whenever a task must stop being someone's: `pm_release("US-PRJ-1-1", note="worker stopped before finishing")`.
 - **task_id**: Task ID to release (alias: `id`). Tasks only — a story or epic id is an error, since `assignee` is a task-only field.
-- Clears the assignee, sets the status, and appends a run-log entry — one call, no empty values anywhere. There is no `assignee` parameter: releasing is said by the verb.
+- Clears the assignee **and the claim metadata** (`claimed_at`, `claimed_by_run`), sets the status, and appends a run-log entry — one call, no empty values anywhere. There is no `assignee` parameter: releasing is said by the verb.
+- **run_id** (optional): Stamped on the activity-log event. Omit and the run recorded in the task's own `claimed_by_run` is used, so a release is attributed to the claim it ends.
 - **status** (optional, default `todo`): Status to leave the task in
 - **note** / **outcome** (optional): Run-log entry, appended only when one of them is given; `outcome` defaults to `info`
 - **expected_assignee** (optional): Release only if this name still holds the task. Omit for an unguarded release. A mismatch is an expected negative (`status: not_holder`) and the task is left untouched.
 - Releasing an already-unassigned task **succeeds**, with `from_assignee: null` — a cleanup loop never has to branch on it.
 - **Returns**: `released:` with the full `task` and `from_assignee` (who held it before the call, or null), plus the `note_truncated` fields when the note had to be truncated (see `pm_update`)
 
-### pm_done_next(task_id, outcome?, note?, assignee?, same_story_only?, evidence?)
+### pm_done_next(task_id, outcome?, note?, assignee?, same_story_only?, run_id?, evidence?)
 Complete a task and claim the next ready one in a single call — the loop primitive for working through tasks.
 `pm_accept` is the same call with the verdict said by the verb. This spelling stays supported forever and is not deprecated.
 - **task_id**: Task ID just finished (e.g. `US-PRJ-1-1`) (alias: `id`)
@@ -208,6 +361,8 @@ Complete a task and claim the next ready one in a single call — the loop primi
 - Closes the parent story automatically if this was its last open task (`story_closed` in the response)
 - Grabs the next ready unassigned task — same-story siblings first (topological order), then other stories by priority. The story body is only included when the next task belongs to a different story.
 - **same_story_only** (optional, default `false`): Stop instead of crossing to another story
+- **run_id** (optional): Opaque id of this orchestrator run — recorded as `claimed_by_run` on the task claimed as `next`, and stamped on the activity-log events. Omit and the server's per-process id is used.
+- The completed task keeps its `assignee` but has `claimed_at` / `claimed_by_run` cleared: the claim is over, and only a claim in force can go stale.
 - **evidence** (optional): Structured proof for the run-log entry — an object with `files` (paths changed), `tests` (`{command, passed, summary?}` objects), `dod_met` and `dod_unmet`. **Lists go here, never in the note**; the note stays a one-line human summary. See [Structured evidence](#structured-evidence) below.
 - **Returns**: `completed` summary, optional `story_closed`, and `next` (a full grab payload). When nothing is ready the response is an expected negative — `{outcome: expected_negative, status: no_next_task, message, completed, next: null, next_info}` — the task was still completed; only the second half of the question has no answer. The `note_truncated` fields (see `pm_update`) are present on both shapes when the note had to be truncated.
 
@@ -223,12 +378,18 @@ An omitted note is rejected by the schema before anything is written; a blank
 one is an error for the same reason. See
 `docs/reference/verdict-verbs-contract.md`.
 
-| Verb | Verdict | status | outcome | assignee |
-|---|---|---|---|---|
-| `pm_accept` | Accept | `done` | `success` | **kept** (a done task records who did it) |
-| `pm_retry` | Retry | `todo` | `failed` | cleared |
-| `pm_park` | Park | `review` | `blocked` | cleared |
-| `pm_review` | Accept-as-review | `review` | `partial` | cleared |
+| Verb | Verdict | status | outcome | assignee | claim metadata |
+|---|---|---|---|---|---|
+| `pm_accept` | Accept | `done` | `success` | **kept** (a done task records who did it) | cleared |
+| `pm_retry` | Retry | `todo` | `failed` | cleared | cleared |
+| `pm_park` | Park | `review` | `blocked` | cleared | cleared |
+| `pm_review` | Accept-as-review | `review` | `partial` | cleared | cleared |
+
+All four clear `claimed_at` / `claimed_by_run`: the claim is no longer in
+force, and left behind it would age every finished task into a phantom stale
+claim. Their activity-log events are attributed to the run named in the task's
+own `claimed_by_run`, so none of the three releasing verbs needs a `run_id`
+parameter.
 
 `pm_retry`, `pm_park` and `pm_review` accept **any** starting status,
 including `done` — the common case is precisely a worker that self-reported
@@ -244,13 +405,14 @@ All four also take the optional `evidence` object — see
 `pm_review` are where evidence exists, and `pm_retry`/`pm_park` carry the
 failing `tests` entries that justify the verdict.
 
-### pm_accept(task_id, note, next_task?, same_story_only?, assignee?, project?, evidence?)
+### pm_accept(task_id, note, next_task?, same_story_only?, assignee?, project?, run_id?, evidence?)
 Accept a task's work — mark it done, log why, and claim the next one. The
 same call as `pm_done_next` with the verdict said by the verb, so it is the
 form to use in an orchestrator loop: `pm_accept("US-PRJ-1-1", note="all DoD items met; 47 tests pass")`.
 - **task_id**: Task ID being accepted (alias: `id`). Tasks only.
 - **note** (**required**): Run-log note saying what was delivered. Blank is an error; over 4096 characters is truncated server-side, never rejected.
-- Always writes `status: done` + `outcome: success` + the note, so a run-log entry is unavoidable. The assignee is **kept**.
+- Always writes `status: done` + `outcome: success` + the note, so a run-log entry is unavoidable. The assignee is **kept**; `claimed_at` / `claimed_by_run` are cleared.
+- **run_id** (optional): Opaque id of this orchestrator run — recorded as `claimed_by_run` on the task claimed as `next`, and stamped on the activity-log events.
 - Closes the parent story automatically if this was its last open task (`story_closed` in the response)
 - **next_task** (optional, default `true`): Also claim the next ready task. With `false` the `next` key is absent entirely.
 - **same_story_only** (optional, default `true`): Only take a next task from the same story
@@ -312,11 +474,12 @@ List sprints, optionally filtered by status.
 - **fields** (optional): Comma-separated key names to return, with the same semantics as on `pm_get` — everything else is omitted, `id` is always kept, and an unknown name is a hard error listing the valid sprint keys. **If both are given, `fields` wins** — explicit beats preset.
 - **Returns**: `sprints` (with name, status, goal, and dates) and `count`. `count` is present in every mode, and omitting both `brief` and `fields` leaves the response byte-identical to before they existed.
 
-### pm_update_sprint(sprint_id, name?, status?, goal?, start_date?, end_date?, planned_stories?, project?)
+### pm_update_sprint(sprint_id, name?, status?, goal?, start_date?, end_date?, planned_stories?, run_id?, project?)
 Update sprint fields (status, stories, dates, etc.).
 - **sprint_id**: Sprint ID (alias: `id`)
 - **status** (optional): New status — `planning`, `active`, `completed`, or `cancelled`
 - **planned_stories** (optional): Comma-separated story IDs (replaces the planned set)
+- **run_id** (optional): Opaque id of the orchestrator run closing (or otherwise editing) the sprint, stamped on the activity-log event so the close appears in `pm_activity(run_id=...)` beside that run's claims and verdicts. Not a sprint field.
 - **Returns**: Updated sprint metadata, plus `dependency_warnings` if newly planned stories have unmet dependencies
 
 ## Intelligence Tools
@@ -337,18 +500,30 @@ Discover what needs scoping — returns codebase signals or undecomposed stories
 - **offset** (optional, default `0`): Starting index for pagination in incremental mode
 - **Returns**: Full scan returns documentation, build files, source tree, and creation guidance. Incremental returns a paginated batch of undecomposed story IDs/titles with `has_more` and `next_offset` for pagination.
 
-### pm_audit(include_info?, project?)
+### pm_audit(include_info?, project?, since?)
 Run project audit for drift detection. Performs 18 checks covering stories, tasks, epics, documentation, hub docs, assignments, dependencies, malformed files, and completion evidence.
 - Findings include `done-without-evidence` (warning): one aggregate finding listing every non-archived `done` task whose run log carries no entry with structured `evidence`. A done task with no run log at all qualifies; an `evidence` object with all lists empty does not (presence, never truthiness). It is a warning, not an error, so it never halts an orchestrator run — every task completed before evidence shipped trips it. Use `pm_run_log(id, has_evidence=false)` to see the evidence-less entries for one item.
 - **include_info** (optional, default `false`): Include info-level findings in the response. By default only errors and warnings are returned, with omitted info findings summarized as a count. The full report is always written to `DRIFT.md`.
+- Every report starts with a `digest: <16 hex chars>` line, immediately after the `# Project Audit Report` title and before the `**Errors:** …` counts. It is a fixed-width fingerprint of everything the audit reads — item files, `config.yaml`, project and hub docs, `malformed/`, `logs/*.jsonl`, sprints, indexes — hashed by content, so two calls with no writes between them return the same digest and any change to audit inputs returns a different one. The same digest appears in the default response, the `include_info` response, and `DRIFT.md`. Audit output and caches (`DRIFT.md` itself, `embeddings.db`) are excluded, so an audit never invalidates its own answer. Keep the digest between polls to tell an unchanged project from a changed one without diffing reports.
+- **since** (optional): A digest from a previous `pm_audit` call. If it matches the current digest, the tool answers in under 100 bytes — `digest: <hex>`, `unchanged: true`, and `errors: N | warnings: M` from the last report — without running a single check and without rewriting `DRIFT.md`. If it differs, is absent, is stale, or is malformed, the full audit runs exactly as it otherwise would; an unusable `since` is never an error.
+- **Why `since` does not weaken the health check**: the digest is a content hash of everything the audit reads, so any state change that could produce a new finding necessarily changes the digest. A matching digest therefore means byte-identical inputs, which means identical findings — a new ERROR-level finding cannot hide behind a short-circuit. The hash is deliberately over-sensitive: an unrelated write costs one extra full report, whereas under-sensitivity would hide a real finding. Orchestrators should keep polling on their normal cadence and simply pass the last digest as `since`.
 
 ### pm_reindex(project?)
 Rebuild project index and embeddings.
 
 ### pm_repair()
+> Break-glass — off the tool list unless `tools.maintenance: true`. CLI: `projectman repair`.
+
 Scan the hub for unregistered projects, initialize missing PM data directories (`.project/projects/{name}/`), rebuild all indexes and embeddings, and regenerate dashboards. Hub mode only. Writes a `REPAIR.md` report.
 
 ## Web Dashboard Tools
+
+> **Off by default.** These three tools are registered only when
+> `.project/config.yaml` sets `tools.web: true`. Otherwise they do not appear
+> in `tools/list` and calling one returns `Unknown tool: <name>` with
+> `is_error` set. See [file-formats.md § tools](file-formats.md#tools--gated-tool-families).
+> The dashboard itself is unaffected — `projectman web` still starts it from
+> the CLI.
 
 ### pm_web_start(host?, port?)
 Start the ProjectMan web dashboard as a background server.
@@ -372,6 +547,10 @@ Get the next malformed file from quarantine.
 - **Returns**: File content and metadata for the next malformed file, one at a time
 
 ### pm_fix_malformed(filename, id, title, item_type, body?, status?, priority?, points?, story_id?, project?)
+> Break-glass — off the tool list unless `tools.maintenance: true`. CLI:
+> `projectman fix-malformed <filename> --id ID --title T --type story|task
+> [--body B] [--status S] [--priority P] [--points N] [--story-id SID] [--project NAME]`.
+
 Fix a malformed file by providing corrected metadata.
 - **filename**: Name of the malformed file
 - **id**: Corrected ID
@@ -385,6 +564,9 @@ Fix a malformed file by providing corrected metadata.
 - **Returns**: Fixed file metadata
 
 ### pm_restore(filename, project?)
+> Break-glass — off the tool list unless `tools.maintenance: true`. CLI:
+> `projectman restore <filename> [--project NAME]`.
+
 Restore a malformed file back to its original location without fixes.
 - **filename**: Name of the malformed file
 - **Returns**: Restored file path
@@ -408,16 +590,30 @@ Push committed changes to remote.
 - **Returns**: Push result
 
 ### pm_push_all(dry_run?, projects?)
+> Break-glass — off the tool list unless `tools.maintenance: true`. CLI:
+> `projectman push-all [--dry-run] [--projects a,b]`.
+
 Coordinated push: preflight checks, push subprojects, then push hub.
 - **dry_run** (optional, default `false`): Preview what would be pushed without pushing
 - **projects** (optional): Comma-separated project names (auto-discovers dirty projects if omitted)
 - **Returns**: Per-project push results with preflight status
 
 ### pm_validate_branches()
+> Break-glass — off the tool list unless `tools.maintenance: true`. CLI: `projectman validate-branches`.
+
 Validate that hub submodule branches match their configured tracking branches.
 - **Returns**: Per-project branch validation results
 
 ## Changeset Tools
+
+> **Off by default outside hub mode.** These five tools are registered when
+> `.project/config.yaml` sets `tools.changesets: true`, and — because a
+> changeset spans several projects — automatically in hub mode unless
+> `tools.changesets: false` says otherwise. When hidden they do not appear in
+> `tools/list` and calling one returns `Unknown tool: <name>` with `is_error`
+> set. See [file-formats.md § tools](file-formats.md#tools--gated-tool-families).
+> The CLI is unaffected either way — `projectman changeset create/add-project/status`
+> works whether or not the tools are registered.
 
 ### pm_changeset_create(title, projects, description?, project?)
 Create a changeset to coordinate multi-project changes.
@@ -441,7 +637,13 @@ Add a project entry to an existing changeset.
 ### pm_changeset_create_prs(changeset_id, project?)
 Generate `gh` CLI commands for creating cross-referenced PRs.
 - **changeset_id**: Changeset ID (alias: `id`)
-- **Returns**: List of `gh pr create` commands with cross-references
+- **Returns**: `changeset`, `title`, and `pr_commands` — one entry per project. An entry with a ref carries `project`, `ref`, `argv` and `command`; an entry without a ref carries `project` and `status` ("skipped — no ref/branch set") only.
+- **argv**: the `gh pr create` invocation as a list of arguments (`["gh", "pr", "create", "--title", …, "--body", …, "--head", ref]`). Execute this form directly — `subprocess.run(argv, cwd=project)` — never a shell string.
+- **command**: the same invocation rendered for a human to read/paste, built with `shlex.quote`/`shlex.join`: `cd <project> && gh pr create …`. Titles, bodies and refs containing `"`, `'`, backticks, `$(…)`, `;`, `&&`, `|` or newlines are quoted, so `shlex.split(command)` always round-trips to `["cd", project, "&&", *argv]`.
+- The PR body uses real newlines, so the cross-reference list renders as separate lines on GitHub.
+- **NUL bytes are rejected, not rendered.** If the changeset id, title, description, a project name or a ref contains a NUL byte (`0x00`), the call raises `ValueError: changeset <id> <field> contains a NUL byte (0x00), which cannot be carried in a command argument; remove it from the changeset before generating PR commands`. No argv element can carry a NUL — `execve` arguments are NUL-terminated, `subprocess.run` raises `embedded null byte`, and a shell truncates the argument there — so a rendered `command` would differ from what actually executes. The error names the offending field rather than handing back an unrunnable command.
+
+The commands are **not** executed — review them, then run them yourself.
 
 ### pm_changeset_push(changeset_id, project?)
 Check PR merge status and update changeset status.
@@ -505,13 +707,15 @@ append a run-log entry: `pm_accept`, `pm_review`, `pm_retry`, `pm_park`,
 
 ## Activity Log
 
-### pm_activity(item_id?, event_type?, from_date?, to_date?, actor?, limit?, offset?, project?)
+### pm_activity(item_id?, event_type?, from_date?, to_date?, actor?, run_id?, limit?, offset?, project?)
 Query the activity log with filtering and pagination.
 - **item_id** (optional): Filter by item ID (alias: `id`)
 - **event_type** (optional): Filter by event type (`create`, `update`, `delete`, `archive`)
 - **from_date** (optional): Start date filter (ISO format)
 - **to_date** (optional): End date filter (ISO format)
 - **actor** (optional): Filter by actor name
+- **run_id** (optional): Filter to the events **one orchestrator run** produced. `actor` is the same string for every run of every agent on a machine, so it is this — and only this — that answers "what did *this* run do". Everything a run needs for its final report is in the filtered slice: the claims it took (`pm_grab`), the claims it took *back* (`claimed_by_run: <old> → <this run>`), its releases, its verdicts (`pm_accept` / `pm_retry` / `pm_park` / `pm_review`), the **story closures those verdicts triggered** — `pm_accept` stamps the close with the run that caused it — and any `pm_update`, `pm_update_many` or `pm_update_sprint` the caller tagged with the same `run_id`. Ordinary untagged edits carry no run id and never match. This is how `/pm-orchestrate` Phase 4 rebuilds its report from the log instead of from memory, and how a restarted run reconstructs its predecessor's.
 - **limit** (optional, default `20`): Max entries to return
 - **offset** (optional, default `0`): Starting index for pagination
-- **Returns**: Formatted log entries, most recent first
+- **Returns**: `total`, `showing`, `has_more` and `entries` — formatted log entries, most recent first. Claim, release and verdict events additionally render `run <run_id>` after the actor, and carry the `claimed_at` / `claimed_by_run` before/after pair in their changes — `actor` alone cannot separate one orchestrator run from the next, so that is what a run reads to find the claims it left behind.
+- **`has_more`** is `true` when entries remain past this page. Page with `offset` until it is `false`: a report rebuilt from a silently truncated first page is a wrong report, which is precisely the failure the `run_id` filter exists to prevent.

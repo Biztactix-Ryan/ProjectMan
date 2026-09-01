@@ -39,6 +39,12 @@ from tools.usage_telemetry.extract import ToolCall, ToolResult
 
 SERVER_PY = Path(__file__).resolve().parents[1] / "src" / "projectman" / "server.py"
 
+#: The changeset and web families are hidden from ``tools/list`` by default
+#: (US-PM-15-5).  What this file proves is a property of every tool's failure paths,
+#: ``pm_changeset_create``'s among them, so it sweeps the full surface.  ``tests/test_tool_gating.py`` asserts the gate itself.
+pytestmark = pytest.mark.usefixtures("all_tool_families")
+
+
 READY_BODY = (
     "## Implementation\n\nDo the thing properly.\n\n"
     "## Testing\n\nTest the thing properly.\n\n"

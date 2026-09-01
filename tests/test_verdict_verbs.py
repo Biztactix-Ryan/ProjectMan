@@ -670,7 +670,11 @@ def test_pm_done_next_keeps_its_signature(tmp_project):
         "project",
         "id",
     ]
-    assert list(parameters)[7:] == ["evidence"]
+    # `run_id` was appended by US-PM-14-5 on the same terms as `evidence`:
+    # trailing, optional, defaulted, so no existing call site moves.  It sits
+    # before `evidence`, which the evidence contract requires to stay last.
+    assert list(parameters)[7:] == ["run_id", "evidence"]
+    assert parameters["run_id"].default is None
     assert parameters["evidence"].default is None
     assert parameters["outcome"].default == "success"
     assert parameters["note"].default is None

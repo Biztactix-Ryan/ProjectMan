@@ -20,6 +20,8 @@
   archived: false
   points: null
   assignee: alice
+  claimed_at: null
+  claimed_by_run: null
   tags: []
   depends_on: []
   created: <DATE>

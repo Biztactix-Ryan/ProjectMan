@@ -67,7 +67,7 @@ Examples:
 - `autoscope` → redirect to `/pm-autoscope`
 - `audit` → `pm_audit`, review findings, suggest and execute approved fixes
 - `init [project]` → set up project documentation (wizard for new, import for existing)
-- `fix` → `pm_malformed`, then fix quarantined files one at a time via `pm_fix_malformed`
+- `fix` → `pm_malformed`, then fix quarantined files one at a time via `projectman fix-malformed <filename> --id ID --title T --type story|task` (break-glass: CLI, not a tool)
 - `grab <task-id> [assignee]` → `pm_grab(task_id, assignee)` — claim with readiness validation. On success, suggest `/pm-do <id>` to execute (spawned agents use `/pm-do <id> --complete`).
 - `done <task-id> [note]` → `pm_done_next(task_id, outcome, note)` — complete a task, auto-close its story if finished, and claim the next ready task in one call. Prefer this over separate `pm_update` + `pm_grab` when working through tasks.
 
@@ -76,9 +76,13 @@ Examples:
 - `push [scope]` → `pm_push(scope)` — scope: `hub` (default), `all` (coordinated), `project:<name>`
 
 ### Hub Operations
-- `repair` → `pm_repair` — scan, discover, init, rebuild
+- `repair` → `projectman repair` — scan, discover, init, rebuild
 - `sync` → pull latest across all hub submodules
-- `validate` / `check branches` → `pm_validate_branches`
+- `validate` / `check branches` → `projectman validate-branches`
+
+Repair, restore, branch validation, malformed fixes and coordinated push are
+break-glass: they live in the CLI, and their MCP tools are registered only
+when `.project/config.yaml` sets `tools.maintenance: true`.
 - `git status` → `pm_git_status` — branch, dirty, ahead/behind, PRs across submodules
 - `docs [vision|architecture|decisions|project|infrastructure|security]` → `pm_docs`
 

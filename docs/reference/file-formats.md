@@ -58,6 +58,11 @@ next_story_id: 1         # Auto-incremented
 next_epic_id: 1          # Auto-incremented
 next_changeset_id: 1     # Auto-incremented
 projects: []             # Hub mode: list of registered project names
+stale_claim_hours: 2.0   # Age at which an in-progress claim is flagged stale
+tools:                   # Optional — which gated tool families agents see
+  changesets: null       # null = follow `hub`; true/false to force
+  maintenance: false     # Break-glass repair/restore tools, off by default
+  web: false             # Web dashboard tools, off by default
 ```
 
 | Field | Type | Description |
@@ -72,6 +77,67 @@ projects: []             # Hub mode: list of registered project names
 | `next_epic_id` | int | Next epic number to assign (auto-incremented) |
 | `next_changeset_id` | int | Next changeset number to assign (auto-incremented) |
 | `projects` | list[str] | Hub mode: names of registered subprojects |
+| `stale_claim_hours` | float | How long an in-progress claim may sit before `pm_active` / `pm_board` flag it `stale: true` — a claim must *pass* this age, so exactly at the threshold is not yet stale. Default `2.0`. A task with no `claimed_at` is never stale regardless. Turn it *up* rather than to `0` to disable — `0` flags every live claim. A value that is not a non-negative finite number falls back to `2.0` rather than failing the config load |
+| `tools.changesets` | bool\|null | Register the five `pm_changeset_*` tools. `null` (default) follows `hub` |
+| `tools.maintenance` | bool | Register the five break-glass tools (`pm_repair`, `pm_restore`, `pm_validate_branches`, `pm_fix_malformed`, `pm_push_all`). Default `false` |
+| `tools.web` | bool | Register the three `pm_web_*` tools. Default `false` |
+
+### tools — gated tool families
+
+Three tool families are registered with the MCP server only when this project
+asks for them. Across ~14,200 recorded tool calls on four machines none of
+their members was ever called, so by default their schemas were paid for in
+every request and never used. Hiding them costs nothing that was in use and
+takes **thirteen** tools off `tools/list` — 54 registered, 41 visible with a
+default config.
+
+Nothing is deleted: the code is untouched, and turning a family back on is
+one line.
+
+```yaml
+tools:
+  web: true              # pm_web_start / pm_web_stop / pm_web_status
+```
+
+```yaml
+tools:
+  changesets: true       # the five pm_changeset_* tools
+```
+
+```yaml
+tools:
+  maintenance: true      # pm_repair / pm_restore / pm_validate_branches
+                         # pm_fix_malformed / pm_push_all
+```
+
+`tools.changesets` is tri-state. Left unset — which is what an untouched
+`config.yaml` gives you — it **follows `hub`**: a changeset groups one change
+across several projects, which only a hub has, so a hub gets the family and a
+plain repo does not. Writing `changesets: false` in a hub config, or
+`changesets: true` in a leaf one, overrides that inference. `tools.web` and
+`tools.maintenance` get no such inference — a hub is no likelier than a leaf
+repo to want the dashboard driven from an agent's tool list, and it breaks no
+more often — so both are a plain `false` by default everywhere.
+
+`tools.maintenance` is the odd one out in *why* it is hidden. The other two
+are hidden because nobody calls them; these five are hidden because they are
+aimed at the wrong audience. Repairing a hub, un-quarantining a malformed
+file or driving a coordinated push is human recovery work, and every one of
+the five has a CLI equivalent, so hiding them from the agent's tool list
+takes away no reach:
+
+| Tool | CLI command |
+|------|-------------|
+| `pm_repair` | `projectman repair` |
+| `pm_restore` | `projectman restore <filename> [--project NAME]` |
+| `pm_validate_branches` | `projectman validate-branches` |
+| `pm_fix_malformed` | `projectman fix-malformed <filename> --id ID --title T --type story\|task` |
+| `pm_push_all` | `projectman push-all [--dry-run] [--projects a,b]` |
+
+A hidden tool is hidden from `tools/list` **and** from `tools/call`: calling
+one gets the same `Unknown tool: <name>` any misspelled name gets, with
+`is_error` set. The flags are read when the server starts, so a change takes
+effect on the next server restart.
 
 ## index.yaml
 
@@ -164,6 +230,8 @@ title: Implement JWT middleware
 status: todo
 points: 2
 assignee: null
+claimed_at: null         # Set when claimed, cleared on release/done
+claimed_by_run: null     # Which run holds the claim
 tags: [backend]
 depends_on: []
 created: '2026-02-15'
@@ -200,6 +268,8 @@ Add JWT validation middleware to the Express app.
 | `status` | enum | yes | `todo`, `in-progress`, `review`, `done`, `blocked` |
 | `points` | int\|null | no | Fibonacci: 1, 2, 3, 5, 8, 13 |
 | `assignee` | string\|null | no | Who is working on this |
+| `claimed_at` | datetime\|null | no | UTC ISO-8601 timestamp of the claim in force. Written by `pm_grab` / the next-claim in `pm_done_next`; cleared on release and on done |
+| `claimed_by_run` | string\|null | no | Opaque id of the run holding the claim. Cleared with `claimed_at` |
 | `tags` | list[str] | no | Free-form tags |
 | `depends_on` | list[str] | no | Task IDs this task depends on (must be siblings under the same story) |
 | `created` | date | yes | ISO date |
@@ -212,6 +282,36 @@ todo → in-progress → review → done
               ↓
            blocked
 ```
+
+### Claim ownership — `claimed_at` / `claimed_by_run`
+
+`assignee` says *who* holds a task. It is not enough to recover from a crash:
+every agent claim is `claude`, so an orchestrator restarting after a dead run
+cannot tell a task being worked right now from one abandoned forty minutes ago.
+These two fields answer that without asking a human.
+
+- `claimed_by_run` — an opaque run id. Callers pass `run_id` to `pm_grab`,
+  `pm_release`, `pm_accept` or `pm_done_next`; when they do not, the MCP
+  server's own per-process id is used, so **every claim has an owner**.
+- `claimed_at` — UTC ISO-8601, the moment the claim was taken.
+
+Rules the store enforces:
+
+| Event | `assignee` | `claimed_at` / `claimed_by_run` |
+|-------|-----------|----------------------------------|
+| `pm_grab` / next-claim wins | set | set |
+| re-claim by the **same** run | unchanged | **unchanged** — the claim did not change hands, so its age keeps running |
+| re-claim by a **different** run | set | reset — a restarted run retaking `claude`'s work is a new claim |
+| `pm_release`, `pm_retry`, `pm_park`, `pm_review` | cleared | cleared |
+| `pm_accept` / `pm_done_next` (done) | **kept** — a done task records who did it | cleared — the claim is no longer in force |
+
+Both fields are optional and default to `null`, so a task file written before
+they existed loads unchanged. Such a task has an **unknown** claim age and is
+never reported stale: treating a missing timestamp as "old" would have a
+recovery loop take live work away from an older writer.
+
+Staleness is not stored — it is computed on read from `claimed_at` against
+`stale_claim_hours` (below) and surfaced by `pm_active` and `pm_board`.
 
 ## Epic Format (epics/EPIC-PRJ-1.md)
 
@@ -386,6 +486,12 @@ The activity log is an append-only JSONL file at `.project/activity.jsonl`. Each
 | `timestamp` | datetime | ISO 8601 with microseconds |
 | `actor` | string | Who performed the action (e.g. `claude`, a human name) |
 | `source` | enum | `mcp`, `web`, `cli` |
+| `run_id` | string\|null | Which orchestrator run owned this mutation. Set on claim, release and verdict events; `null` on ordinary edits and on every line written before the field existed |
+
+`run_id` exists because `actor` is too coarse for recovery: every run of every
+agent on a machine shares one actor, so "what did *my* previous run claim?"
+cannot be answered from it. A claim event also carries `claimed_at` and
+`claimed_by_run` in its `changes` diff.
 
 The log is never overwritten — new entries are always appended. Query it with `pm_activity`.
 
@@ -415,19 +521,23 @@ Read the history with `pm_run_log`, or fetch the most recent entries inline via 
 Auto-generated by `pm_audit`. Lists inconsistencies found in the project.
 
 ```markdown
-# Drift Report
+# Project Audit Report
 
-Generated: 2026-02-15
+digest: 4f1c8a9b2d7e0356
 
-## Findings: 2
+**Errors:** 1 | **Warnings:** 0 | **Info:** 1
 
-### [ERROR] US-PRJ-1
-Story marked done but has 1 incomplete task(s):
-- US-PRJ-1-2: Add password hashing (todo)
-
-### [INFO] US-PRJ-3
-Story has no tasks — consider decomposing with /pm scope
+- [ERROR] Story US-PRJ-1 is done but has 1 incomplete task(s)
+- [INFO] Story US-PRJ-3 has a thin description (12 chars)
 ```
+
+The `digest:` line is a fixed-width (16 hex character) fingerprint of everything
+the audit reads, hashed by content: item files, `config.yaml`, project and hub
+docs, `malformed/`, `logs/*.jsonl`, sprints and indexes. It is stable across
+calls with no writes in between and changes whenever any audit input changes,
+so a poller can tell an unchanged project from a changed one without diffing
+reports. `DRIFT.md` itself and derived caches such as `embeddings.db` are
+excluded from the hash. The same digest appears in every `pm_audit` response.
 
 Severity levels:
 - **ERROR** — critical inconsistencies (done stories with incomplete tasks, done epics with open stories, missing documentation)

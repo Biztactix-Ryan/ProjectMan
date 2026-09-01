@@ -62,10 +62,21 @@ READY_BODY = (
 # `store`, which pins an implementation detail of *how* the store reads the
 # clock instead of the response contract this file is about.  Actor comes from
 # git config, so it is machine-dependent for the same reason.
+#
+# `claimed_at` / `claimed_by_run` (US-PM-14-5) join them: the first is the wall
+# clock at claim time, the second embeds the pid of whatever process ran the
+# suite.  Both are normalised only when they carry a *value* — an unclaimed
+# task's `null` is part of the shape and stays golden-compared, which is what
+# keeps the fields' presence and their default pinned.
 _NORMALISERS = (
     (re.compile(r"^(\s*-?\s*(?:created|updated):\s*)'\d{4}-\d{2}-\d{2}'$", re.M), r"\1<DATE>"),
     (re.compile(r"^(\s*-?\s*timestamp:\s*)'[^']*'$", re.M), r"\1<TIMESTAMP>"),
     (re.compile(r"^(\s*-?\s*actor:\s*).*$", re.M), r"\1<ACTOR>"),
+    (re.compile(r"^(\s*-?\s*claimed_at:\s*)'[^']*'$", re.M), r"\1<CLAIMED_AT>"),
+    # The space is matched literally, not by `\s*`: a greedy `\s*` backtracks
+    # past it so the `null` lookahead never bites, and every unclaimed task
+    # would be normalised away along with the real run ids.
+    (re.compile(r"^(\s*-?\s*claimed_by_run:) (?!null$).+$", re.M), r"\1 <RUN_ID>"),
 )
 
 
@@ -321,8 +332,11 @@ def test_pm_grab_explicit_fields_none_equals_omitted(project):
 EXPECTED_SIGNATURES = {
     "pm_get": (("id", "include_log", "project", "task_id"), ("fields",)),
     "pm_batch_get": (("type", "ids", "project"), ("brief", "fields")),
+    # `run_id` (US-PM-14-5) is a *leading* parameter: it changes what the
+    # claim records, not what the response shows, and it sits before `fields`
+    # precisely so the projection parameter stays the trailing one.
     "pm_grab": (
-        ("task_id", "assignee", "include_story", "project", "id"),
+        ("task_id", "assignee", "include_story", "project", "id", "run_id"),
         ("fields",),
     ),
     "pm_list_sprints": (("status", "project"), ("brief", "fields")),

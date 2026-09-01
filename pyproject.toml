@@ -33,3 +33,6 @@ packages = ["src/projectman"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src", "."]
+markers = [
+    "benchmark: timing-sensitive performance test; set PROJECTMAN_SKIP_BENCH=1 to skip",
+]

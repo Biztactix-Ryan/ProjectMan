@@ -404,6 +404,75 @@ def repair():
     click.echo(report)
 
 
+def _break_glass(fn, **kwargs) -> str:
+    """Run one break-glass server function and turn its failure into exit 1.
+
+    The ``maintenance`` tool family (``pm_repair``, ``pm_restore``,
+    ``pm_validate_branches``, ``pm_fix_malformed``, ``pm_push_all``) is
+    hidden from the agent tool list by default — see
+    ``server.TOOL_FAMILIES`` — because recovering a broken project is a
+    human action.  Hidden is not gone: these commands call the very same
+    functions, so the CLI stays the supported way in (US-PM-15-6).
+    """
+    try:
+        return fn(**kwargs)
+    except Exception as e:
+        click.echo(f"Error: {e}", err=True)
+        raise SystemExit(1)
+
+
+@cli.command()
+@click.argument("filename")
+@click.option("--project", default=None, help="Project name (hub mode only)")
+def restore(filename, project):
+    """Move a fixed file out of malformed/ back into stories/ or tasks/."""
+    from projectman import server
+
+    click.echo(_break_glass(server.pm_restore, filename=filename, project=project))
+
+
+@cli.command("fix-malformed")
+@click.argument("filename")
+@click.option("--id", "id_", required=True, help="Correct item ID (e.g. PRJ-1, PRJ-1-1)")
+@click.option("--title", required=True, help="Correct title")
+@click.option("--type", "item_type", type=click.Choice(["story", "task"]), required=True, help="Item type")
+@click.option("--body", default=None, help="New body content (keeps the original if omitted)")
+@click.option("--status", default=None, help="Status (stories: backlog/ready/active/done; tasks: todo/in-progress/review/done/blocked)")
+@click.option("--priority", default=None, help="Priority for stories (must/should/could/wont)")
+@click.option("--points", default=None, type=int, help="Story points")
+@click.option("--story-id", default=None, help="Parent story ID (required for tasks)")
+@click.option("--project", default=None, help="Project name (hub mode only)")
+def fix_malformed(filename, id_, title, item_type, body, status, priority, points, story_id, project):
+    """Rewrite a quarantined file with valid frontmatter and restore it."""
+    from projectman import server
+
+    click.echo(
+        _break_glass(
+            server.pm_fix_malformed,
+            filename=filename,
+            id=id_,
+            title=title,
+            item_type=item_type,
+            body=body,
+            status=status,
+            priority=priority,
+            points=points,
+            story_id=story_id,
+            project=project,
+        )
+    )
+
+
+@cli.command("push-all")
+@click.option("--dry-run", is_flag=True, help="Show what would be pushed without executing")
+@click.option("--projects", default=None, help="Comma-separated project names (default: auto-discover dirty projects)")
+def push_all(dry_run, projects):
+    """Coordinated push: preflight, push subprojects, then push the hub."""
+    from projectman import server
+
+    click.echo(_break_glass(server.pm_push_all, dry_run=dry_run, projects=projects))
+
+
 @cli.command("migrate-archived")
 @click.option(
     "--apply",
@@ -535,34 +604,33 @@ def changeset_create_prs(changeset_id):
     from projectman.config import find_project_root
     from projectman.store import Store
 
+    from projectman.changesets import changeset_create_prs as build_pr_commands
+
     root = find_project_root()
     store = Store(root)
-    meta, body = store.get_changeset(changeset_id)
+    meta, _body = store.get_changeset(changeset_id)
 
     if not meta.entries:
         click.echo("Error: changeset has no project entries", err=True)
         raise SystemExit(1)
 
-    cross_refs = [f"- {e.project} (ref: {e.ref or 'TBD'})" for e in meta.entries]
-    cross_ref_block = "\n".join(cross_refs)
+    # Shared builder: argv lists rendered with shlex quoting so titles,
+    # bodies and refs containing shell metacharacters stay inert.  A NUL
+    # byte is the one value no argument can carry, so the builder refuses
+    # it — report that rather than a traceback.
+    try:
+        result = build_pr_commands(store, changeset_id)
+    except ValueError as exc:
+        click.echo(f"Error: {exc}", err=True)
+        raise SystemExit(1)
 
-    click.echo(f"PR commands for changeset {meta.id}: {meta.title}\n")
-    for entry in meta.entries:
-        if not entry.ref:
-            click.echo(f"# {entry.project}: SKIPPED — no ref/branch set")
+    click.echo(f"PR commands for changeset {result['changeset']}: {result['title']}\n")
+    for cmd in result["pr_commands"]:
+        if "command" not in cmd:
+            click.echo(f"# {cmd['project']}: SKIPPED — no ref/branch set")
             continue
-        pr_body = (
-            f"## Part of changeset: {meta.title} ({meta.id})\n\n"
-            f"### Cross-references\n{cross_ref_block}\n\n"
-            f"{body or ''}"
-        )
-        click.echo(f"# {entry.project}:")
-        click.echo(
-            f'cd {entry.project} && '
-            f'gh pr create --title "{meta.title}: {entry.project}" '
-            f'--body "{pr_body}" '
-            f'--head {entry.ref}'
-        )
+        click.echo(f"# {cmd['project']}:")
+        click.echo(cmd["command"])
         click.echo()
 
 

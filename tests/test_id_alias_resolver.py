@@ -34,6 +34,13 @@ from mcp.server.fastmcp.exceptions import ToolError
 
 from projectman.server import _resolve_id
 
+#: The changeset and web families are hidden from ``tools/list`` by default
+#: (US-PM-15-5).  Four of the nine aliased tools are ``pm_changeset_*``, and the
+#: rollout checks read the alias set off a real ``tools/list``, so this
+#: module needs the full surface registered.  ``tests/test_tool_gating.py`` asserts the gate itself.
+pytestmark = pytest.mark.usefixtures("all_tool_families")
+
+
 
 READY_TASK_BODY = """\
 ## Implementation

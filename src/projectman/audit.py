@@ -1,5 +1,7 @@
 """Project audit — drift detection and consistency checks."""
 
+import hashlib
+import re
 from datetime import date, timedelta
 from pathlib import Path
 from typing import Optional
@@ -9,6 +11,151 @@ import yaml
 from .config import load_config
 from .deps import build_combined_dep_graph, detect_cycle
 from .store import Store
+
+# ── State digest (US-PM-11-5) ────────────────────────────────────────────
+#
+# pm-orchestrate polls pm_audit — once in pre-flight, then as a health check
+# every 3 accepted tasks — and 92 of 139 measured calls in one session were
+# byte-identical repeats.  The poll is correct (caching it would disable the
+# health check); what was missing is a cheap way to say "nothing changed".
+# This digest is that answer, and US-PM-11-6 compares it against a caller's
+# ``since`` to short-circuit the whole report.
+#
+# WHAT IS HASHED, AND WHY THE WHOLE TREE: every audit check reads its inputs
+# through the Store or straight off ``project_dir`` — item files, config.yaml,
+# PROJECT/INFRASTRUCTURE/SECURITY.md, hub docs, malformed/, logs/*.jsonl (the
+# evidence check), sprints, index files.  Enumerating those paths here would
+# mean this function goes stale the day someone adds check 19, so it hashes
+# the *entire* PM directory instead: path + size + bytes, in sorted order.
+# Over-sensitivity is safe (it costs one extra full report); under-sensitivity
+# would hide a real finding, which is the failure that matters.
+#
+# Content, not mtime: two calls with no writes between them must agree, and a
+# rewrite of identical bytes (reindex, a no-op reconcile) should not lie about
+# a change.  Nothing wall-clock enters the hash.
+#
+# EXCLUSIONS are outputs and caches, never inputs:
+#   * DRIFT.md — written by ``run_audit`` itself and now carries the digest, so
+#     hashing it would make every audit change its own answer;
+#   * embeddings.db and sqlite sidecars — a derived cache whose bytes move on
+#     access, not on project state;
+#   * __pycache__ / *.pyc and *.lock / *.tmp — scratch, not state.
+DIGEST_LENGTH = 16
+DIGEST_LINE_PREFIX = "digest: "
+
+_DIGEST_SKIP_NAMES = frozenset({"DRIFT.md"})
+_DIGEST_SKIP_SUFFIXES = (
+    ".db",
+    ".db-wal",
+    ".db-shm",
+    ".db-journal",
+    ".lock",
+    ".pyc",
+    ".tmp",
+)
+_DIGEST_SKIP_DIRS = frozenset({"__pycache__"})
+
+
+def _digest_skips(path: Path, pm_dir: Path) -> bool:
+    """True for files that are audit *output* or cache, never audit input."""
+    if path.name in _DIGEST_SKIP_NAMES:
+        return True
+    if path.name.endswith(_DIGEST_SKIP_SUFFIXES):
+        return True
+    return any(part in _DIGEST_SKIP_DIRS for part in path.relative_to(pm_dir).parts)
+
+
+def compute_state_digest(root: Path, project_dir: Optional[Path] = None) -> str:
+    """A short, stable fingerprint of everything the audit reads.
+
+    Returns ``DIGEST_LENGTH`` lowercase hex characters — fixed width, cheap to
+    log, cheap to compare.  Equal digests mean no audit input changed; a
+    different digest means something did.
+
+    *root* / *project_dir* resolve exactly as ``Store`` resolves them, so the
+    digest always covers the same directory the audit reads.  When auditing a
+    hub subproject, the hub's own ``config.yaml`` is mixed in as well: Check 11
+    reads it (``load_config(root).hub``) and it lives outside the subproject
+    directory.
+
+    Callers may compute this without running the audit — that is how
+    US-PM-11-6 answers an unchanged project in a few bytes.  Measured on this
+    repo's own ``.project`` (791 files, 1.3 MB of hashed bytes): 106 ms against
+    5,056 ms for a full ``run_audit`` — about 2% of the work it can skip.
+    """
+    pm_dir = project_dir if project_dir is not None else root / ".project"
+    hasher = hashlib.sha256()
+    # Version tag: bump if the hashing rule changes, so stale digests from an
+    # older build compare unequal instead of falsely matching.
+    hasher.update(b"projectman-audit-state-v1\0")
+
+    if pm_dir.is_dir():
+        for path in sorted(p for p in pm_dir.rglob("*") if p.is_file()):
+            if _digest_skips(path, pm_dir):
+                continue
+            try:
+                data = path.read_bytes()
+            except OSError:
+                # Vanished or unreadable mid-walk; skip rather than hash a
+                # sentinel that would flap between calls.
+                continue
+            hasher.update(path.relative_to(pm_dir).as_posix().encode())
+            hasher.update(b"\0")
+            hasher.update(str(len(data)).encode())
+            hasher.update(b"\0")
+            hasher.update(data)
+
+    hub_config = root / ".project" / "config.yaml"
+    if project_dir is not None and pm_dir.resolve() != hub_config.parent.resolve():
+        try:
+            hasher.update(b"hub-config\0" + hub_config.read_bytes())
+        except OSError:
+            pass
+
+    return hasher.hexdigest()[:DIGEST_LENGTH]
+
+
+UNCHANGED_LINE = "unchanged: true"
+
+_COUNTS_RE = re.compile(
+    r"\*\*Errors:\*\* (\d+) \| \*\*Warnings:\*\* (\d+) \| \*\*Info:\*\* (\d+)"
+)
+
+
+def _last_report_counts(pm_dir: Path, digest: str) -> Optional[tuple[int, int]]:
+    """(errors, warnings) from DRIFT.md — only if it describes *this* state.
+
+    DRIFT.md carries the digest of the state it was rendered from, so a
+    matching digest line is proof the counts below it are still current.  Any
+    other outcome (no file, older digest, unparseable header) returns None and
+    the caller simply omits the counts; it never re-runs the checks to get
+    them, and it never reports counts it cannot vouch for.
+    """
+    try:
+        text = (pm_dir / "DRIFT.md").read_text()
+    except OSError:
+        return None
+    if f"{DIGEST_LINE_PREFIX}{digest}" not in text.splitlines():
+        return None
+    match = _COUNTS_RE.search(text)
+    if not match:
+        return None
+    return int(match.group(1)), int(match.group(2))
+
+
+def unchanged_report(root: Path, project_dir: Optional[Path], digest: str) -> str:
+    """The few-byte answer for "nothing changed since *digest*" (US-PM-11-6).
+
+    Under 100 bytes against the 162-10,440 char full report, and it performs no
+    check and no DRIFT.md write — the digest already proved there is nothing
+    new to say.
+    """
+    pm_dir = project_dir if project_dir is not None else root / ".project"
+    lines = [f"{DIGEST_LINE_PREFIX}{digest}", UNCHANGED_LINE]
+    counts = _last_report_counts(pm_dir, digest)
+    if counts is not None:
+        lines.append(f"errors: {counts[0]} | warnings: {counts[1]}")
+    return "\n".join(lines) + "\n"
 
 
 def check_completions_without_evidence(store: Store) -> list[dict]:
@@ -64,7 +211,10 @@ def check_completions_without_evidence(store: Store) -> list[dict]:
 
 
 def run_audit(
-    root: Path, project_dir: Optional[Path] = None, include_info: bool = True
+    root: Path,
+    project_dir: Optional[Path] = None,
+    include_info: bool = True,
+    since: Optional[str] = None,
 ) -> str:
     """Run all audit checks and generate a report. Also writes DRIFT.md.
 
@@ -73,7 +223,33 @@ def run_audit(
 
     When *include_info* is False, info-level findings are omitted from the
     returned report (summarized as a count); DRIFT.md always gets the full report.
+
+    Every rendering — the normal response, the include_info response, and
+    DRIFT.md — carries a ``digest: <16 hex>`` line as the first line after the
+    title (US-PM-11-5).  It fingerprints the audit's inputs, so an orchestrator
+    can tell an unchanged project from a changed one without diffing reports.
+
+    When *since* equals that digest, this returns ``unchanged_report`` instead
+    — a sub-100-byte answer, with no check run and no DRIFT.md write
+    (US-PM-11-6).  **This does not weaken the health check.** The digest is a
+    content hash of the audit's entire input tree, so any state change that
+    could produce a new finding necessarily changes the digest; a matching
+    digest therefore implies byte-identical inputs, which implies identical
+    findings — a new ERROR is impossible to hide behind it.  The hash is
+    deliberately over-sensitive (an unrelated write costs one extra full
+    report) because under-sensitivity is the failure that matters.  A *since*
+    that is stale, malformed, or from an older hashing rule simply fails to
+    match and the full audit runs; it is never an error.
     """
+    # Computed up front, off the same directory the checks below read
+    # (US-PM-11-5).  DRIFT.md is excluded from the hash, so writing the report
+    # at the end of this function cannot perturb the digest it reports — and
+    # it is the only work done before the short-circuit decision, measured at
+    # ~2% of a full audit on this repo's own .project.
+    digest = compute_state_digest(root, project_dir)
+    if since is not None and since.strip().lower() == digest:
+        return unchanged_report(root, project_dir, digest)
+
     store = Store(root, project_dir=project_dir) if project_dir else Store(root)
     findings = []
 
@@ -447,7 +623,11 @@ def run_audit(
     header = f"**Errors:** {error_count} | **Warnings:** {warn_count} | **Info:** {info_count}\n"
 
     def _render(items: list[dict], footer: Optional[str] = None) -> str:
-        lines = ["# Project Audit Report\n", header]
+        lines = [
+            "# Project Audit Report\n",
+            f"{DIGEST_LINE_PREFIX}{digest}\n",
+            header,
+        ]
         if not findings:
             lines.append("No issues found. Project is clean.\n")
         else:

@@ -468,6 +468,511 @@ def test_pm_board_completed_deps_available(tmp_project):
     assert "US-TST-1-2" in available_ids
 
 
+def test_pm_board_loads_bodies_without_per_task_get(tmp_project, monkeypatch):
+    """The board reads every task body in one pass — no get_task per task."""
+    from projectman.store import Store
+    from projectman.server import pm_create_story, pm_create_tasks, pm_update, pm_board
+
+    pm_create_story("Story", "Description")
+    pm_update("US-TST-1", status="active")
+    pm_create_tasks("US-TST-1", [
+        {"title": f"Task {n}", "description": READY_TASK_BODY, "points": 2}
+        for n in range(1, 6)
+    ])
+
+    calls = []
+    original = Store.get_task
+
+    def spy(self, task_id):
+        calls.append(task_id)
+        return original(self, task_id)
+
+    monkeypatch.setattr(Store, "get_task", spy)
+
+    result = pm_board()
+    data = yaml.safe_load(result)
+
+    assert calls == [], f"pm_board called get_task {len(calls)} times: {calls}"
+    available_ids = {t["id"] for t in data["board"]["available"]}
+    assert available_ids == {f"US-TST-1-{n}" for n in range(1, 6)}
+
+
+def test_pm_board_checks_readiness_without_per_task_store_reads(
+    tmp_project, monkeypatch
+):
+    """Readiness for the whole board costs one tasks read and one stories read.
+
+    check_readiness used to call get_story on every task, plus list_tasks and
+    list_stories on every task carrying depends_on — a 100-task board ran those
+    lookups 100 times.  The board now builds that context once and passes it in.
+    """
+    from projectman.store import Store
+    from projectman.server import pm_create_story, pm_create_tasks, pm_update, pm_board
+
+    pm_create_story("Story", "Description")
+    pm_update("US-TST-1", status="active")
+    pm_create_tasks("US-TST-1", [
+        {"title": f"Task {n}", "description": READY_TASK_BODY, "points": 2}
+        for n in range(1, 11)
+    ])
+    # Every task but the first waits on its predecessor, so the dependency
+    # branch of check_readiness runs nine times.
+    for n in range(2, 11):
+        pm_update(f"US-TST-1-{n}", depends_on=f"US-TST-1-{n - 1}")
+
+    calls = {"list_tasks": 0, "list_stories": 0, "get_story": 0}
+    for name in calls:
+        original = getattr(Store, name)
+
+        def spy(self, *args, _name=name, _original=original, **kwargs):
+            calls[_name] += 1
+            return _original(self, *args, **kwargs)
+
+        monkeypatch.setattr(Store, name, spy)
+
+    data = yaml.safe_load(pm_board())
+
+    assert calls["list_tasks"] <= 1, f"pm_board called list_tasks {calls['list_tasks']}x"
+    assert calls["list_stories"] <= 1, (
+        f"pm_board called list_stories {calls['list_stories']}x"
+    )
+    assert calls["get_story"] == 0, f"pm_board called get_story {calls['get_story']}x"
+
+    board = data["board"]
+    assert [t["id"] for t in board["available"]] == ["US-TST-1-1"]
+    not_ready = {t["id"]: t["blockers"] for t in board["not_ready"]}
+    assert set(not_ready) == {f"US-TST-1-{n}" for n in range(2, 11)}
+    assert not_ready["US-TST-1-2"] == ["incomplete dependencies: US-TST-1-1"]
+    assert not_ready["US-TST-1-10"] == ["incomplete dependencies: US-TST-1-9"]
+
+
+def test_pm_board_batched_bodies_match_per_task_get(tmp_project):
+    """Every board entry's body-derived fields match *that* task's own body.
+
+    Counting zero ``get_task`` calls only proves the batch read happened — it
+    would still pass if ``body_by_id`` handed every task the same body.  This
+    pins the mapping: hints and the thin-description blocker must equal what
+    the per-task ``get_task`` path produces for that specific id, read from
+    disk with the cache cleared.
+    """
+    from projectman.store import Store, _cache
+    from projectman.readiness import compute_hints
+    from projectman.server import pm_create_story, pm_create_tasks, pm_update, pm_board
+
+    pm_create_story("Story", "Description")
+    pm_update("US-TST-1", status="active")
+    bodies = [
+        READY_TASK_BODY,
+        "Coordinate with the vendor about the api key before starting, then "
+        "wire it through the client and confirm the handshake end to end.",
+        "too thin",
+    ]
+    pm_create_tasks("US-TST-1", [
+        {"title": f"Task {n}", "description": body, "points": 2}
+        for n, body in enumerate(bodies, start=1)
+    ])
+
+    data = yaml.safe_load(pm_board())
+
+    _cache.clear()
+    store = Store(tmp_project)
+
+    hints_by_id = {t["id"]: t["hints"] for t in data["board"]["available"]}
+    assert set(hints_by_id) == {"US-TST-1-1", "US-TST-1-2"}
+    for task_id, hints in hints_by_id.items():
+        meta, body = store.get_task(task_id)
+        assert hints == compute_hints(meta, body), task_id
+    # Distinct bodies must yield distinct hints — a shared body would not.
+    assert hints_by_id["US-TST-1-1"] != hints_by_id["US-TST-1-2"]
+    assert "needs-coordination" in hints_by_id["US-TST-1-2"]
+
+    not_ready = {t["id"]: t["blockers"] for t in data["board"]["not_ready"]}
+    assert not_ready["US-TST-1-3"] == ["description too thin (<50 chars)"]
+
+
+def test_pm_epic_partitions_tasks_without_per_story_list(tmp_project, monkeypatch):
+    """The epic view reads every task once and partitions locally — no N+1."""
+    from projectman.store import Store
+    from projectman.server import (
+        pm_archive,
+        pm_create_epic,
+        pm_create_story,
+        pm_create_task,
+        pm_epic,
+        pm_update,
+    )
+
+    pm_create_epic("Epic", "Description")
+    for n in (1, 2, 3):
+        pm_create_story(f"Story {n}", "Description", epic_id="EPIC-TST-1")
+
+    pm_create_task("US-TST-1", "Delivered", "A" * 80, points=5)
+    pm_create_task("US-TST-1", "Outstanding", "A" * 80, points=3)
+    pm_create_task("US-TST-2", "Delivered", "A" * 80, points=2)
+    pm_create_task("US-TST-2", "Abandoned", "A" * 80, points=5)
+    pm_create_task("US-TST-3", "Outstanding", "A" * 80, points=1)
+    pm_update("US-TST-1-1", status="done")
+    pm_update("US-TST-2-1", status="done")
+    pm_archive("US-TST-2-2")
+
+    calls = []
+    original = Store.list_tasks
+
+    def spy(self, *args, **kwargs):
+        calls.append((args, kwargs))
+        return original(self, *args, **kwargs)
+
+    monkeypatch.setattr(Store, "list_tasks", spy)
+
+    data = yaml.safe_load(pm_epic("EPIC-TST-1"))
+
+    assert len(calls) == 1, f"pm_epic called list_tasks {len(calls)} times: {calls}"
+    assert calls[0] == ((), {}), "the single call must be unfiltered"
+
+    stories = {s["id"]: s for s in data["stories"]}
+    assert set(stories) == {"US-TST-1", "US-TST-2", "US-TST-3"}
+
+    # task_summary still lists every task, archived included, in file order.
+    assert [t["id"] for t in stories["US-TST-1"]["tasks"]] == [
+        "US-TST-1-1",
+        "US-TST-1-2",
+    ]
+    assert [t["id"] for t in stories["US-TST-2"]["tasks"]] == [
+        "US-TST-2-1",
+        "US-TST-2-2",
+    ]
+    assert [t["id"] for t in stories["US-TST-3"]["tasks"]] == ["US-TST-3-1"]
+
+    # Per-story rollup: archived task drops out of numerator and denominator.
+    assert (stories["US-TST-1"]["task_points"], stories["US-TST-1"]["done_points"]) == (8, 5)
+    assert (stories["US-TST-2"]["task_points"], stories["US-TST-2"]["done_points"]) == (2, 2)
+    assert (stories["US-TST-3"]["task_points"], stories["US-TST-3"]["done_points"]) == (1, 0)
+
+    assert data["rollup"]["story_count"] == 3
+    assert data["rollup"]["total_points"] == 11
+    assert data["rollup"]["completed_points"] == 7
+
+
+def test_pm_epic_pagination_reads_tasks_once_and_keeps_empty_stories(
+    tmp_project, monkeypatch
+):
+    """Paging the story list must not re-read tasks, and a story with none of
+    its own still pages through as ``[]`` contributing nothing to the rollup."""
+    from projectman.store import Store
+    from projectman.server import (
+        pm_create_epic,
+        pm_create_story,
+        pm_create_task,
+        pm_epic,
+        pm_update,
+    )
+
+    pm_create_epic("Epic", "Description")
+    for n in (1, 2, 3):
+        pm_create_story(f"Story {n}", "Description", epic_id="EPIC-TST-1")
+
+    pm_create_task("US-TST-1", "Delivered", "A" * 80, points=5)
+    # US-TST-2 deliberately gets no tasks at all.
+    pm_create_task("US-TST-3", "Outstanding", "A" * 80, points=3)
+    pm_update("US-TST-1-1", status="done")
+
+    calls = []
+    original = Store.list_tasks
+
+    def spy(self, *args, **kwargs):
+        calls.append((args, kwargs))
+        return original(self, *args, **kwargs)
+
+    monkeypatch.setattr(Store, "list_tasks", spy)
+
+    whole = yaml.safe_load(pm_epic("EPIC-TST-1"))
+    first = yaml.safe_load(pm_epic("EPIC-TST-1", limit=2, offset=0))
+    second = yaml.safe_load(pm_epic("EPIC-TST-1", limit=2, offset=2))
+
+    # One unfiltered read per call, however the stories are sliced.
+    assert calls == [((), {})] * 3, calls
+
+    # Each page is exactly the matching slice of the unpaginated listing.
+    assert first["stories"] == whole["stories"][:2]
+    assert second["stories"] == whole["stories"][2:]
+    assert (first["has_more"], first["next_offset"]) == (True, 2)
+    assert second["has_more"] is False
+    assert "next_offset" not in second
+
+    # The rollup spans every linked story regardless of the page shown.
+    for page in (whole, first, second):
+        assert page["rollup"] == {
+            "story_count": 3,
+            "total_points": 8,
+            "completed_points": 5,
+            # round() breaks 62.5 to even, so 5/8 renders as 62%.
+            "completion": "62%",
+        }
+
+    # The task-less story survives partitioning as an empty bucket.
+    empty = first["stories"][1]
+    assert empty["id"] == "US-TST-2"
+    assert (empty["tasks"], empty["task_points"], empty["done_points"]) == ([], 0, 0)
+
+
+def test_pm_active_lists_stories_once_with_a_tag(tmp_project, monkeypatch):
+    """The tag branch reuses the one story listing instead of loading a second."""
+    from projectman.store import Store
+    from projectman.server import (
+        pm_active,
+        pm_create_story,
+        pm_create_task,
+        pm_update,
+    )
+
+    # Active story carrying the tag, plus a task that inherits it.
+    pm_create_story("Tagged story", "Description", tags="api")
+    pm_update("US-TST-1", status="active")
+    pm_create_task("US-TST-1", "Inherits the tag", "A" * 80, points=3)
+    pm_update("US-TST-1-1", status="in-progress")
+
+    # Active story without the tag; its task carries the tag directly.
+    pm_create_story("Untagged story", "Description")
+    pm_update("US-TST-2", status="active")
+    pm_create_task("US-TST-2", "Tagged itself", "A" * 80, points=2, tags="api")
+    pm_update("US-TST-2-1", status="in-progress")
+
+    # Active story and task with no relation to the tag at all.
+    pm_create_story("Unrelated story", "Description")
+    pm_update("US-TST-3", status="active")
+    pm_create_task("US-TST-3", "Unrelated", "A" * 80, points=1)
+    pm_update("US-TST-3-1", status="in-progress")
+
+    # A backlog story with the tag must not surface as active work.
+    pm_create_story("Backlog story", "Description", tags="api")
+
+    calls = []
+    original = Store.list_stories
+
+    def spy(self, *args, **kwargs):
+        calls.append((args, kwargs))
+        return original(self, *args, **kwargs)
+
+    monkeypatch.setattr(Store, "list_stories", spy)
+
+    data = yaml.safe_load(pm_active(tag="api"))
+
+    assert len(calls) == 1, f"pm_active called list_stories {len(calls)} times: {calls}"
+
+    assert [s["id"] for s in data["active_stories"]] == ["US-TST-1"]
+    assert data["active_stories_total"] == 1
+    assert [t["id"] for t in data["active_tasks"]] == ["US-TST-1-1", "US-TST-2-1"]
+    assert data["active_tasks_total"] == 2
+
+
+def test_pm_active_lists_stories_once_without_a_tag(tmp_project, monkeypatch):
+    """The no-tag path filters active stories in memory off one listing.
+
+    Pins both halves of the refactor: a single ``list_stories`` call, and an
+    in-memory filter that matches what ``list_stories(status="active")``
+    returned -- non-active stories stay out of ``active_stories`` while their
+    in-progress tasks are still reported, exactly as before.
+    """
+    from projectman.store import Store
+    from projectman.server import (
+        pm_active,
+        pm_create_story,
+        pm_create_task,
+        pm_update,
+    )
+
+    pm_create_story("Active story", "Description")
+    pm_update("US-TST-1", status="active")
+    pm_create_task("US-TST-1", "Active work", "A" * 80, points=3)
+    pm_update("US-TST-1-1", status="in-progress")
+
+    # Backlog parent: excluded from active_stories, but its claimed task is
+    # still active work -- pm_active never filters tasks by story status.
+    pm_create_story("Backlog story", "Description")
+    pm_create_task("US-TST-2", "Claimed anyway", "A" * 80, points=2)
+    pm_update("US-TST-2-1", status="in-progress")
+
+    calls = []
+    original = Store.list_stories
+
+    def spy(self, *args, **kwargs):
+        calls.append((args, kwargs))
+        return original(self, *args, **kwargs)
+
+    monkeypatch.setattr(Store, "list_stories", spy)
+
+    data = yaml.safe_load(pm_active())
+
+    assert len(calls) == 1, f"pm_active called list_stories {len(calls)} times: {calls}"
+
+    assert [s["id"] for s in data["active_stories"]] == ["US-TST-1"]
+    assert data["active_stories_total"] == 1
+    assert [t["id"] for t in data["active_tasks"]] == ["US-TST-1-1", "US-TST-2-1"]
+    assert data["active_tasks_total"] == 2
+
+
+def _fake_embedding_module(results):
+    """A stand-in projectman.embeddings whose search() returns `results`.
+
+    Keeps the test off the real module, which imports numpy and would load an
+    embedding model -- neither is available in the unit environment.
+    """
+    import types
+    from dataclasses import dataclass
+
+    @dataclass
+    class _Result:
+        id: str
+        title: str
+        type: str
+        score: float
+
+    module = types.ModuleType("projectman.embeddings")
+
+    class _Store:
+        def __init__(self, project_dir):
+            self.project_dir = project_dir
+
+        def search(self, query, top_k=10):
+            return [_Result(**r) for r in results]
+
+    module.EmbeddingStore = _Store
+    return module
+
+
+def test_pm_search_tag_filter_batches_metadata(tmp_project, monkeypatch):
+    """The embeddings tag filter reads metadata in batch -- no get per result."""
+    import sys
+
+    from projectman.store import Store
+    from projectman.server import (
+        pm_create_story,
+        pm_create_task,
+        pm_search,
+        pm_update,
+    )
+
+    pm_create_story("API Authentication", "API auth flow", tags="api")
+    pm_update("US-TST-1", status="active")
+    pm_create_task("US-TST-1", "Implement API auth", "A" * 80, points=3, tags="api")
+    pm_create_story("Web Authentication", "Web auth flow", tags="web")
+
+    fake = _fake_embedding_module(
+        [
+            {"id": "US-TST-1", "title": "API Authentication", "type": "story", "score": 0.9},
+            {"id": "US-TST-99", "title": "Deleted", "type": "story", "score": 0.8},
+            {"id": "US-TST-2", "title": "Web Authentication", "type": "story", "score": 0.7},
+            {"id": "US-TST-1-1", "title": "Implement API auth", "type": "task", "score": 0.6},
+        ]
+    )
+
+    calls = []
+    original = Store.get
+
+    def spy(self, item_id):
+        calls.append(item_id)
+        return original(self, item_id)
+
+    monkeypatch.setattr(Store, "get", spy)
+    monkeypatch.setitem(sys.modules, "projectman.embeddings", fake)
+
+    # A query no keyword search could match: a non-empty result set proves the
+    # stubbed embeddings branch ran rather than the keyword fallback.
+    data = yaml.safe_load(pm_search("zzqqxx", tag="api"))
+
+    assert data, "the stubbed embeddings branch did not run"
+    assert calls == [], f"pm_search called Store.get {len(calls)} times: {calls}"
+    # Tagged hits survive in ranking order; the untagged story and the id that
+    # is no longer on disk both drop out.
+    assert [item["id"] for item in data] == ["US-TST-1", "US-TST-1-1"]
+    def test_construction_and_index_item_stay_lazy(self, tmp_project, monkeypatch):
+        """Nothing builds the matrix until the first search().
+
+        Constructing the store and writing a row through index_item() must not
+        read the vector column at all; the cache stays empty until a search
+        asks for it, and only then is it built.
+        """
+        from projectman import embeddings as embeddings_module
+        from projectman.embeddings import EmbeddingStore
+
+        recorder = _RecordingSqlite(embeddings_module.sqlite3)
+        monkeypatch.setattr(embeddings_module, "sqlite3", recorder)
+
+        emb = EmbeddingStore(tmp_project / ".project")
+        assert emb._matrix is None and emb._rows is None and emb._cache_stamp is None
+
+        emb._model = _StubModel([0.1, 0.2, 0.3, 0.4])
+        emb.index_item("US-TST-1", "Title 1", "story", "content")
+        assert emb._matrix is None and emb._rows is None and emb._cache_stamp is None
+
+        def vector_selects():
+            return [s for s in recorder.statements if "SELECT" in s and "vector" in s]
+
+        assert vector_selects() == [], (
+            f"no vector SELECT may run before the first search, got {vector_selects()}"
+        )
+
+        emb.search("anything")
+        assert emb._matrix is not None and emb._matrix.shape == (1, 4)
+        assert emb._cache_stamp is not None
+        assert len(vector_selects()) == 1
+
+
+
+def test_pm_search_tag_filter_lists_once_per_kind(tmp_project, monkeypatch):
+    """The tag branch lists stories/tasks exactly once regardless of hit count.
+
+    Store.get staying at zero is not enough on its own: a per-result
+    ``list_stories()`` would also make no get() calls while still being O(N)
+    listings. Pin the listing counts to one apiece for a many-hit result set,
+    and to zero when no tag is passed (the branch must not run at all).
+    """
+    import sys
+
+    from projectman.store import Store
+    from projectman.server import pm_create_story, pm_create_task, pm_search, pm_update
+
+    for n in range(1, 5):
+        pm_create_story(f"Auth story {n}", "auth flow", tags="api")
+        pm_update(f"US-TST-{n}", status="active")
+        pm_create_task(f"US-TST-{n}", f"Auth task {n}", "B" * 80, points=1, tags="api")
+
+    hits = []
+    for n in range(1, 5):
+        hits.append(
+            {"id": f"US-TST-{n}", "title": f"Auth story {n}", "type": "story", "score": 0.9}
+        )
+        hits.append(
+            {"id": f"US-TST-{n}-1", "title": f"Auth task {n}", "type": "task", "score": 0.8}
+        )
+    fake = _fake_embedding_module(hits)
+
+    counts = {"stories": 0, "tasks": 0}
+    orig_stories, orig_tasks = Store.list_stories, Store.list_tasks
+
+    def spy_stories(self, *a, **kw):
+        counts["stories"] += 1
+        return orig_stories(self, *a, **kw)
+
+    def spy_tasks(self, *a, **kw):
+        counts["tasks"] += 1
+        return orig_tasks(self, *a, **kw)
+
+    monkeypatch.setattr(Store, "list_stories", spy_stories)
+    monkeypatch.setattr(Store, "list_tasks", spy_tasks)
+    monkeypatch.setitem(sys.modules, "projectman.embeddings", fake)
+
+    data = yaml.safe_load(pm_search("zzqqxx", tag="api"))
+    assert len(data) == 8, data
+    assert counts == {"stories": 1, "tasks": 1}, counts
+
+    # No tag: nothing is filtered, so neither listing is touched.
+    counts["stories"] = counts["tasks"] = 0
+    data = yaml.safe_load(pm_search("zzqqxx"))
+    assert len(data) == 8, data
+    assert counts == {"stories": 0, "tasks": 0}, counts
+
+
 def test_pm_board_available_topological_order(tmp_project):
     """Board available section sorted by topological order within each story."""
     from projectman.server import pm_create_story, pm_create_tasks, pm_update, pm_board

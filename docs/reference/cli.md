@@ -341,6 +341,14 @@ Generate `gh` CLI commands for creating cross-referenced PRs.
 projectman changeset create-prs CS-PRJ-1
 ```
 
+Prints one `cd <project> && gh pr create …` line per project with a ref.
+The commands are built from argument lists and rendered with `shlex.quote`
+/ `shlex.join`, so a title, description or branch ref containing `"`,
+backticks, `$(…)`, `;`, `&&`, `|` or a newline is quoted rather than
+interpreted.  The MCP tool `pm_changeset_create_prs` returns the same
+invocation as an `argv` list for callers that execute it without a shell.
+Nothing is executed — review the output, then run it.
+
 ### projectman changeset push
 
 Check PR merge status and update changeset status.

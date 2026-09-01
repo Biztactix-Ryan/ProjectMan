@@ -8,6 +8,7 @@ This directory holds **measurements**, not code. The code is
 | --- | --- |
 | `baseline-pre-fix.json` | the machine-readable **pre-fix baseline**. Every later claim of improvement is diffed against this. Do not overwrite it. |
 | `baseline-pre-fix.md` | human summary of the same capture: provenance, headline numbers, busiest tools. |
+| `tool-list-size.md` | the US-PM-15-7 **tool-list payload measurement**: `tools/list` bytes with and without the gated tool families, per family, plus the command that regenerates it. Not a corpus measurement -- it describes the schema surface the server offers, so it is regenerated on demand rather than pinned. |
 
 ## What a baseline is
 
@@ -101,8 +102,27 @@ python -m tools.usage_telemetry.baseline compare \
 
 Add `--json` for a machine-readable diff. The comparison covers calls, response
 bytes, estimated tokens, median bytes/call, the three failure classes with their
-rates, run totals and the longest run. Metrics where lower is better are marked
+rates, run totals, the corpus-wide longest run, and a *per-tool* longest run for
+each tool in `baseline.BULK_RUN_TOOLS` (`pm_update_longest_run`,
+`pm_archive_longest_run`). Metrics where lower is better are marked
 `better` / `worse`; `corpus_grew` flags the growing-denominator case explicitly.
+
+The per-tool run keys exist because the corpus-wide `longest_run` names only
+whichever tool happens to top the corpus. US-PM-12's bulk verbs
+(`pm_update_many` / `pm_archive_many`) are meant to shorten `pm_update` and
+`pm_archive` runs specifically, and a capture where some other tool holds the
+record leaves `longest_run` unmoved -- or rising -- while those runs collapse.
+The per-tool numbers are computed from the `by_tool[].runs` profile every
+capture already stores, so a baseline taken before this metric existed still
+answers the question with no re-capture (the pre-fix file reads 45x `pm_update`,
+15x `pm_archive`).
+
+One caveat when reading them: a longest run is a **maximum over the whole
+corpus**, and the corpus only grows, so a whole-corpus re-capture can never show
+the maximum fall -- the pre-bulk-verb history stays in it forever. To see
+adoption, point `--root` at a transcript tree containing only post-release
+sessions, and read `by_tool[].runs.histogram` / `removable_calls` alongside the
+`pm_update_many` and `pm_archive_many` call counts.
 
 Because both files carry provenance, the diff header prints each capture's label,
 moment and commit — so a "regression" caused by re-running against different code

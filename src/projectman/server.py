@@ -10,11 +10,19 @@ from mcp.server.fastmcp import FastMCP
 from mcp.server.fastmcp.exceptions import ToolError
 from mcp.types import ToolAnnotations
 
-from .config import find_project_root, load_config
+from .config import enabled_tool_families, find_project_root, load_config
 from .event_bus import EventBus, NoOpEventBus
 from .indexer import build_index, write_index
 from .models import ChangesetStatus, Evidence, ProjectIndex
-from .store import NOTE_SUMMARY_RECOMMENDED, NothingToCommit, Store
+from .store import (
+    CLAIM_FIELDS,
+    NOTE_SUMMARY_RECOMMENDED,
+    NothingToCommit,
+    RELEASE_FIELDS,
+    Store,
+    claim_age_seconds,
+    is_stale_claim,
+)
 
 mcp = FastMCP("projectman")
 
@@ -980,6 +988,37 @@ def pm_update_doc(
         raise _failed(e) from e
 
 
+#: Claim-staleness surfacing (US-PM-14-5).  Deliberately *not* a new tool:
+#: "is this claim abandoned" is asked at exactly the moments a caller is
+#: already listing in-progress work, and a separate tool would be one more
+#: schema to pay for and one more call to forget.  `pm_active` and `pm_board`
+#: annotate the entries they were going to return anyway.
+#:
+#: Both annotations are added only when they say something.  `claim_age` is
+#: absent when `claimed_at` is unknown (a task file older than this field),
+#: and `stale` is present only as `true` — a `stale: false` on every healthy
+#: task would be pure noise on the busiest read tools in the corpus.
+
+
+def _stale_threshold_hours(store: Store, stale_after: Optional[float]) -> float:
+    """Resolve the staleness threshold: caller override, else config."""
+    if stale_after is not None:
+        return float(stale_after)
+    return float(getattr(store.config, "stale_claim_hours", 2.0))
+
+
+def _annotate_claim(entry: dict, meta, max_age_seconds: float) -> dict:
+    """Add `claim_age` / `claimed_by_run` / `stale` to one rendered task."""
+    age = claim_age_seconds(meta)
+    if age is not None:
+        entry["claim_age"] = int(age)
+    if getattr(meta, "claimed_by_run", None):
+        entry["claimed_by_run"] = meta.claimed_by_run
+    if is_stale_claim(meta, max_age_seconds):
+        entry["stale"] = True
+    return entry
+
+
 @mcp.tool(
     title="Active Work",
     annotations=ToolAnnotations(title="Active Work", readOnlyHint=True),
@@ -989,25 +1028,39 @@ def pm_active(
     tag: Optional[str] = None,
     limit: int = 20,
     offset: int = 0,
+    stale_after: Optional[float] = None,
 ) -> str:
-    """List active/in-progress stories and tasks.
+    """List active/in-progress stories and tasks, flagging stale claims.
+
+    Each in-progress task carries `claim_age` (seconds since it was claimed)
+    and `claimed_by_run` when known, plus `stale: true` once the claim is
+    older than the threshold — that is how a restarting orchestrator tells an
+    abandoned claim from live work without asking a human. A task claimed
+    before claim metadata existed has no `claim_age` and is never stale.
 
     Args:
         project: Optional project name (hub mode only)
         tag: Filter to show only items (or their parent stories) with this tag
         limit: Max items per list (default 20)
         offset: Starting index for pagination (default 0)
+        stale_after: Hours a claim may sit before it is flagged `stale: true`. Omit to use the project's `stale_claim_hours` config key (default 2).
     """
     try:
         store = _store(project)
-        all_stories = store.list_stories(status="active")
+        # One listing per call: list_stories() already excludes archived
+        # stories and filters on status.value, so deriving the active subset
+        # in memory is identical to list_stories(status="active") -- and the
+        # same list backs the tag filter's parent lookup below instead of a
+        # second full listing.
+        every_story = store.list_stories()
+        all_stories = [s for s in every_story if s.status.value == "active"]
         # Archived tasks keep the status they stopped at, so an abandoned
         # in-progress task would otherwise be reported as active work.
         all_tasks = store.list_tasks(status="in-progress", archived=False)
 
         if tag:
             all_stories = [s for s in all_stories if tag in s.tags]
-            story_cache = {s.id: s for s in store.list_stories()}
+            story_cache = {s.id: s for s in every_story}
             all_tasks = [
                 t
                 for t in all_tasks
@@ -1021,11 +1074,21 @@ def pm_active(
         stories_page = all_stories[offset : offset + limit]
         tasks_page = all_tasks[offset : offset + limit]
 
+        threshold_hours = _stale_threshold_hours(store, stale_after)
+        max_age_seconds = threshold_hours * 3600.0
+        active_tasks = [
+            _annotate_claim(t.model_dump(mode="json"), t, max_age_seconds)
+            for t in tasks_page
+        ]
         result = {
             "active_stories": [s.model_dump(mode="json") for s in stories_page],
             "active_stories_total": len(all_stories),
-            "active_tasks": [t.model_dump(mode="json") for t in tasks_page],
+            "active_tasks": active_tasks,
             "active_tasks_total": len(all_tasks),
+            "stale_after_hours": threshold_hours,
+            "stale_tasks": [
+                t.id for t in all_tasks if is_stale_claim(t, max_age_seconds)
+            ],
             "limit": limit,
             "offset": offset,
             "has_more": (offset + limit) < len(all_stories)
@@ -1062,16 +1125,22 @@ def pm_search(
             if results:
                 # Post-filter by tag if specified
                 if tag:
-                    store = Store(proj_dir)
-                    filtered = []
-                    for r in results:
-                        try:
-                            meta, _ = store.get(r.id)
-                            if tag in (meta.tags if hasattr(meta, "tags") else []):
-                                filtered.append(r)
-                        except Exception:
-                            pass
-                    results = filtered
+                    # _store(), not Store(proj_dir): proj_dir is the .project
+                    # directory while Store's first argument is the repo root,
+                    # so the old construction looked under .project/.project
+                    # and every lookup raised -- the tag filter silently
+                    # dropped every hit.
+                    store = _store(project)
+                    # The embedding index only ever holds stories and tasks
+                    # (see EmbeddingStore.reindex_all), so two batch listings
+                    # cover every possible result id -- no store.get per hit.
+                    # An id that is no longer on disk is absent from the map
+                    # and drops out, as it did when get() raised.
+                    tags_by_id = {
+                        m.id: m.tags
+                        for m in (*store.list_stories(), *store.list_tasks())
+                    }
+                    results = [r for r in results if tag in tags_by_id.get(r.id, ())]
                 return _yaml_dump(
                     [
                         {
@@ -1114,14 +1183,21 @@ def pm_board(
     assignee: Optional[str] = None,
     tag: Optional[str] = None,
     limit: int = 10,
+    stale_after: Optional[float] = None,
 ) -> str:
     """Show the task board — available tasks grouped by status and readiness.
+
+    Entries in `in_progress` carry `claim_age` (seconds since claimed) and
+    `claimed_by_run` when known, and `stale: true` once the claim has aged
+    past the threshold; `stale_tasks` lists their ids. A claim that has gone
+    stale is an abandoned one — release it rather than waiting on it.
 
     Args:
         project: Optional project name (hub mode only)
         assignee: Filter to show only tasks for this assignee
         tag: Filter to show only tasks (or their parent stories) with this tag
         limit: Max items per board group (default 10). Totals are always shown.
+        stale_after: Hours a claim may sit before it is flagged `stale: true`. Omit to use the project's `stale_claim_hours` config key (default 2).
     """
     try:
         from .readiness import check_readiness, compute_hints
@@ -1131,11 +1207,26 @@ def pm_board(
         # Archived tasks are abandoned, not workable.  Archival used to write
         # "done", which dropped them off the board as a side effect; now that
         # they keep their real status the exclusion has to be explicit.
-        all_tasks = store.list_tasks(archived=False)
+        #
+        # One unfiltered read serves both audiences: the board itself wants
+        # only the active tasks, while check_readiness's dependency check needs
+        # the archived ones too (an archived dependency releases its dependents
+        # instead of blocking them forever).  Filtering in memory keeps the
+        # board at a single tasks read regardless of task count.
+        all_task_entries = store.list_tasks_with_bodies()
+        every_task = [meta for meta, _ in all_task_entries]
+        task_entries = [(m, b) for m, b in all_task_entries if m.archived is False]
+        all_tasks = [meta for meta, _ in task_entries]
+        # Bodies for the whole board in one pass — get_task per task is a
+        # linear cache scan each time, which made the board O(n^2).
+        body_by_id = {meta.id: body for meta, body in task_entries}
 
-        # Build a story lookup for priority ordering and context
+        # Build a story lookup for priority ordering and context — also handed
+        # to check_readiness so its parent-story lookup is a dict hit, not a
+        # get_story per task.
+        all_stories = store.list_stories()
         story_cache = {}
-        for story in store.list_stories():
+        for story in all_stories:
             story_cache[story.id] = story
 
         # Build topological position map per story for dependency-aware ordering
@@ -1151,6 +1242,9 @@ def pm_board(
             for idx, t in enumerate(sorted_tasks):
                 topo_position[t.id] = idx
 
+        threshold_hours = _stale_threshold_hours(store, stale_after)
+        max_age_seconds = threshold_hours * 3600.0
+
         available = []
         not_ready = []
         in_progress = []
@@ -1158,7 +1252,7 @@ def pm_board(
         blocked = []
 
         for task in all_tasks:
-            _, task_body = store.get_task(task.id)
+            task_body = body_by_id.get(task.id, "")
             story = story_cache.get(task.story_id)
             story_label = f"{story.id} — {story.title}" if story else task.story_id
 
@@ -1173,13 +1267,17 @@ def pm_board(
 
             if task.status.value == "in-progress":
                 in_progress.append(
-                    {
-                        "id": task.id,
-                        "title": task.title,
-                        "points": task.points,
-                        "assignee": task.assignee,
-                        "story": story_label,
-                    }
+                    _annotate_claim(
+                        {
+                            "id": task.id,
+                            "title": task.title,
+                            "points": task.points,
+                            "assignee": task.assignee,
+                            "story": story_label,
+                        },
+                        task,
+                        max_age_seconds,
+                    )
                 )
             elif task.status.value == "review":
                 in_review.append(
@@ -1202,7 +1300,14 @@ def pm_board(
                     }
                 )
             elif task.status.value == "todo" and not assignee:
-                readiness = check_readiness(task, task_body, store)
+                readiness = check_readiness(
+                    task,
+                    task_body,
+                    store,
+                    stories=story_cache,
+                    all_tasks=every_task,
+                    all_stories=all_stories,
+                )
                 if readiness["ready"]:
                     hints = compute_hints(task, task_body)
                     priority_order = {"must": 0, "should": 1, "could": 2, "wont": 3}
@@ -1255,6 +1360,13 @@ def pm_board(
                 "in_review": len(in_review),
                 "blocked": len(blocked),
             },
+            # Beside `summary` rather than inside it: `summary` is a pinned
+            # count-per-group shape, and a stale claim is not a sixth group —
+            # it is an annotation on the in_progress ones.  Ids rather than a
+            # count, because the caller's next move is to release them, and
+            # `in_progress` above is truncated by `limit` while this is not.
+            "stale_tasks": [t["id"] for t in in_progress if t.get("stale")],
+            "stale_after_hours": threshold_hours,
             "limit": limit,
         }
         return _yaml_dump(result)
@@ -1436,12 +1548,19 @@ def pm_epic(
 
         # Find linked stories — compute rollup from ALL, paginate the detail list
         linked_stories = [s for s in store.list_stories() if s.epic_id == id]
+        # One pass over every task, partitioned locally: asking the store once
+        # per story turned an epic view into N+1 scans of the same cached list.
+        # The partition is stable, so each bucket keeps the order the per-story
+        # call returned.
+        tasks_by_story: dict[str, list] = {}
+        for task in store.list_tasks():
+            tasks_by_story.setdefault(task.story_id, []).append(task)
         story_data = []
         total_points = 0
         completed_points = 0
 
         for i, story in enumerate(linked_stories):
-            tasks = store.list_tasks(story_id=story.id)
+            tasks = tasks_by_story.get(story.id, [])
             # Archived tasks are abandoned work: they leave the numerator and
             # the denominator alike, so the rollup neither claims them as
             # delivered nor keeps demanding them.
@@ -1682,6 +1801,183 @@ def pm_create_tasks(
         raise _failed(e) from e
 
 
+def _do_update(
+    store,
+    id: str,
+    *,
+    status: Optional[str] = None,
+    points: Optional[int] = None,
+    title: Optional[str] = None,
+    assignee: Optional[str] = None,
+    unassign: bool = False,
+    clear: Optional[str] = None,
+    epic_id: Optional[str] = None,
+    body: Optional[str] = None,
+    acceptance_criteria: Optional[Union[str, list[str]]] = None,
+    tags: Optional[str] = None,
+    depends_on: Optional[str] = None,
+    outcome: Optional[str] = None,
+    note: Optional[str] = None,
+    evidence: Optional[Evidence] = None,
+    run_id: Optional[str] = None,
+    reindex: bool = True,
+) -> dict:
+    """One item's update, exactly as ``pm_update`` performs it, as a dict.
+
+    Shared by ``pm_update`` and ``pm_update_many`` so the bulk verb cannot
+    drift from the single-item one: parsing, clearing, run-log entries,
+    truncation and clamp reporting, criteria reconciliation and status events
+    all happen here, once.  ``reindex=False`` lets a bulk caller write the
+    index once at the end of the sweep instead of once per item; everything
+    else is identical.
+    """
+    # Capture old status before update for event emission
+    old_status_val = None
+    if status is not None:
+        try:
+            old_meta, _ = store.get(id)
+            old_status_val = (
+                old_meta.status.value
+                if hasattr(old_meta.status, "value")
+                else str(old_meta.status)
+            )
+        except Exception:
+            pass
+
+    kwargs = {}
+    if status is not None:
+        kwargs["status"] = status
+    if points is not None:
+        kwargs["points"] = points
+    if title is not None:
+        kwargs["title"] = title
+    if assignee is not None:
+        kwargs["assignee"] = assignee
+    if unassign:
+        # A contradiction, not a precedence question: silently letting one
+        # win would turn a release into an assignment (or the reverse).
+        if assignee:
+            raise ToolError(
+                "conflicting instruction: unassign=true was given together with "
+                f"assignee={assignee!r}; pass one or the other"
+            )
+        # "" is normalised to None by Store.update — the legacy sentinel,
+        # still accepted there, is now spelled by this boolean instead.
+        kwargs["assignee"] = ""
+    clear_fields = (
+        [name.strip() for name in clear.split(",") if name.strip()] if clear else []
+    )
+    if epic_id is not None:
+        kwargs["epic_id"] = epic_id
+    if body is not None:
+        kwargs["body"] = body
+    if acceptance_criteria is not None:
+        kwargs["acceptance_criteria"] = _criteria_list(acceptance_criteria)
+    if tags is not None:
+        kwargs["tags"] = [t.strip() for t in tags.split(",")]
+    if depends_on is not None:
+        kwargs["depends_on"] = [d.strip() for d in depends_on.split(",")]
+    if outcome is not None:
+        kwargs["outcome"] = outcome
+    if note is not None:
+        kwargs["note"] = note
+    evidence_arg = _evidence_arg(evidence)
+    if evidence_arg is not None:
+        kwargs["evidence"] = evidence_arg
+
+    meta = store.update(id, clear=clear_fields, run_id=run_id, **kwargs)
+    # Read the reconciliation record straight after the update that
+    # produced it — it is per-instance state on a cached Store, so a later
+    # call would otherwise inherit it.
+    reconciliation = (
+        store.last_criteria_reconciliation if acceptance_criteria is not None else None
+    )
+    # Read (and clear) the truncation record straight after the update that
+    # produced it, before any later call can overwrite or inherit it.
+    truncation = _note_truncation_fields(store, note)
+    clamp = _evidence_clamp_fields(store, evidence_arg)
+    if reindex:
+        write_index(store)
+
+    # Emit events for status changes
+    if (
+        status is not None
+        and old_status_val is not None
+        and old_status_val != status
+    ):
+        _emit_status_change(store, id, old_status_val, status, meta)
+
+    # Echo only identity + the fields changed in this call (confirms how
+    # list-shaped inputs were parsed) — not the full object
+    dumped = meta.model_dump(mode="json")
+    updated = {"id": meta.id, "status": dumped.get("status")}
+    for field in (
+        "points",
+        "title",
+        "assignee",
+        "epic_id",
+        "acceptance_criteria",
+        "tags",
+        "depends_on",
+    ):
+        # Cleared fields are echoed too — a caller that asked for a field
+        # to be emptied gets to see that it is.
+        if field in kwargs or field in clear_fields:
+            updated[field] = dumped.get(field)
+    if body is not None:
+        updated["body_chars"] = len(body)
+    if outcome is not None:
+        updated["run_log"] = outcome
+    elif evidence_arg is not None:
+        # Evidence alone still lands an entry — `info`, empty note — so
+        # the response says so rather than staying silent about a write.
+        updated["run_log"] = "info"
+    result = {"updated": updated}
+    # Present only when the note was actually truncated; absence means the
+    # note was stored whole.  See _note_truncation_fields for why.
+    result.update(truncation)
+    result.update(clamp)
+    result.update(_note_length_fields(note, evidence_arg))
+    # Present only when editing acceptance criteria actually moved test
+    # tasks around, so the caller learns about tasks it did not ask for.
+    if reconciliation and (
+        reconciliation["created_task_ids"]
+        or reconciliation["resynced_task_ids"]
+        or reconciliation["orphaned"]
+        or reconciliation["retired"]
+    ):
+        result["test_tasks"] = {
+            "created": reconciliation["created_task_ids"],
+            "resynced": reconciliation["resynced_task_ids"],
+            # Criteria that got no new task because an *archived* test
+            # task already covers them.  Nothing was un-archived: that
+            # is a human decision (pm_restore), not the reconciler's.
+            "retired": [
+                {"id": e["task_id"], "criterion": e["criterion"]}
+                for e in reconciliation["retired"]
+            ],
+            # US-PM-5-6's removal policy, as applied.  `archived` and
+            # `flagged` partition `orphaned`, so a caller can branch on
+            # list membership alone; `action` and `work_reasons` on each
+            # orphan say why, in codes, never prose.
+            "archived": reconciliation["archived_task_ids"],
+            "flagged": reconciliation["flagged_task_ids"],
+            "needs_attention": bool(reconciliation["flagged_task_ids"]),
+            "orphaned": [
+                {
+                    "id": o["task_id"],
+                    "criterion": o["criterion"],
+                    "status": o["status"],
+                    "has_work": o["has_work"],
+                    "action": o["action"],
+                    "work_reasons": o["work_reasons"],
+                }
+                for o in reconciliation["orphaned"]
+            ],
+        }
+    return result
+
+
 @mcp.tool(
     title="Update Item",
     annotations=ToolAnnotations(
@@ -1705,6 +2001,7 @@ def pm_update(
     note: Optional[str] = None,
     project: Optional[str] = None,
     task_id: Optional[str] = None,
+    run_id: Optional[str] = None,
     evidence: Optional[Evidence] = None,
 ) -> str:
     """Update an epic, story, or task.
@@ -1729,6 +2026,7 @@ def pm_update(
         note: Run-log note describing what was accomplished or what blocked progress. Longer notes are truncated server-side (4096 chars) with a visible marker, never rejected — the status/outcome write always lands. Requires outcome.
         project: Optional project name (hub mode only)
         task_id: Alias for id — either spelling works; passing both with different values is an error. Note epic_id is NOT an alias: it links a story to an epic.
+        run_id: Opaque id of the orchestrator run making this edit, stamped on the activity-log event so `pm_activity(run_id=...)` returns it alongside the run's claims and verdicts. Not a frontmatter field and never a claim — for that use `pm_grab`. Omit on ordinary edits, which belong to no run.
         evidence: Structured proof for the run-log entry — an object with `files` (paths changed), `tests` (objects with `command`, `passed`, optional `summary`), `dod_met` and `dod_unmet` (criteria). Put lists here, never in the note; the note stays a one-line summary (recommended <= 200 chars). Evidence on its own appends an entry (outcome `info`, empty note) — no outcome required. Bounded and clamped, never rejected: files <= 40, tests <= 10, each DoD list <= 20, each string <= 160 chars; when a clamp fires the response carries `evidence_clamped` and `evidence_dropped`.
 
     Response: always `updated: <item>`.  When — and only when — a supplied note
@@ -1748,152 +2046,351 @@ def pm_update(
         # story is being linked to, not another spelling of the item's own id.
         id = _resolve_id("id", id, task_id=task_id)
         store = _store(project)
-        # Capture old status before update for event emission
-        old_status_val = None
-        if status is not None:
-            try:
-                old_meta, _ = store.get(id)
-                old_status_val = (
-                    old_meta.status.value
-                    if hasattr(old_meta.status, "value")
-                    else str(old_meta.status)
-                )
-            except Exception:
-                pass
-
-        kwargs = {}
-        if status is not None:
-            kwargs["status"] = status
-        if points is not None:
-            kwargs["points"] = points
-        if title is not None:
-            kwargs["title"] = title
-        if assignee is not None:
-            kwargs["assignee"] = assignee
-        if unassign:
-            # A contradiction, not a precedence question: silently letting one
-            # win would turn a release into an assignment (or the reverse).
-            if assignee:
-                raise ToolError(
-                    "conflicting instruction: unassign=true was given together with "
-                    f"assignee={assignee!r}; pass one or the other"
-                )
-            # "" is normalised to None by Store.update — the legacy sentinel,
-            # still accepted there, is now spelled by this boolean instead.
-            kwargs["assignee"] = ""
-        clear_fields = (
-            [name.strip() for name in clear.split(",") if name.strip()] if clear else []
+        return _yaml_dump(
+            _do_update(
+                store,
+                id,
+                status=status,
+                points=points,
+                title=title,
+                assignee=assignee,
+                unassign=unassign,
+                clear=clear,
+                epic_id=epic_id,
+                body=body,
+                acceptance_criteria=acceptance_criteria,
+                tags=tags,
+                depends_on=depends_on,
+                outcome=outcome,
+                note=note,
+                evidence=evidence,
+                run_id=run_id,
+            )
         )
-        if epic_id is not None:
-            kwargs["epic_id"] = epic_id
-        if body is not None:
-            kwargs["body"] = body
-        if acceptance_criteria is not None:
-            kwargs["acceptance_criteria"] = _criteria_list(acceptance_criteria)
-        if tags is not None:
-            kwargs["tags"] = [t.strip() for t in tags.split(",")]
-        if depends_on is not None:
-            kwargs["depends_on"] = [d.strip() for d in depends_on.split(",")]
-        if outcome is not None:
-            kwargs["outcome"] = outcome
-        if note is not None:
-            kwargs["note"] = note
-        evidence_arg = _evidence_arg(evidence)
-        if evidence_arg is not None:
-            kwargs["evidence"] = evidence_arg
-
-        meta = store.update(id, clear=clear_fields, **kwargs)
-        # Read the reconciliation record straight after the update that
-        # produced it — it is per-instance state on a cached Store, so a later
-        # call would otherwise inherit it.
-        reconciliation = (
-            store.last_criteria_reconciliation if acceptance_criteria is not None else None
-        )
-        # Read (and clear) the truncation record straight after the update that
-        # produced it, before any later call can overwrite or inherit it.
-        truncation = _note_truncation_fields(store, note)
-        clamp = _evidence_clamp_fields(store, evidence_arg)
-        write_index(store)
-
-        # Emit events for status changes
-        if (
-            status is not None
-            and old_status_val is not None
-            and old_status_val != status
-        ):
-            _emit_status_change(store, id, old_status_val, status, meta)
-
-        # Echo only identity + the fields changed in this call (confirms how
-        # list-shaped inputs were parsed) — not the full object
-        dumped = meta.model_dump(mode="json")
-        updated = {"id": meta.id, "status": dumped.get("status")}
-        for field in (
-            "points",
-            "title",
-            "assignee",
-            "epic_id",
-            "acceptance_criteria",
-            "tags",
-            "depends_on",
-        ):
-            # Cleared fields are echoed too — a caller that asked for a field
-            # to be emptied gets to see that it is.
-            if field in kwargs or field in clear_fields:
-                updated[field] = dumped.get(field)
-        if body is not None:
-            updated["body_chars"] = len(body)
-        if outcome is not None:
-            updated["run_log"] = outcome
-        elif evidence_arg is not None:
-            # Evidence alone still lands an entry — `info`, empty note — so
-            # the response says so rather than staying silent about a write.
-            updated["run_log"] = "info"
-        result = {"updated": updated}
-        # Present only when the note was actually truncated; absence means the
-        # note was stored whole.  See _note_truncation_fields for why.
-        result.update(truncation)
-        result.update(clamp)
-        result.update(_note_length_fields(note, evidence_arg))
-        # Present only when editing acceptance criteria actually moved test
-        # tasks around, so the caller learns about tasks it did not ask for.
-        if reconciliation and (
-            reconciliation["created_task_ids"]
-            or reconciliation["resynced_task_ids"]
-            or reconciliation["orphaned"]
-            or reconciliation["retired"]
-        ):
-            result["test_tasks"] = {
-                "created": reconciliation["created_task_ids"],
-                "resynced": reconciliation["resynced_task_ids"],
-                # Criteria that got no new task because an *archived* test
-                # task already covers them.  Nothing was un-archived: that
-                # is a human decision (pm_restore), not the reconciler's.
-                "retired": [
-                    {"id": e["task_id"], "criterion": e["criterion"]}
-                    for e in reconciliation["retired"]
-                ],
-                # US-PM-5-6's removal policy, as applied.  `archived` and
-                # `flagged` partition `orphaned`, so a caller can branch on
-                # list membership alone; `action` and `work_reasons` on each
-                # orphan say why, in codes, never prose.
-                "archived": reconciliation["archived_task_ids"],
-                "flagged": reconciliation["flagged_task_ids"],
-                "needs_attention": bool(reconciliation["flagged_task_ids"]),
-                "orphaned": [
-                    {
-                        "id": o["task_id"],
-                        "criterion": o["criterion"],
-                        "status": o["status"],
-                        "has_work": o["has_work"],
-                        "action": o["action"],
-                        "work_reasons": o["work_reasons"],
-                    }
-                    for o in reconciliation["orphaned"]
-                ],
-            }
-        return _yaml_dump(result)
     except Exception as e:
         raise _failed(e) from e
+
+
+def _bulk_entry_id(entry: dict) -> Optional[str]:
+    """The item ID named by one entry of a bulk payload.
+
+    A dict key, not a tool parameter — which is why the alias resolution lives
+    here rather than in the tool body: ``_resolve_id``'s registry-wide contract
+    (US-PM-3) is about *arguments* a caller spells, and the sweeps that enforce
+    it read each tool's own source.  The two accepted spellings are the same
+    two, and disagreement is the same hard error.
+    """
+    return _resolve_id("id", entry.get("id"), required=False, task_id=entry.get("task_id"))
+
+
+#: Fields a per-item patch in ``pm_update_many`` may carry — the same set
+#: ``pm_update`` accepts, minus `project` (a property of the whole call).
+BULK_UPDATE_FIELDS = (
+    "status",
+    "points",
+    "title",
+    "assignee",
+    "unassign",
+    "clear",
+    "epic_id",
+    "body",
+    "acceptance_criteria",
+    "tags",
+    "depends_on",
+    "outcome",
+    "note",
+    "evidence",
+)
+
+#: How many items one bulk update may carry.  Sized above the longest
+#: consecutive pm_update run ever measured (109), so every real sweep is
+#: expressible in one call, while a runaway loop still hits a wall.
+BULK_UPDATE_LIMIT = 250
+
+
+def _bulk_failure(item_id: str, error: BaseException) -> dict:
+    """One failed item of a bulk sweep, in the shared partial-failure shape.
+
+    Always two string keys — ``id`` (the ID exactly as the caller wrote it, so
+    it can be fed straight back into a retry) and ``error`` (why that item did
+    not land).  An exception whose ``str()`` is empty would otherwise report a
+    failure with no reason at all, so the class name stands in: a bulk verb
+    may fail an item, never hide why.
+    """
+    return {"id": item_id, "error": str(error).strip() or type(error).__name__}
+
+
+def _bulk_result(written_key: str, written: list[dict], failures: list[dict]) -> dict:
+    """Assemble a bulk verb's response under the one partial-failure contract.
+
+    Shared by ``pm_update_many`` and ``pm_archive_many`` so the two cannot
+    drift in key name, key presence or ordering.  The contract, stated once
+    here and in ``docs/reference/mcp-tools.md`` ("Partial failure"):
+
+    * **Fail-soft per item.**  A failing item is recorded and the sweep
+      continues; it never stops the items after it.
+    * **No rollback.**  Items that landed stay landed.  There is no
+      transaction and none is wanted: a half-written sweep that then undoes
+      itself leaves the caller less able to say what happened, not more.
+    * **Call-level rejection is different.**  A malformed *call* raises before
+      the loop starts, so nothing is written at all.  Only item-level
+      failures reach this function.
+    * **Keys.**  Always ``<written_key>`` (list of per-item result objects)
+      and ``count`` (int, ``len`` of that list).  *Only* when at least one
+      item failed: ``failed`` (list of ``{id, error}`` strings, in input
+      order), ``failed_count`` (int), ``succeeded`` (list of the IDs that
+      landed, in input order) and ``partial: true``.  Their absence is the
+      positive statement that every item landed — a caller tests
+      ``"partial" in result``, never a count comparison.
+    * **Not a failed call.**  ``is_error`` is never set for a partial
+      failure, and the body never begins with ``error:``.  The call did what
+      it was asked to do and is reporting the outcome per item.
+    * **Retry.**  Re-issue the same call with ``ids`` set to the ``failed``
+      IDs only — the successes are already durable, so re-sending them would
+      only repeat work.
+
+    ``succeeded`` is derived from ``written`` rather than tracked separately,
+    so it is the IDs of exactly the entries reported above it, in the order
+    they were written, which is the caller's input order.
+    """
+    result: dict = {written_key: written, "count": len(written)}
+    if failures:
+        result["failed"] = failures
+        result["failed_count"] = len(failures)
+        result["succeeded"] = [e["id"] for e in written]
+        result["partial"] = True
+    return result
+
+
+@mcp.tool(
+    title="Update Many Items",
+    annotations=ToolAnnotations(
+        title="Update Many Items", readOnlyHint=False, destructiveHint=False
+    ),
+)
+def pm_update_many(
+    ids: Optional[str] = None,
+    updates: Optional[list[dict]] = None,
+    status: Optional[str] = None,
+    points: Optional[int] = None,
+    title: Optional[str] = None,
+    assignee: Optional[str] = None,
+    unassign: bool = False,
+    clear: Optional[str] = None,
+    body: Optional[str] = None,
+    tags: Optional[str] = None,
+    depends_on: Optional[str] = None,
+    outcome: Optional[str] = None,
+    note: Optional[str] = None,
+    run_id: Optional[str] = None,
+    evidence: Optional[Evidence] = None,
+    project: Optional[str] = None,
+) -> str:
+    """Update many items in one call — one uniform patch, or one patch per item.
+
+    The bulk form of `pm_update`, shaped like `pm_create_tasks`.  Every field
+    means exactly what it means on `pm_update`; the same code performs each
+    item's write, so nothing behaves differently for being in a batch.
+
+    Two shapes, and you may combine them:
+
+    * **Uniform** — `ids="US-PRJ-1-1,US-PRJ-1-2"` plus the patch fields.  The
+      same patch lands on every ID: `pm_update_many(ids="a,b,c",
+      status="done", outcome="success", note="shipped")`.
+    * **Per item** — `updates=[{"id": "US-PRJ-1-1", "points": 3}, {"id":
+      "US-PRJ-1-2", "points": 5}]`, for heterogeneous work such as estimating
+      a backlog or wiring different dependencies onto different tasks.  Any
+      top-level patch field given alongside `updates` is a default that each
+      entry may override, so `updates=[...], status="done"` is one status flip
+      with per-item notes.
+
+    Prefer this over a run of single `pm_update` calls: a long tail of
+    identical writes reads as runaway behaviour, while one declared call with
+    an explicit ID list is one reviewable intent.
+
+    Args:
+        ids: Comma-separated item IDs to apply the uniform patch to (e.g. "US-PRJ-1-1,US-PRJ-1-2"). Epics, stories and tasks may be mixed.
+        updates: Per-item patches — a list of dicts, each with `id` (or `task_id`) plus any of the fields this tool takes: status, points, title, assignee, unassign, clear, epic_id, body, acceptance_criteria, tags, depends_on, outcome, note, evidence. An unknown key is an error naming the valid ones, raised before anything is written.
+        status: New status applied to every listed item (epics: draft/active/done/archived; stories: backlog/ready/active/done/archived; tasks: todo/in-progress/review/done/blocked)
+        points: New point estimate for every listed item (fibonacci: 1,2,3,5,8,13). For different estimates per item, use `updates`.
+        title: New title for every listed item — rarely what you want in bulk; usually belongs in `updates`.
+        assignee: Assignee name for every listed item (tasks only). To remove one, pass unassign=true — never an empty assignee.
+        unassign: Set true to remove the assignee from every listed item (tasks only). Passing it together with a non-empty assignee is an error.
+        clear: Comma-separated field names to reset to empty on every listed item. Valid names: assignee, depends_on, epic_id, points, tags.
+        body: New markdown body for every listed item — rarely what you want in bulk; usually belongs in `updates`.
+        tags: Comma-separated tags applied to every listed item (e.g. "security,mvp")
+        depends_on: Comma-separated task IDs every listed item depends on (tasks only). For different wiring per item, use `updates`.
+        outcome: Run-log outcome (success/partial/blocked/failed/info) recorded on every listed item. With `note`, appends a run-log entry to each.
+        note: Run-log note recorded on every listed item. Truncated server-side exactly as on pm_update, never rejected. Requires outcome.
+        run_id: Opaque id of the orchestrator run making these edits, stamped on every activity-log event this call emits so `pm_activity(run_id=...)` returns them. A property of the whole call, like `project` — not a per-item field in `updates`.
+        evidence: Structured proof for the run-log entry, exactly as on pm_update. Applies to every listed item unless an entry in `updates` carries its own.
+        project: Optional project name (hub mode only)
+
+    Response: `updated:` — one entry per item that was written, each shaped
+    like `pm_update`'s `updated` block and carrying that item's own extras
+    (`note_truncated`, `test_tasks`, ...) — plus `count` (int).
+
+    Partial failure (the contract both bulk verbs share; the same words are
+    in `docs/reference/mcp-tools.md` under "Partial failure"):
+
+    * **Fail-soft per item.** A failing item is recorded and the sweep
+      continues — it never stops the items after it. 50 items with 3 bad ones
+      write 47 and report 3.
+    * **No rollback.** The items that landed stay landed. There is no
+      transaction and none is wanted: the caller is told exactly which IDs
+      changed rather than being left to guess what a rollback undid.
+    * **Call-level rejection is a different thing.** A malformed *call* —
+      unknown key in an entry, an entry with no `id`, no items at all,
+      nothing to change, more than 250 items — raises before the loop starts,
+      so nothing at all is written. Only a well-formed call reaches the
+      per-item stage. (`pm_archive_many` additionally rejects a duplicate ID;
+      this verb does not, because repeating an idempotent patch is harmless
+      while archiving twice is not.)
+    * **Keys, and when they are present.** Always `updated` (list) and
+      `count` (int). *Only* when at least one item failed: `failed` — a list
+      of `{id: str, error: str}` in input order; `failed_count` (int);
+      `succeeded` — the IDs that landed, as strings, in input order; and
+      `partial: true`. Their absence is the positive statement that every
+      item landed, so branch on `"partial" in result`, never on arithmetic.
+      `partial: true` also covers the all-failed sweep (`count: 0`).
+    * **Not a failed call.** `is_error` is never set for a partial failure and
+      the body never starts with `error:`. The call did what it was asked to
+      do; the outcome is per item.
+    * **Retry** by re-issuing the call with `ids` set to the `failed` IDs
+      only. The successes are durable — re-sending them just repeats work.
+    """
+    try:
+        store = _store(project)
+
+        uniform = {
+            "status": status,
+            "points": points,
+            "title": title,
+            "assignee": assignee,
+            "clear": clear,
+            "body": body,
+            "tags": tags,
+            "depends_on": depends_on,
+            "outcome": outcome,
+            "note": note,
+            "evidence": evidence,
+        }
+        uniform = {k: v for k, v in uniform.items() if v is not None}
+        if unassign:
+            uniform["unassign"] = True
+
+        # Build the whole work list — and reject the whole call if any of it
+        # is malformed — before writing anything.  A bulk verb whose first
+        # half lands and second half turns out to be a typo is worse than no
+        # bulk verb: the caller cannot tell what state it left behind.
+        work: list[tuple[str, dict]] = []
+        id_list = [i.strip() for i in ids.split(",") if i.strip()] if ids else []
+        if id_list and not uniform:
+            raise ToolError(
+                "nothing to change: ids were given with no patch fields — pass "
+                "status, points, note or another field, or use `updates` for "
+                "per-item patches"
+            )
+        for item_id in id_list:
+            work.append((item_id, dict(uniform)))
+
+        if updates is not None:
+            if not isinstance(updates, list):
+                raise ToolError("updates must be a list of per-item patch objects")
+            for position, entry in enumerate(updates):
+                if not isinstance(entry, dict):
+                    raise ToolError(
+                        f"updates[{position}] is not an object — every entry must be a dict "
+                        "with an `id` and the fields to change"
+                    )
+                entry_id = _bulk_entry_id(entry)
+                if not entry_id:
+                    raise ToolError(
+                        f"updates[{position}] has no `id` — every entry must name "
+                        "the item it patches"
+                    )
+                unknown = sorted(
+                    set(entry) - set(BULK_UPDATE_FIELDS) - {"id", "task_id"}
+                )
+                if unknown:
+                    raise ToolError(
+                        f"updates[{position}] has unknown field(s) "
+                        f"{', '.join(unknown)}; valid fields are: id, "
+                        + ", ".join(BULK_UPDATE_FIELDS)
+                    )
+                patch = dict(uniform)
+                patch.update(
+                    {k: v for k, v in entry.items() if k in BULK_UPDATE_FIELDS}
+                )
+                if not patch:
+                    raise ToolError(
+                        f"updates[{position}] ({entry_id}) has nothing to change"
+                    )
+                work.append((entry_id, patch))
+
+        if not work:
+            raise ToolError(
+                "provide ids (with a patch) or updates — pm_update_many needs at "
+                "least one item to write"
+            )
+        if len(work) > BULK_UPDATE_LIMIT:
+            raise ToolError(
+                f"too many items: {len(work)} exceeds the {BULK_UPDATE_LIMIT}-item "
+                "limit for one bulk update; split the call"
+            )
+
+        written: list[dict] = []
+        failures: list[dict] = []
+        for item_id, patch in work:
+            try:
+                one = _do_update(
+                    store, item_id, reindex=False, run_id=run_id, **patch
+                )
+            except Exception as item_error:
+                # Per item, not per call: one bad ID in a sweep of fifty is
+                # that item's problem, and the caller is told which.  Whole-
+                # call mistakes were already rejected above.  Nothing already
+                # written is undone — see _bulk_result for the contract.
+                failures.append(_bulk_failure(item_id, item_error))
+                continue
+            entry = dict(one.pop("updated", {"id": item_id}))
+            # Anything else pm_update would have reported at the top level —
+            # note_truncated, evidence_clamped, test_tasks — belongs to this
+            # item, so it rides along with it.
+            entry.update(one)
+            written.append(entry)
+
+        # One index write for the whole sweep rather than one per item.
+        if written:
+            write_index(store)
+
+        return _yaml_dump(_bulk_result("updated", written, failures))
+    except Exception as e:
+        raise _failed(e) from e
+
+
+def _do_archive(store, id: str) -> dict:
+    """One item's archive, exactly as ``pm_archive`` performs it, as a dict.
+
+    Shared by ``pm_archive`` and ``pm_archive_many`` so the bulk verb cannot
+    drift from the single-item one.  The reported ``status`` is the one the
+    item actually ends up with, which is not the same thing for every kind:
+    epics and stories move to ``archived``, while a task keeps the status it
+    really reached and carries the orthogonal ``archived`` flag instead.
+    """
+    store.archive(id)
+    meta, _ = store.get(id)
+    return {
+        "id": id,
+        "status": getattr(meta.status, "value", str(meta.status)),
+        "archived": True,
+    }
+
+
+#: How many items one bulk archive may carry.  Sized above the longest
+#: consecutive pm_archive run ever measured (114) and equal to the bulk-update
+#: limit, so the two verbs answer the same question the same way.
+BULK_ARCHIVE_LIMIT = BULK_UPDATE_LIMIT
 
 
 @mcp.tool(
@@ -1909,6 +2406,9 @@ def pm_archive(
 ) -> str:
     """Archive an epic, story, or task.
 
+    Archiving more than one item? Use `pm_archive_many(ids="a,b,c")` — one
+    declared call, not a run of these.
+
     Args:
         id: Epic, story, or task ID to archive (alias: task_id)
         project: Optional project name (hub mode only)
@@ -1917,14 +2417,131 @@ def pm_archive(
     try:
         id = _resolve_id("id", id, task_id=task_id)
         store = _store(project)
-        store.archive(id)
+        _do_archive(store, id)
         write_index(store)
         return f"archived: {id}"
     except Exception as e:
         raise _failed(e) from e
 
 
-def _do_grab(store, task_id: str, assignee: str, include_story: bool) -> dict:
+@mcp.tool(
+    title="Archive Many Items",
+    annotations=ToolAnnotations(
+        title="Archive Many Items", readOnlyHint=False, destructiveHint=True
+    ),
+)
+def pm_archive_many(
+    ids: Optional[str] = None,
+    project: Optional[str] = None,
+) -> str:
+    """Archive many items in one call, from an explicit ID list.
+
+    The bulk form of `pm_archive`, shaped like `pm_update_many`: a
+    comma-separated `ids` list, and the same code performs each item's write,
+    so nothing behaves differently for being in a batch.
+
+        pm_archive_many(ids="US-PRJ-1,US-PRJ-2,US-PRJ-3-1")
+
+    The list is the whole input — there is no criteria or sweep form, and no
+    default: this tool never decides for itself what to archive, so what it
+    touches is exactly what the caller wrote down and a reviewer can read.
+
+    Prefer this over a run of single `pm_archive` calls. A long tail of
+    identical destructive writes reads as runaway behaviour and has been
+    denied mid-sweep by permission tooling; one declared call with an explicit
+    ID list is one reviewable intent.
+
+    Args:
+        ids: Comma-separated item IDs to archive (e.g. "US-PRJ-1-1,US-PRJ-1-2"). Epics, stories and tasks may be mixed. Required — an empty list is an error, never a no-op.
+        project: Optional project name (hub mode only)
+
+    Response: `archived:` — one entry per item that was written, each with
+    `id`, the `status` it ends up with and `archived: true` — plus `count`
+    (int).
+
+    Partial failure (the contract both bulk verbs share; the same words are
+    in `docs/reference/mcp-tools.md` under "Partial failure"):
+
+    * **Fail-soft per item.** A failing item is recorded and the sweep
+      continues — it never stops the items after it. 50 items with 3 bad ones
+      archive 47 and report 3.
+    * **No rollback.** The items that landed stay archived. There is no
+      transaction and none is wanted: un-archiving on someone else's behalf
+      is exactly the guess this verb refuses to make.
+    * **Call-level rejection is a different thing.** A malformed *call* — no
+      IDs, a duplicate ID, more than 250 items — raises before the loop
+      starts, so nothing at all is written. Only a well-formed call reaches
+      the per-item stage. (The duplicate-ID rejection is this verb's alone:
+      `pm_update_many` allows a repeat because an idempotent patch is
+      harmless, while a list that archives an item twice is not the list its
+      author thinks it is.)
+    * **Keys, and when they are present.** Always `archived` (list) and
+      `count` (int). *Only* when at least one item failed: `failed` — a list
+      of `{id: str, error: str}` in input order; `failed_count` (int);
+      `succeeded` — the IDs that landed, as strings, in input order; and
+      `partial: true`. Their absence is the positive statement that every
+      item landed, so branch on `"partial" in result`, never on arithmetic.
+      `partial: true` also covers the all-failed sweep (`count: 0`).
+    * **Not a failed call.** `is_error` is never set for a partial failure and
+      the body never starts with `error:`. The call did what it was asked to
+      do; the outcome is per item.
+    * **Retry** by re-issuing the call with `ids` set to the `failed` IDs
+      only. The successes are durable — re-sending them would be a second
+      archive of an already-archived item.
+    """
+    try:
+        store = _store(project)
+
+        id_list = [i.strip() for i in ids.split(",") if i.strip()] if ids else []
+        if not id_list:
+            raise ToolError(
+                "provide ids — pm_archive_many needs an explicit list of at "
+                'least one item to archive (e.g. ids="US-PRJ-1-1,US-PRJ-1-2")'
+            )
+        duplicates = sorted({i for i in id_list if id_list.count(i) > 1})
+        if duplicates:
+            # Whole-call mistake, not an item's: a repeated ID means the
+            # caller's list is not the list it thinks it is, and archiving is
+            # not something to guess about.
+            raise ToolError(
+                f"duplicate id(s) in the list: {', '.join(duplicates)} — "
+                "each item may appear once"
+            )
+        if len(id_list) > BULK_ARCHIVE_LIMIT:
+            raise ToolError(
+                f"too many items: {len(id_list)} exceeds the "
+                f"{BULK_ARCHIVE_LIMIT}-item limit for one bulk archive; split "
+                "the call"
+            )
+
+        written: list[dict] = []
+        failures: list[dict] = []
+        for item_id in id_list:
+            try:
+                written.append(_do_archive(store, item_id))
+            except Exception as item_error:
+                # Per item, not per call: one bad ID in a sweep of fifty is
+                # that item's problem, and the caller is told which.  The
+                # archives that already landed stay landed — see _bulk_result
+                # for the contract both bulk verbs share.
+                failures.append(_bulk_failure(item_id, item_error))
+
+        # One index write for the whole sweep rather than one per item.
+        if written:
+            write_index(store)
+
+        return _yaml_dump(_bulk_result("archived", written, failures))
+    except Exception as e:
+        raise _failed(e) from e
+
+
+def _do_grab(
+    store,
+    task_id: str,
+    assignee: str,
+    include_story: bool,
+    run_id: Optional[str] = None,
+) -> dict:
     """Claim a task and build its context payload. Shared by pm_grab and pm_done_next.
 
     Returns a dict — either an expected-negative payload or {"grabbed": {...}}.
@@ -1951,7 +2568,7 @@ def _do_grab(store, task_id: str, assignee: str, include_story: bool) -> dict:
     # task that passes it and then loses the swap gets `already_claimed`,
     # which is the correct and honest answer.
     old_status = task_meta.status.value
-    won, current = store.claim_task(task_id, assignee)
+    won, current = store.claim_task(task_id, assignee, run_id=run_id)
     if not won:
         # Another worker got there first.  Expected negative, not a failure:
         # two workers racing for one task is the normal operation of a
@@ -2070,6 +2687,7 @@ def pm_grab(
     include_story: bool = True,
     project: Optional[str] = None,
     id: Optional[str] = None,
+    run_id: Optional[str] = None,
     fields: Optional[str] = None,
 ) -> str:
     """Claim a task — validates readiness, assigns, sets in-progress, loads context.
@@ -2082,19 +2700,24 @@ def pm_grab(
     Re-claiming a task already assigned to the same assignee (e.g. pre-claimed
     by an orchestrator via pm_done_next) succeeds and returns the same payload.
 
+    A win records `claimed_at` and `claimed_by_run` on the task, so a claim
+    left behind by a crashed run is identifiable later — see `pm_active` /
+    `pm_board`, which flag it `stale: true`.
+
     Args:
         task_id: Task ID to claim (e.g. US-PRJ-1-1) (alias: id)
         assignee: Who is claiming (default "claude" for AI agents, or a human name)
         include_story: Include the parent story body (default true). Pass false when grabbing another task from a story whose context you already have.
         project: Optional project name (hub mode only)
         id: Alias for task_id — either spelling works; passing both with different values is an error
+        run_id: Opaque id of the run making the claim, recorded on the task as `claimed_by_run` and on the activity-log event. Pass a value that is stable for one orchestrator run and different across runs, so a restarted run can query `pm_activity` for the claims its predecessor took. Omit and the server's own per-process id is used, so every claim still has an owner.
         fields: Comma-separated key names to return, e.g. "status,assignee" — a re-claim used only to verify state is `pm_grab(task_id, fields="status,assignee")` and comes back as `grabbed: {task: {id, status, assignee}}`. Names are either keys of the task (status, assignee, points, title, story_id, depends_on, …) or whole top-level sections (body, story_context, sibling_tasks, sibling_tasks_total, sibling_tasks_done, dependency_status, warnings); unnamed sections are omitted and `id` is always kept. Projection is output-only — the claim is identical either way, and expected negatives come back in full. An unknown name is an error listing the valid ones. Omit for the full payload — the default is unchanged.
     """
     try:
         task_id = _resolve_id("task_id", task_id, id=id)
         store = _store(project)
         names = _field_names(fields)
-        payload = _do_grab(store, task_id, assignee, include_story)
+        payload = _do_grab(store, task_id, assignee, include_story, run_id=run_id)
         # Expected negatives (`already_claimed`, `not_ready`) are returned
         # unprojected: they are already small, and their detail — `holder`,
         # `blockers` — is the caller's whole recovery path.
@@ -2119,6 +2742,7 @@ def pm_release(
     expected_assignee: Optional[str] = None,
     project: Optional[str] = None,
     id: Optional[str] = None,
+    run_id: Optional[str] = None,
 ) -> str:
     """Release a task — hand it back to the pool. The exact inverse of pm_grab.
 
@@ -2142,6 +2766,7 @@ def pm_release(
         expected_assignee: Release only if this name still holds the task. Omit for an unguarded release. A mismatch is an expected negative (`status: not_holder`) and the task is left untouched.
         project: Optional project name (hub mode only)
         id: Alias for task_id — either spelling works; passing both with different values is an error
+        run_id: Opaque id of the run doing the release, stamped on the activity-log event. Omit and the run recorded in the task's own `claimed_by_run` is used, so a release is attributed to the claim it ends.
 
     Response: `released:` with the full `task` and `from_assignee` — who held it
     before the call, or null if it was already unassigned.  When — and only when
@@ -2178,7 +2803,16 @@ def pm_release(
         if note is not None or outcome is not None:
             kwargs["outcome"] = outcome or "info"
 
-        meta = store.update(task_id, status=status, clear=["assignee"], **kwargs)
+        # The whole claim goes, not just the assignee: a `claimed_at` left
+        # behind on a task back in the pool would age into a phantom stale
+        # claim that no run owns.
+        meta = store.update(
+            task_id,
+            status=status,
+            clear=list(RELEASE_FIELDS),
+            run_id=run_id or current.claimed_by_run,
+            **kwargs,
+        )
         truncation = _note_truncation_fields(store, note)
         write_index(store)
         if old_status != status:
@@ -2275,9 +2909,12 @@ def _do_verdict(
     All three accept **any** starting status, including `done` — the common
     case is precisely a worker that self-reported done and failed
     validation, and refusing it would leave the orchestrator with no way to
-    say so.  All three clear the assignee because the task is going back to
-    the pool (`retry`) or waiting on a human (`park`, `review`), and a stale
-    holder blocks the next `pm_grab`.  Only `pm_accept` guards.
+    say so.  All three clear the assignee — and the claim metadata with
+    it — because the task is going back to the pool (`retry`) or waiting on a
+    human (`park`, `review`), and a stale holder blocks the next `pm_grab`.
+    The activity-log event is stamped with the run whose claim is ending,
+    taken from the task itself, so no verdict verb needs a `run_id`
+    parameter.  Only `pm_accept` guards.
     """
     status, outcome, key = _VERDICTS[verb]
     _verdict_target(verb, store, task_id)
@@ -2294,7 +2931,8 @@ def _do_verdict(
         outcome=outcome,
         note=note,
         evidence=evidence,
-        clear=["assignee"],
+        clear=list(RELEASE_FIELDS),
+        run_id=current.claimed_by_run,
     )
     # Read (and clear) the truncation and clamp records straight after the
     # write — write_index and the event emit must not get between them.
@@ -2328,6 +2966,7 @@ def _do_accept(
     assignee: str = "claude",
     guard_done: bool = False,
     evidence: object = None,
+    run_id: Optional[str] = None,
 ) -> dict:
     """Complete a task, close its story if it was the last, grab the next.
 
@@ -2368,8 +3007,18 @@ def _do_accept(
     # the mechanism behind "completions lacking a run-log entry drops to
     # zero".  See DONE_NEXT_NO_NOTE for the pm_done_next case.
     evidence = _evidence_arg(evidence)
+    # The claim metadata is cleared but `assignee` is kept: a done task
+    # records who did the work, while `claimed_at`/`claimed_by_run` describe
+    # a claim *in force* and there is no longer one.  Leaving them would age
+    # every completed task into a permanent stale claim.
     meta = store.update(
-        task_id, status="done", outcome=outcome, note=note, evidence=evidence
+        task_id,
+        status="done",
+        outcome=outcome,
+        note=note,
+        evidence=evidence,
+        clear=list(CLAIM_FIELDS),
+        run_id=run_id or task_meta.claimed_by_run,
     )
     # Read (and clear) the truncation and clamp records before anything else
     # touches the Store: closing the parent story and grabbing the next task
@@ -2395,7 +3044,15 @@ def _do_accept(
             story_meta, _ = store.get_story(story_id)
             if story_meta.status.value not in ("done", "archived"):
                 old_story_status = story_meta.status.value
-                story_meta = store.update(story_id, status="done")
+                # Stamped with the same run as the completion that caused it:
+                # a story closure is one of the lines the final report is
+                # built from, and an unstamped one would be invisible to
+                # `pm_activity(run_id=...)` even though this run caused it.
+                story_meta = store.update(
+                    story_id,
+                    status="done",
+                    run_id=run_id or task_meta.claimed_by_run,
+                )
                 write_index(store)
                 _emit_status_change(
                     store, story_id, old_story_status, "done", story_meta
@@ -2454,6 +3111,7 @@ def _do_accept(
                 candidate.id,
                 assignee,
                 include_story=candidate.story_id != story_id,
+                run_id=run_id,
             )
             if "grabbed" in grab:
                 next_grab = grab["grabbed"]
@@ -2500,6 +3158,7 @@ def pm_accept(
     assignee: str = "claude",
     project: Optional[str] = None,
     id: Optional[str] = None,
+    run_id: Optional[str] = None,
     evidence: Optional[Evidence] = None,
 ) -> str:
     """Accept a task's work — marks it done, logs why, and claims the next one.
@@ -2514,7 +3173,9 @@ def pm_accept(
     run-log entry saying what was delivered.
 
     The assignee is kept — a done task records who did it. Its siblings
-    pm_retry / pm_park / pm_review clear it instead.
+    pm_retry / pm_park / pm_review clear it instead. The claim metadata
+    (`claimed_at`, `claimed_by_run`) is cleared by all four: the claim is
+    over, and only a claim in force can go stale.
 
     Accepting an already-done task is an expected negative
     (`status: already_done`), not a failure: nothing is written twice.
@@ -2530,6 +3191,7 @@ def pm_accept(
         assignee: Who claims the next task (default "claude")
         project: Optional project name (hub mode only)
         id: Alias for task_id — either spelling works; passing both with different values is an error
+        run_id: Opaque id of this orchestrator run. Recorded as `claimed_by_run` on the next task claimed here, and stamped on the activity-log events. Omit and the server's own per-process id is used.
         evidence: Structured proof for the run-log entry — an object with `files` (paths changed), `tests` (objects with `command`, `passed`, optional `summary`), `dod_met` and `dod_unmet` (criteria). Put lists here, never in the note; the note stays a one-line summary (recommended <= 200 chars). Bounded and clamped, never rejected: files <= 40, tests <= 10, each DoD list <= 20, each string <= 160 chars; when a clamp fires the response carries `evidence_clamped` and `evidence_dropped`.
 
     Response: `completed:` with the id, status and run_log outcome;
@@ -2554,6 +3216,7 @@ def pm_accept(
                 assignee=assignee,
                 guard_done=True,
                 evidence=evidence,
+                run_id=run_id,
             )
         )
     except Exception as e:
@@ -2722,6 +3385,7 @@ def pm_done_next(
     same_story_only: bool = False,
     project: Optional[str] = None,
     id: Optional[str] = None,
+    run_id: Optional[str] = None,
     evidence: Optional[Evidence] = None,
 ) -> str:
     """Complete a task and claim the next ready one in a single call — use this instead of pm_update + pm_grab when working through tasks.
@@ -2748,6 +3412,7 @@ def pm_done_next(
         same_story_only: Only grab a next task from the same story; report and stop otherwise (default false)
         project: Optional project name (hub mode only)
         id: Alias for task_id — either spelling works; passing both with different values is an error
+        run_id: Opaque id of this orchestrator run. Recorded as `claimed_by_run` on the next task claimed here, and stamped on the activity-log events, so a restarted run can query `pm_activity` for what its predecessor claimed. Omit and the server's own per-process id is used.
         evidence: Structured proof for the run-log entry — an object with `files` (paths changed), `tests` (objects with `command`, `passed`, optional `summary`), `dod_met` and `dod_unmet` (criteria). Put lists here, never in the note; the note stays a one-line summary (recommended <= 200 chars). Bounded and clamped, never rejected: files <= 40, tests <= 10, each DoD list <= 20, each string <= 160 chars; when a clamp fires the response carries `evidence_clamped` and `evidence_dropped`.
 
     When — and only when — a supplied note had to be truncated, the response
@@ -2773,6 +3438,7 @@ def pm_done_next(
                 same_story_only=same_story_only,
                 assignee=assignee,
                 evidence=evidence,
+                run_id=run_id,
             )
         )
     except Exception as e:
@@ -2838,15 +3504,34 @@ def pm_scope(
     title="Project Audit",
     annotations=ToolAnnotations(title="Project Audit", readOnlyHint=True),
 )
-def pm_audit(include_info: bool = False, project: Optional[str] = None) -> str:
+def pm_audit(
+    include_info: bool = False,
+    project: Optional[str] = None,
+    since: Optional[str] = None,
+) -> str:
     """Run project audit — checks for drift, inconsistencies, stale items.
 
     Returns errors and warnings; info-level findings are summarized as a count
     unless include_info is true. The full report is always written to DRIFT.md.
 
+    Every report carries a "digest: <16 hex>" line under the title — a
+    fingerprint of the audit's inputs. Two calls with no writes in between
+    return the same digest; keep it between polls to tell an unchanged project
+    from a changed one.
+
+    Pass that digest back as since on the next poll. If nothing changed, the
+    answer is "digest: <hex>" + "unchanged: true" (plus the last report's
+    error/warning counts) in under 100 bytes — no checks are run and DRIFT.md
+    is left alone. This does not weaken the health check: the digest hashes the
+    content of everything the audit reads, so any change that could produce a
+    new ERROR-level finding changes the digest, and a matching digest means the
+    findings are necessarily identical. A stale, unknown, or malformed since is
+    never an error — it simply does not match, and the full audit runs.
+
     Args:
         include_info: Include info-level findings in the response (default false)
         project: Optional project name (hub mode only)
+        since: Digest from a previous pm_audit; short-circuits if unchanged
     """
     try:
         from .audit import run_audit
@@ -2858,8 +3543,13 @@ def pm_audit(include_info: bool = False, project: Optional[str] = None) -> str:
                 pm_dir = root / ".project" / "projects" / project
                 if not (pm_dir / "config.yaml").exists():
                     raise ToolError(f"project '{project}' not found in hub")
-                return run_audit(root, project_dir=pm_dir, include_info=include_info)
-        return run_audit(root, include_info=include_info)
+                return run_audit(
+                    root,
+                    project_dir=pm_dir,
+                    include_info=include_info,
+                    since=since,
+                )
+        return run_audit(root, include_info=include_info, since=since)
     except Exception as e:
         raise _failed(e) from e
 
@@ -3813,6 +4503,7 @@ def pm_update_sprint(
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
     planned_stories: Optional[str] = None,
+    run_id: Optional[str] = None,
     project: Optional[str] = None,
     id: Optional[str] = None,
 ) -> str:
@@ -3828,6 +4519,7 @@ def pm_update_sprint(
         start_date: Start date (YYYY-MM-DD)
         end_date: End date (YYYY-MM-DD)
         planned_stories: Comma-separated story IDs (replaces current list)
+        run_id: Opaque id of the orchestrator run completing (or otherwise editing) the sprint, stamped on the activity-log event so `pm_activity(run_id=...)` returns the sprint close beside the run's claims and verdicts. Not a sprint field.
         project: Optional project name (hub mode only)
         id: Alias for sprint_id — either spelling works; passing both with different values is an error
 
@@ -3853,7 +4545,7 @@ def pm_update_sprint(
             story_list = [s.strip() for s in planned_stories.split(",") if s.strip()]
             kwargs["planned_stories"] = story_list
 
-        meta = store.update_sprint(sprint_id, **kwargs)
+        meta = store.update_sprint(sprint_id, run_id=run_id, **kwargs)
         result = {"updated": meta.model_dump(mode="json")}
 
         # Check for dependency issues if stories were updated
@@ -4067,6 +4759,7 @@ def pm_activity(
     from_date: Optional[str] = None,
     to_date: Optional[str] = None,
     actor: Optional[str] = None,
+    run_id: Optional[str] = None,
     limit: int = 20,
     offset: int = 0,
     project: Optional[str] = None,
@@ -4080,10 +4773,14 @@ def pm_activity(
         from_date: Filter from date (ISO 8601, e.g. 2026-01-01)
         to_date: Filter to date (ISO 8601, e.g. 2026-12-31)
         actor: Filter by actor name
+        run_id: Filter to the events one orchestrator run produced — claims, releases, verdicts, the story closures they triggered, and anything tagged with the same id via `pm_update`/`pm_update_many`/`pm_update_sprint`. This is how a run builds its final report (and a restarted run its predecessor's) from the log rather than from memory: `actor` is the same string for every run on a machine, so only this separates one run from the next. Paginate with `offset` while the response reports `has_more: true`.
         limit: Max entries to return (default 20)
         offset: Starting index for pagination (default 0)
         project: Optional project name (hub mode only)
         id: Alias for item_id — either spelling works; passing both with different values is an error
+
+    Response: `total` (matching entries), `showing`, `has_more` (true when more
+    remain past this page — page with `offset`), and `entries`.
     """
     import json
     from datetime import datetime
@@ -4116,6 +4813,14 @@ def pm_activity(
             entries = [e for e in entries if e.get("event_type") == event_type]
         if actor:
             entries = [e for e in entries if e.get("actor") == actor]
+        # The recovery filter (US-PM-14-7).  `actor` is one string for every
+        # run of every agent on a machine, so "what did *this* run do" is not
+        # answerable without it — and answering that from the log is what
+        # keeps the final report off the orchestrator's memory.  Pre-14-5
+        # lines have no `run_id` key at all; they simply never match, which
+        # is right: they belong to no run.
+        if run_id:
+            entries = [e for e in entries if e.get("run_id") == run_id]
         if from_date:
             from_dt = datetime.fromisoformat(from_date)
             entries = [
@@ -4145,6 +4850,13 @@ def pm_activity(
             ]
             if e.get("actor"):
                 line_parts.append(f"by {e['actor']}")
+            # The run id is rendered, not just stored: `actor` is the same
+            # string for every run on a machine, so without this a caller
+            # reconstructing "what did my previous run claim" would have to
+            # read activity.jsonl by hand.  Absent on ordinary edits, so the
+            # line is unchanged for everything that is nobody's run.
+            if e.get("run_id"):
+                line_parts.append(f"run {e['run_id']}")
             changes = e.get("changes", {})
             if changes:
                 change_strs = []
@@ -4162,6 +4874,10 @@ def pm_activity(
             "showing": f"{offset + 1}-{offset + len(entries)} of {total}"
             if entries
             else "0 of 0",
+            # Explicit rather than left to the caller to derive from
+            # `showing`: a report rebuilt from a silently truncated first
+            # page is exactly the failure this filter exists to prevent.
+            "has_more": offset + len(entries) < total,
             "entries": formatted,
         }
         return _yaml_dump(result)
@@ -4216,6 +4932,118 @@ def pm_run_log(
         raise _failed(e) from e
 
 
+# ===========================================================================
+# Gated tool families (US-PM-15)
+# ===========================================================================
+
+#: Tool families that are registered with the MCP server only when the
+#: project opts in.  Every tool named here was called zero times across
+#: ~14,200 recorded tool calls on four machines, so by default their
+#: schemas are dead weight in every request.  Gating is by *registration*,
+#: not deletion: the functions below are untouched and stay importable, and
+#: turning a family back on is one line in ``.project/config.yaml`` (see
+#: ``config.enabled_tool_families``).
+#:
+#: ``maintenance`` is the break-glass cluster.  Unlike the other two it is
+#: hidden because it is the *wrong audience*, not because nobody wants it:
+#: repairing a hub or un-quarantining a malformed file is a human recovery
+#: action, and each of the five has a ``projectman`` CLI equivalent
+#: (``repair``, ``restore``, ``validate-branches``, ``fix-malformed``,
+#: ``push-all``), so hiding them from the agent tool list costs no reach.
+TOOL_FAMILIES: dict[str, tuple[str, ...]] = {
+    "changesets": (
+        "pm_changeset_create",
+        "pm_changeset_status",
+        "pm_changeset_add_project",
+        "pm_changeset_create_prs",
+        "pm_changeset_push",
+    ),
+    "maintenance": (
+        "pm_repair",
+        "pm_restore",
+        "pm_validate_branches",
+        "pm_fix_malformed",
+        "pm_push_all",
+    ),
+    "web": (
+        "pm_web_start",
+        "pm_web_stop",
+        "pm_web_status",
+    ),
+}
+
+#: The ``Tool`` objects FastMCP built at import time, kept aside so a family
+#: can be put back after it has been removed.  Populated on the first
+#: ``apply_tool_gating`` call, while every tool is still registered.
+_GATED_TOOLS: dict[str, object] = {}
+
+
+def _resolve_tool_families() -> dict[str, bool]:
+    """Which families this project enables, or none if there is no project.
+
+    Never raises: an MCP server can be started anywhere, and "no project
+    here" must leave the gated families hidden rather than take startup
+    down.
+    """
+    try:
+        return enabled_tool_families(load_config())
+    except Exception:
+        return enabled_tool_families(None)
+
+
+def gated_tool_state() -> dict[str, bool]:
+    """Which gated families are registered right now.
+
+    The inverse of :func:`apply_tool_gating`, so a caller (a test, mostly)
+    can snapshot the current visibility and put it back afterwards.
+    """
+    registry = mcp._tool_manager._tools
+    return {
+        family: all(name in registry for name in names)
+        for family, names in TOOL_FAMILIES.items()
+    }
+
+
+def apply_tool_gating(
+    families: Optional[dict[str, bool]] = None,
+) -> dict[str, bool]:
+    """Add or remove the gated families so the registry matches the config.
+
+    Called at import time and again from :func:`run_server`.  Tests pass
+    ``families`` explicitly to drive a configuration without a project on
+    disk; anything omitted from the mapping counts as off.
+
+    Gating the *registry* rather than the decorator keeps
+    ``mcp.list_tools()`` truthful and makes a call to a hidden tool fail the
+    way any unknown tool does — FastMCP's ``Unknown tool: <name>`` — instead
+    of crashing or half-working.
+
+    Returns the resolved ``{family: enabled}`` mapping.
+    """
+    registry = mcp._tool_manager._tools
+    if not _GATED_TOOLS:
+        for names in TOOL_FAMILIES.values():
+            for name in names:
+                tool = registry.get(name)
+                if tool is not None:
+                    _GATED_TOOLS[name] = tool
+    if families is None:
+        families = _resolve_tool_families()
+
+    resolved: dict[str, bool] = {}
+    for family, names in TOOL_FAMILIES.items():
+        enabled = bool(families.get(family, False))
+        resolved[family] = enabled
+        for name in names:
+            if enabled:
+                tool = _GATED_TOOLS.get(name)
+                if tool is not None:
+                    registry[name] = tool
+            else:
+                registry.pop(name, None)
+    return resolved
+
+
 def run_server(
     transport: str = "stdio", host: str = "127.0.0.1", port: int = 22001
 ) -> None:
@@ -4227,6 +5055,11 @@ def run_server(
         port: Port to bind to (SSE mode only)
     """
     global _event_bus
+
+    # The config may not have been readable at import time (the process can
+    # be started from anywhere); resolve the gated families again now that
+    # the server is really coming up.
+    apply_tool_gating()
 
     if transport == "sse":
         mcp.settings.host = host
@@ -4252,3 +5085,10 @@ def run_server(
         mcp._custom_starlette_routes.append(Mount("/", app=web_app))
 
     mcp.run(transport=transport)
+
+
+
+# Import-time gating: the tools above are all registered by their decorators
+# by now, so this is the first point at which the hidden ones can be taken
+# back out again.
+apply_tool_gating()

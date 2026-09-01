@@ -4,6 +4,7 @@ import logging
 import os
 import subprocess
 import tempfile
+import uuid
 from contextlib import contextmanager
 from datetime import date, datetime, timezone
 from difflib import SequenceMatcher
@@ -64,11 +65,72 @@ NOTE_SUMMARY_RECOMMENDED = 200
 # absence.
 CLEARABLE_FIELDS: dict[str, tuple[object, frozenset[str]]] = {
     "assignee": (None, frozenset({"task"})),
+    # The claim-ownership pair (US-PM-14-5).  Clearable for the same reason
+    # `assignee` is: releasing and completing both have to say "this claim is
+    # over", and a stale `claimed_at` left behind would make a task in the
+    # pool look like abandoned work forever.
+    "claimed_at": (None, frozenset({"task"})),
+    "claimed_by_run": (None, frozenset({"task"})),
     "depends_on": ([], frozenset({"task", "story"})),
     "tags": ([], frozenset({"epic", "story", "task"})),
     "points": (None, frozenset({"epic", "story", "task"})),
     "epic_id": (None, frozenset({"story"})),
 }
+
+#: The fields a release or a completion clears together -- the whole claim.
+#: Named once so `pm_release` and every verdict verb cannot drift apart on
+#: which half of a claim they forget to drop.
+CLAIM_FIELDS = ("claimed_at", "claimed_by_run")
+RELEASE_FIELDS = ("assignee", *CLAIM_FIELDS)
+
+#: Identifies the process that made a claim when the caller supplies no run
+#: id.  Generated once at import -- i.e. once per server process -- so every
+#: claim carries *some* owner even from a caller that has never heard of run
+#: ids.  It is deliberately not a stable machine id: the question it answers
+#: is "was this claimed by the process that is still running", and a value
+#: that outlived the process would answer it wrongly.
+PROCESS_RUN_ID = f"proc-{os.getpid()}-{uuid.uuid4().hex[:8]}"
+
+
+def claim_age_seconds(
+    meta, now: Optional[datetime] = None
+) -> Optional[float]:
+    """Seconds since `meta` was claimed, or None if that is unknown.
+
+    None is not zero and not infinity: a task whose file predates
+    `claimed_at` has an *unknowable* claim age, and every caller has to make
+    its own decision about that rather than inherit a made-up number.
+    """
+    claimed_at = getattr(meta, "claimed_at", None)
+    if claimed_at is None:
+        return None
+    if claimed_at.tzinfo is None:
+        claimed_at = claimed_at.replace(tzinfo=timezone.utc)
+    now = now or datetime.now(timezone.utc)
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=timezone.utc)
+    return (now - claimed_at).total_seconds()
+
+
+def is_stale_claim(
+    meta, max_age_seconds: float, now: Optional[datetime] = None
+) -> bool:
+    """True when `meta` is an in-progress task whose claim has aged out.
+
+    Three ways to be *not stale*, and each matters:
+
+    * not in-progress -- a todo or done task holds no claim to go stale;
+    * no `claimed_at` -- unknown age, never stale (a task file written
+      before US-PM-14-5 must not be swept up by a recovery loop);
+    * inside the threshold -- the ordinary case.
+    """
+    status = getattr(getattr(meta, "status", None), "value", None)
+    if status != TaskStatus.in_progress.value:
+        return False
+    age = claim_age_seconds(meta, now=now)
+    if age is None:
+        return False
+    return age > max_age_seconds
 
 
 def _empty_value(field: str) -> object:
@@ -344,7 +406,7 @@ def _exclusive_file_lock(path: Path):
                 fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
 
 
-from .config import load_config
+from .config import clear_config_cache, load_config
 from .models import (
     EVIDENCE_MAX_DOD,
     EVIDENCE_MAX_FILES,
@@ -471,10 +533,22 @@ class Store:
         return ProjectConfig(**data)
 
     def _save_config(self) -> None:
-        """Save config.yaml to self.project_dir."""
+        """Save config.yaml to self.project_dir, invalidating the cache.
+
+        ``config.load_config`` caches parsed configs per project root, so a
+        write here (an id bump, a sprint counter) has to drop that entry —
+        the mtime/size stamp alone would miss a same-size rewrite that lands
+        inside a single filesystem timestamp tick.  Both this Store's root
+        and the parent of an explicitly-passed ``project_dir`` are cleared,
+        since either could be the key a reader loaded under.
+        """
         config_path = self.project_dir / "config.yaml"
         with open(config_path, "w") as f:
             yaml.dump(self.config.model_dump(), f, default_flow_style=False)
+        clear_config_cache(self.root)
+        parent = self.project_dir.parent
+        if parent.resolve() != Path(self.root).resolve():
+            clear_config_cache(parent)
 
     def _next_story_id(self) -> str:
         sid = f"US-{self.config.prefix}-{self.config.next_story_id}"
@@ -594,6 +668,7 @@ class Store:
         item_id: str,
         item_type: ItemType,
         changes: dict | None = None,
+        run_id: str | None = None,
     ) -> None:
         """Emit an activity log entry. Failures are silently swallowed."""
         from .activity_log import append_log_entry
@@ -607,6 +682,7 @@ class Store:
                 timestamp=datetime.now(timezone.utc),
                 actor=self._resolve_actor(),
                 source=LogSource.cli,
+                run_id=run_id,
             )
             log_path = self.project_dir / "activity.jsonl"
             append_log_entry(log_path, entry)
@@ -1779,6 +1855,26 @@ class Store:
 
         Cache is automatically invalidated if external file changes are detected.
         """
+        return [
+            m
+            for m, _ in self.list_tasks_with_bodies(
+                story_id=story_id, status=status, archived=archived
+            )
+        ]
+
+    def list_tasks_with_bodies(
+        self,
+        story_id: Optional[str] = None,
+        status: Optional[str] = None,
+        archived: Optional[bool] = None,
+    ) -> list[tuple[TaskFrontmatter, str]]:
+        """Like :meth:`list_tasks`, but returns ``(frontmatter, body)`` pairs.
+
+        One pass over the same cached entries ``list_tasks``/``get_task`` use,
+        so a caller that needs every body (the board, for instance) can build a
+        lookup once instead of calling ``get_task`` per task — which is a linear
+        scan each time, making the caller O(n^2).
+        """
         if not self.tasks_dir.exists():
             return []
         key = self._cache_key("tasks")
@@ -1806,7 +1902,7 @@ class Store:
             result = [(m, b) for m, b in result if m.status.value == status]
         if archived is not None:
             result = [(m, b) for m, b in result if m.archived is archived]
-        return [m for m, _ in result]
+        return list(result)
 
     def list_all(
         self,
@@ -1906,6 +2002,7 @@ class Store:
         task_id: str,
         assignee: str,
         expected_assignee: str | None = None,
+        run_id: str | None = None,
     ) -> tuple[bool, TaskFrontmatter]:
         """Atomically claim a task.  Returns ``(won, current_meta)``.
 
@@ -1928,6 +2025,17 @@ class Store:
             expected_assignee: when given, win only if the task is currently
                 held by this name — an explicit hand-off rather than a take
                 from the unassigned pool.
+            run_id: which run is claiming.  Defaults to :data:`PROCESS_RUN_ID`
+                so a claim always records an owner (US-PM-14-5).
+
+        The winner also records ``claimed_by_run`` and ``claimed_at``, which is
+        what makes an abandoned claim recoverable rather than merely visible.
+        An **idempotent re-claim by the same run keeps the original
+        ``claimed_at``**: nothing changed hands, and refreshing the timestamp
+        would let a wedged loop that re-grabs its own task hide its own
+        staleness forever.  A re-claim by a *different* run under the same
+        assignee — which is exactly a restarted orchestrator taking back
+        "claude"'s work — does reset it, because that claim genuinely is new.
         """
         path = self._task_path(task_id)
         if not path.exists():
@@ -1940,14 +2048,50 @@ class Store:
             disk = TaskFrontmatter(**post.metadata)
             if not self._claim_won(disk, assignee, expected_assignee):
                 return False, disk
+            run_id = run_id or PROCESS_RUN_ID
+            if disk.claimed_by_run == run_id and disk.claimed_at is not None:
+                claimed_at = disk.claimed_at.isoformat()
+            else:
+                claimed_at = datetime.now(timezone.utc).isoformat()
             # The swap.  update() re-reads the same file, writes it
             # atomically and refreshes the cache entry before the lock is
             # released, so no reader can observe the pre-claim value once the
             # claim is durable.
             meta = self.update(
-                task_id, assignee=assignee, status=TaskStatus.in_progress.value
+                task_id,
+                assignee=assignee,
+                status=TaskStatus.in_progress.value,
+                claimed_at=claimed_at,
+                claimed_by_run=run_id,
+                run_id=run_id,
             )
         return True, meta
+
+    def stale_claims(
+        self,
+        max_age_hours: Optional[float] = None,
+        now: Optional[datetime] = None,
+    ) -> list[TaskFrontmatter]:
+        """In-progress tasks whose claim has aged past the threshold.
+
+        This is the "without asking a human" half of US-PM-14: a restarting
+        orchestrator calls it instead of guessing whether the tasks sitting at
+        in-progress belong to a run that is still alive.
+
+        ``max_age_hours`` defaults to the project's ``stale_claim_hours``
+        config key.  Tasks with no ``claimed_at`` are never returned — see
+        :func:`is_stale_claim`.
+        """
+        if max_age_hours is None:
+            max_age_hours = getattr(self.config, "stale_claim_hours", 2.0)
+        max_age_seconds = float(max_age_hours) * 3600.0
+        return [
+            meta
+            for meta in self.list_tasks(
+                status=TaskStatus.in_progress.value, archived=False
+            )
+            if is_stale_claim(meta, max_age_seconds, now=now)
+        ]
 
     @staticmethod
     def _resolve_clear(clear, item_kind: str, kwargs: dict) -> list[str]:
@@ -1994,12 +2138,17 @@ class Store:
         return resolved
 
     def update(
-        self, item_id: str, *, clear=None, **kwargs
+        self, item_id: str, *, clear=None, run_id: str | None = None, **kwargs
     ) -> EpicFrontmatter | StoryFrontmatter | TaskFrontmatter:
         """Update fields on an epic, story, or task.
 
         Accepts frontmatter fields as keyword arguments.  The special
         ``body`` kwarg replaces the markdown body content (not frontmatter).
+
+        ``run_id`` is *not* a frontmatter field: it is stamped on the activity
+        log entry this update emits, so a claim or a release is attributable to
+        the run that made it (US-PM-14-5).  It is a named parameter rather than
+        a kwarg precisely so it can never be written into the file by accident.
 
         ``clear`` names fields to reset to empty — a comma-separated string or
         an iterable of names drawn from :data:`CLEARABLE_FIELDS`.  It exists
@@ -2195,7 +2344,9 @@ class Store:
         item_type = (
             ItemType.epic if is_epic else (ItemType.task if is_task else ItemType.story)
         )
-        self._emit_log(EventType.update, item_id, item_type, changes=changes)
+        self._emit_log(
+            EventType.update, item_id, item_type, changes=changes, run_id=run_id
+        )
 
         # Append run-log entry if outcome, note or evidence provided.  Evidence
         # widens the condition so `update(id, evidence=...)` alone still lands
@@ -2429,8 +2580,16 @@ class Store:
                 continue
         return sprints
 
-    def update_sprint(self, sprint_id: str, **kwargs) -> SprintFrontmatter:
-        """Update sprint fields. Auto-computes completed_points when completing."""
+    def update_sprint(
+        self, sprint_id: str, *, run_id: str | None = None, **kwargs
+    ) -> SprintFrontmatter:
+        """Update sprint fields. Auto-computes completed_points when completing.
+
+        ``run_id`` is *not* a sprint frontmatter field -- it is stamped on the
+        activity-log event only, exactly as on :meth:`update`, so the sprint
+        completion an orchestrator run performs shows up in
+        ``pm_activity(run_id=...)`` beside the claims and verdicts it ends.
+        """
         meta, body = self.get_sprint(sprint_id)
         changes = {}
 
@@ -2486,7 +2645,9 @@ class Store:
             **meta.model_dump(mode="json"),
         )
         self._sprint_path(sprint_id).write_text(frontmatter.dumps(post))
-        self._emit_log(EventType.update, sprint_id, ItemType.sprint, changes=changes)
+        self._emit_log(
+            EventType.update, sprint_id, ItemType.sprint, changes=changes, run_id=run_id
+        )
         return meta
 
     # ─── Git Operations ──────────────────────────────────────────

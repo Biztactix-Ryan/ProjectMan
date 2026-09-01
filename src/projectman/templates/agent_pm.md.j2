@@ -150,14 +150,16 @@ Sprints are the unit of orchestrated execution — `/pm-orchestrate` drives the 
 
 1. Call `pm_malformed` — returns one file at a time
 2. Examine frontmatter and body
-3. Call `pm_fix_malformed(...)` to fix and restore
+3. Run `projectman fix-malformed <filename> --id ID --title T --type story|task`
+   to fix and restore it. (`pm_fix_malformed` is the same code as an MCP tool,
+   but it is break-glass: off the tool list unless `tools.maintenance: true`.)
 4. Repeat until "no malformed files"
 
 ## Hub Mode
 
 - Most tools accept optional `project` parameter for subprojects
 - `pm_malformed` scans all subprojects automatically
-- Use `pm_repair` to discover and initialize projects
+- Run `projectman repair` to discover and initialize projects (break-glass: CLI, not a tool)
 - Use `pm_context(project)` to get combined hub + project context
 
 ## Audit Checks (16 total)

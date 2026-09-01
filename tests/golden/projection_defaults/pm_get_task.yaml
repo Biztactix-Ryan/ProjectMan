@@ -5,6 +5,8 @@ status: in-progress
 archived: false
 points: 2
 assignee: bob
+claimed_at: null
+claimed_by_run: null
 tags:
 - auth
 depends_on: []

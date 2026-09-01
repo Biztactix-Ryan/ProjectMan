@@ -135,6 +135,27 @@ def build_provenance(
     }
 
 
+def measure_tool_list() -> dict[str, Any] | None:
+    """The ``tools/list`` payload sizes, or ``None`` if they cannot be taken.
+
+    US-PM-15 gates three tool families, and US-PM-15-7 records the saving as a
+    number. That number is a property of the *code*, not of the transcript
+    corpus, so it is measured here at capture time rather than derived from the
+    report.
+
+    Imported lazily and never allowed to fail the capture: telemetry analysis
+    must still run in a checkout where ``projectman`` and the ``mcp`` package
+    are not importable, and a missing block reads as ``None`` in the headline
+    exactly like any other metric added after a baseline was taken.
+    """
+    try:
+        from tools.usage_telemetry.tool_list_size import measure
+
+        return measure()
+    except Exception:
+        return None
+
+
 def build_baseline(
     report: UsageReport,
     *,
@@ -142,15 +163,26 @@ def build_baseline(
     label: str = DEFAULT_LABEL,
     note: str | None = None,
     captured_at: datetime | None = None,
+    tool_list: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Wrap ``report.as_dict()`` with provenance. The committed artifact."""
-    return {
+    """Wrap ``report.as_dict()`` with provenance. The committed artifact.
+
+    ``tool_list`` is the optional US-PM-15-7 measurement. It is a *parameter*
+    rather than something this function goes and measures, so building a
+    baseline out of a report stays pure and cheap; :func:`capture` is what
+    fills it in for a real artifact. Omitted entirely when absent, so the
+    committed pre-fix baseline's key set is what it always was.
+    """
+    artifact: dict[str, Any] = {
         "schema": SCHEMA,
         "provenance": build_provenance(
             report, repo=repo, label=label, note=note, captured_at=captured_at
         ),
         "report": report.as_dict(),
     }
+    if tool_list is not None:
+        artifact["tool_list"] = tool_list
+    return artifact
 
 
 # ---------------------------------------------------------------- metrics --
@@ -222,6 +254,30 @@ def _guidance_sessions_pct(by_tool: dict[str, Any], tool: str) -> float | None:
     return _pct((by_tool.get(tool) or {}).get("session_rate") or 0.0)
 
 
+#: Tools whose longest consecutive run the bulk verbs (US-PM-12) exist to
+#: shorten. They get a *per-tool* headline number because the corpus-wide
+#: ``longest_run`` answers a different question: it reports whichever tool
+#: happens to top the corpus, so a ``pm_update`` run collapsing from 45 to 3 is
+#: invisible in it the moment any other tool holds the record.
+BULK_RUN_TOOLS: tuple[str, ...] = ("pm_update", "pm_archive")
+
+
+def _tool_longest_run(rows: Sequence[dict[str, Any]], tool: str) -> int | None:
+    """Longest consecutive run of ``tool``; ``None`` only when ``by_tool`` is absent.
+
+    Unlike the guidance-tool metrics this one is *retroactive*: every baseline
+    ever captured already carries a per-tool run profile, so an old file answers
+    the question without being re-captured. A tool the corpus never saw reports
+    a measured ``0``, not ``None``.
+    """
+    if not rows:
+        return None
+    for row in rows:
+        if row.get("tool") == tool:
+            return (row.get("runs") or {}).get("longest") or 0
+    return 0
+
+
 def headline_metrics(baseline: dict[str, Any]) -> dict[str, Any]:
     """The small set of numbers a comparison is actually argued from.
 
@@ -247,9 +303,15 @@ def headline_metrics(baseline: dict[str, Any]) -> dict[str, Any]:
     # for a tool nobody called. US-PM-13's "before" is a zero, and the whole
     # criterion is that the zero is visible.
     guidance = (report.get("guidance_tools") or {}).get("by_tool") or {}
+    by_tool = report.get("by_tool") or []
+    # Likewise absent before US-PM-15 added the tool-list measurement. This one
+    # sits beside ``report`` rather than inside it: it measures the *schema
+    # surface the server offers*, which is a property of the code, not of the
+    # transcript corpus every other metric here is computed from.
+    tool_list = baseline.get("tool_list") or {}
 
     calls = totals.get("calls")
-    return {
+    metrics: dict[str, Any] = {
         "transcript_files": corpus.get("files_scanned"),
         "sessions": totals.get("sessions"),
         "calls": calls,
@@ -281,7 +343,15 @@ def headline_metrics(baseline: dict[str, Any]) -> dict[str, Any]:
         "runs_total": runs.get("total"),
         "longest_run": longest[0].get("length") if longest else None,
         "longest_run_tool": longest[0].get("tool") if longest else None,
+        "tool_list_bytes_all": (tool_list.get("all_families") or {}).get("bytes"),
+        "tool_list_bytes_default": (tool_list.get("default") or {}).get("bytes"),
+        "tool_list_tools_default": (tool_list.get("default") or {}).get("tools"),
     }
+    # Per-tool run lengths, keyed by tool so the comparison table names the tool
+    # the criterion is about instead of leaving the reader to infer it.
+    for tool in BULK_RUN_TOOLS:
+        metrics[f"{tool}_longest_run"] = _tool_longest_run(by_tool, tool)
+    return metrics
 
 
 def top_tools_by_calls(baseline: dict[str, Any], limit: int = 10) -> list[dict[str, Any]]:
@@ -314,6 +384,15 @@ LOWER_IS_BETTER = frozenset(
         "note_length_p90",
         "note_length_p95",
         "longest_run",
+        # Per-tool run lengths: the whole point of a bulk verb is that the run
+        # it replaces gets shorter.
+        *(f"{tool}_longest_run" for tool in BULK_RUN_TOOLS),
+        # US-PM-15: schema bytes served on every request. Only the *default*
+        # payload is a target -- ``tool_list_bytes_all`` is the unabridged
+        # surface the saving is measured against, and it moving is a change in
+        # how many tools exist, not a win or a loss, so it stays unlabelled.
+        # ``tool_list_tools_default`` is a plain count for the same reason.
+        "tool_list_bytes_default",
     }
 )
 
@@ -530,6 +609,18 @@ def format_summary(baseline: dict[str, Any]) -> str:
             f"`pm_estimate` {_fmt(m['pm_estimate_calls'])} calls "
             f"in {_fmt(m['pm_estimate_sessions_pct'])}% of sessions |"
         )
+    # Same rule again for US-PM-15's tool-list measurement. Unlike every row
+    # above it this one is not computed from the corpus -- see
+    # ``docs/telemetry/tool-list-size.md`` for the full per-family breakdown.
+    if m["tool_list_bytes_default"] is not None:
+        saved = (m["tool_list_bytes_all"] or 0) - m["tool_list_bytes_default"]
+        pct = _rate(saved, m["tool_list_bytes_all"])
+        lines.append(
+            f"| `tools/list` schema bytes | {_fmt(m['tool_list_bytes_default'])} "
+            f"for {_fmt(m['tool_list_tools_default'])} tools by default, "
+            f"{_fmt(m['tool_list_bytes_all'])} with every gated family on "
+            f"({_fmt(saved)} saved, {_fmt(pct)}%) |"
+        )
     lines += [
         "",
         "The three failure classes overlap (one call can be both malformed and a hard "
@@ -601,7 +692,11 @@ def capture(
     extraction = scan(root=root, tool_prefix=prefix, min_match_rate=min_match_rate)
     report = report_from_extraction(extraction)
     return build_baseline(
-        report, repo=repo or Path.cwd(), label=label, note=note
+        report,
+        repo=repo or Path.cwd(),
+        label=label,
+        note=note,
+        tool_list=measure_tool_list(),
     )
 
 

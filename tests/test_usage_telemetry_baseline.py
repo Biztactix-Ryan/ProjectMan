@@ -237,6 +237,116 @@ def test_longest_run_is_carried_into_the_headline():
     assert m["longest_run_tool"] == "pm_update"
 
 
+# ------------------------------------------- per-tool runs (US-PM-12-5) --
+#
+# US-PM-12's acceptance criterion is "longest consecutive-run length drops
+# sharply in the next telemetry baseline", and it is about pm_update and
+# pm_archive specifically. The corpus-wide ``longest_run`` cannot answer that:
+# it names whichever tool tops the corpus, so the moment pm_get (or anything
+# else) holds the record, a pm_update run collapsing from 45 to 3 leaves it
+# unchanged and a reader would conclude nothing moved. Hence a per-tool number.
+
+
+def test_the_headline_carries_a_longest_run_for_each_bulk_verb_tool():
+    """A run per tool, measured independently of every other tool's runs."""
+    calls = (
+        [make_call(tool="pm_update", seq=i) for i in range(5)]
+        + [make_call(tool="pm_archive", seq=5 + i) for i in range(3)]
+    )
+    m = bl.headline_metrics(sample_baseline(calls=calls))
+    assert m["pm_update_longest_run"] == 5
+    assert m["pm_archive_longest_run"] == 3
+
+
+def test_a_per_tool_run_is_visible_even_when_another_tool_tops_the_corpus():
+    """The failure mode the per-tool metric exists to prevent.
+
+    pm_get holds the corpus record here, so ``longest_run`` says nothing about
+    the bulk verbs; the per-tool keys still report their real, shorter runs.
+    """
+    calls = (
+        [make_call(tool="pm_update", seq=i) for i in range(2)]
+        + [make_call(tool="pm_get", seq=2 + i) for i in range(9)]
+        + [make_call(tool="pm_archive", seq=11)]
+    )
+    m = bl.headline_metrics(sample_baseline(calls=calls))
+    assert m["longest_run"] == 9 and m["longest_run_tool"] == "pm_get"
+    assert m["pm_update_longest_run"] == 2
+    assert m["pm_archive_longest_run"] == 1
+
+
+def test_another_tool_in_the_middle_breaks_the_run_rather_than_bridging_it():
+    """Three pm_update calls split by a pm_get are two runs, not one of three."""
+    calls = [
+        make_call(tool="pm_update", seq=0),
+        make_call(tool="pm_update", seq=1),
+        make_call(tool="pm_get", seq=2),
+        make_call(tool="pm_update", seq=3),
+    ]
+    m = bl.headline_metrics(sample_baseline(calls=calls))
+    assert m["pm_update_longest_run"] == 2
+
+
+def test_runs_do_not_span_two_transcripts():
+    """Six pm_update calls across two sessions are two runs of three.
+
+    A cross-session merge would inflate exactly the number this criterion is
+    argued from, in the direction that flatters the "before" measurement.
+    """
+    calls = [make_call(tool="pm_update", session="sess-a", seq=i) for i in range(3)] + [
+        make_call(tool="pm_update", session="sess-b", seq=i) for i in range(3)
+    ]
+    m = bl.headline_metrics(sample_baseline(calls=calls))
+    assert m["pm_update_longest_run"] == 3
+
+
+def test_a_bulk_verb_tool_the_corpus_never_saw_reports_a_measured_zero():
+    """0, not None: nobody called pm_archive, and that is a real observation."""
+    m = bl.headline_metrics(
+        sample_baseline(calls=[make_call(tool="pm_update", seq=0)])
+    )
+    assert m["pm_archive_longest_run"] == 0
+
+
+def test_a_report_without_a_by_tool_section_reports_unknown_not_zero():
+    """Only a *missing* section is unknown -- an absent section is not a zero."""
+    m = bl.headline_metrics({"schema": bl.SCHEMA, "provenance": {}, "report": {}})
+    assert m["pm_update_longest_run"] is None
+    assert m["pm_archive_longest_run"] is None
+
+
+def test_every_bulk_verb_run_metric_reads_shorter_as_better():
+    """Direction has to be declared, or the comparison prints a bare delta."""
+    for tool in bl.BULK_RUN_TOOLS:
+        assert f"{tool}_longest_run" in bl.LOWER_IS_BETTER, tool
+
+
+def test_a_shortening_pm_update_run_compares_as_better():
+    """The criterion, end to end: long single-item burst -> short bulk-era run."""
+    before = sample_baseline(
+        calls=[make_call(tool="pm_update", seq=i) for i in range(20)]
+    )
+    after = sample_baseline(
+        calls=[make_call(tool="pm_update", seq=i) for i in range(2)]
+    )
+    row = bl.compare(before, after)["metrics"]["pm_update_longest_run"]
+    assert row["before"] == 20
+    assert row["after"] == 2
+    assert row["delta"] == -18
+    assert row["direction"] == "better"
+
+
+def test_the_committed_baseline_already_answers_the_per_tool_question(committed):
+    """The metric is retroactive: the stored "before" needs no re-capture.
+
+    Every baseline ever written carries per-tool run profiles, so these are the
+    pre-bulk-verb numbers the next capture is measured against.
+    """
+    m = bl.headline_metrics(committed)
+    assert m["pm_update_longest_run"] == 45
+    assert m["pm_archive_longest_run"] == 15
+
+
 # ----------------------------------------------------------------- compare --
 
 

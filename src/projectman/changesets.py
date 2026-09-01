@@ -6,6 +6,7 @@ Store interface.
 """
 
 import json
+import shlex
 import subprocess
 from datetime import date
 from pathlib import Path
@@ -80,6 +81,24 @@ def update_changeset_status(
     return meta
 
 
+def _reject_nul(field: str, value: str) -> None:
+    """Refuse a NUL byte rather than render a command that cannot run.
+
+    ``execve`` arguments are NUL-terminated, so no argv element can carry
+    one: :func:`subprocess.run` raises ``ValueError: embedded null byte``
+    and a shell truncates the argument at the NUL.  ``shlex.quote`` will
+    happily wrap one, which would hand the caller a *display* string that
+    silently differs from what would execute.  Both forms are therefore
+    rejected up front, naming the offending field.
+    """
+    if "\x00" in value:
+        raise ValueError(
+            f"{field} contains a NUL byte (0x00), which cannot be carried in a "
+            "command argument; remove it from the changeset before generating "
+            "PR commands"
+        )
+
+
 def changeset_create_prs(
     store: Store,
     changeset_id: str,
@@ -87,11 +106,19 @@ def changeset_create_prs(
     """Generate PR creation commands for all projects in a changeset with cross-references.
 
     Returns a dict with ``changeset``, ``title``, and ``pr_commands``.
-    Each command object includes project name, ref, and the ``gh`` CLI command
-    string.  Entries without a ref are skipped with a status message.
+    Each command object includes the project name, ref, an ``argv`` list
+    (for callers that execute the command without a shell) and a
+    shell-safe ``command`` display string built with :func:`shlex.join`.
+    Entries without a ref are skipped with a status message.
+
+    Titles, bodies and refs are user/agent-supplied, so every value is
+    quoted: a ``"``, backtick, ``$(``, ``;`` or newline in any of them
+    cannot break out of its argument.
 
     Raises:
-        ValueError: If the changeset has no project entries.
+        ValueError: If the changeset has no project entries, or if the id,
+            title, description, a project name or a ref contains a NUL byte
+            (no argv element can carry one — see :func:`_reject_nul`).
         FileNotFoundError: If the changeset does not exist.
     """
     meta, body = store.get_changeset(changeset_id)
@@ -99,9 +126,16 @@ def changeset_create_prs(
     if not meta.entries:
         raise ValueError("changeset has no project entries")
 
+    _reject_nul(f"changeset {meta.id} id", meta.id)
+    _reject_nul(f"changeset {meta.id} title", meta.title)
+    _reject_nul(f"changeset {meta.id} description", body or "")
+    for entry in meta.entries:
+        _reject_nul(f"changeset {meta.id} project name", entry.project)
+        _reject_nul(f"changeset {meta.id} ref for {entry.project!r}", entry.ref or "")
+
     pr_commands: list[dict] = []
     cross_refs = [f"- {e.project} (ref: {e.ref or 'TBD'})" for e in meta.entries]
-    cross_ref_block = "\\n".join(cross_refs)
+    cross_ref_block = "\n".join(cross_refs)
 
     for entry in meta.entries:
         if not entry.ref:
@@ -112,19 +146,21 @@ def changeset_create_prs(
             continue
 
         pr_body = (
-            f"## Part of changeset: {meta.title} ({meta.id})\\n\\n"
-            f"### Cross-references\\n{cross_ref_block}\\n\\n"
+            f"## Part of changeset: {meta.title} ({meta.id})\n\n"
+            f"### Cross-references\n{cross_ref_block}\n\n"
             f"{body or ''}"
         )
-        cmd = (
-            f'cd {entry.project} && '
-            f'gh pr create --title "{meta.title}: {entry.project}" '
-            f'--body "{pr_body}" '
-            f'--head {entry.ref}'
-        )
+        argv = [
+            "gh", "pr", "create",
+            "--title", f"{meta.title}: {entry.project}",
+            "--body", pr_body,
+            "--head", entry.ref,
+        ]
+        cmd = f"cd {shlex.quote(entry.project)} && {shlex.join(argv)}"
         pr_commands.append({
             "project": entry.project,
             "ref": entry.ref,
+            "argv": argv,
             "command": cmd,
         })
 

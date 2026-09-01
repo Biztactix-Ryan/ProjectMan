@@ -227,6 +227,136 @@ class TestCheckReadiness:
         assert not any("dependencies" in b for b in result["blockers"])
 
 
+class TestPreloadedContext:
+    """check_readiness takes caller-supplied context instead of re-reading.
+
+    The board checks every todo task, so the parent-story lookup and the
+    dependency listing used to run once per task.  Passing the context in
+    must not change a single verdict — every test here pins a store-backed
+    result against the pre-loaded one.
+    """
+
+    @staticmethod
+    def _context(store):
+        """Build the context the board builds: one tasks read, one stories read."""
+        all_stories = store.list_stories()
+        return {
+            "stories": {s.id: s for s in all_stories},
+            "all_tasks": store.list_tasks(),
+            "all_stories": all_stories,
+        }
+
+    def test_ready_task_identical(self, store):
+        store.create_story("Story", "Description here")
+        store.update("US-TST-1", status="active")
+        store.create_task("US-TST-1", "Add login endpoint", GOOD_BODY, points=3)
+        task_meta, task_body = store.get_task("US-TST-1-1")
+
+        from_store = check_readiness(task_meta, task_body, store)
+        preloaded = check_readiness(task_meta, task_body, store, **self._context(store))
+
+        assert from_store["ready"] is True
+        assert preloaded == from_store
+
+    def test_missing_parent_story_identical(self, store):
+        store.create_story("Story", "Description")
+        store.update("US-TST-1", status="active")
+        store.create_task("US-TST-1", "Task", GOOD_BODY, points=3)
+        task_meta, task_body = store.get_task("US-TST-1-1")
+        orphan = task_meta.model_copy(update={"story_id": "US-TST-99"})
+
+        from_store = check_readiness(orphan, task_body, store)
+        preloaded = check_readiness(orphan, task_body, store, **self._context(store))
+
+        assert from_store["blockers"] == ["parent story US-TST-99 not found"]
+        assert preloaded == from_store
+
+    def test_non_active_story_identical(self, store):
+        store.create_story("Story", "Description")  # backlog by default
+        store.create_task("US-TST-1", "Task", GOOD_BODY, points=3)
+        task_meta, task_body = store.get_task("US-TST-1-1")
+
+        from_store = check_readiness(task_meta, task_body, store)
+        preloaded = check_readiness(task_meta, task_body, store, **self._context(store))
+
+        assert any("backlog" in b for b in from_store["blockers"])
+        assert preloaded == from_store
+
+    def test_incomplete_deps_identical(self, store):
+        store.create_story("Story", "Description")
+        store.update("US-TST-1", status="active")
+        store.create_task("US-TST-1", "Setup DB", GOOD_BODY, points=2)
+        store.create_task("US-TST-1", "Create schema", GOOD_BODY, points=2)
+        store.update("US-TST-1-1", status="in-progress", assignee="alice")
+        store.update("US-TST-1-1", status="done")
+        store.create_task(
+            "US-TST-1",
+            "Run migrations",
+            GOOD_BODY,
+            points=2,
+            depends_on=["US-TST-1-1", "US-TST-1-2"],
+        )
+        task_meta, task_body = store.get_task("US-TST-1-3")
+
+        from_store = check_readiness(task_meta, task_body, store)
+        preloaded = check_readiness(task_meta, task_body, store, **self._context(store))
+
+        assert from_store["blockers"] == ["incomplete dependencies: US-TST-1-2"]
+        assert preloaded == from_store
+
+    def test_archived_parent_story_falls_back_to_the_store(self, store):
+        """A story missing from the dict is a cache miss, not a verdict.
+
+        ``list_stories`` drops archived stories; ``get_story`` still reads them
+        from disk.  Treating the miss as "not found" would silently rewrite
+        "parent story X is 'archived'" — so the miss must fall back.
+        """
+        store.create_story("Story", "Description")
+        store.update("US-TST-1", status="active")
+        store.create_task("US-TST-1", "Task", GOOD_BODY, points=3)
+        task_meta, task_body = store.get_task("US-TST-1-1")
+        store.update("US-TST-1", status="archived")
+
+        context = self._context(store)
+        assert "US-TST-1" not in context["stories"], "archived story is not listed"
+
+        from_store = check_readiness(task_meta, task_body, store)
+        preloaded = check_readiness(task_meta, task_body, store, **context)
+
+        assert from_store["blockers"] == [
+            "parent story US-TST-1 is 'archived' — must be 'active' or 'ready'"
+        ]
+        assert preloaded == from_store
+
+    def test_store_is_not_read_when_context_is_supplied(self, store, monkeypatch):
+        """The whole point: no get_story, no list_tasks, no list_stories."""
+        from projectman.store import Store
+
+        store.create_story("Story", "Description")
+        store.update("US-TST-1", status="active")
+        store.create_task("US-TST-1", "Dep task", GOOD_BODY, points=2)
+        store.create_task(
+            "US-TST-1", "Main task", GOOD_BODY, points=2, depends_on=["US-TST-1-1"]
+        )
+        task_meta, task_body = store.get_task("US-TST-1-2")
+        context = self._context(store)
+
+        calls = []
+        for name in ("get_story", "list_tasks", "list_stories"):
+            original = getattr(Store, name)
+
+            def spy(self, *args, _name=name, _original=original, **kwargs):
+                calls.append(_name)
+                return _original(self, *args, **kwargs)
+
+            monkeypatch.setattr(Store, name, spy)
+
+        result = check_readiness(task_meta, task_body, store, **context)
+
+        assert calls == [], f"check_readiness hit the store: {calls}"
+        assert result["blockers"] == ["incomplete dependencies: US-TST-1-1"]
+
+
 class TestComputeHints:
     def test_well_scoped_task(self, store):
         store.create_story("Story", "Description")

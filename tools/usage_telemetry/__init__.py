@@ -7,7 +7,8 @@ reproduced and compared across fixes.
 Currently implemented: the extraction pass (:mod:`tools.usage_telemetry.extract`),
 failure classification (:mod:`tools.usage_telemetry.classify`), the usage
 metrics report (:mod:`tools.usage_telemetry.report`) and the provenance-stamped
-baseline capture/compare (:mod:`tools.usage_telemetry.baseline`). The baseline
+baseline capture/compare (:mod:`tools.usage_telemetry.baseline`) and the
+``tools/list`` payload measurement (:mod:`tools.usage_telemetry.tool_list_size`). The baseline
 lands on top of the other three without changing any of them -- see
 ``docs/telemetry/README.md`` for the capture and comparison procedure.
 
