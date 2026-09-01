@@ -526,6 +526,55 @@ Attach reads **local ref storage only and never fetches**, so a branch pushed si
 
 Refusals happen before any mutation, so a refused attach leaves the repo exactly as it was: no branch created, no worktree registered, `.project/` byte for byte as it was found.
 
+## Living with the projectman worktree
+
+Once `.project/` is a worktree of the `projectman` branch, the files are exactly where they always were and every ProjectMan command reads and writes them as before. What changes is git, and the edges below are the ones worth knowing about. [ADR-001](../../.project/DECISIONS.md) records the decision and its consequences; US-PM-21 verified them.
+
+### PM git commands follow the store, not your branch
+
+`projectman commit` / `pm_commit`, `projectman push` / `pm_push` and `projectman git-status` / `pm_git_status` resolve the branch that *owns* `.project/` by running inside it, so after the migration they target `projectman` automatically:
+
+| Command | Plain `.project/` (unmigrated) | Worktree-mounted `.project/` |
+|---|---|---|
+| `projectman commit` | Commits on the checked-out branch, paths reported as `.project/...` | Commits on `projectman`, paths reported relative to the store (`stories/...`). The output names the branch: `Branch: projectman`. |
+| `projectman push` | Pushes the checked-out branch | Pushes **only** `projectman`. An unpushed commit on `main` stays unpushed. In hub mode `--scope hub` pushes `main` (submodule refs) and then `projectman`. |
+| `projectman git-status` | `PM store: .project on main (plain directory), clean` | `PM store: .project on projectman (worktree), clean, 1 ahead` — its own dirty count and ahead/behind, never conflated with `main`'s |
+
+The hypothesis in ADR-001 that the shell-outs would need zero changes turned out to be false: run from the repo root, `git add .project` refuses the now-ignored path and `git status .project/` reports nothing. Every PM git command now runs inside the store, and the hub route strips the `.project/` prefix so the `hub` / `project:<name>` / `all` scope filters work in both layouts.
+
+Pushes go to `origin`. To push somewhere else (see the sibling-repo variant below) use git directly: `git push <remote> projectman`.
+
+### `.project/` is ignored but precious
+
+The migration adds `.project/` to `.gitignore` so `main` never sees the store again. Ignored is not disposable:
+
+- `git status` and `git add -A` on `main` skip it — good, that is the point.
+- `git clean -fdx` does **not** descend into a nested worktree, so a routine clean leaves it alone. `git clean -ffdx` (two `f`s) *does* remove it, along with any uncommitted PM changes inside. Run `git -C .project status` first, or commit with `projectman commit`, before any double-force clean.
+- `git stash` on `main` ignores the store. To stash PM changes, run `git -C .project stash`.
+- Deleting `.project/` by hand leaves a stale worktree registration; `git worktree prune` clears it and `projectman attach` mounts the branch again.
+
+### Fresh clones need attach
+
+A clone brings `origin/projectman` but no `.project/`, because the working branch ignores that path. `projectman init` detects the branch and mounts it; `projectman attach` does the same explicitly. See [`projectman attach`](#projectman-attach). `git clone --single-branch` and shallow CI clones never fetch the branch at all, which is what keeps PM data out of CI.
+
+### The branch is as visible as the repo
+
+`projectman` is an ordinary branch on the same remote with the same permissions. On a public repository the PM store is public too. When that is not acceptable, keep the same local layout but point the branch at a private sibling repository, conventionally `<repo>-pm`:
+
+```bash
+# once, in the repo that owns the store
+git remote add pm git@example.com:org/myrepo-pm.git
+git push -u pm projectman            # publish the store privately
+git push origin --delete projectman  # if it was ever pushed publicly
+
+# on a fresh clone
+git remote add pm git@example.com:org/myrepo-pm.git
+git fetch pm projectman
+git worktree add --track -b projectman .project pm/projectman
+```
+
+Remotes belong to the repository, not to a worktree, so the extra remote is visible from `.project/` as well. The trade-offs: two repositories per project, `projectman push` still targets `origin` so the private branch is pushed with `git push pm projectman`, and `projectman attach` / `init` look for `origin/projectman` only, which is why the clone step above mounts the branch by hand.
+
 ## projectman audit
 
 Run drift detection and generate a `DRIFT.md` report.

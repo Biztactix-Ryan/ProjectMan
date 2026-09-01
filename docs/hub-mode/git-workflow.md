@@ -264,6 +264,16 @@ Sources include: `coordinated_push`, `changeset`, `sync`, `manual`, `auto_rebase
 
 The log is capped at 500 entries. Older entries rotate to `ref-log.archive.yaml`.
 
+## PM Store on Its Own Branch
+
+A hub whose `.project/` has been moved onto the `projectman` branch by [`projectman migrate-worktree`](../reference/cli.md#projectman-migrate-worktree) keeps the workflow above unchanged for code: submodule refs still live on `main` and still flow through the coordinated push. What moves is the PM data:
+
+- `pm_commit` (any scope) commits on `projectman`; the hub's `main` is never touched, its working tree stays clean, and `.project/` is never a gitlink — there is no second submodule pointer to dirty the parent on every task update.
+- `pm_push --scope hub` pushes `main` first (submodule ref updates) and then `projectman`. The result carries a `pm_store` entry naming the branch. A failed store push fails the call.
+- `pm_git_status` reports the store separately (`pm_store`: branch, worktree flag, dirty count, ahead/behind) so a dirty store is not read as a dirty hub.
+
+The full list of edges — `git clean -ffdx`, fresh clones, public visibility — is in [Living with the projectman worktree](../reference/cli.md#living-with-the-projectman-worktree).
+
 ## MCP Tools
 
 These tools are available via the MCP server for agent-driven workflows:

@@ -39,6 +39,13 @@ Changes landed between 2026-08-19 and 2026-09-02.
   tool-list-size reporting, and rates for completions without a run log.
 - Reference docs for the verdict-verb, evidence, claim-and-release, and
   cache-semantics contracts.
+- `pm_git_status` and `projectman git-status` report the PM store on its own
+  (`pm_store`: branch, worktree flag, dirty count, ahead/behind), so a store on
+  the `projectman` branch is never read as `main`'s state.
+- `pm_commit` results carry `on_branch`, the branch the commit landed on.
+- A "Living with the projectman worktree" reference covering `git clean`,
+  the ignored-but-precious store, fresh clones, and the private sibling-repo
+  variant for public repositories.
 
 ### Changed
 
@@ -70,6 +77,12 @@ Changes landed between 2026-08-19 and 2026-09-02.
 - `pm_done_next` and `pm_release` report when a note was truncated, matching
   `pm_update`.
 - Archiving a task no longer marks it done.
+- `pm_commit` and `pm_push` work against a worktree-mounted `.project/`.
+  Commits land on the `projectman` branch and pushes move only that branch;
+  before, the non-hub commit failed on the ignored path, the hub commit was a
+  silent no-op, and push sent `main`.
+- `migrate-worktree` pushes the branch from the repo root, so a relative
+  remote URL resolves correctly.
 
 ### Removed
 
@@ -78,6 +91,4 @@ Changes landed between 2026-08-19 and 2026-09-02.
 
 ### Known gaps
 
-- PM git operations against a worktree-mounted `.project/` are not yet
-  verified.
 - API authentication for the web server is scoped but not started.

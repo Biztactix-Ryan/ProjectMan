@@ -2377,13 +2377,23 @@ def push_hub(
             final_sha = _get_hub_head(root)
             if final_sha:
                 commit_sha = final_sha
-        return {
+        out = {
             "committed": committed,
             "pushed": True,
             "commit_sha": commit_sha,
             "status": status,
             "attempts": attempts,
         }
+        # A worktree-mounted store keeps the PM commits on its own branch,
+        # which the hub push above never touches (US-PM-21).
+        store_push = _push_store_branch(root)
+        if store_push is not None:
+            out["pm_store"] = store_push
+            if not store_push["pushed"]:
+                out["pushed"] = False
+                out["status"] = "failed"
+                out["error"] = store_push["error"]
+        return out
 
     return {
         "committed": committed,
@@ -2393,6 +2403,35 @@ def push_hub(
         "status": "failed",
         "attempts": attempts,
     }
+
+
+def _push_store_branch(root: Path, remote: str = "origin") -> Optional[dict]:
+    """Push the branch that owns a worktree-mounted ``.project/``.
+
+    Returns ``None`` when the store is a plain directory (its commits ride on
+    the hub branch and were pushed with it), otherwise a dict with
+    ``branch``, ``pushed`` and ``error``.  Only that one named branch is
+    pushed, from the hub root (see :func:`projectman.worktree.push_branch`).
+    """
+    from ..worktree import push_branch, store_git_state
+
+    state = store_git_state(root)
+    if not state["worktree"]:
+        return None
+    if not state["branch"]:
+        return {
+            "branch": None,
+            "pushed": False,
+            "error": ".project/ worktree is on a detached HEAD — check out its branch first",
+        }
+    proc = push_branch(root, state["branch"], remote)
+    if proc.returncode != 0:
+        return {
+            "branch": state["branch"],
+            "pushed": False,
+            "error": f"push of '{state['branch']}' failed: {(proc.stderr or proc.stdout or '').strip()}",
+        }
+    return {"branch": state["branch"], "pushed": True, "error": None}
 
 
 def _has_unpushed_commits(name: str, root: Path) -> bool:
@@ -2703,13 +2742,17 @@ def _generate_hub_commit_message(changed_files: list[str]) -> str:
     config_changed = False
     other = 0
 
+    # Paths are ".project/stories/X.md" for a plain store and "stories/X.md"
+    # for a worktree-mounted one; the leading "/" makes both match the same
+    # "/stories/" probe.
     for f in changed_files:
         name = Path(f).stem  # e.g. "US-PRJ-5" from ".project/stories/US-PRJ-5.md"
-        if "/stories/" in f:
+        probe = "/" + f
+        if "/stories/" in probe:
             ids.append(name)
-        elif "/tasks/" in f:
+        elif "/tasks/" in probe:
             ids.append(name)
-        elif "/epics/" in f:
+        elif "/epics/" in probe:
             ids.append(name)
         elif Path(f).name in ("config.yaml", "index.yaml"):
             config_changed = True
@@ -2721,9 +2764,9 @@ def _generate_hub_commit_message(changed_files: list[str]) -> str:
         return f"pm: update {', '.join(ids)}"
 
     # Otherwise, summarise by type counts
-    stories = sum(1 for f in changed_files if "/stories/" in f)
-    tasks = sum(1 for f in changed_files if "/tasks/" in f)
-    epics = sum(1 for f in changed_files if "/epics/" in f)
+    stories = sum(1 for f in changed_files if "/stories/" in "/" + f)
+    tasks = sum(1 for f in changed_files if "/tasks/" in "/" + f)
+    epics = sum(1 for f in changed_files if "/epics/" in "/" + f)
 
     parts: list[str] = []
     if stories:
@@ -2765,10 +2808,17 @@ def pm_commit(
             when ``None``.
         root: Hub root directory.  Auto-detected when ``None``.
 
+    Every git command runs *inside* ``.project/`` so the commit lands on the
+    branch that owns the store: the hub's checked-out branch for a plain
+    directory, or the ``projectman`` branch when the store is a worktree
+    mounted by ``projectman migrate-worktree`` (US-PM-21).  From the hub root
+    the worktree path is ignored, and ``git status .project/`` reports nothing
+    — which used to make every commit a silent ``nothing_to_commit``.
+
     Returns:
-        A dict with ``commit_hash``, ``message``, and ``files_committed``,
-        or ``{"nothing_to_commit": True}`` when there are no matching
-        changes.
+        A dict with ``commit_hash``, ``message``, ``files_committed`` and
+        ``on_branch`` (the branch the commit landed on), or
+        ``{"nothing_to_commit": True}`` when there are no matching changes.
 
     Raises:
         FileNotFoundError: If ``.project/`` doesn't exist.
@@ -2782,6 +2832,7 @@ def pm_commit(
 
     if not project_dir.exists():
         raise FileNotFoundError(".project/ directory does not exist")
+    store_cwd = str(project_dir)
 
     # Validate scope
     if scope == "hub":
@@ -2806,13 +2857,25 @@ def pm_commit(
     #    files instead of collapsing untracked directories; scoped to
     #    .project/ so the performance cost is negligible)
     result = subprocess.run(
-        ["git", "status", "--porcelain", "--untracked-files=all", ".project/"],
-        cwd=str(root),
+        ["git", "status", "--porcelain", "--untracked-files=all", "--", "."],
+        cwd=store_cwd,
         capture_output=True,
         text=True,
     )
     if result.returncode != 0:
         raise RuntimeError(f"git status failed: {result.stderr.strip()}")
+
+    # Porcelain paths are relative to the owning repo's root: ".project/x"
+    # for a plain store, "x" for a worktree.  ``show-prefix`` is that
+    # difference (".project/" or ""), so stripping it gives store-relative
+    # paths the scope filters can share.
+    prefix_result = subprocess.run(
+        ["git", "rev-parse", "--show-prefix"],
+        cwd=store_cwd,
+        capture_output=True,
+        text=True,
+    )
+    store_prefix = prefix_result.stdout.strip() if prefix_result.returncode == 0 else ""
 
     # Parse porcelain output — each line is "XY path" or "XY path -> path"
     all_changed: list[str] = []
@@ -2824,43 +2887,46 @@ def pm_commit(
         # Handle renames: "R  old -> new"
         if " -> " in path:
             path = path.split(" -> ", 1)[1]
+        if store_prefix and path.startswith(store_prefix):
+            path = path[len(store_prefix):]
         if path:
             all_changed.append(path)
 
     if not all_changed:
         return {"nothing_to_commit": True}
 
-    # 2. Filter to scope
+    # 2. Filter to scope (store-relative paths)
     if scope == "all":
         scoped_files = all_changed
     elif scope == "hub":
         # Hub-level = everything in .project/ EXCEPT .project/projects/
         scoped_files = [
             f for f in all_changed
-            if not f.startswith(".project/projects/")
+            if not f.startswith("projects/")
         ]
     else:
         # scope == "project:{name}"
         project_name = scope.split(":", 1)[1]
-        prefix = f".project/projects/{project_name}/"
+        prefix = f"projects/{project_name}/"
         scoped_files = [f for f in all_changed if f.startswith(prefix)]
 
     if not scoped_files:
         return {"nothing_to_commit": True}
 
-    # 3. Stage only the scoped files
+    # 3. Stage only the scoped files (paths are cwd-relative inside the store)
     subprocess.run(
         ["git", "add", "--"] + scoped_files,
-        cwd=str(root),
+        cwd=store_cwd,
         capture_output=True,
         text=True,
         check=True,
     )
 
-    # Verify something was staged (handles edge cases)
+    # Verify something was staged (handles edge cases).  Reported paths are
+    # root-relative again: ".project/..." plain, store-relative for a worktree.
     diff_result = subprocess.run(
         ["git", "diff", "--cached", "--name-only"],
-        cwd=str(root),
+        cwd=store_cwd,
         capture_output=True,
         text=True,
         check=True,
@@ -2876,7 +2942,7 @@ def pm_commit(
     # 5. Commit
     commit_result = subprocess.run(
         ["git", "commit", "-m", message],
-        cwd=str(root),
+        cwd=store_cwd,
         capture_output=True,
         text=True,
     )
@@ -2885,19 +2951,27 @@ def pm_commit(
             f"git commit failed: {commit_result.stderr.strip()}"
         )
 
-    # 6. Get commit SHA
+    # 6. Get commit SHA and the branch it landed on
     sha_result = subprocess.run(
         ["git", "rev-parse", "HEAD"],
-        cwd=str(root),
+        cwd=store_cwd,
         capture_output=True,
         text=True,
         check=True,
     )
+    branch_result = subprocess.run(
+        ["git", "symbolic-ref", "--short", "HEAD"],
+        cwd=store_cwd,
+        capture_output=True,
+        text=True,
+    )
+    branch = branch_result.stdout.strip() if branch_result.returncode == 0 else None
 
     return {
         "commit_hash": sha_result.stdout.strip(),
         "message": message,
         "files_committed": staged,
+        "on_branch": branch,
     }
 
 
@@ -3085,6 +3159,8 @@ def pm_push(
         }
         if not pushed:
             out["error"] = hub_result.get("error", "push failed")
+        if "pm_store" in hub_result:
+            out["pm_store"] = hub_result["pm_store"]
         return out
 
     # scope == "project:{name}"
@@ -3325,6 +3401,7 @@ def git_status_all(root: Optional[Path] = None) -> dict:
     from ..config import find_project_root
     root = root or find_project_root()
     config = load_config(root)
+    pm_store = _pm_store_status(root)
 
     if not config.hub:
         return {
@@ -3332,7 +3409,8 @@ def git_status_all(root: Optional[Path] = None) -> dict:
             "total": 0,
             "issues": 0,
             "ok": False,
-            "summary": "Not a hub project.",
+            "summary": f"Not a hub project. PM store: {pm_store['description']}",
+            "pm_store": pm_store,
         }
 
     names = list(config.projects)
@@ -3342,7 +3420,8 @@ def git_status_all(root: Optional[Path] = None) -> dict:
             "total": 0,
             "issues": 0,
             "ok": True,
-            "summary": "No projects registered.",
+            "summary": f"No projects registered. PM store: {pm_store['description']}",
+            "pm_store": pm_store,
         }
 
     # Collect status for all projects in parallel
@@ -3367,8 +3446,36 @@ def git_status_all(root: Optional[Path] = None) -> dict:
         "total": total,
         "issues": issue_count,
         "ok": issue_count == 0,
-        "summary": summary,
+        "summary": f"{summary} PM store: {pm_store['description']}",
+        "pm_store": pm_store,
     }
+
+
+def _pm_store_status(root: Path) -> dict:
+    """The ``pm_store`` entry of :func:`git_status_all`.
+
+    The PM store is reported separately from the submodules and from the
+    hub's own branch because, once migrated, it lives on a worktree with its
+    own branch, dirty state and ahead/behind counts (US-PM-21).  Keys mirror
+    :func:`projectman.worktree.store_git_state` plus a one-line
+    ``description``.  Never raises: an unreadable state degrades to the
+    all-clean shape with ``branch`` None.
+    """
+    from ..worktree import describe_store_state, store_git_state
+
+    try:
+        state = store_git_state(root)
+    except Exception:  # noqa: BLE001 — status must never fail the dashboard
+        state = {
+            "path": ".project", "worktree": False, "branch": None,
+            "detached": False, "head": None, "upstream": None,
+            "ahead": 0, "behind": 0, "dirty": False, "dirty_count": 0,
+        }
+    try:
+        state["description"] = describe_store_state(state)
+    except Exception:  # noqa: BLE001
+        state["description"] = ".project"
+    return state
 
 
 def _severity_score(project: dict) -> int:
@@ -3406,6 +3513,8 @@ def format_git_status(data: dict, *, verbose: bool = False) -> str:
     """
     projects = data.get("projects", [])
     total = data.get("total", 0)
+    store = data.get("pm_store") or {}
+    store_line = f"PM store: {store['description']}" if store.get("description") else ""
 
     if total == 0:
         return data.get("summary", "No projects.")
@@ -3446,7 +3555,10 @@ def format_git_status(data: dict, *, verbose: bool = False) -> str:
 
     # Format output
     lines: list[str] = []
-    lines.append(f"Hub Git Status ({total} projects)\n")
+    lines.append(f"Hub Git Status ({total} projects)")
+    if store_line:
+        lines.append(f"  {store_line}")
+    lines.append("")
 
     # Header line
     hdr = "  ".join(h.ljust(widths[i]) for i, h in enumerate(header))

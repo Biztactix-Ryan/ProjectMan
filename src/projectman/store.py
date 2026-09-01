@@ -2658,27 +2658,37 @@ class Store:
         If *message* is provided it is used as-is; otherwise a summary is
         generated from the staged diff (e.g. "pm: add 2 stories, update 1 task").
 
-        Returns a dict with ``commit_hash``, ``message``, and ``files_changed``.
+        Every git command runs *inside* the store directory, so the commit
+        lands on whichever branch owns it: the checked-out branch when
+        ``.project/`` is a plain tracked directory, or the ``projectman``
+        branch when it is a worktree mounted by ``projectman migrate-worktree``
+        (US-PM-21).  Run from the repo root, ``git add .project`` would refuse
+        the ignored worktree path.
+
+        Returns a dict with ``commit_hash``, ``message``, ``files_changed`` and
+        ``on_branch`` (the branch the commit landed on).
         Raises ``RuntimeError`` if the commit fails, or :class:`NothingToCommit`
         (a ``RuntimeError`` subclass) when there was nothing to commit — the
         latter is an expected negative, not a failure.
         """
         import subprocess
 
-        project_dir = str(self.project_dir)
+        cwd = str(self.project_dir)
 
-        # Stage all .project/ changes
+        # Stage all changes under the store (pathspec "." is cwd-relative)
         subprocess.run(
-            ["git", "add", project_dir],
-            cwd=str(self.root),
+            ["git", "add", "-A", "--", "."],
+            cwd=cwd,
             capture_output=True,
             check=True,
         )
 
-        # Check if there are staged changes
+        # Check if there are staged changes under the store.  Paths come back
+        # relative to the owning repo's root: ".project/stories/X.md" for a
+        # plain directory, "stories/X.md" for a worktree.
         diff_result = subprocess.run(
-            ["git", "diff", "--cached", "--name-only", "--", project_dir],
-            cwd=str(self.root),
+            ["git", "diff", "--cached", "--name-only", "--", "."],
+            cwd=cwd,
             capture_output=True,
             text=True,
             check=True,
@@ -2693,28 +2703,36 @@ class Store:
             message = self._generate_commit_message(changed_files)
 
         # Commit
-        commit_result = subprocess.run(
+        subprocess.run(
             ["git", "commit", "-m", message],
-            cwd=str(self.root),
+            cwd=cwd,
             capture_output=True,
             text=True,
             check=True,
         )
 
-        # Extract commit hash
+        # Extract commit hash and the branch it landed on
         hash_result = subprocess.run(
             ["git", "rev-parse", "HEAD"],
-            cwd=str(self.root),
+            cwd=cwd,
             capture_output=True,
             text=True,
             check=True,
         )
         commit_hash = hash_result.stdout.strip()
+        branch_result = subprocess.run(
+            ["git", "symbolic-ref", "--short", "HEAD"],
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+        )
+        branch = branch_result.stdout.strip() if branch_result.returncode == 0 else None
 
         return {
             "commit_hash": commit_hash,
             "message": message,
             "files_changed": changed_files,
+            "on_branch": branch,
         }
 
     def _generate_commit_message(self, changed_files: list[str]) -> str:
@@ -2762,21 +2780,30 @@ class Store:
         return "pm: update project data"
 
     def push_project_changes(self, remote: str = "origin") -> dict:
-        """Push committed changes to the remote.
+        """Push the branch that owns the store to the remote.
 
-        Validates that we are on a branch (not detached HEAD) and that
+        The branch is resolved *inside* the store directory (see
+        :meth:`commit_project_changes`), so a worktree-mounted ``.project/``
+        pushes its own ``projectman`` branch and nothing else; a plain
+        directory pushes the checked-out branch as before.  The push itself
+        runs from the repo root because a named-branch push does not depend
+        on the worktree it is issued from, and a relative remote URL must
+        resolve from the same place it does for every other push.
+
+        Validates that the store is on a branch (not detached HEAD) and that
         the remote exists before pushing.
 
-        Returns a dict with ``branch`` and ``remote`` on success,
-        or ``up_to_date`` if there was nothing new to push.
+        Returns a dict with ``branch`` and ``remote`` on success.
         Raises ``RuntimeError`` on validation or push failure.
         """
         import subprocess
 
-        # Check we're on a branch (not detached HEAD)
+        from .worktree import push_branch
+
+        # Check the store's HEAD is on a branch (not detached)
         branch_result = subprocess.run(
             ["git", "symbolic-ref", "--short", "HEAD"],
-            cwd=str(self.root),
+            cwd=str(self.project_dir),
             capture_output=True,
             text=True,
         )
@@ -2804,12 +2831,7 @@ class Store:
             )
 
         # Push
-        push_result = subprocess.run(
-            ["git", "push", remote, branch],
-            cwd=str(self.root),
-            capture_output=True,
-            text=True,
-        )
+        push_result = push_branch(self.root, branch, remote)
         if push_result.returncode != 0:
             stderr = push_result.stderr.strip()
             raise RuntimeError(f"Push failed: {stderr}")

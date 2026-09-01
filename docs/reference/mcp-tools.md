@@ -574,20 +574,20 @@ Restore a malformed file back to its original location without fixes.
 ## Git & Push Tools
 
 ### pm_git_status(project?)
-Get git status of all hub submodules.
+Get git status of all hub submodules, plus the PM store itself.
 - **project** (optional): Project name for hub mode
-- **Returns**: Per-project branch, dirty state, ahead/behind counts, and open PRs
+- **Returns**: Per-project branch, dirty state, ahead/behind counts, and open PRs, and a `pm_store` entry (`path`, `worktree`, `branch`, `dirty`, `dirty_count`, `ahead`, `behind`, `upstream`, `description`) describing `.project/` on its own — after [`migrate-worktree`](cli.md#projectman-migrate-worktree) that is the `projectman` branch, reported distinctly from `main`
 
 ### pm_commit(scope?, message?)
 Commit `.project/` changes.
 - **scope** (optional, default `"all"`): `"hub"`, `"project:<name>"`, or `"all"`
 - **message** (optional): Commit message (auto-generated if omitted)
-- **Returns**: Commit hash and committed-file count (the message is echoed only when auto-generated), or an expected negative `{outcome: expected_negative, status: nothing_to_commit, message}` when there is nothing to commit
+- **Returns**: Commit hash, committed-file count and `on_branch` — the branch the commit landed on: the checked-out branch for a plain `.project/`, `projectman` when the store is a worktree (the message is echoed only when auto-generated). Or an expected negative `{outcome: expected_negative, status: nothing_to_commit, message}` when there is nothing to commit
 
 ### pm_push(scope?)
 Push committed changes to remote.
 - **scope** (optional, default `"hub"`): `"hub"`, `"project:<name>"`, or `"all"`
-- **Returns**: Push result
+- **Returns**: Push result. Non-hub: the branch that owns `.project/` is pushed and nothing else (`projectman` after `migrate-worktree`). Hub `"hub"` scope: `main` is pushed and then, when the store is a worktree, `projectman`, reported under `pm_store`
 
 ### pm_push_all(dry_run?, projects?)
 > Break-glass — off the tool list unless `tools.maintenance: true`. CLI:

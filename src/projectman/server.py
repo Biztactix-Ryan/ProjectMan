@@ -3908,6 +3908,7 @@ def pm_git_status(project: Optional[str] = None) -> str:
                     "issues": 1 if matched[0].get("issues") else 0,
                     "ok": not matched[0].get("issues"),
                     "summary": f"Status for {project}",
+                    "pm_store": data.get("pm_store"),
                 }
             )
 

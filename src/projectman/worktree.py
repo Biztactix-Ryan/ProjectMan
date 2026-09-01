@@ -410,8 +410,10 @@ def migrate_to_worktree(
     if push_remote:
         # The local migration is complete and correct at this point. A failed
         # push must not undo it, so it downgrades to a warning: the user re-runs
-        # `git -C .project push` once the remote is reachable again.
-        proc = _git("push", "-u", push_remote, branch, cwd=target, check=False)
+        # `git -C .project push` once the remote is reachable again.  The
+        # push runs from the root (see push_branch) so a relative remote URL
+        # resolves the same way it did for the first push.
+        proc = push_branch(root, branch, push_remote, set_upstream=True)
         if proc.returncode == 0:
             result["pushed"] = True
         else:
@@ -635,3 +637,120 @@ def format_attach_result(result: dict) -> str:
     lines += [f"  {label.ljust(width)} : {value}" for label, value in rows]
     lines += ["", f"{project_dir}/ is now a worktree of the '{branch}' branch."]
     return "\n".join(lines)
+
+
+# ─── Store git state (US-PM-21) ─────────────────────────────────────────────
+#
+# Every PM git operation (commit, push, status) asks one question first: which
+# branch owns ``.project/``?  Before the migration it is the checked-out branch
+# of the repo; after it, ``.project/`` is a worktree with its own HEAD.  Git
+# already answers that correctly for any command run *inside* the directory, so
+# the helpers below run there and report what they find, and the callers stop
+# assuming the root's HEAD applies to the store.
+
+
+def store_git_state(root: Path, project_dir: str | Path = ".project") -> dict:
+    """Git state of the PM store at ``root / project_dir``.
+
+    Returns a dict with:
+
+    - ``path``: ``project_dir`` as given;
+    - ``worktree``: True when the store is a mounted worktree (its own HEAD);
+    - ``branch``: the branch that owns the store — the worktree's branch, or
+      the repo's current branch for a plain directory; None when detached;
+    - ``detached``: True when that HEAD is not on a branch;
+    - ``head``: the commit the store's HEAD points at, or None (unborn);
+    - ``upstream``: ``<remote>/<branch>`` configured for ``branch``, or None;
+    - ``ahead`` / ``behind``: commits relative to ``upstream`` (0 when none);
+    - ``dirty`` / ``dirty_count``: uncommitted changes *under the store only*,
+      counting untracked files individually.
+
+    Never raises for an unreadable state: a missing directory or a repo-less
+    path yields the all-clean shape with ``branch`` None.
+    """
+    target = root / project_dir
+    state: dict = {
+        "path": str(project_dir),
+        "worktree": False,
+        "branch": None,
+        "detached": False,
+        "head": None,
+        "upstream": None,
+        "ahead": 0,
+        "behind": 0,
+        "dirty": False,
+        "dirty_count": 0,
+    }
+    if not target.is_dir():
+        return state
+    state["worktree"] = is_worktree(target)
+
+    proc = _git("symbolic-ref", "--short", "HEAD", cwd=target, check=False)
+    if proc.returncode == 0:
+        state["branch"] = proc.stdout.strip() or None
+    else:
+        state["detached"] = _git("rev-parse", "--git-dir", cwd=target, check=False).returncode == 0
+
+    head = _git("rev-parse", "--verify", "--quiet", "HEAD", cwd=target, check=False)
+    state["head"] = head.stdout.strip() or None if head.returncode == 0 else None
+
+    if state["branch"]:
+        state["upstream"] = upstream_of(root, state["branch"])
+    if state["upstream"]:
+        counts = _git(
+            "rev-list", "--left-right", "--count",
+            f"{state['branch']}...{state['upstream']}",
+            cwd=target, check=False,
+        )
+        parts = counts.stdout.split() if counts.returncode == 0 else []
+        if len(parts) == 2 and all(p.isdigit() for p in parts):
+            state["ahead"], state["behind"] = int(parts[0]), int(parts[1])
+
+    status = _git(
+        "status", "--porcelain", "--untracked-files=all", "--", ".",
+        cwd=target, check=False,
+    )
+    if status.returncode == 0:
+        entries = [line for line in status.stdout.splitlines() if line.strip()]
+        state["dirty_count"] = len(entries)
+        state["dirty"] = bool(entries)
+    return state
+
+
+def push_branch(
+    root: Path, branch: str, remote: str = "origin", set_upstream: bool = False
+) -> subprocess.CompletedProcess:
+    """``git push [-u] <remote> <branch>`` run from ``root``.
+
+    Pushing a *named* branch does not depend on which worktree the command
+    runs in, so this always runs at the repo root.  That keeps a relative
+    remote URL (``../origin.git``) resolving from the same directory it does
+    for every other push, instead of from inside ``.project/`` where it would
+    point one level too deep.  Returns the CompletedProcess; the caller decides
+    whether a non-zero exit is fatal.
+    """
+    args = ["push"]
+    if set_upstream:
+        args.append("-u")
+    args += [remote, branch]
+    return _git(*args, cwd=root, check=False)
+
+
+def describe_store_state(state: dict) -> str:
+    """One line for humans: ``.project on projectman (worktree), clean, 1 ahead``."""
+    where = state.get("branch") or ("detached HEAD" if state.get("detached") else "no git")
+    mount = "worktree" if state.get("worktree") else "plain directory"
+    bits = [f"{state.get('path', '.project')} on {where} ({mount})"]
+    if state.get("dirty"):
+        n = state.get("dirty_count", 0)
+        bits.append(f"{n} uncommitted {'file' if n == 1 else 'files'}")
+    else:
+        bits.append("clean")
+    ahead, behind = state.get("ahead", 0), state.get("behind", 0)
+    if ahead:
+        bits.append(f"{ahead} ahead")
+    if behind:
+        bits.append(f"{behind} behind")
+    if state.get("branch") and not state.get("upstream"):
+        bits.append("no upstream")
+    return ", ".join(bits)

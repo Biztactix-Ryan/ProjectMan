@@ -942,6 +942,8 @@ def commit(scope, message):
             return
 
         click.echo(f"Committed: {result['commit_hash'][:8]}")
+        if result.get("on_branch"):
+            click.echo(f"Branch: {result['on_branch']}")
         click.echo(f"Message: {result['message']}")
         click.echo(f"Files ({len(result['files_committed'])}):")
         for f in result["files_committed"]:
@@ -955,6 +957,8 @@ def commit(scope, message):
             raise SystemExit(1)
 
         click.echo(f"Committed: {result['commit_hash'][:8]}")
+        if result.get("on_branch"):
+            click.echo(f"Branch: {result['on_branch']}")
         click.echo(f"Message: {result['message']}")
         click.echo(f"Files ({len(result['files_changed'])}):")
         for f in result["files_changed"]:
@@ -998,6 +1002,9 @@ def push(scope, dry_run, projects):
                 click.echo(f"Pushed ({scope})")
                 if "branch" in result:
                     click.echo(f"Branch: {result['branch']}")
+                store = result.get("pm_store")
+                if store and store.get("pushed"):
+                    click.echo(f"PM store branch: {store['branch']}")
                 if "report" in result:
                     click.echo(result["report"])
             else:
