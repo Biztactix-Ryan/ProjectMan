@@ -137,12 +137,12 @@ A capture is trustworthy when:
 - failures are counted across **all three** classes — `is_error` hard errors,
   error envelopes in the response body (soft errors, `is_error` false), and
   `__unparsedToolInput` malformed calls. Counting only `is_error` reports ~1%
-  where the real rate is ~6%; two of the four original `Study/` scripts made
+  where the real rate is ~6%; two of the four original the original usage studies scripts made
   exactly that mistake;
 - the classes overlap, so they do not sum to the distinct failure count.
 
 The pre-fix capture reproduces the numbers independently derived in the four
-`Study/` appendices: ~6.2% combined failure rate, ~1.4% hard, ~4.8% soft, ~0.8%
+the original usage studies appendices: ~6.2% combined failure rate, ~1.4% hard, ~4.8% soft, ~0.8%
 malformed, ~4 MB total response bytes, longest run 45× `pm_update`.
 
 ## Related commands

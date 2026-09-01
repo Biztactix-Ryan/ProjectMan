@@ -15,7 +15,7 @@ updated: '2026-07-29'
 
 Make ProjectMan's failures visible and stop losing writes.
 
-Evidence base: four independent tool-usage studies (Study/ directory) covering ~14,200 MCP calls across 4 machines, ~1,500 sessions and ~13 consumer repos, on versions 0.8.9 and 0.8.15.
+Evidence base: four independent tool-usage studies (internal usage studies, not included in this repo) covering ~14,200 MCP calls across 4 machines, ~1,500 sessions and ~13 consumer repos, on versions 0.8.9 and 0.8.15.
 
 The headline result is that ProjectMan's real failure rate is 6-12%, not the ~1% that transport-level metrics report. Failures are raised as ValueError, returned as HTTP 200 with an `error:` string body, and are therefore invisible to any caller checking `is_error` — including ProjectMan's own orchestrator. Two of the four studies undercounted errors by ~10x for exactly this reason.
 

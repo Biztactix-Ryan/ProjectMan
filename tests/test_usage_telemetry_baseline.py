@@ -828,7 +828,7 @@ def test_the_committed_baseline_declares_itself_the_pre_fix_capture(committed):
 def test_the_committed_numbers_are_the_known_pre_fix_ground_truth(committed):
     """Exact, not ranged: this artifact is frozen history.
 
-    Cross-checked against the four Study/ appendices -- 6.26% combined failure
+    Cross-checked against the four study appendices -- 6.26% combined failure
     rate, 47 hard errors, 27 malformed inputs, longest run 45x ``pm_update``.
     """
     m = bl.headline_metrics(committed)

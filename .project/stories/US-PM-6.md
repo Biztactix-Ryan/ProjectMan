@@ -22,7 +22,7 @@ updated: '2026-07-29'
 
 As a maintainer, I want the tool-usage study to be a repo artifact, so that I can verify these fixes actually moved the numbers instead of assuming they did.
 
-All four studies in Study/ were written as throwaway scratchpad scripts, and two of the four got the methodology wrong in the same way — they counted only `is_error` and so reported ~1% failure rates on corpora where the real rate was 6-12%. The correct method is documented across the four appendices but exists nowhere in the repo.
+All four studies in the internal usage studies were written as throwaway scratchpad scripts, and two of the four got the methodology wrong in the same way — they counted only `is_error` and so reported ~1% failure rates on corpora where the real rate was 6-12%. The correct method is documented across the four appendices but exists nowhere in the repo.
 
 The three non-obvious points that materially change the numbers:
 1. Soft errors are not is_error — match an error prefix inside the response body as well

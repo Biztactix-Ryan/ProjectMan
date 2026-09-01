@@ -1,6 +1,6 @@
 """Extraction pass: walk Claude Code transcripts and join tool calls to results.
 
-Method (ported from the four studies in ``Study/``)::
+Method (ported from the four studies in `the original usage studies`)::
 
     1. Walk every ``*.jsonl`` under ~/.claude/projects.
     2. Pass one  — collect ``tool_use`` blocks whose name starts with the tool

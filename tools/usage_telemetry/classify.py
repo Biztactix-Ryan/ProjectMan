@@ -1,6 +1,6 @@
 """Failure classification: hard errors, soft errors and malformed inputs.
 
-This is the step two of the four studies in ``Study/`` got wrong. Two of them
+This is the step two of the four studies in `the original usage studies` got wrong. Two of them
 counted only ``is_error`` and reported ~1% failure rates on corpora where the
 real rate was 6-12%. Three classes exist and all three have to be counted::
 

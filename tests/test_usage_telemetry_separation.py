@@ -3,7 +3,7 @@
 ``tests/test_usage_telemetry_classify.py`` proves each class is *detected*.
 This module proves the word the criterion turns on -- **separately** -- and is
 the regression net for the specific mistake two of the four studies in
-``Study/`` made:
+`the original usage studies` made:
 
 1. **Independence** -- a call carrying exactly one marker lands in exactly one
    class and contributes nothing to the other two, in the inclusive counts, the
@@ -25,7 +25,7 @@ the regression net for the specific mistake two of the four studies in
    equal the true failure rate. The reference corpus is the one from
    ``an internal usage study``: 47 hard (1.4%), 155 soft (4.7%), 27
    malformed, true rate 6.2%.
-5. **Real strings** -- every error body quoted in ``Study/`` classifies the way
+5. **Real strings** -- every error body quoted in `the original usage studies` classifies the way
    the story says it does.
 """
 

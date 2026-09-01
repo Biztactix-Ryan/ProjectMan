@@ -4,7 +4,7 @@ Covers story AC 2: hard errors, soft errors and malformed inputs are reported
 separately, plus a combined true failure rate that counts distinct calls.
 
 The strings used here are the real ones observed in the corpora described in
-``Study/`` -- the 1024-char run-log rejection, the ``task is not ready to grab``
+`the original usage studies` -- the 1024-char run-log rejection, the ``task is not ready to grab``
 envelope, ``<tool_use_error>InputValidationError: ...``, and the ``pm_get``
 success payload that merely *contains* an ``error:`` field and must not be
 counted.

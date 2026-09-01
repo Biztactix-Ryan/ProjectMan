@@ -1,6 +1,6 @@
 """Repeatable usage-telemetry analysis for ProjectMan MCP tool calls.
 
-The four studies in ``Study/`` were run as throwaway scratchpad scripts. This
+The four studies in `the original usage studies` were run as throwaway scratchpad scripts. This
 package is the repo-resident port of that methodology so the numbers can be
 reproduced and compared across fixes.
 

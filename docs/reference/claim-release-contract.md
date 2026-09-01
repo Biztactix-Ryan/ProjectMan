@@ -56,8 +56,7 @@ fix:
 | Study C | 31 (`assignee`) + 17 (`depends_on`) + 6 (`note`) = 44 of 45 payloads | 44 of 55 total |
 | Study B | 27 | — |
 
-Sources: `an internal usage study` §1, `an internal usage study` §5 and
-"Recommendations" §3, `an internal usage study`, `an internal usage study`.
+Sources: four internal tool-usage studies (not included in this repo).
 
 Two facts from that data shape the design and are easy to miss:
 
