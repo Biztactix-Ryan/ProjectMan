@@ -18,7 +18,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-mcp = ["mcp[cli]>=1.0"]
+mcp = ["mcp[cli]>=1.0,<2"]
 embeddings = ["fastembed>=0.4", "numpy>=1.24"]
 web = ["fastapi>=0.115", "uvicorn[standard]>=0.34"]
 all = ["projectman[mcp,embeddings,web]"]
