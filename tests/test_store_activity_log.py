@@ -119,18 +119,6 @@ class TestCreateEpicEmitsLog:
         assert "EPIC-TST-2" in epic_ids
 
 
-class TestCreateChangesetEmitsLog:
-    """create_changeset must emit a 'create' log entry for the changeset."""
-
-    def test_create_changeset_emits_created_entry(self, store):
-        store.create_changeset("Deploy v1", ["api", "web"])
-        entries = _read_log(store)
-        cs_entries = [e for e in entries if e["item_type"] == "changeset"]
-        assert len(cs_entries) == 1
-        assert cs_entries[0]["event_type"] == "create"
-        assert cs_entries[0]["item_id"].startswith("CS-TST-")
-
-
 class TestLogEntryFields:
     """All emitted log entries must have required fields populated."""
 

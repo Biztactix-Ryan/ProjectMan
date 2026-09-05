@@ -1,7 +1,7 @@
-"""Integration tests for hub conflict resolution with real git repos.
+"""Integration tests for hub push-with-rebase against real git repos.
 
-Tests auto-rebase and fast-forward scenarios by creating bare repos as
-remotes and simulating concurrent pushes.
+Creates bare repos as remotes and simulates concurrent pushes to cover the
+clean push, the auto-rebase retry, and the abort-on-conflict paths.
 """
 
 import os
@@ -192,105 +192,7 @@ def test_simple_rebase(hub_env):
     assert result["error"] is None
 
 
-# ─── 3. Same-project fast-forward: ours newer ────────────────────
-
-
-def test_same_project_ff_ours_newer(hub_env):
-    """Both update api ref — ours is ahead, auto-resolved, ours kept."""
-    hub = hub_env["hub"]
-    api_work = hub_env["api_work"]
-
-    sha_c1 = _make_commit(api_work, "c1")
-    sha_c2 = _make_commit(api_work, "c2")  # c2 ahead of c1
-
-    # Dev2 pushes api at c1 (the older commit)
-    hub2 = _clone_hub(hub_env)
-    _update_sub(hub2, "api", sha_c1)
-    _git(["commit", "-m", "dev2: api@c1"], hub2)
-    _git(["push", "origin", "main"], hub2)
-
-    # Dev1 has api at c2 (the newer commit)
-    _update_sub(hub, "api", sha_c2)
-    _git(["commit", "-m", "dev1: api@c2"], hub)
-
-    result = hub_push_with_rebase(root=hub)
-
-    assert result["pushed"] is True
-    assert result["rebased"] is True
-    assert _committed_sub_ref(hub, "api") == sha_c2
-
-
-# ─── 4. Same-project fast-forward: theirs newer ──────────────────
-
-
-def test_same_project_ff_theirs_newer(hub_env):
-    """Both update api ref — theirs is ahead, auto-resolved, theirs kept."""
-    hub = hub_env["hub"]
-    api_work = hub_env["api_work"]
-
-    sha_c1 = _make_commit(api_work, "c1")
-    sha_c2 = _make_commit(api_work, "c2")
-
-    # Dev2 pushes api at c2 (the newer commit)
-    hub2 = _clone_hub(hub_env)
-    _update_sub(hub2, "api", sha_c2)
-    _git(["commit", "-m", "dev2: api@c2"], hub2)
-    _git(["push", "origin", "main"], hub2)
-
-    # Dev1 has api at c1 (the older commit)
-    _update_sub(hub, "api", sha_c1)
-    _git(["commit", "-m", "dev1: api@c1"], hub)
-
-    result = hub_push_with_rebase(root=hub)
-
-    assert result["pushed"] is True
-    assert result["rebased"] is True
-    # Check the committed ref (not the submodule working dir, which rebase
-    # doesn't update for theirs-newer resolution)
-    assert _committed_sub_ref(hub, "api") == sha_c2
-
-
-# ─── 5. Diverged refs ────────────────────────────────────────────
-
-
-def test_diverged_refs(hub_env):
-    """Both update api ref, branches diverged — flagged for manual resolution."""
-    hub = hub_env["hub"]
-    api_work = hub_env["api_work"]
-
-    # Create two diverged branches in the api subproject
-    _git(["checkout", "-b", "branch-a"], api_work)
-    (api_work / "a.txt").write_text("a")
-    _git(["add", "."], api_work)
-    _git(["commit", "-m", "branch-a"], api_work)
-    sha_a = _sha(api_work)
-    _git(["push", "origin", "branch-a"], api_work)
-
-    _git(["checkout", "main"], api_work)
-    _git(["checkout", "-b", "branch-b"], api_work)
-    (api_work / "b.txt").write_text("b")
-    _git(["add", "."], api_work)
-    _git(["commit", "-m", "branch-b"], api_work)
-    sha_b = _sha(api_work)
-    _git(["push", "origin", "branch-b"], api_work)
-
-    # Dev2 pushes api at branch-a
-    hub2 = _clone_hub(hub_env)
-    _update_sub(hub2, "api", sha_a)
-    _git(["commit", "-m", "dev2: api@branch-a"], hub2)
-    _git(["push", "origin", "main"], hub2)
-
-    # Dev1 has api at branch-b
-    _update_sub(hub, "api", sha_b)
-    _git(["commit", "-m", "dev1: api@branch-b"], hub)
-
-    result = hub_push_with_rebase(root=hub)
-
-    assert result["pushed"] is False
-    assert "diverged" in result["error"].lower()
-
-
-# ─── 6. Max retries exceeded ─────────────────────────────────────
+# ─── 3. Max retries exceeded ─────────────────────────────────────
 
 
 def test_max_retries_exceeded(hub_env):
@@ -317,7 +219,7 @@ def test_max_retries_exceeded(hub_env):
         hook_path.unlink()
 
 
-# ─── 7. .project/ file conflict ──────────────────────────────────
+# ─── 4. .project/ file conflict ──────────────────────────────────
 
 
 def test_project_file_conflict(hub_env):
@@ -345,11 +247,11 @@ def test_project_file_conflict(hub_env):
     result = hub_push_with_rebase(root=hub)
 
     assert result["pushed"] is False
-    assert ".project/" in result["error"]
+    assert "rebase conflict" in result["error"]
     assert "manual resolution" in result["error"]
 
 
-# ─── 8. Ref log after push ───────────────────────────────────────
+# ─── 5. Ref log after push ───────────────────────────────────────
 
 
 def test_ref_log_after_push(hub_env):
@@ -385,7 +287,7 @@ def test_ref_log_after_push(hub_env):
     assert entry["old_ref"] != entry["new_ref"]
 
 
-# ─── 9. Ref log rotation ─────────────────────────────────────────
+# ─── 6. Ref log rotation ─────────────────────────────────────────
 
 
 def test_ref_log_rotation(tmp_hub):

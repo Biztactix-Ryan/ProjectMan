@@ -114,7 +114,7 @@ def load_config(root: Optional[Path] = None) -> ProjectConfig:
 
 #: The tool families that are registered only on request, and the config key
 #: that turns each one on.  ``server.TOOL_FAMILIES`` names the tools in each.
-GATED_TOOL_FAMILIES = ("changesets", "maintenance", "web")
+GATED_TOOL_FAMILIES = ("maintenance", "web")
 
 
 def enabled_tool_families(config: Optional[ProjectConfig]) -> dict[str, bool]:
@@ -127,19 +127,14 @@ def enabled_tool_families(config: Optional[ProjectConfig]) -> dict[str, bool]:
         tools:
           web: true
 
-    The one inference: ``tools.changesets`` left unset follows ``hub`` — a
-    changeset spans several projects, which only a hub has.  Writing
-    ``changesets: false`` in a hub config, or ``true`` in a leaf one,
-    overrides that.  ``maintenance`` (the break-glass cluster) and ``web``
-    take no inference at all: off until someone writes ``true``.
+    No family takes any inference: ``maintenance`` (the break-glass
+    cluster) and ``web`` are off until someone writes ``true``.
     ``config=None`` (no project found) means everything stays hidden.
     """
     if config is None:
         return {family: False for family in GATED_TOOL_FAMILIES}
     flags = config.tools
-    changesets = config.hub if flags.changesets is None else flags.changesets
     return {
-        "changesets": bool(changesets),
         "maintenance": bool(flags.maintenance),
         "web": bool(flags.web),
     }

@@ -34,14 +34,15 @@ import pytest
 import yaml
 from mcp.server.fastmcp.exceptions import ToolError
 
+from projectman.errors import ERROR_CODES, NotFoundError, ProjectManError
 from tools.usage_telemetry import classify as cf
 from tools.usage_telemetry.extract import ToolCall, ToolResult
 
 SERVER_PY = Path(__file__).resolve().parents[1] / "src" / "projectman" / "server.py"
 
-#: The changeset and web families are hidden from ``tools/list`` by default
+#: The maintenance and web families are hidden from ``tools/list`` by default
 #: (US-PM-15-5).  What this file proves is a property of every tool's failure paths,
-#: ``pm_changeset_create``'s among them, so it sweeps the full surface.  ``tests/test_tool_gating.py`` asserts the gate itself.
+#: ``pm_repair``'s among them, so it sweeps the full surface.  ``tests/test_tool_gating.py`` asserts the gate itself.
 pytestmark = pytest.mark.usefixtures("all_tool_families")
 
 
@@ -147,20 +148,6 @@ def test_nonexistent_id_raises(tmp_project, monkeypatch):
         with pytest.raises(ToolError) as excinfo:
             fn("US-TST-9-9")
         assert "US-TST-9-9" in str(excinfo.value), fn.__name__
-
-
-def test_constraint_violation_on_empty_argument_raises(tmp_project, monkeypatch):
-    """An explicit (non-generic) site: pm_changeset_create with no projects.
-
-    Inventory 3.3 — one of the four plain-string ``return "error: ..."`` sites
-    the story's own grep does not find.
-    """
-    _in_project(tmp_project, monkeypatch)
-    from projectman.server import pm_changeset_create
-
-    with pytest.raises(ToolError) as excinfo:
-        pm_changeset_create("no-projects", "")
-    assert str(excinfo.value) == "at least one project is required"
 
 
 def test_mutation_on_absent_malformed_file_raises(tmp_project, monkeypatch):
@@ -300,8 +287,6 @@ def _failing_calls(tmp_project):
     from projectman.server import (
         pm_archive,
         pm_batch_get,
-        pm_changeset_create,
-        pm_changeset_status,
         pm_docs,
         pm_estimate,
         pm_get,
@@ -322,11 +307,9 @@ def _failing_calls(tmp_project):
         ("pm_estimate missing id", pm_estimate, ("US-TST-9-9",)),
         ("pm_scope missing id", pm_scope, ("US-TST-9-9",)),
         ("pm_get_sprint missing id", pm_get_sprint, ("SPRINT-999",)),
-        ("pm_changeset_status missing id", pm_changeset_status, ("CS-TST-999",)),
         ("pm_batch_get bad type", pm_batch_get, ("task",)),
         ("pm_docs unknown name", pm_docs, ("nonsense",)),
         ("pm_update_doc unknown name", pm_update_doc, ("nonsense", "x")),
-        ("pm_changeset_create no projects", pm_changeset_create, ("cs", "")),
         ("pm_restore absent file", pm_restore, ("GHOST-1.md",)),
         ("pm_repair not a hub", pm_repair, ()),
     ]
@@ -385,8 +368,6 @@ def test_is_error_is_actually_set_on_the_wire(tmp_project, monkeypatch):
         for name, arguments, expected in (
             ("pm_get", {"id": "US-TST-9-9"}, "Task not found: US-TST-9-9"),
             ("pm_docs", {"doc": "nonsense"}, "unknown doc 'nonsense'"),
-            ("pm_changeset_create", {"title": "cs", "projects": ""},
-             "at least one project is required"),
         ):
             is_error, text = await call(name, arguments)
             assert is_error is True, name
@@ -449,3 +430,161 @@ def test_the_epics_instrument_sees_no_soft_error_from_any_of_them(
     assert report.hard == len(calls)
     assert report.failures == len(calls)
     assert report.top_messages() == []
+
+
+# --------------------------------------------------------------------------
+# The code on the wire (US-PRJ-48-7).
+#
+# US-PM-2 made a genuine failure *visible*; US-PRJ-48 makes it *classifiable*.
+# `_failed` now appends the taxonomy code as a trailing token and the raised
+# error exposes `.code` / `.message`, so an in-process caller
+# (orchestrator_api, the web routes) can branch without parsing prose.  The
+# message itself is unchanged — every assertion above still holds, which is
+# the backwards-compatibility criterion asserted in place rather than argued.
+# --------------------------------------------------------------------------
+
+
+CODED_BUILTINS = [
+    (FileNotFoundError("gone"), "not_found"),
+    (ValueError("bad points"), "invalid"),
+    (PermissionError("denied"), "permission"),
+    # The generic catch-all: anything with no more specific classification.
+    (RuntimeError("boom"), "internal"),
+    (Exception("boom"), "internal"),
+    (KeyError("k"), "internal"),
+]
+
+
+def test_coded_error_is_still_a_tool_error():
+    """The suffix must not cost anyone their ``except ToolError``.
+
+    Every converted site raises through ``_failed``, and roughly fifty of them
+    are caught, re-raised or asserted on as ``ToolError`` (here, in
+    ``server.py`` itself, and across the suite).  Subclassing is what keeps all
+    of that true.
+    """
+    from projectman.server import CodedToolError, _failed
+
+    err = _failed(FileNotFoundError("gone"))
+    assert isinstance(err, ToolError)
+    assert isinstance(err, CodedToolError)
+
+
+@pytest.mark.parametrize("code", ERROR_CODES)
+def test_failed_renders_every_code_in_the_taxonomy(code):
+    """Every member of ``ERROR_CODES`` renders — none is unreachable prose.
+
+    Parametrised over the taxonomy itself rather than a hand-written list, so
+    a code added later fails here until it, too, is proven to render.
+    """
+    from projectman.server import _failed
+
+    err = _failed(ProjectManError("Task US-TST-1-9 not found", code=code))
+    assert err.code == code
+    assert err.message == "Task US-TST-1-9 not found"
+    assert str(err) == f"Task US-TST-1-9 not found [code: {code}]"
+
+
+@pytest.mark.parametrize("exc,code", CODED_BUILTINS)
+def test_failed_maps_builtins_and_falls_back_to_internal(exc, code):
+    """The builtin mapping, including the generic fallback.
+
+    Pre-taxonomy code (and the standard library) still raises plain builtins;
+    they must not all collapse into one undifferentiated code.  Anything with
+    no mapping is ``internal`` — the fallback the acceptance criteria require.
+    """
+    from projectman.server import _failed
+
+    err = _failed(exc)
+    assert err.code == code
+    assert code in ERROR_CODES
+    assert str(err) == f"{err.message} [code: {code}]"
+
+
+def test_the_message_is_unchanged_and_the_code_is_only_appended():
+    """Backwards compatibility, asserted directly: message text is untouched."""
+    from projectman.server import _failed
+
+    err = _failed(NotFoundError("Task US-PRJ-1-9 not found"))
+    assert str(err).startswith("Task US-PRJ-1-9 not found")
+    assert err.message == "Task US-PRJ-1-9 not found"
+    assert str(err) == "Task US-PRJ-1-9 not found [code: not_found]"
+
+
+def test_an_empty_message_still_falls_back_to_the_class_name():
+    """The pre-existing empty-message guard survives, now with a code."""
+    from projectman.server import _failed
+
+    err = _failed(ValueError(""))
+    assert err.message == "ValueError"
+    assert str(err) == "ValueError [code: invalid]"
+
+
+def test_a_deliberate_tool_error_passes_through_untouched():
+    """A hand-raised ``ToolError`` is already a rendered MCP error.
+
+    Its text is that tool's own contract — ``pm_get``'s unknown-field message
+    ends in a machine-parsed ``valid names:`` list — so ``_failed`` must not
+    append anything when a tool body's generic handler catches one on its way
+    out.  Nor may a nested call double-suffix an already-coded error.
+    """
+    from projectman.server import CodedToolError, _failed
+
+    passed_through = _failed(ToolError("unknown field name(s) for task: stauts"))
+    assert str(passed_through) == "unknown field name(s) for task: stauts"
+
+    already_coded = _failed(CodedToolError("Task US-TST-9-9 not found", "not_found"))
+    assert str(already_coded) == "Task US-TST-9-9 not found [code: not_found]"
+    assert already_coded.code == "not_found"
+
+
+def test_in_process_callers_can_branch_without_parsing_text(tmp_project, monkeypatch):
+    """The reason ``.code`` exists: ``orchestrator_api`` and the web routes.
+
+    Driven through a real tool against a real store, so this asserts the code
+    the *store's* exception carries reaches the caller — not one manufactured
+    in the test.
+    """
+    _in_project(tmp_project, monkeypatch)
+    from projectman.server import CodedToolError, pm_get
+
+    with pytest.raises(ToolError) as excinfo:
+        pm_get("US-TST-9-9")
+    err = excinfo.value
+    assert isinstance(err, CodedToolError)
+    assert err.code == "not_found"
+    assert "US-TST-9-9" in err.message
+    assert str(err).endswith("[code: not_found]")
+
+
+def test_the_code_reaches_the_actual_wire(tmp_project, monkeypatch):
+    """End to end through FastMCP's own ``tools/call`` handler.
+
+    The sibling test above asserts the raise; this one reads the text off the
+    ``CallToolResult`` the client actually receives, which is the only place
+    the criterion "error responses include error_code" can be checked.
+    """
+    import anyio
+    import mcp.types as types
+
+    monkeypatch.chdir(tmp_project)
+    from projectman.server import mcp as mcp_server
+
+    handler = mcp_server._mcp_server.request_handlers[types.CallToolRequest]
+
+    async def main():
+        request = types.CallToolRequest(
+            method="tools/call",
+            params=types.CallToolRequestParams(
+                name="pm_get", arguments={"id": "US-TST-9-9"}
+            ),
+        )
+        result = (await handler(request)).root
+        assert bool(result.isError) is True
+        text = result.content[0].text
+        # FastMCP prefixes "Error executing tool <name>: "; the message and the
+        # code token are what this asserts, in that order.
+        assert "Task not found: US-TST-9-9" in text
+        assert text.endswith("Task not found: US-TST-9-9 [code: not_found]")
+
+    anyio.run(main)

@@ -4,22 +4,23 @@ import asyncio
 from pathlib import Path
 from typing import Optional, Union
 
-import frontmatter
 import yaml
 from mcp.server.fastmcp import FastMCP
 from mcp.server.fastmcp.exceptions import ToolError
 from mcp.types import ToolAnnotations
 
 from .config import enabled_tool_families, find_project_root, load_config
+from .errors import wire_code_for
 from .event_bus import EventBus, NoOpEventBus
 from .indexer import build_index, write_index
-from .models import ChangesetStatus, Evidence, ProjectIndex
+from .models import Evidence, ProjectIndex
 from .store import (
     CLAIM_FIELDS,
     NOTE_SUMMARY_RECOMMENDED,
     NothingToCommit,
     RELEASE_FIELDS,
     Store,
+    _atomic_write_text,
     claim_age_seconds,
     is_stale_claim,
 )
@@ -226,6 +227,29 @@ def _expected_negative_payload(status: str, message: str, **detail) -> dict:
     }
 
 
+class CodedToolError(ToolError):
+    """A :class:`ToolError` that also carries a machine-readable error code.
+
+    ``str(exc)`` is ``f"{message} [code: {code}]"`` — the human message the
+    caller has always seen, with the code appended as a trailing token, so a
+    client that only reads prose loses nothing and a client that wants to
+    branch can parse one stable suffix.  In-process callers
+    (``orchestrator_api``, the web routes) should read ``.code`` / ``.message``
+    instead of parsing the text at all.
+
+    It subclasses ``ToolError``, so every ``except ToolError`` and
+    ``pytest.raises(ToolError)`` in the codebase keeps matching, and FastMCP
+    still renders it as a ``CallToolResult`` with ``isError=True``.
+    """
+
+    def __init__(self, message: str, code: str) -> None:
+        super().__init__(f"{message} [code: {code}]" if code else message)
+        #: The unsuffixed human-readable message.
+        self.message = message
+        #: The machine-readable code, from ``errors.ERROR_CODES``.
+        self.code = code
+
+
 def _failed(exc: Exception) -> ToolError:
     """Turn a caught exception into a real MCP error (US-PM-2-3).
 
@@ -252,8 +276,27 @@ def _failed(exc: Exception) -> ToolError:
     ``except Exception as e: return f"error: {e}"`` handler is a GENUINE FAILURE
     site and now raises through this helper like every other one.  See
     docs/reference/error-paths-inventory.md 7.1.
+
+    US-PRJ-48-7: the returned error also carries a *code*.  A
+    :class:`~projectman.errors.ProjectManError` supplies its own; a builtin is
+    mapped by :func:`~projectman.errors.wire_code_for`
+    (``FileNotFoundError`` -> ``not_found``, ``ValueError`` -> ``invalid``,
+    ``PermissionError`` -> ``permission``); anything else — the generic
+    catch-all every tool body still ends with — becomes ``internal``.  The
+    message is unchanged and the code is appended as ``" [code: <code>]"``.
+    A ``ToolError`` is passed through untouched.  It is already a rendered MCP
+    error — either one this helper produced further down a nested call (which
+    must not be double-suffixed) or one a tool raised deliberately, whose exact
+    text is that tool's own contract: ``pm_get``'s unknown-field message, for
+    instance, ends in a machine-parsed ``valid names:`` list that a trailing
+    token would corrupt.  Re-wrapping never changed those messages before and
+    must not start now (US-PRJ-48 AC: "existing error behavior preserved").
     """
-    return ToolError(str(exc) or exc.__class__.__name__)
+    if isinstance(exc, CodedToolError):
+        return CodedToolError(exc.message, exc.code)
+    if isinstance(exc, ToolError):
+        return ToolError(str(exc) or exc.__class__.__name__)
+    return CodedToolError(str(exc) or exc.__class__.__name__, wire_code_for(exc))
 
 
 def _resolve_id(
@@ -306,9 +349,8 @@ def _resolve_id(
       the missing-argument error, not a conflict between two empties).
 
     ``required=False`` covers the tools whose ID is an optional *filter* rather
-    than the operand — ``pm_activity``'s ``item_id`` (omit to see everything),
-    ``pm_changeset_status``'s ``changeset_id`` (omit to list all).  Only the
-    "neither" rule changes: it returns ``None`` instead of raising, so omitting
+    than the operand — ``pm_activity``'s ``item_id`` (omit to see everything).
+    Only the "neither" rule changes: it returns ``None`` instead of raising, so omitting
     the argument keeps meaning "no filter".  A conflict is still a conflict —
     two different filters are as unanswerable as two different operands.
 
@@ -663,6 +705,44 @@ def _criteria_list(
     return [str(entry).strip() for entry in entries if str(entry).strip()]
 
 
+#: The counterpart to ``_criteria_list`` for every OTHER list-shaped input on
+#: this surface — tags, dependency IDs, item IDs, field names.  Their entries
+#: are tokens, never prose, so a comma inside one is a separator and splitting
+#: a string on commas is right (US-PRJ-58).  What is new is that a real list
+#: is now accepted too, so an MCP client holding ``["a", "b"]`` no longer has
+#: to join it into ``"a,b"`` for the server to split it straight back apart.
+def _as_list(
+    value: Union[str, list[str], None],
+) -> Optional[list[str]]:
+    """Normalise a token-list argument to a list of entries.
+
+    A string is split on commas; a list is taken entry-per-entry, as-is.
+    Either way entries are stripped and blank ones dropped, so ``"a, b,,c"``
+    and ``["a ", " b", "", "c"]`` are the same three tokens.
+
+    ``None`` means "not supplied" and is passed through as ``None``; an empty
+    string or empty list means "supplied, but empty" and yields ``[]`` — the
+    distinction the update path uses to tell "leave this field alone" from
+    "set this field to nothing".
+    """
+    if value is None:
+        return None
+    entries = value.split(",") if isinstance(value, str) else list(value)
+    return [str(entry).strip() for entry in entries if str(entry).strip()]
+
+
+def _as_csv(value: Union[str, list[str], None]) -> Optional[str]:
+    """``_as_list`` re-joined, for the few paths that still pass IDs as a string.
+
+    ``_resolve_id`` compares and de-duplicates *scalar* argument values, so an
+    ID argument that now also accepts a list is normalised to the canonical
+    comma string before it gets there.  The tool body splits it again exactly
+    as it always did.
+    """
+    entries = _as_list(value)
+    return None if entries is None else ",".join(entries)
+
+
 # ─── Query Tools ────────────────────────────────────────────────
 
 
@@ -691,13 +771,6 @@ def pm_status(project: Optional[str] = None) -> str:
             key = "archived" if entry.archived else entry.status
             status_groups.setdefault(key, []).append(entry)
 
-        # Changeset summary
-        changesets = store.list_changesets()
-        cs_by_status = {}
-        for cs in changesets:
-            cs_by_status.setdefault(cs.status.value, 0)
-            cs_by_status[cs.status.value] += 1
-
         result = {
             "project": store.config.name,
             "epics": index.epic_count,
@@ -707,8 +780,6 @@ def pm_status(project: Optional[str] = None) -> str:
             "completed_points": index.completed_points,
             "completion": f"{pct}%",
             "by_status": {k: len(v) for k, v in status_groups.items()},
-            "changesets": len(changesets),
-            "changesets_by_status": cs_by_status,
         }
         return _yaml_dump(result)
     except Exception as e:
@@ -719,10 +790,10 @@ def pm_status(project: Optional[str] = None) -> str:
     title="Get Item", annotations=ToolAnnotations(title="Get Item", readOnlyHint=True)
 )
 def pm_get(
-    id: Optional[str] = None,
+    id: Optional[Union[str, list[str]]] = None,
     include_log: bool = False,
     project: Optional[str] = None,
-    task_id: Optional[str] = None,
+    task_id: Optional[Union[str, list[str]]] = None,
     fields: Optional[str] = None,
 ) -> str:
     """Get full details of epics, stories, or tasks by ID. Accepts multiple comma-separated IDs — always fetch related items in one call instead of repeated single-ID calls.
@@ -732,14 +803,14 @@ def pm_get(
     costs a small fraction of the full item.
 
     Args:
-        id: One or more comma-separated IDs — epic (e.g. EPIC-PRJ-1), story (e.g. US-PRJ-1), or task (e.g. US-PRJ-1-1,US-PRJ-1-2) (alias: task_id)
+        id: One or more IDs — epic (e.g. EPIC-PRJ-1), story (e.g. US-PRJ-1), or task (e.g. US-PRJ-1-1). Pass a list (["US-PRJ-1-1", "US-PRJ-1-2"]) or a comma-separated string ("US-PRJ-1-1,US-PRJ-1-2"); both mean the same thing. (alias: task_id)
         include_log: Include the 3 most recent run-log entries per item (default false; use pm_run_log for full history)
         project: Optional project name (hub mode only)
         task_id: Alias for id — either spelling works; passing both with different values is an error
         fields: Comma-separated key names to return, e.g. "status,assignee" — everything else is omitted (`id` is always kept so multi-ID results stay addressable). Names are the item's own keys: status, assignee, points, title, story_id, depends_on, tags, body, acceptance_criteria, recent_run_log, … An unknown name is an error listing the valid ones. Omit for the full item — the default is unchanged.
     """
     try:
-        id = _resolve_id("id", id, task_id=task_id)
+        id = _resolve_id("id", _as_csv(id), task_id=_as_csv(task_id))
         store = _store(project)
         names = _field_names(fields)
 
@@ -800,7 +871,7 @@ def pm_get(
 )
 def pm_batch_get(
     type: Optional[str] = None,
-    ids: Optional[str] = None,
+    ids: Optional[Union[str, list[str]]] = None,
     project: Optional[str] = None,
     brief: bool = False,
     fields: Optional[str] = None,
@@ -816,7 +887,7 @@ def pm_batch_get(
 
     Args:
         type: Fetch all items of a type: "epics", "stories", or "tasks"
-        ids: Comma-separated item IDs to fetch (e.g. "US-PRJ-1,US-PRJ-2-3,EPIC-PRJ-1"). Takes precedence over type.
+        ids: Item IDs to fetch — a list (["US-PRJ-1", "EPIC-PRJ-1"]) or a comma-separated string ("US-PRJ-1,US-PRJ-2-3,EPIC-PRJ-1"); both mean the same thing. Takes precedence over type.
         project: Optional project name (hub mode only)
         brief: Drop the heavy free-text (default false). Keeps whichever of id, title, status, points, priority, story_id, epic_id, assignee, tags, depends_on the item type has, and omits body, acceptance_criteria and any run log. Use it to scan a backlog: pm_batch_get(type="stories", brief=True).
         fields: Comma-separated key names to return, e.g. "status,points" — everything else is omitted and `id` is always kept, exactly as on pm_get. An unknown name is an error listing the valid ones. If both are given, `fields` wins — explicit beats preset. Omit both for the full items; the default is unchanged.
@@ -838,7 +909,7 @@ def pm_batch_get(
 
         if ids:
             items = []
-            for item_id in [i.strip() for i in ids.split(",") if i.strip()]:
+            for item_id in _as_list(ids) or []:
                 try:
                     meta, body = store.get(item_id)
                     item = meta.model_dump(mode="json")
@@ -984,6 +1055,64 @@ def pm_update_doc(
         path = proj_dir / filename
         path.write_text(content)
         return f"updated: {filename}"
+    except Exception as e:
+        raise _failed(e) from e
+
+
+@mcp.tool(
+    title="Next-Session Note",
+    annotations=ToolAnnotations(
+        title="Next-Session Note", readOnlyHint=False, destructiveHint=False
+    ),
+)
+def pm_next(
+    text: Optional[str] = None,
+    append: bool = False,
+    clear: bool = False,
+    project: Optional[str] = None,
+) -> str:
+    """Read, write or clear the short note the next session should see first.
+
+    It exists so a decision made mid-plan — "we decided to fix X by doing Y
+    and Z" — survives a context clear without being turned into a story: it
+    is scratch text with one owner and a short life, kept in
+    `.project/NEXT.md` and nowhere else.
+
+    Three modes. No arguments reads it, returning `{note: <text>}` or
+    `{note: null, message: "no note saved"}`. `text` writes it — replacing
+    the note, or with `append=true` adding a dated paragraph below what is
+    already there. `clear=true` deletes it and returns `{cleared: true}` (or
+    `false` when there was nothing to clear). `text` and `clear` together is
+    an error; so is `append` without `text`.
+
+    `clear` is deliberately not marked destructive: the note is scratch by
+    design, holds no project state, and is meant to be cleared once the work
+    it describes is done.
+
+    Args:
+        text: The note to save. Omit to read the note, which is the common call.
+        append: Add `text` below the existing note under a dated heading instead of replacing it. Requires `text`.
+        clear: Delete the note. Cannot be combined with `text`.
+        project: Optional project name (hub mode only)
+    """
+    try:
+        if text is not None and clear:
+            raise ToolError("pass text or clear, not both")
+        if append and text is None:
+            raise ToolError("append needs text to append — pass text, or omit append")
+
+        store = _store(project)
+
+        if clear:
+            return _yaml_dump({"cleared": store.clear_next()})
+
+        if text is not None:
+            return _yaml_dump({"note": store.write_next(text, append=append)})
+
+        note = store.read_next()
+        if note is None:
+            return _yaml_dump({"note": None, "message": "no note saved"})
+        return _yaml_dump({"note": note})
     except Exception as e:
         raise _failed(e) from e
 
@@ -1174,6 +1303,15 @@ def pm_search(
         raise _failed(e) from e
 
 
+# Shipped verbatim on every pm_board call so callers can rely on it
+# being there.  Kept to one line: it is paid for in tokens per call.
+_BOARD_NOTE = (
+    "blocked = a status a human set on the task (external blocker). "
+    "not_ready = derived each build from readiness: no points, thin "
+    "description, or incomplete dependencies. Independent concepts."
+)
+
+
 @mcp.tool(
     title="Task Board",
     annotations=ToolAnnotations(title="Task Board", readOnlyHint=True),
@@ -1191,6 +1329,10 @@ def pm_board(
     `claimed_by_run` when known, and `stale: true` once the claim has aged
     past the threshold; `stale_tasks` lists their ids. A claim that has gone
     stale is an abandoned one — release it rather than waiting on it.
+
+    `blocked` and `not_ready` are independent: `blocked` is a status a human
+    set on the task (external blocker), `not_ready` is derived each build from
+    readiness — no points, thin description, or incomplete dependencies.
 
     Args:
         project: Optional project name (hub mode only)
@@ -1368,6 +1510,11 @@ def pm_board(
             "stale_tasks": [t["id"] for t in in_progress if t.get("stale")],
             "stale_after_hours": threshold_hours,
             "limit": limit,
+            # Independent concepts, routinely confused: `blocked` is a status a
+            # human sets, `not_ready` is derived on every board build from the
+            # task's own readiness.  One short line, on every call, so callers
+            # can rely on it being there (US-PRJ-31-4).
+            "note": _BOARD_NOTE,
         }
         return _yaml_dump(result)
     except Exception as e:
@@ -1430,8 +1577,8 @@ def pm_create_story(
     points: Optional[int] = None,
     epic_id: Optional[str] = None,
     acceptance_criteria: Optional[Union[str, list[str]]] = None,
-    tags: Optional[str] = None,
-    depends_on: Optional[str] = None,
+    tags: Optional[Union[str, list[str]]] = None,
+    depends_on: Optional[Union[str, list[str]]] = None,
     project: Optional[str] = None,
 ) -> str:
     """Create a new user story.
@@ -1443,15 +1590,15 @@ def pm_create_story(
         points: Story points (fibonacci: 1,2,3,5,8,13)
         epic_id: Optional parent epic ID (e.g. EPIC-PRJ-1)
         acceptance_criteria: List of acceptance criteria, one entry per criterion (e.g. ["Users can log in", "Error shown on invalid password"]). Pass a JSON list, never a comma-joined string: criteria are natural language and a comma inside one is punctuation, not a separator. A bare string is accepted and taken as exactly one criterion. Each criterion auto-generates a test task.
-        tags: Comma-separated tags (e.g. "security,mvp")
-        depends_on: Comma-separated dependency IDs (stories or tasks this story depends on)
+        tags: Tags — a list (["security", "mvp"]) or a comma-separated string ("security,mvp"); both mean the same thing.
+        depends_on: Dependency IDs (stories or tasks this story depends on) — a list (["US-PRJ-1", "US-PRJ-2"]) or a comma-separated string ("US-PRJ-1,US-PRJ-2"); both mean the same thing.
         project: Optional project name (hub mode only)
     """
     try:
         store = _store(project)
         ac_list = _criteria_list(acceptance_criteria)
-        tag_list = [t.strip() for t in tags.split(",")] if tags else None
-        dep_list = [d.strip() for d in depends_on.split(",")] if depends_on else None
+        tag_list = _as_list(tags) if tags else None
+        dep_list = _as_list(depends_on) if depends_on else None
         meta, test_tasks = store.create_story(
             title,
             description,
@@ -1497,7 +1644,7 @@ def pm_create_epic(
     description: str,
     priority: Optional[str] = None,
     target_date: Optional[str] = None,
-    tags: Optional[str] = None,
+    tags: Optional[Union[str, list[str]]] = None,
     project: Optional[str] = None,
 ) -> str:
     """Create a new epic for grouping related stories.
@@ -1507,12 +1654,12 @@ def pm_create_epic(
         description: Epic description (vision, success criteria, scope)
         priority: Priority level: must, should, could, wont
         target_date: Optional target date (YYYY-MM-DD)
-        tags: Comma-separated tags (e.g. "security,mvp")
+        tags: Tags — a list (["security", "mvp"]) or a comma-separated string ("security,mvp"); both mean the same thing.
         project: Optional project name (hub mode only)
     """
     try:
         store = _store(project)
-        tag_list = [t.strip() for t in tags.split(",")] if tags else None
+        tag_list = _as_list(tags) if tags else None
         meta = store.create_epic(title, description, priority, target_date, tag_list)
         write_index(store)
         _emit("project.updated", {"summary": f"Epic {meta.id} created"})
@@ -1634,6 +1781,10 @@ def pm_context(
     docs, active epics, and active stories. Docs are truncated to max_doc_chars
     each — use pm_docs(doc=...) to read a full document.
 
+    When the previous session left a next-session note (pm_next), it comes
+    back first under `next_time`, untruncated; the key is absent when there
+    is no note.
+
     Args:
         project: Optional project name (hub mode only)
         limit: Max epics/stories to include (default 20)
@@ -1656,6 +1807,15 @@ def pm_context(
             return text
 
         result = {}
+
+        # The next-session note goes first, before any document: it is the
+        # one thing a session-start read must not scroll past, and it is
+        # short by design so it is never truncated.  Absent note, absent
+        # key — an empty `next_time` would read as "there was a note and it
+        # said nothing".
+        next_note = store.read_next()
+        if next_note:
+            result["next_time"] = next_note
 
         # Hub-level context (if hub mode)
         if hub_config.hub:
@@ -1719,8 +1879,8 @@ def pm_create_task(
     title: str,
     description: str,
     points: Optional[int] = None,
-    tags: Optional[str] = None,
-    depends_on: Optional[str] = None,
+    tags: Optional[Union[str, list[str]]] = None,
+    depends_on: Optional[Union[str, list[str]]] = None,
     project: Optional[str] = None,
 ) -> str:
     """Create a new task under a story.
@@ -1730,14 +1890,14 @@ def pm_create_task(
         title: Task title
         description: Task description with implementation details
         points: Task points (fibonacci: 1,2,3,5,8,13)
-        tags: Comma-separated tags (e.g. "backend,api")
-        depends_on: Comma-separated task IDs this task depends on (e.g. "US-PRJ-1-1,US-PRJ-1-2")
+        tags: Tags — a list (["backend", "api"]) or a comma-separated string ("backend,api"); both mean the same thing.
+        depends_on: Task IDs this task depends on — a list (["US-PRJ-1-1", "US-PRJ-1-2"]) or a comma-separated string ("US-PRJ-1-1,US-PRJ-1-2"); both mean the same thing.
         project: Optional project name (hub mode only)
     """
     try:
         store = _store(project)
-        tag_list = [t.strip() for t in tags.split(",")] if tags else None
-        dep_list = [d.strip() for d in depends_on.split(",")] if depends_on else None
+        tag_list = _as_list(tags) if tags else None
+        dep_list = _as_list(depends_on) if depends_on else None
         meta = store.create_task(
             story_id, title, description, points, tags=tag_list, depends_on=dep_list
         )
@@ -1766,6 +1926,10 @@ def pm_create_tasks(
     project: Optional[str] = None,
 ) -> str:
     """Create multiple tasks under a story in a single call.
+
+    `depends_on` may forward-reference the id of a task created later in the
+    same batch — ids for the whole batch are allocated before anything is
+    written. A cycle rejects and rolls back the whole batch.
 
     Args:
         story_id: Parent story ID (e.g. US-PRJ-1)
@@ -1810,12 +1974,12 @@ def _do_update(
     title: Optional[str] = None,
     assignee: Optional[str] = None,
     unassign: bool = False,
-    clear: Optional[str] = None,
+    clear: Optional[Union[str, list[str]]] = None,
     epic_id: Optional[str] = None,
     body: Optional[str] = None,
     acceptance_criteria: Optional[Union[str, list[str]]] = None,
-    tags: Optional[str] = None,
-    depends_on: Optional[str] = None,
+    tags: Optional[Union[str, list[str]]] = None,
+    depends_on: Optional[Union[str, list[str]]] = None,
     outcome: Optional[str] = None,
     note: Optional[str] = None,
     evidence: Optional[Evidence] = None,
@@ -1864,9 +2028,7 @@ def _do_update(
         # "" is normalised to None by Store.update — the legacy sentinel,
         # still accepted there, is now spelled by this boolean instead.
         kwargs["assignee"] = ""
-    clear_fields = (
-        [name.strip() for name in clear.split(",") if name.strip()] if clear else []
-    )
+    clear_fields = _as_list(clear) if clear else []
     if epic_id is not None:
         kwargs["epic_id"] = epic_id
     if body is not None:
@@ -1874,9 +2036,9 @@ def _do_update(
     if acceptance_criteria is not None:
         kwargs["acceptance_criteria"] = _criteria_list(acceptance_criteria)
     if tags is not None:
-        kwargs["tags"] = [t.strip() for t in tags.split(",")]
+        kwargs["tags"] = _as_list(tags)
     if depends_on is not None:
-        kwargs["depends_on"] = [d.strip() for d in depends_on.split(",")]
+        kwargs["depends_on"] = _as_list(depends_on)
     if outcome is not None:
         kwargs["outcome"] = outcome
     if note is not None:
@@ -1991,12 +2153,12 @@ def pm_update(
     title: Optional[str] = None,
     assignee: Optional[str] = None,
     unassign: bool = False,
-    clear: Optional[str] = None,
+    clear: Optional[Union[str, list[str]]] = None,
     epic_id: Optional[str] = None,
     body: Optional[str] = None,
     acceptance_criteria: Optional[Union[str, list[str]]] = None,
-    tags: Optional[str] = None,
-    depends_on: Optional[str] = None,
+    tags: Optional[Union[str, list[str]]] = None,
+    depends_on: Optional[Union[str, list[str]]] = None,
     outcome: Optional[str] = None,
     note: Optional[str] = None,
     project: Optional[str] = None,
@@ -2016,12 +2178,12 @@ def pm_update(
         title: New title
         assignee: Assignee name (tasks only). To remove one, pass unassign=true — never an empty assignee.
         unassign: Set true to remove the assignee (tasks only). Changes nothing else — no status reset, no run-log entry; use pm_release for that. Passing unassign=true together with a non-empty assignee is an error.
-        clear: Comma-separated names of fields to reset to empty, e.g. "depends_on", "tags", "depends_on,tags". Valid names: assignee, depends_on, epic_id, points, tags. Clearing a field that is already empty succeeds. Naming a field here and also setting it in the same call is an error, as is an unknown name.
+        clear: Names of fields to reset to empty — a list (["depends_on", "tags"]) or a comma-separated string ("depends_on,tags"); both mean the same thing. Valid names: assignee, depends_on, epic_id, points, tags. Clearing a field that is already empty succeeds. Naming a field here and also setting it in the same call is an error, as is an unknown name.
         epic_id: Link a story to an epic (stories only)
         body: New markdown body/description content
         acceptance_criteria: List of acceptance criteria, one entry per criterion (stories only, e.g. ["Users can log in", "Error shown on invalid password"]). Pass a JSON list, never a comma-joined string: criteria are natural language and a comma inside one is punctuation, not a separator. A bare string is accepted and taken as exactly one criterion; an empty list clears the criteria. Changing them reconciles the auto-generated test tasks: new criteria get a task, reworded criteria have their task retitled and rebodied, and tasks whose criterion was removed are archived if nothing has happened to them or flagged for a human if work has started. Nothing is ever deleted; archiving is reversible (Store.unarchive).
-        tags: Comma-separated tags (e.g. "security,mvp,backend")
-        depends_on: Comma-separated task IDs this task depends on (tasks only, e.g. "US-PRJ-1-1,US-PRJ-1-2")
+        tags: Tags — a list (["security", "mvp", "backend"]) or a comma-separated string ("security,mvp,backend"); both mean the same thing.
+        depends_on: Task IDs this task depends on (tasks only) — a list (["US-PRJ-1-1", "US-PRJ-1-2"]) or a comma-separated string ("US-PRJ-1-1,US-PRJ-1-2"); both mean the same thing.
         outcome: Run-log outcome (success/partial/blocked/failed/info). When provided with note, appends a run-log entry for tracking work attempts.
         note: Run-log note describing what was accomplished or what blocked progress. Longer notes are truncated server-side (4096 chars) with a visible marker, never rejected — the status/outcome write always lands. Requires outcome.
         project: Optional project name (hub mode only)
@@ -2169,17 +2331,17 @@ def _bulk_result(written_key: str, written: list[dict], failures: list[dict]) ->
     ),
 )
 def pm_update_many(
-    ids: Optional[str] = None,
+    ids: Optional[Union[str, list[str]]] = None,
     updates: Optional[list[dict]] = None,
     status: Optional[str] = None,
     points: Optional[int] = None,
     title: Optional[str] = None,
     assignee: Optional[str] = None,
     unassign: bool = False,
-    clear: Optional[str] = None,
+    clear: Optional[Union[str, list[str]]] = None,
     body: Optional[str] = None,
-    tags: Optional[str] = None,
-    depends_on: Optional[str] = None,
+    tags: Optional[Union[str, list[str]]] = None,
+    depends_on: Optional[Union[str, list[str]]] = None,
     outcome: Optional[str] = None,
     note: Optional[str] = None,
     run_id: Optional[str] = None,
@@ -2209,17 +2371,17 @@ def pm_update_many(
     an explicit ID list is one reviewable intent.
 
     Args:
-        ids: Comma-separated item IDs to apply the uniform patch to (e.g. "US-PRJ-1-1,US-PRJ-1-2"). Epics, stories and tasks may be mixed.
+        ids: Item IDs to apply the uniform patch to — a list (["US-PRJ-1-1", "US-PRJ-1-2"]) or a comma-separated string ("US-PRJ-1-1,US-PRJ-1-2"); both mean the same thing. Epics, stories and tasks may be mixed.
         updates: Per-item patches — a list of dicts, each with `id` (or `task_id`) plus any of the fields this tool takes: status, points, title, assignee, unassign, clear, epic_id, body, acceptance_criteria, tags, depends_on, outcome, note, evidence. An unknown key is an error naming the valid ones, raised before anything is written.
         status: New status applied to every listed item (epics: draft/active/done/archived; stories: backlog/ready/active/done/archived; tasks: todo/in-progress/review/done/blocked)
         points: New point estimate for every listed item (fibonacci: 1,2,3,5,8,13). For different estimates per item, use `updates`.
         title: New title for every listed item — rarely what you want in bulk; usually belongs in `updates`.
         assignee: Assignee name for every listed item (tasks only). To remove one, pass unassign=true — never an empty assignee.
         unassign: Set true to remove the assignee from every listed item (tasks only). Passing it together with a non-empty assignee is an error.
-        clear: Comma-separated field names to reset to empty on every listed item. Valid names: assignee, depends_on, epic_id, points, tags.
+        clear: Field names to reset to empty on every listed item — a list (["depends_on", "tags"]) or a comma-separated string ("depends_on,tags"); both mean the same thing. Valid names: assignee, depends_on, epic_id, points, tags.
         body: New markdown body for every listed item — rarely what you want in bulk; usually belongs in `updates`.
-        tags: Comma-separated tags applied to every listed item (e.g. "security,mvp")
-        depends_on: Comma-separated task IDs every listed item depends on (tasks only). For different wiring per item, use `updates`.
+        tags: Tags applied to every listed item — a list (["security", "mvp"]) or a comma-separated string ("security,mvp"); both mean the same thing.
+        depends_on: Task IDs every listed item depends on (tasks only) — a list (["US-PRJ-1-1", "US-PRJ-1-2"]) or a comma-separated string ("US-PRJ-1-1,US-PRJ-1-2"); both mean the same thing. For different wiring per item, use `updates`.
         outcome: Run-log outcome (success/partial/blocked/failed/info) recorded on every listed item. With `note`, appends a run-log entry to each.
         note: Run-log note recorded on every listed item. Truncated server-side exactly as on pm_update, never rejected. Requires outcome.
         run_id: Opaque id of the orchestrator run making these edits, stamped on every activity-log event this call emits so `pm_activity(run_id=...)` returns them. A property of the whole call, like `project` — not a per-item field in `updates`.
@@ -2284,7 +2446,7 @@ def pm_update_many(
         # half lands and second half turns out to be a typo is worse than no
         # bulk verb: the caller cannot tell what state it left behind.
         work: list[tuple[str, dict]] = []
-        id_list = [i.strip() for i in ids.split(",") if i.strip()] if ids else []
+        id_list = _as_list(ids) if ids else []
         if id_list and not uniform:
             raise ToolError(
                 "nothing to change: ids were given with no patch fields — pass "
@@ -2431,7 +2593,7 @@ def pm_archive(
     ),
 )
 def pm_archive_many(
-    ids: Optional[str] = None,
+    ids: Optional[Union[str, list[str]]] = None,
     project: Optional[str] = None,
 ) -> str:
     """Archive many items in one call, from an explicit ID list.
@@ -2452,7 +2614,7 @@ def pm_archive_many(
     ID list is one reviewable intent.
 
     Args:
-        ids: Comma-separated item IDs to archive (e.g. "US-PRJ-1-1,US-PRJ-1-2"). Epics, stories and tasks may be mixed. Required — an empty list is an error, never a no-op.
+        ids: Item IDs to archive — a list (["US-PRJ-1-1", "US-PRJ-1-2"]) or a comma-separated string ("US-PRJ-1-1,US-PRJ-1-2"); both mean the same thing. Epics, stories and tasks may be mixed. Required — an empty list is an error, never a no-op.
         project: Optional project name (hub mode only)
 
     Response: `archived:` — one entry per item that was written, each with
@@ -2492,7 +2654,7 @@ def pm_archive_many(
     try:
         store = _store(project)
 
-        id_list = [i.strip() for i in ids.split(",") if i.strip()] if ids else []
+        id_list = _as_list(ids) if ids else []
         if not id_list:
             raise ToolError(
                 "provide ids — pm_archive_many needs an explicit list of at "
@@ -3666,7 +3828,7 @@ def pm_malformed(project: Optional[str] = None) -> str:
 @mcp.tool(
     title="Fix Malformed File",
     annotations=ToolAnnotations(
-        title="Fix Malformed File", readOnlyHint=False, destructiveHint=False
+        title="Fix Malformed File", readOnlyHint=False, destructiveHint=True
     ),
 )
 def pm_fix_malformed(
@@ -3745,9 +3907,17 @@ def pm_fix_malformed(
             )
             dest = proj_dir / "stories" / dest_filename
 
+        # A create never writes over a live item (US-PM-24).  ``id`` is
+        # caller-supplied, so a typo here would otherwise silently destroy an
+        # unrelated story or task.  Refuse before touching *either* file: the
+        # malformed source stays in quarantine so the caller can retry with a
+        # free id rather than losing the broken file as well.
+        if dest.exists():
+            raise ToolError(f"{id} already exists: {dest}")
+
         # Write the fixed file to its correct location with ID-based filename
         post = fm.Post(content=body, **meta.model_dump(mode="json"))
-        dest.write_text(fm.dumps(post))
+        _atomic_write_text(dest, fm.dumps(post))
         source.unlink()
 
         # Clean up empty malformed dir
@@ -3766,7 +3936,7 @@ def pm_fix_malformed(
 @mcp.tool(
     title="Restore File",
     annotations=ToolAnnotations(
-        title="Restore File", readOnlyHint=False, destructiveHint=False
+        title="Restore File", readOnlyHint=False, destructiveHint=True
     ),
 )
 def pm_restore(filename: str, project: Optional[str] = None) -> str:
@@ -3799,6 +3969,13 @@ def pm_restore(filename: str, project: Optional[str] = None) -> str:
         else:
             StoryFrontmatter(**post.metadata)
             dest = proj_dir / "stories" / filename
+
+        # ``shutil.move`` is a rename on POSIX, which replaces the destination
+        # without a word.  A restore creates an item file, so it obeys the same
+        # rule as every other create (US-PM-24): refuse rather than overwrite,
+        # leaving the quarantined file where it is.
+        if dest.exists():
+            raise ToolError(f"{dest.stem} already exists: {dest}")
 
         import shutil
 
@@ -3882,9 +4059,9 @@ def pm_auto_scope(
     annotations=ToolAnnotations(title="Git Status Dashboard", readOnlyHint=True),
 )
 def pm_git_status(project: Optional[str] = None) -> str:
-    """Show git status across all hub submodules — branch, dirty, ahead/behind, PRs.
+    """Show git status across all hub submodules — branch, dirty, ahead/behind.
 
-    Returns the structured list from git_status_all() including PR data.
+    Returns the structured list from git_status_all().
     Use this as the first thing to check before any coordinated operation.
 
     Args:
@@ -3990,7 +4167,7 @@ def pm_commit(
 @mcp.tool(
     title="Push PM Changes",
     annotations=ToolAnnotations(
-        title="Push PM Changes", readOnlyHint=False, destructiveHint=False
+        title="Push PM Changes", readOnlyHint=False, destructiveHint=True
     ),
 )
 def pm_push(
@@ -4027,7 +4204,7 @@ def pm_push(
 @mcp.tool(
     title="Coordinated Push All",
     annotations=ToolAnnotations(
-        title="Coordinated Push All", readOnlyHint=False, destructiveHint=False
+        title="Coordinated Push All", readOnlyHint=False, destructiveHint=True
     ),
 )
 def pm_push_all(
@@ -4065,216 +4242,6 @@ def pm_push_all(
         raise _failed(e) from e
 
 
-# ─── Changeset Tools ────────────────────────────────────────────
-
-
-@mcp.tool(
-    title="Create Changeset",
-    annotations=ToolAnnotations(
-        title="Create Changeset", readOnlyHint=False, destructiveHint=False
-    ),
-)
-def pm_changeset_create(
-    title: str,
-    projects: str,
-    description: str = "",
-    project: Optional[str] = None,
-) -> str:
-    """Create a changeset grouping related changes across multiple projects.
-
-    Args:
-        title: Changeset name (e.g. "add-auth")
-        projects: Comma-separated project names (e.g. "api,web,worker")
-        description: Optional description of the changeset
-        project: Optional project name (hub mode only)
-    """
-    try:
-        store = _store(project)
-        project_list = [p.strip() for p in projects.split(",") if p.strip()]
-        if not project_list:
-            raise ToolError("at least one project is required")
-        meta = store.create_changeset(title, project_list, description)
-        write_index(store)
-        return _yaml_dump({"created": meta.model_dump(mode="json")})
-    except Exception as e:
-        raise _failed(e) from e
-
-
-@mcp.tool(
-    title="Changeset Status",
-    annotations=ToolAnnotations(title="Changeset Status", readOnlyHint=True),
-)
-def pm_changeset_status(
-    changeset_id: Optional[str] = None,
-    project: Optional[str] = None,
-    id: Optional[str] = None,
-) -> str:
-    """Get changeset status — one changeset by ID, or list all open changesets.
-
-    Args:
-        changeset_id: Optional changeset ID (e.g. CS-PRJ-1). Omit to list all. (alias: id)
-        project: Optional project name (hub mode only)
-        id: Alias for changeset_id — either spelling works; passing both with different values is an error
-    """
-    try:
-        # Optional filter, so "neither" means "list all" rather than an error.
-        changeset_id = _resolve_id(
-            "changeset_id", changeset_id, required=False, id=id
-        )
-        store = _store(project)
-        if changeset_id:
-            meta, body = store.get_changeset(changeset_id)
-            result = meta.model_dump(mode="json")
-            result["body"] = body
-            return _yaml_dump(result)
-        else:
-            changesets = store.list_changesets()
-            return _yaml_dump(
-                {
-                    "changesets": [cs.model_dump(mode="json") for cs in changesets],
-                    "count": len(changesets),
-                }
-            )
-    except Exception as e:
-        raise _failed(e) from e
-
-
-@mcp.tool(
-    title="Add Project to Changeset",
-    annotations=ToolAnnotations(
-        title="Add Project to Changeset", readOnlyHint=False, destructiveHint=False
-    ),
-)
-def pm_changeset_add_project(
-    name: str,
-    changeset_id: Optional[str] = None,
-    ref: str = "",
-    project: Optional[str] = None,
-    id: Optional[str] = None,
-) -> str:
-    """Add a project entry to an existing changeset.
-
-    Args:
-        name: Project name to add
-        changeset_id: Changeset ID (e.g. CS-PRJ-1) (alias: id)
-        ref: Optional git ref/branch for this project
-        project: Optional project name (hub mode only)
-        id: Alias for changeset_id — either spelling works; passing both with different values is an error
-    """
-    try:
-        changeset_id = _resolve_id("changeset_id", changeset_id, id=id)
-        store = _store(project)
-        meta = store.add_changeset_entry(changeset_id, name, ref=ref)
-        return _yaml_dump({"updated": meta.model_dump(mode="json")})
-    except Exception as e:
-        raise _failed(e) from e
-
-
-@mcp.tool(
-    title="Changeset Create PRs",
-    annotations=ToolAnnotations(title="Changeset Create PRs", readOnlyHint=True),
-)
-def pm_changeset_create_prs(
-    changeset_id: Optional[str] = None,
-    project: Optional[str] = None,
-    id: Optional[str] = None,
-) -> str:
-    """Generate PR creation commands for all projects in a changeset.
-
-    Returns the gh CLI commands to create cross-referenced PRs for each project
-    in the changeset. Does not execute them — the caller should review and run.
-
-    Args:
-        changeset_id: Changeset ID (e.g. CS-PRJ-1) (alias: id)
-        project: Optional project name (hub mode only)
-        id: Alias for changeset_id — either spelling works; passing both with different values is an error
-    """
-    try:
-        from .changesets import changeset_create_prs
-
-        changeset_id = _resolve_id("changeset_id", changeset_id, id=id)
-        store = _store(project)
-        result = changeset_create_prs(store, changeset_id)
-        return _yaml_dump(result)
-    except Exception as e:
-        raise _failed(e) from e
-
-
-@mcp.tool(
-    title="Changeset Push",
-    annotations=ToolAnnotations(
-        title="Changeset Push", readOnlyHint=False, destructiveHint=False
-    ),
-)
-def pm_changeset_push(
-    changeset_id: Optional[str] = None,
-    project: Optional[str] = None,
-    id: Optional[str] = None,
-) -> str:
-    """Mark a changeset as merged and report status for hub ref updates.
-
-    Checks all entries — if all are merged, marks the changeset as merged.
-    If some are still pending, marks as partial and reports what's outstanding.
-
-    Args:
-        changeset_id: Changeset ID (e.g. CS-PRJ-1) (alias: id)
-        project: Optional project name (hub mode only)
-        id: Alias for changeset_id — either spelling works; passing both with different values is an error
-    """
-    try:
-        changeset_id = _resolve_id("changeset_id", changeset_id, id=id)
-        store = _store(project)
-        meta, body = store.get_changeset(changeset_id)
-
-        from datetime import date as _date
-
-        merged = [e for e in meta.entries if e.status == "merged"]
-        pending = [e for e in meta.entries if e.status != "merged"]
-
-        if not pending:
-            # All merged — update changeset status
-            meta.status = ChangesetStatus.merged
-            meta.updated = _date.today()
-            post = frontmatter.Post(
-                content=body,
-                **meta.model_dump(mode="json"),
-            )
-            store._changeset_path(changeset_id).write_text(frontmatter.dumps(post))
-            return _yaml_dump(
-                {
-                    "changeset": meta.id,
-                    "status": "merged",
-                    "message": "All PRs merged — safe to update hub submodule refs.",
-                    "projects": [e.project for e in meta.entries],
-                }
-            )
-        else:
-            # Partial — update status
-            if merged:
-                meta.status = ChangesetStatus.partial
-                meta.updated = _date.today()
-                post = frontmatter.Post(
-                    content=body,
-                    **meta.model_dump(mode="json"),
-                )
-                store._changeset_path(changeset_id).write_text(frontmatter.dumps(post))
-
-            return _yaml_dump(
-                {
-                    "changeset": meta.id,
-                    "status": "partial",
-                    "merged": [e.project for e in merged],
-                    "pending": [
-                        {"project": e.project, "ref": e.ref, "status": e.status}
-                        for e in pending
-                    ],
-                    "message": "Not all PRs merged — do NOT update hub refs yet.",
-                }
-            )
-    except Exception as e:
-        raise _failed(e) from e
-
-
 # ─── Sprint Tools ────────────────────────────────────────────────
 
 
@@ -4289,7 +4256,7 @@ def pm_create_sprint(
     goal: str = "",
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
-    planned_stories: Optional[str] = None,
+    planned_stories: Optional[Union[str, list[str]]] = None,
     project: Optional[str] = None,
 ) -> str:
     """Create a sprint with a name, goal, dates, and planned stories.
@@ -4299,18 +4266,14 @@ def pm_create_sprint(
         goal: Sprint goal summary
         start_date: Optional start date (YYYY-MM-DD)
         end_date: Optional end date (YYYY-MM-DD)
-        planned_stories: Comma-separated story IDs (e.g. "US-PRJ-1,US-PRJ-2")
+        planned_stories: Story IDs — a list (["US-PRJ-1", "US-PRJ-2"]) or a comma-separated string ("US-PRJ-1,US-PRJ-2"); both mean the same thing.
         project: Optional project name (hub mode only)
 
     Returns dependency warnings if planned stories have unmet external dependencies.
     """
     try:
         store = _store(project)
-        story_list = (
-            [s.strip() for s in planned_stories.split(",") if s.strip()]
-            if planned_stories
-            else []
-        )
+        story_list = _as_list(planned_stories) or []
 
         # Check for dependency issues
         warnings = []
@@ -4503,7 +4466,7 @@ def pm_update_sprint(
     goal: Optional[str] = None,
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
-    planned_stories: Optional[str] = None,
+    planned_stories: Optional[Union[str, list[str]]] = None,
     run_id: Optional[str] = None,
     project: Optional[str] = None,
     id: Optional[str] = None,
@@ -4519,7 +4482,7 @@ def pm_update_sprint(
         goal: Updated sprint goal
         start_date: Start date (YYYY-MM-DD)
         end_date: End date (YYYY-MM-DD)
-        planned_stories: Comma-separated story IDs (replaces current list)
+        planned_stories: Story IDs replacing the current set — a list (["US-PRJ-1", "US-PRJ-2"]) or a comma-separated string ("US-PRJ-1,US-PRJ-2"); both mean the same thing.
         run_id: Opaque id of the orchestrator run completing (or otherwise editing) the sprint, stamped on the activity-log event so `pm_activity(run_id=...)` returns the sprint close beside the run's claims and verdicts. Not a sprint field.
         project: Optional project name (hub mode only)
         id: Alias for sprint_id — either spelling works; passing both with different values is an error
@@ -4541,9 +4504,8 @@ def pm_update_sprint(
         if end_date is not None:
             kwargs["end_date"] = end_date
 
-        story_list = None
-        if planned_stories is not None:
-            story_list = [s.strip() for s in planned_stories.split(",") if s.strip()]
+        story_list = _as_list(planned_stories)
+        if story_list is not None:
             kwargs["planned_stories"] = story_list
 
         meta = store.update_sprint(sprint_id, run_id=run_id, **kwargs)
@@ -4952,13 +4914,6 @@ def pm_run_log(
 #: (``repair``, ``restore``, ``validate-branches``, ``fix-malformed``,
 #: ``push-all``), so hiding them from the agent tool list costs no reach.
 TOOL_FAMILIES: dict[str, tuple[str, ...]] = {
-    "changesets": (
-        "pm_changeset_create",
-        "pm_changeset_status",
-        "pm_changeset_add_project",
-        "pm_changeset_create_prs",
-        "pm_changeset_push",
-    ),
     "maintenance": (
         "pm_repair",
         "pm_restore",

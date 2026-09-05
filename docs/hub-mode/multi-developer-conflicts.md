@@ -195,8 +195,8 @@ Time  Dev A                                Dev B
 
 At T4, `git pull --rebase` merges cleanly because Dev A changed
 `projects/api` and Dev B changed `projects/frontend` — different paths.
-**But there is a subtle problem:** Dev B's commit does not include
-`projects/api` in its changeset. After rebasing on top of Dev A's commit, the
+**But there is a subtle problem:** Dev B's commit does not touch
+`projects/api` at all. After rebasing on top of Dev A's commit, the
 hub correctly shows:
 
 - `projects/api` → `bbb` (from Dev A's commit)

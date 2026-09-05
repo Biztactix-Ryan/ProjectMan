@@ -191,7 +191,17 @@ def test_git_provenance_reads_a_real_repo_without_mutating_it():
     assert git["commit"] and len(git["commit"]) == 40
     assert git["branch"]
     assert isinstance(git["dirty"], bool)
+    # The repo is recorded relative to the git root, so the value is the same in
+    # every clone; "." is the root itself.
+    assert git["repo"] == "."
     assert before == after, "capturing a baseline must never touch git state"
+
+
+def test_git_provenance_records_a_subdirectory_relative_to_the_repo_root():
+    """A capture taken from inside the tree still records a portable path."""
+    git = bl.git_provenance(REPO_ROOT / "tools" / "usage_telemetry")
+    assert git["repo"] == "tools/usage_telemetry"
+    assert not Path(git["repo"]).is_absolute()
 
 
 def test_the_raw_report_is_stored_verbatim_under_report():
@@ -610,6 +620,21 @@ COMMITTED = TELEMETRY_DIR / "baseline-pre-fix.json"
 COMMITTED_MD = TELEMETRY_DIR / "baseline-pre-fix.md"
 COMMITTED_README = TELEMETRY_DIR / "README.md"
 
+# US-PM-30 added a second committed baseline, captured after the Sprint 1-8
+# subtraction. It is not a replacement: the pre-fix corpus has since aged out of
+# the transcript tree, so each file is now the only surviving record of its own
+# corpus. Every check below that is about the *artifact* rather than about the
+# pre-fix numbers runs over both, so the newer file cannot drift into being a
+# second-class deliverable that nobody validates.
+COMMITTED_POST = TELEMETRY_DIR / "baseline-post-subtraction.json"
+COMMITTED_POST_MD = TELEMETRY_DIR / "baseline-post-subtraction.md"
+
+#: label -> (json, markdown). The label is also the pytest param id.
+COMMITTED_BASELINES: dict[str, tuple[Path, Path]] = {
+    "pre-fix": (COMMITTED, COMMITTED_MD),
+    "post-subtraction": (COMMITTED_POST, COMMITTED_POST_MD),
+}
+
 #: Frozen pre-fix ground truth. The pre-fix baseline is a historical
 #: measurement: it is captured once and never re-captured, so these are exact,
 #: not ranges. A test failure here means the artifact was overwritten or
@@ -634,79 +659,153 @@ def _git(*args):
 
 @pytest.fixture(scope="module")
 def committed():
-    """The real artifact, parsed. Fails (never skips) when it is missing."""
+    """The real pre-fix artifact, parsed. Fails (never skips) when it is missing."""
     assert COMMITTED.exists(), (
         f"the pre-fix baseline must exist at {COMMITTED.relative_to(REPO_ROOT)}"
     )
     return bl.load_baseline(COMMITTED)
 
 
+class CommittedBaseline:
+    """One committed baseline: its label, its two files and the parsed JSON.
+
+    The artifact-level tests take this instead of a bare dict so a failure names
+    *which* baseline broke, and so a test can reach the markdown companion
+    without hard-coding a filename.
+    """
+
+    def __init__(self, label: str, json_path: Path, md_path: Path):
+        self.label = label
+        self.json_path = json_path
+        self.md_path = md_path
+        assert json_path.exists(), (
+            f"the {label} baseline must exist at {json_path.relative_to(REPO_ROOT)}"
+        )
+        self.data = bl.load_baseline(json_path)
+
+    @property
+    def provenance(self) -> dict:
+        return self.data["provenance"]
+
+    def markdown(self) -> str:
+        return self.md_path.read_text(encoding="utf-8")
+
+    def __repr__(self) -> str:  # pragma: no cover - debugging aid
+        return f"<CommittedBaseline {self.label}>"
+
+
+@pytest.fixture(scope="module", params=list(COMMITTED_BASELINES), ids=list(COMMITTED_BASELINES))
+def any_committed(request):
+    """Every committed baseline in turn.
+
+    Used by the checks that are true of *any* baseline the repo ships --
+    provenance completeness, schema conformance, rate format, committability.
+    The pre-fix-specific ground-truth tests keep the single ``committed``
+    fixture, because those numbers are frozen history and are true of exactly
+    one file.
+    """
+    json_path, md_path = COMMITTED_BASELINES[request.param]
+    return CommittedBaseline(request.param, json_path, md_path)
+
+
+@pytest.fixture(scope="module")
+def post_subtraction():
+    """The US-PM-30 baseline specifically."""
+    json_path, md_path = COMMITTED_BASELINES["post-subtraction"]
+    return CommittedBaseline("post-subtraction", json_path, md_path)
+
+
 # -- (1) it exists at its documented path and is committable ----------------
 
 
-def test_all_three_baseline_artifacts_exist_at_their_documented_paths():
+def test_every_baseline_artifact_exists_at_its_documented_path(any_committed):
     """The AC is about a captured artifact, so absence is a failure, not a skip."""
-    for path in (COMMITTED, COMMITTED_MD, COMMITTED_README):
+    for path in (any_committed.json_path, any_committed.md_path, COMMITTED_README):
         assert path.is_file(), f"missing baseline artifact: {path}"
         assert path.stat().st_size > 0, f"empty baseline artifact: {path}"
     # A truncated or stub JSON would still be a file; the real capture is large.
-    assert COMMITTED.stat().st_size > 10_000
-    # The README is the documentation the path claim rests on.
+    assert any_committed.json_path.stat().st_size > 10_000
+
+
+def test_the_readme_documents_every_committed_baseline_pair():
+    """The README is the documentation the path claims rest on."""
     readme = COMMITTED_README.read_text(encoding="utf-8")
-    assert "baseline-pre-fix.json" in readme
-    assert "baseline-pre-fix.md" in readme
+    for json_path, md_path in COMMITTED_BASELINES.values():
+        assert json_path.name in readme, json_path.name
+        assert md_path.name in readme, md_path.name
 
 
-def test_the_baseline_lives_inside_the_repo_not_a_temp_or_scratch_directory():
+def test_the_baseline_lives_inside_the_repo_not_a_temp_or_scratch_directory(any_committed):
     """A baseline in /tmp is not a baseline; it is a number someone once saw."""
-    resolved = COMMITTED.resolve()
+    resolved = any_committed.json_path.resolve()
     rel = resolved.relative_to(REPO_ROOT.resolve())  # raises if outside the repo
-    assert rel == Path("docs/telemetry/baseline-pre-fix.json")
+    assert rel == Path("docs/telemetry") / any_committed.json_path.name
     lowered = str(resolved).lower()
     for scratch in ("/tmp/", "/var/tmp/", "scratchpad", "/.venv/", "node_modules"):
         assert scratch not in lowered, f"baseline sits under a scratch path: {scratch}"
 
 
-def test_the_baseline_artifacts_are_not_gitignored_so_they_can_be_committed():
+def test_the_baseline_artifacts_are_not_gitignored_so_they_can_be_committed(any_committed):
     """``git check-ignore`` exits 1 when a path is *not* ignored.
 
     This is the committable half of "captured and committed": a file the repo
     would silently refuse to track could never satisfy the AC, and that failure
     mode is invisible until someone tries to commit.
     """
-    for path in (COMMITTED, COMMITTED_MD, COMMITTED_README):
+    for path in (any_committed.json_path, any_committed.md_path, COMMITTED_README):
         proc = _git("check-ignore", "-v", "--no-index", str(path))
         assert proc.returncode == 1, (
             f"{path.relative_to(REPO_ROOT)} is gitignored: {proc.stdout.strip()}"
         )
 
 
-def test_git_sees_the_baseline_as_content_to_track():
+def test_git_sees_the_baseline_as_content_to_track(any_committed):
     """Either already tracked, or untracked-and-addable -- never ignored.
 
     Passes both before the human commits (``??``) and forever after (empty
     porcelain status, i.e. tracked and clean).
     """
-    proc = _git("status", "--porcelain", "--ignored", "--", str(COMMITTED))
+    path = any_committed.json_path
+    proc = _git("status", "--porcelain", "--ignored", "--", str(path))
     assert proc.returncode == 0, proc.stderr
     status = proc.stdout.strip()
     assert not status.startswith("!!"), f"git reports the baseline ignored: {status}"
     if status:
-        assert status.split()[0] in {"??", "A", "M", "AM", "??"}, status
+        assert status.split()[0] in {"??", "A", "M", "AM"}, status
     else:  # tracked and clean
-        assert _git("ls-files", "--error-unmatch", str(COMMITTED)).returncode == 0
+        assert _git("ls-files", "--error-unmatch", str(path)).returncode == 0
 
 
 # -- (2) it parses and conforms to its schema -------------------------------
 
 
-def test_the_committed_baseline_parses_as_json_and_declares_its_schema(committed):
+def test_the_committed_baseline_parses_as_json_and_declares_its_schema(any_committed):
+    committed = any_committed.data
     assert committed["schema"] == bl.SCHEMA == "projectman.usage-telemetry.baseline/1"
-    assert set(committed) == {"schema", "provenance", "report"}
+    # ``tool_list`` (US-PM-15) is the one optional top-level section: it measures
+    # the schema surface the server offers rather than the transcript corpus, and
+    # baselines captured before the metric existed simply do not carry it.
+    assert set(committed) - {"tool_list"} == {"schema", "provenance", "report"}
+    assert "tool_list" in committed or committed["provenance"]["label"] == "pre-fix"
 
 
-def test_the_committed_baseline_conforms_to_the_artifact_schema(committed):
+def test_every_committed_baseline_came_from_the_same_extractor():
+    """US-PM-30 AC 1: the post-subtraction file must not be a hand-rolled lookalike.
+
+    Same schema string and same ``generator`` means the same ``capture`` entry
+    point produced both, which is what makes the two comparable at all.
+    """
+    generators = set()
+    for label, (json_path, _) in COMMITTED_BASELINES.items():
+        data = bl.load_baseline(json_path)
+        assert data["schema"] == bl.SCHEMA, label
+        generators.add(data["provenance"]["generator"])
+    assert len(generators) == 1, f"baselines came from different generators: {generators}"
+
+
+def test_the_committed_baseline_conforms_to_the_artifact_schema(any_committed):
     """Every field a reader dereferences, with the type they will assume."""
+    committed = any_committed.data
     prov = committed["provenance"]
     expected = {
         "label": str,
@@ -741,13 +840,37 @@ def test_the_committed_baseline_conforms_to_the_artifact_schema(committed):
     }
 
 
-def test_the_committed_baseline_survives_a_load_write_load_round_trip(tmp_path, committed):
-    """Re-emitting it byte-for-byte proves nothing was hand-edited into it."""
-    json_path, md_path = bl.write_baseline(committed, tmp_path, "baseline-pre-fix")
+def test_the_committed_baseline_survives_a_load_write_load_round_trip(tmp_path, any_committed):
+    """Re-emitting it byte-for-byte proves nothing was hand-edited into the JSON."""
+    committed = any_committed.data
+    stem = any_committed.json_path.stem
+    json_path, md_path = bl.write_baseline(committed, tmp_path, stem)
     assert bl.load_baseline(json_path) == committed
-    assert json_path.read_text(encoding="utf-8") == COMMITTED.read_text(encoding="utf-8")
-    # The markdown is a pure function of the JSON, so a stale .md is detectable.
-    assert md_path.read_text(encoding="utf-8") == COMMITTED_MD.read_text(encoding="utf-8")
+    assert json_path.read_text(encoding="utf-8") == any_committed.json_path.read_text(
+        encoding="utf-8"
+    )
+
+
+def test_the_committed_markdown_still_publishes_the_numbers_its_json_holds(any_committed):
+    """A stale ``.md`` beside a re-captured ``.json`` is the failure mode here.
+
+    The generated summary is a pure function of the JSON. ``baseline-pre-fix.md``
+    is exactly that function's output, so it is compared byte-for-byte.
+    ``baseline-post-subtraction.md`` carries the generated summary *plus* the
+    hand-written comparison US-PM-30 asks for, so the invariant there is
+    containment: every generated table row must still appear verbatim, which is
+    what would break if the JSON were re-captured and the prose left behind.
+    """
+    generated = bl.format_summary(any_committed.data)
+    published = any_committed.markdown()
+    if published == generated:
+        return
+    rows = [line for line in generated.splitlines() if line.startswith("| ")]
+    assert rows, "the generated summary should contain table rows"
+    missing = [row for row in rows if row not in published]
+    assert not missing, (
+        f"{any_committed.md_path.name} is stale -- generated rows absent: {missing[:3]}"
+    )
 
 
 def test_an_empty_or_corrupt_artifact_would_be_rejected_rather_than_compared(tmp_path):
@@ -762,8 +885,8 @@ def test_an_empty_or_corrupt_artifact_would_be_rejected_rather_than_compared(tmp
 # -- (3) it carries the provenance a "before" measurement needs -------------
 
 
-def test_the_committed_baseline_records_when_and_against_what_it_was_captured(committed):
-    prov = committed["provenance"]
+def test_the_committed_baseline_records_when_and_against_what_it_was_captured(any_committed):
+    prov = any_committed.provenance
 
     captured = datetime.fromisoformat(prov["captured_at"])
     assert captured.tzinfo is not None, "a capture instant without a timezone is ambiguous"
@@ -781,14 +904,21 @@ def test_the_committed_baseline_records_when_and_against_what_it_was_captured(co
     assert "baseline" in prov["generator"] and "capture" in prov["generator"]
 
 
-def test_the_committed_baseline_pins_the_code_that_produced_it(committed):
-    git = committed["provenance"]["git"]
+def test_the_committed_baseline_pins_the_code_that_produced_it(any_committed):
+    git = any_committed.provenance["git"]
     commit = git["commit"]
     assert isinstance(commit, str) and len(commit) == 40
     assert all(c in "0123456789abcdef" for c in commit), commit
     assert git["branch"]
     assert isinstance(git["dirty"], bool), "dirty must never be unknown for the deliverable"
-    assert Path(git["repo"]).resolve() == REPO_ROOT.resolve()
+
+    # Repo-relative, so this holds in a fresh clone at any path -- an absolute
+    # path would pin the artifact to the machine that captured it.
+    recorded = Path(git["repo"])
+    assert not recorded.is_absolute(), f"provenance records an absolute path: {git['repo']}"
+    resolved = (REPO_ROOT / recorded).resolve()
+    assert resolved.is_relative_to(REPO_ROOT.resolve()), git["repo"]
+    assert resolved == REPO_ROOT.resolve(), "the baseline was captured from the repo root"
 
     kind = _git("cat-file", "-t", commit)
     if kind.returncode != 0:  # shallow clone / object pruned
@@ -796,9 +926,9 @@ def test_the_committed_baseline_pins_the_code_that_produced_it(committed):
     assert kind.stdout.strip() == "commit"
 
 
-def test_provenance_counts_agree_with_the_report_they_summarise(committed):
+def test_provenance_counts_agree_with_the_report_they_summarise(any_committed):
     """Provenance is a copy of report numbers; a drift would mislead a reader."""
-    prov, report = committed["provenance"], committed["report"]
+    prov, report = any_committed.provenance, any_committed.data["report"]
     assert prov["calls"] == report["totals"]["calls"]
     assert prov["sessions"] == report["totals"]["sessions"]
     assert prov["matched_calls"] == report["totals"]["matched"]
@@ -806,6 +936,35 @@ def test_provenance_counts_agree_with_the_report_they_summarise(committed):
     assert prov["transcript_files"] == report["corpus"]["files_scanned"]
     assert prov["corpus_root"] == report["corpus"]["root"]
     assert prov["match_rate"] == report["corpus"]["match_rate"]
+
+
+def test_committed_rates_are_fractions_in_the_report_and_percentages_in_the_headline(
+    any_committed,
+):
+    """The unit confusion this module exists to prevent, checked on the real files.
+
+    ``report`` stores 0.0626; the baseline headline and the markdown publish
+    6.26%. A file that stored the percentage twice, or published the fraction,
+    would make every later comparison off by 100x in one direction or the other.
+    """
+    rates = any_committed.data["report"]["failures"]["rates"]
+    for key, value in rates.items():
+        assert isinstance(value, float), f"{key} is {type(value)}"
+        assert 0.0 <= value <= 1.0, f"{key} looks like a percentage, not a fraction: {value}"
+
+    m = bl.headline_metrics(any_committed.data)
+    for headline_key, rate_key in (
+        ("failure_rate_pct", "combined_failure_rate"),
+        ("hard_error_rate_pct", "hard_error"),
+        ("soft_error_rate_pct", "soft_error"),
+        ("malformed_input_rate_pct", "malformed_input"),
+    ):
+        assert m[headline_key] == pytest.approx(rates[rate_key] * 100, abs=1e-3), headline_key
+        assert m[headline_key] > 1.0 or rates[rate_key] < 0.01, headline_key
+    assert m["match_rate_pct"] == 100.0
+
+    # Published once, in percent, in the human artifact too.
+    assert f"{m['failure_rate_pct']:.2f}%" in any_committed.markdown()
 
 
 # -- (4) it records a PRE-FIX state -----------------------------------------
@@ -869,6 +1028,117 @@ def test_the_markdown_summary_publishes_the_same_pre_fix_numbers(committed):
     assert "45" in md and "pm_update" in md
     assert committed["provenance"]["captured_at"] in md
     assert committed["provenance"]["git"]["commit"] in md
+
+
+# -- (4b) the POST-SUBTRACTION capture (US-PM-30) ---------------------------
+#
+# AC 1: the artifacts exist and were produced by the same extractor as pre-fix
+#       (the "same extractor" half is
+#       ``test_every_committed_baseline_came_from_the_same_extractor``; the
+#       provenance/schema/rate checks above now run over this file too).
+# AC 3: the markdown compares calls per task and context per worker against the
+#       pre-fix numbers.
+
+
+def _mean_calls_per_session(baseline: dict) -> float:
+    return baseline["report"]["totals"]["calls_per_session"]["mean"]
+
+
+def _bytes_per_session(baseline: dict) -> float:
+    totals = baseline["report"]["totals"]
+    return totals["response_bytes"] / totals["sessions"]
+
+
+def test_the_post_subtraction_baseline_declares_itself_and_names_its_commit(post_subtraction):
+    prov = post_subtraction.provenance
+    assert prov["label"] == "post-subtraction"
+    note = prov["note"]
+    # The note has to name the commit the capture follows, or "after the
+    # subtraction" is an unverifiable claim.
+    assert "1061084" in note, note
+    assert "subtraction" in note.lower()
+    md = post_subtraction.markdown()
+    assert "POST-SUBTRACTION baseline" in md
+    assert "do not overwrite" in md.lower()
+
+
+def test_the_post_subtraction_capture_is_later_than_the_pre_fix_one(committed, post_subtraction):
+    before = datetime.fromisoformat(committed["provenance"]["captured_at"])
+    after = datetime.fromisoformat(post_subtraction.provenance["captured_at"])
+    assert after > before, "the post-subtraction baseline must postdate the pre-fix one"
+
+
+def test_the_post_subtraction_markdown_compares_calls_per_task(committed, post_subtraction):
+    """AC 3, first half. Both sides of the comparison must be on the page."""
+    md = post_subtraction.markdown()
+    assert "Calls per task" in md
+    for baseline in (committed, post_subtraction.data):
+        mean = _mean_calls_per_session(baseline)
+        assert f"{mean:.2f}" in md, f"calls-per-session mean {mean:.2f} missing from the markdown"
+        median = baseline["report"]["totals"]["calls_per_session"]["median"]
+        assert str(median) in md
+    # Session counts are the denominator the means are read against.
+    assert f"{committed['report']['totals']['sessions']:,}" in md
+    assert f"{post_subtraction.data['report']['totals']['sessions']:,}" in md
+
+
+def test_the_post_subtraction_markdown_compares_context_per_worker(committed, post_subtraction):
+    """AC 3, second half: response bytes landing in one worker's context."""
+    md = post_subtraction.markdown()
+    assert "Context per worker" in md
+    for baseline in (committed, post_subtraction.data):
+        per_session = _bytes_per_session(baseline)
+        assert f"{round(per_session):,}" in md, (
+            f"bytes-per-session {round(per_session):,} missing from the markdown"
+        )
+        median_call = baseline["report"]["totals"]["bytes_per_call"]["median"]
+        assert f"{median_call:,}" in md
+
+
+def test_the_post_subtraction_markdown_reports_both_bulk_verb_longest_runs(
+    committed, post_subtraction
+):
+    """The metrics US-PM-12-5 reads, with a before and an after for each."""
+    md = post_subtraction.markdown()
+    before = bl.headline_metrics(committed)
+    after = bl.headline_metrics(post_subtraction.data)
+    for tool in bl.BULK_RUN_TOOLS:
+        key = f"{tool}_longest_run"
+        assert key in md, f"{key} is not named in the comparison"
+        assert str(before[key]) in md, f"{key} before value {before[key]} missing"
+        assert str(after[key]) in md, f"{key} after value {after[key]} missing"
+
+
+def test_the_post_subtraction_markdown_states_the_dirty_tree_caveat(post_subtraction):
+    """A dirty capture that does not say so is the one unreadable outcome."""
+    assert post_subtraction.provenance["git"]["dirty"] is True, (
+        "if this capture is ever retaken from a clean tree, drop this test"
+    )
+    md = post_subtraction.markdown()
+    assert "Provenance caveat" in md
+    assert "dirty" in md
+    assert "1061084" in md, "the caveat must name the commit the tree sat on"
+
+
+def test_the_two_committed_baselines_compare_without_special_casing(
+    committed, post_subtraction
+):
+    """The pair must work as a real before/after through ``compare`` itself."""
+    diff = bl.compare(committed, post_subtraction.data)
+    assert diff["before"]["label"] == "pre-fix"
+    assert diff["after"]["label"] == "post-subtraction"
+    metrics = diff["metrics"]
+    for tool in bl.BULK_RUN_TOOLS:
+        row = metrics[f"{tool}_longest_run"]
+        assert isinstance(row["before"], int) and isinstance(row["after"], int)
+        if row["delta"]:
+            # Shorter runs are the win these verbs exist for; the label must
+            # follow the number rather than flattering the newer capture.
+            assert row["direction"] == ("better" if row["delta"] < 0 else "worse")
+    assert metrics["pm_update_longest_run"]["before"] == PRE_FIX["longest_run"]
+    text = bl.format_comparison(diff)
+    assert "pm_update_longest_run" in text
+    assert "pm_archive_longest_run" in text
 
 
 # -- (5) it is usable as a comparison base ----------------------------------

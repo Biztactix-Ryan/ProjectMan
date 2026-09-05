@@ -1,7 +1,9 @@
 """Tests for Store CRUD operations."""
 
 import pytest
+from pydantic import ValidationError
 
+from projectman.models import TASK_ID
 from projectman.store import Store, clear_all_caches, get_cache_stats, _cache, _cache_stats, _cache_debug
 import projectman.store as store_module
 
@@ -1204,9 +1206,463 @@ class TestStoryDependsOn:
         with pytest.raises(ValueError, match="does not exist"):
             store.update("US-TST-1", depends_on=["US-TST-999"])
 
-    def test_task_depends_on_story(self, store):
-        """A task can depend on a story being done."""
+    def test_task_depends_on_story_is_rejected(self, store):
+        """A task may NOT depend on a story (contract change, US-PRJ-50).
+
+        The dependency only ever resolves in one direction: a story may
+        depend on a task (see ``test_create_story_depends_on_task`` above),
+        but a task blocks on other tasks only -- a story is not a unit of
+        work whose completion a task can observe.  Before US-PRJ-50 the
+        permissive ID pattern let a story ID through here.
+        """
         store.create_story("Story 1", "Desc")
         store.create_story("Story 2", "Desc")
-        task = store.create_task("US-TST-2", "Task", "Desc", depends_on=["US-TST-1"])
-        assert task.depends_on == ["US-TST-1"]
+        with pytest.raises(ValidationError) as exc:
+            store.create_task("US-TST-2", "Task", "Desc", depends_on=["US-TST-1"])
+        assert TASK_ID.pattern in str(exc.value)
+
+    def test_task_depends_on_task_is_accepted(self, store):
+        """The sibling of the above: a task may depend on another task."""
+        store.create_story("Story 1", "Desc")
+        store.create_task("US-TST-1", "Task 1", "Desc")
+        task = store.create_task(
+            "US-TST-1", "Task 2", "Desc", depends_on=["US-TST-1-1"]
+        )
+        assert task.depends_on == ["US-TST-1-1"]
+
+
+class TestIdAllocationReconcilesWithDisk:
+    """ID allocation is the max of the config counter and what is on disk.
+
+    The in-memory ``next_story_id`` is a per-process snapshot.  Two live
+    Stores on one project — two agent sessions, or a CLI run beside an MCP
+    server — used to both start from the same number, so the second create
+    handed out an ID the first had already written and overwrote it.
+    """
+
+    @staticmethod
+    def _fresh_store(root):
+        """A Store that loaded config.yaml independently, as a new process would."""
+        from projectman.config import clear_config_cache
+
+        clear_config_cache()
+        return Store(root)
+
+    def test_second_store_does_not_reuse_first_stores_story_id(self, tmp_project):
+        """Two Stores create in turn; both stories survive with distinct IDs."""
+        _cache.clear()
+        store_a = self._fresh_store(tmp_project)
+        store_b = self._fresh_store(tmp_project)
+        assert store_a.config is not store_b.config, "fixture must model two processes"
+
+        meta_a, _ = store_a.create_story("From A", "Body A")
+        meta_b, _ = store_b.create_story("From B", "Body B")
+
+        assert meta_a.id != meta_b.id
+        assert {meta_a.id, meta_b.id} == {"US-TST-1", "US-TST-2"}
+
+        stories_dir = tmp_project / ".project" / "stories"
+        assert (stories_dir / f"{meta_a.id}.md").exists()
+        assert (stories_dir / f"{meta_b.id}.md").exists()
+        assert "From A" in (stories_dir / f"{meta_a.id}.md").read_text()
+        assert "From B" in (stories_dir / f"{meta_b.id}.md").read_text()
+
+        import yaml as _yaml
+
+        persisted = _yaml.safe_load((tmp_project / ".project" / "config.yaml").read_text())
+        assert persisted["next_story_id"] == 3
+
+    def test_story_id_skips_past_a_higher_file_on_disk(self, tmp_project):
+        """A story pulled in from git without a counter bump is not overwritten."""
+        _cache.clear()
+        store = self._fresh_store(tmp_project)
+        pulled = tmp_project / ".project" / "stories" / "US-TST-7.md"
+        pulled.parent.mkdir(parents=True, exist_ok=True)
+        pulled.write_text("---\nid: US-TST-7\n---\nPulled from a teammate\n")
+
+        meta, _ = store.create_story("After the pull", "Body")
+
+        assert meta.id == "US-TST-8"
+        assert "Pulled from a teammate" in pulled.read_text()
+
+    def test_second_store_does_not_reuse_first_stores_epic_id(self, tmp_project):
+        """Same reconciliation for epics."""
+        _cache.clear()
+        store_a = self._fresh_store(tmp_project)
+        store_b = self._fresh_store(tmp_project)
+
+        epic_a = store_a.create_epic("Epic A", "Body A")
+        epic_b = store_b.create_epic("Epic B", "Body B")
+
+        assert epic_a.id != epic_b.id
+        assert {epic_a.id, epic_b.id} == {"EPIC-TST-1", "EPIC-TST-2"}
+
+        epics_dir = tmp_project / ".project" / "epics"
+        assert "Body A" in (epics_dir / f"{epic_a.id}.md").read_text()
+        assert "Body B" in (epics_dir / f"{epic_b.id}.md").read_text()
+
+    def test_epic_id_skips_past_a_higher_file_on_disk(self, tmp_project):
+        _cache.clear()
+        store = self._fresh_store(tmp_project)
+        pulled = tmp_project / ".project" / "epics" / "EPIC-TST-4.md"
+        pulled.parent.mkdir(parents=True, exist_ok=True)
+        pulled.write_text("---\nid: EPIC-TST-4\n---\nPulled epic\n")
+
+        epic = store.create_epic("After the pull", "Body")
+
+        assert epic.id == "EPIC-TST-5"
+        assert "Pulled epic" in pulled.read_text()
+
+    def test_foreign_prefix_files_are_ignored(self, tmp_project):
+        """Only the project's own prefix counts — US-PRJ-49.md must not move TST."""
+        _cache.clear()
+        store = self._fresh_store(tmp_project)
+        stories_dir = tmp_project / ".project" / "stories"
+        stories_dir.mkdir(parents=True, exist_ok=True)
+        (stories_dir / "US-PRJ-49.md").write_text("---\nid: US-PRJ-49\n---\nOther project\n")
+        (stories_dir / "US-TSTX-12.md").write_text("---\nid: US-TSTX-12\n---\nNot our prefix\n")
+
+        meta, _ = store.create_story("Ours", "Body")
+
+        assert meta.id == "US-TST-1"
+
+    def test_task_files_do_not_move_the_story_counter(self, tmp_project):
+        """``US-TST-3-9.md`` is a task ID, not a story number."""
+        _cache.clear()
+        store = self._fresh_store(tmp_project)
+        stories_dir = tmp_project / ".project" / "stories"
+        stories_dir.mkdir(parents=True, exist_ok=True)
+        (stories_dir / "US-TST-3-9.md").write_text("---\nid: US-TST-3-9\n---\nA task\n")
+
+        meta, _ = store.create_story("Ours", "Body")
+
+        assert meta.id == "US-TST-1"
+
+    def test_story_allocation_does_not_roll_back_the_epic_counter(self, tmp_project):
+        """_save_config rewrites the whole file, so sibling counters carry forward."""
+        _cache.clear()
+        store_a = self._fresh_store(tmp_project)
+        store_b = self._fresh_store(tmp_project)
+
+        store_a.create_epic("Epic A", "Body")  # bumps next_epic_id on disk to 2
+        store_b.create_story("Story B", "Body")  # store_b still remembers epic 1
+
+        import yaml as _yaml
+
+        persisted = _yaml.safe_load((tmp_project / ".project" / "config.yaml").read_text())
+        assert persisted["next_epic_id"] == 2
+
+
+class TestTaskIdAllocationScansDisk:
+    """Task IDs come from the highest suffix on disk, not the task count.
+
+    ``len(list_tasks(story)) + 1`` was only ever right while nothing had
+    been removed.  Delete the middle of three tasks and the count says 3,
+    so the next create reused ``-3`` and silently rewrote a live task.
+    Scanning for the highest existing suffix makes IDs monotonic: a freed
+    number stays free.
+    """
+
+    @staticmethod
+    def _story_file(tmp_project, story_id: str) -> None:
+        """Write a story file directly — create_task only checks it exists."""
+        stories = tmp_project / ".project" / "stories"
+        stories.mkdir(parents=True, exist_ok=True)
+        (stories / f"{story_id}.md").write_text(
+            f"---\nid: {story_id}\n---\nHand-written story\n"
+        )
+
+    def test_next_id_skips_a_deleted_middle_task(self, store, tmp_project):
+        """Deleting -2 must not make the next create overwrite -3."""
+        store.create_story("Story", "Desc")
+        for title in ("One", "Two", "Three"):
+            store.create_task("US-TST-1", title, f"Desc {title}")
+
+        tasks_dir = tmp_project / ".project" / "tasks"
+        (tasks_dir / "US-TST-1-2.md").unlink()
+        survivor = (tasks_dir / "US-TST-1-3.md").read_text()
+
+        meta = store.create_task("US-TST-1", "Four", "Desc Four")
+
+        assert meta.id == "US-TST-1-4"
+        assert (tasks_dir / "US-TST-1-3.md").read_text() == survivor
+        assert not (tasks_dir / "US-TST-1-2.md").exists()
+
+    def test_next_id_never_reuses_a_deleted_last_task(self, store, tmp_project):
+        """The freed top number is gone for good, not handed out again."""
+        store.create_story("Story", "Desc")
+        for title in ("One", "Two", "Three"):
+            store.create_task("US-TST-1", title, f"Desc {title}")
+
+        (tmp_project / ".project" / "tasks" / "US-TST-1-3.md").unlink()
+
+        meta = store.create_task("US-TST-1", "Four", "Desc Four")
+
+        assert meta.id == "US-TST-1-4"
+
+    def test_story_3_and_story_30_do_not_share_a_namespace(self, store, tmp_project):
+        """``US-TST-3-`` must not match ``US-TST-30-1.md`` — prefix, not substring."""
+        tasks_dir = tmp_project / ".project" / "tasks"
+        tasks_dir.mkdir(parents=True, exist_ok=True)
+        self._story_file(tmp_project, "US-TST-3")
+        self._story_file(tmp_project, "US-TST-30")
+        (tasks_dir / "US-TST-3-1.md").write_text(
+            "---\nid: US-TST-3-1\nstory_id: US-TST-3\n---\nOwned by story 3\n"
+        )
+        for n in (1, 9):
+            (tasks_dir / f"US-TST-30-{n}.md").write_text(
+                f"---\nid: US-TST-30-{n}\nstory_id: US-TST-30\n---\nOwned by story 30\n"
+            )
+
+        assert store.create_task("US-TST-3", "Next for 3", "Desc").id == "US-TST-3-2"
+        assert store.create_task("US-TST-30", "Next for 30", "Desc").id == "US-TST-30-10"
+        assert (tasks_dir / "US-TST-3-1.md").read_text().endswith("Owned by story 3\n")
+        assert (tasks_dir / "US-TST-30-9.md").read_text().endswith("Owned by story 30\n")
+
+    def test_batch_seeds_from_disk_and_keeps_forward_references(self, store, tmp_project):
+        """A batch after a deletion allocates -4,-5,-6, forward refs intact."""
+        store.create_story("Story", "Desc")
+        for title in ("One", "Two", "Three"):
+            store.create_task("US-TST-1", title, f"Desc {title}")
+        (tmp_project / ".project" / "tasks" / "US-TST-1-2.md").unlink()
+
+        results = store.create_tasks("US-TST-1", [
+            {"title": "A", "description": "A", "depends_on": ["US-TST-1-6"]},
+            {"title": "B", "description": "B"},
+            {"title": "C", "description": "C"},
+        ])
+
+        assert [t.id for t in results] == ["US-TST-1-4", "US-TST-1-5", "US-TST-1-6"]
+        assert results[0].depends_on == ["US-TST-1-6"]
+        meta_a, _ = store.get_task("US-TST-1-4")
+        assert meta_a.depends_on == ["US-TST-1-6"]
+
+
+class TestCreateRefusesAnExistingTarget:
+    """No create may write over a file that is already there.
+
+    US-PM-24-5/-6 made ID allocation reconcile with disk, so a collision
+    should now be unreachable through the allocators alone.  This class
+    covers the case they cannot: a *second process* that wrote the file
+    between our allocation and our write.  The allocator is stubbed to
+    stand in for that race, because by construction it will no longer
+    hand out a taken number on its own.  What is asserted is the
+    consequence — the create raises and the bytes on disk are untouched.
+    """
+
+    SENTINEL = "---\nid: SENTINEL\n---\nDo not overwrite me.\n"
+
+    @staticmethod
+    def _story_file(tmp_project, story_id: str) -> None:
+        stories = tmp_project / ".project" / "stories"
+        stories.mkdir(parents=True, exist_ok=True)
+        (stories / f"{story_id}.md").write_text(
+            f"---\nid: {story_id}\n---\nHand-written story\n"
+        )
+
+    @staticmethod
+    def _events(tmp_project) -> str:
+        log = tmp_project / ".project" / "activity.jsonl"
+        return log.read_text() if log.exists() else ""
+
+    def test_create_story_refuses(self, store, tmp_project, monkeypatch):
+        target = tmp_project / ".project" / "stories" / "US-TST-7.md"
+        target.write_text(self.SENTINEL)
+        before = self._events(tmp_project)
+        monkeypatch.setattr(store, "_next_story_id", lambda: "US-TST-7")
+
+        with pytest.raises(FileExistsError, match="US-TST-7 already exists"):
+            store.create_story("Clobberer", "Body")
+
+        assert target.read_text() == self.SENTINEL
+        assert self._events(tmp_project) == before
+
+    def test_create_epic_refuses(self, store, tmp_project, monkeypatch):
+        epics = tmp_project / ".project" / "epics"
+        epics.mkdir(parents=True, exist_ok=True)
+        target = epics / "EPIC-TST-7.md"
+        target.write_text(self.SENTINEL)
+        before = self._events(tmp_project)
+        monkeypatch.setattr(store, "_next_epic_id", lambda: "EPIC-TST-7")
+
+        with pytest.raises(FileExistsError, match="EPIC-TST-7 already exists"):
+            store.create_epic("Clobberer", "Body")
+
+        assert target.read_text() == self.SENTINEL
+        assert self._events(tmp_project) == before
+
+    def test_create_task_refuses(self, store, tmp_project, monkeypatch):
+        self._story_file(tmp_project, "US-TST-1")
+        tasks = tmp_project / ".project" / "tasks"
+        tasks.mkdir(parents=True, exist_ok=True)
+        target = tasks / "US-TST-1-7.md"
+        target.write_text(self.SENTINEL)
+        before = self._events(tmp_project)
+        monkeypatch.setattr(store, "_next_task_id", lambda story_id: "US-TST-1-7")
+
+        with pytest.raises(FileExistsError, match="US-TST-1-7 already exists"):
+            store.create_task("US-TST-1", "Clobberer", "Body")
+
+        assert target.read_text() == self.SENTINEL
+        assert self._events(tmp_project) == before
+
+    def test_create_sprint_refuses(self, store, tmp_project):
+        """Reachable without a stub: sprint IDs come from the counter alone."""
+        sprints = tmp_project / ".project" / "sprints"
+        sprints.mkdir(parents=True, exist_ok=True)
+        target = sprints / "SPRINT-TST-1.md"
+        target.write_text(self.SENTINEL)
+        before = self._events(tmp_project)
+
+        with pytest.raises(FileExistsError, match="SPRINT-TST-1 already exists"):
+            store.create_sprint("Clobberer")
+
+        assert target.read_text() == self.SENTINEL
+        assert self._events(tmp_project) == before
+
+    def test_create_tasks_refuses_the_whole_batch(self, store, tmp_project, monkeypatch):
+        """The third ID is taken, so none of the batch lands — not even the first two.
+
+        The allocator would step over the taken number by itself (that is
+        US-PM-24-6), so it is stubbed back to the seed a racing process
+        would have handed us: the point here is that the *batch* checks
+        every ID before writing any file.
+        """
+        store.create_story("Story", "Desc")
+        tasks = tmp_project / ".project" / "tasks"
+        target = tasks / "US-TST-1-3.md"
+        target.write_text(self.SENTINEL)
+        before = self._events(tmp_project)
+        monkeypatch.setattr(store, "_next_task_id", lambda story_id: "US-TST-1-1")
+
+        with pytest.raises(FileExistsError, match="US-TST-1-3 already exists"):
+            store.create_tasks("US-TST-1", [
+                {"title": "A", "description": "A"},
+                {"title": "B", "description": "B"},
+                {"title": "C", "description": "C"},
+                {"title": "D", "description": "D"},
+            ])
+
+        assert target.read_text() == self.SENTINEL
+        assert not (tasks / "US-TST-1-1.md").exists()
+        assert not (tasks / "US-TST-1-2.md").exists()
+        assert not (tasks / "US-TST-1-4.md").exists()
+        assert self._events(tmp_project) == before
+        assert [t.id for t in store.list_tasks("US-TST-1")] == []
+
+    def test_batch_still_rolls_back_on_a_dependency_cycle(self, store, tmp_project):
+        """The rollback path removes exactly the files the batch wrote."""
+        store.create_story("Story", "Desc")
+        tasks = tmp_project / ".project" / "tasks"
+        survivor = tasks / "US-TST-1-1.md"
+        store.create_task("US-TST-1", "Existing", "Body")
+        kept = survivor.read_text()
+
+        with pytest.raises(ValueError, match="Dependency cycle"):
+            store.create_tasks("US-TST-1", [
+                {"title": "A", "description": "A", "depends_on": ["US-TST-1-3"]},
+                {"title": "B", "description": "B", "depends_on": ["US-TST-1-2"]},
+            ])
+
+        assert survivor.read_text() == kept
+        assert not (tasks / "US-TST-1-2.md").exists()
+        assert not (tasks / "US-TST-1-3.md").exists()
+
+
+class TestCreatesWriteAtomically:
+    """A create that dies mid-write leaves no half-item behind.
+
+    ``_atomic_write_text`` writes a same-directory temp file and
+    ``os.replace``s it into position, so the target either does not exist
+    or is complete.  Each case here kills the write inside the helper and
+    asserts the target never appeared — and that no ``.tmp`` debris was
+    left in the directory either.
+    """
+
+    @staticmethod
+    def _explode(monkeypatch):
+        """Make every atomic write fail as if the disk went away mid-create."""
+        def boom(path, text):
+            raise OSError("disk went away")
+
+        monkeypatch.setattr(store_module, "_atomic_write_text", boom)
+
+    @staticmethod
+    def _debris(directory):
+        return [p.name for p in directory.iterdir() if p.name.endswith(".tmp")]
+
+    def test_story_create_leaves_no_partial_file(self, store, tmp_project, monkeypatch):
+        stories = tmp_project / ".project" / "stories"
+        self._explode(monkeypatch)
+
+        with pytest.raises(OSError, match="disk went away"):
+            store.create_story("Doomed", "Body")
+
+        assert not (stories / "US-TST-1.md").exists()
+        assert self._debris(stories) == []
+
+    def test_task_create_leaves_no_partial_file(self, store, tmp_project, monkeypatch):
+        store.create_story("Story", "Desc")
+        tasks = tmp_project / ".project" / "tasks"
+        self._explode(monkeypatch)
+
+        with pytest.raises(OSError, match="disk went away"):
+            store.create_task("US-TST-1", "Doomed", "Body")
+
+        assert not (tasks / "US-TST-1-1.md").exists()
+        assert self._debris(tasks) == []
+
+    def test_a_torn_write_inside_the_helper_never_becomes_the_target(
+        self, store, tmp_project, monkeypatch
+    ):
+        """Fail after the temp file is written but before the rename."""
+        import os as _os
+
+        real_replace = _os.replace
+
+        def fail_replace(src, dst):
+            raise OSError("power cut before rename")
+
+        store.create_story("Story", "Desc")
+        tasks = tmp_project / ".project" / "tasks"
+        monkeypatch.setattr(store_module.os, "replace", fail_replace)
+
+        with pytest.raises(OSError, match="power cut before rename"):
+            store.create_task("US-TST-1", "Doomed", "Body")
+
+        monkeypatch.setattr(store_module.os, "replace", real_replace)
+        assert not (tasks / "US-TST-1-1.md").exists()
+        # The helper unlinks its own temp file on any failure.
+        assert [p.name for p in tasks.iterdir()] == []
+
+    def test_creates_go_through_the_atomic_helper(self, store, tmp_project, monkeypatch):
+        """Named so a future refactor back to write_text fails here, loudly."""
+        seen = []
+        real = store_module._atomic_write_text
+
+        def spy(path, text):
+            seen.append(path.name)
+            return real(path, text)
+
+        monkeypatch.setattr(store_module, "_atomic_write_text", spy)
+        store.create_story("Story", "Desc")
+        store.create_task("US-TST-1", "T", "Body")
+        store.create_tasks("US-TST-1", [{"title": "B", "description": "B"}])
+        store.create_epic("Epic", "Body")
+        store.create_sprint("Sprint")
+
+        assert seen == [
+            "US-TST-1.md",
+            "US-TST-1-1.md",
+            "US-TST-1-2.md",
+            "EPIC-TST-1.md",
+            "SPRINT-TST-1.md",
+        ]
+
+    def test_a_created_file_is_readable_not_owner_only(self, store, tmp_project):
+        """mkstemp makes 0600; a created item must not be stricter than a written one."""
+        import os as _os
+
+        store.create_story("Story", "Desc")
+        mode = _os.stat(tmp_project / ".project" / "stories" / "US-TST-1.md").st_mode
+        assert mode & 0o7777 == store_module._NEW_FILE_MODE

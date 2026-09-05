@@ -27,7 +27,7 @@ class TestSprintModel:
         assert meta.completed_points == 0
 
     def test_sprint_id_validation_rejects_invalid(self):
-        with pytest.raises(ValueError, match="alphanumeric"):
+        with pytest.raises(ValueError, match="must match"):
             SprintFrontmatter(
                 id="123-bad",
                 name="Bad",

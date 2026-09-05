@@ -20,7 +20,17 @@ import frontmatter
 
 import yaml
 
-from projectman.deps import detect_cycle
+# Aliased on import: ``projectman.errors.ValidationError`` is the name this
+# module raises, and pydantic's same-named class is only ever *caught*.
+from pydantic import ValidationError as PydanticValidationError
+
+from projectman.deps import CycleError, detect_cycle
+from projectman.errors import (
+    ConflictError,
+    NotFoundError,
+    StoreError,
+    ValidationError,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -139,14 +149,16 @@ def _empty_value(field: str) -> object:
     return list(empty) if isinstance(empty, list) else empty
 
 
-class NothingToCommit(RuntimeError):
+class NothingToCommit(ConflictError):
     """There was nothing under ``.project/`` to commit.
 
     An *expected negative*, not a failure: the caller asked for ``.project/``
     to be committed and it already is, so the requested end-state holds.  It
-    subclasses ``RuntimeError`` purely for backward compatibility — every
+    subclasses ``ConflictError`` — and so, transitively, ``RuntimeError`` —
+    purely for backward compatibility: every
     existing ``except RuntimeError`` / ``pytest.raises(RuntimeError)`` around
-    ``commit_project_changes`` keeps working — but its own type is what lets
+    ``commit_project_changes`` keeps working, and it now also carries
+    ``code="conflict"`` — but its own type is what lets
     ``server.pm_commit`` tell this apart from a real commit failure *without*
     matching on the message text.  See ``server._expected_negative``.
     """
@@ -348,6 +360,21 @@ def get_cache_stats() -> dict[str, int]:
     return dict(_cache_stats)
 
 
+def _default_file_mode() -> int:
+    """The mode a plain ``open(path, "w")`` would give a new file (0666 & ~umask).
+
+    Read once at import: querying the umask means temporarily setting it, and
+    doing that on every write would race with any concurrent file creation.
+    """
+    current = os.umask(0)
+    os.umask(current)
+    return 0o666 & ~current
+
+
+#: Evaluated at import — see :func:`_default_file_mode`.
+_NEW_FILE_MODE = _default_file_mode()
+
+
 def _atomic_write_text(path: Path, text: str) -> None:
     """Write ``text`` to ``path`` so no reader ever sees a partial file.
 
@@ -356,7 +383,8 @@ def _atomic_write_text(path: Path, text: str) -> None:
     concurrent reader therefore observes either the whole old file or the
     whole new one — never a half-written frontmatter block.  Required by the
     compare-and-swap claim (docs/reference/claim-release-contract.md §2.3);
-    used for every ``Store.update`` write because the guarantee is free.
+    used for every ``Store.update`` write because the guarantee is free, and
+    by every ``create_*`` so a crash mid-create cannot leave a truncated item.
     """
     tmp_fd, tmp_name = tempfile.mkstemp(
         dir=str(path.parent), prefix=f".{path.name}.", suffix=".tmp"
@@ -367,8 +395,14 @@ def _atomic_write_text(path: Path, text: str) -> None:
             fh.flush()
             os.fsync(fh.fileno())
         try:
-            # mkstemp creates 0600; keep the file's own permissions instead.
-            os.chmod(tmp_name, path.stat().st_mode & 0o7777)
+            # mkstemp creates 0600; keep the file's own permissions instead,
+            # or — creating it for the first time — the umask's default, so a
+            # created item is no more private than a hand-written one.
+            mode = path.stat().st_mode & 0o7777
+        except OSError:
+            mode = _NEW_FILE_MODE
+        try:
+            os.chmod(tmp_name, mode)
         except OSError:
             pass
         os.replace(tmp_name, path)
@@ -412,9 +446,6 @@ from .models import (
     EVIDENCE_MAX_FILES,
     EVIDENCE_MAX_STRING,
     EVIDENCE_MAX_TESTS,
-    ChangesetEntry,
-    ChangesetFrontmatter,
-    ChangesetStatus,
     EventType,
     ItemType,
     LogEntry,
@@ -524,6 +555,15 @@ class Store:
         # actually changes acceptance_criteria.  Its "orphaned" bucket is the
         # hand-off point for the removal policy (US-PM-5-6).
         self.last_criteria_reconciliation: dict | None = None
+        #: Highest task number this Store has handed out per story, so a
+        #: number freed by a deletion during this session is not handed out
+        #: a second time.  The disk scan in ``_next_task_id`` is the floor;
+        #: this only ever raises it.  Task IDs, unlike story and epic ones,
+        #: have no counter in config.yaml to persist — a per-story map there
+        #: would rewrite the committed config on every task create — so the
+        #: memory ends with the process and a later session falls back to
+        #: the disk scan, which still never collides with a live file.
+        self._task_high_water: dict[str, int] = {}
 
     def _load_config(self) -> ProjectConfig:
         """Load config.yaml from self.project_dir."""
@@ -550,15 +590,100 @@ class Store:
         if parent.resolve() != Path(self.root).resolve():
             clear_config_cache(parent)
 
+    def _sync_counters_from_disk(self) -> None:
+        """Raise the in-memory ID counters to whatever config.yaml now holds.
+
+        ``self.config`` is a per-process snapshot: a second Store on the same
+        project (a second agent session, a CLI run alongside a live MCP
+        server) bumps the counters on disk without this process noticing.
+        Re-reading here — deliberately bypassing ``config.load_config``'s
+        cache, which our own ``_save_config`` is the only thing that clears —
+        keeps allocation monotonic across processes.  Counters only ever move
+        forward, so a stale read can never hand back a number already used,
+        and the sibling counters are carried too: ``_save_config`` rewrites
+        the whole file, so a story allocation that ignored ``next_epic_id``
+        would roll another process's epic counter back.
+        """
+        try:
+            persisted = self._load_config()
+        except (OSError, TypeError, yaml.YAMLError, PydanticValidationError):
+            # Unreadable or half-written config: fall back to the in-memory
+            # counters, which the on-disk scan still corrects upward.
+            return
+        self.config.next_story_id = max(
+            self.config.next_story_id, persisted.next_story_id
+        )
+        self.config.next_epic_id = max(
+            self.config.next_epic_id, persisted.next_epic_id
+        )
+        self.config.next_sprint_id = max(
+            self.config.next_sprint_id, persisted.next_sprint_id
+        )
+
+    @staticmethod
+    def _highest_numbered(directory: Path, id_prefix: str) -> int:
+        """Highest ``N`` among ``<id_prefix><N>.md`` files in *directory*, else 0.
+
+        *id_prefix* carries the project prefix and its trailing dash (e.g.
+        ``US-PM-``) so the match is exact: a PM project must not count
+        ``US-PRJ-49.md`` sitting in the same directory, and task files such
+        as ``US-PM-24-1.md`` are skipped because their tail is not a bare
+        number.  Files that arrived by ``git pull`` — content without the
+        counter bump that produced it — are found here and nowhere else.
+        """
+        highest = 0
+        try:
+            entries = list(directory.iterdir())
+        except OSError:
+            return 0
+        for path in entries:
+            if path.suffix != ".md" or not path.name.startswith(id_prefix):
+                continue
+            tail = path.stem[len(id_prefix) :]
+            if tail.isdigit():
+                highest = max(highest, int(tail))
+        return highest
+
     def _next_story_id(self) -> str:
-        sid = f"US-{self.config.prefix}-{self.config.next_story_id}"
-        self.config.next_story_id += 1
+        """Allocate a story ID no live story on disk or counter has claimed.
+
+        The number is the max of the persisted counter, this process's
+        counter, and one past the highest story file present.  Archiving is a
+        status change, not a move, so the stories dir is the whole population.
+        """
+        self._sync_counters_from_disk()
+        next_num = max(
+            self.config.next_story_id,
+            self._highest_numbered(self.stories_dir, f"US-{self.config.prefix}-") + 1,
+        )
+        sid = f"US-{self.config.prefix}-{next_num}"
+        self.config.next_story_id = next_num + 1
         self._save_config()
         return sid
 
     def _next_task_id(self, story_id: str) -> str:
-        existing = self.list_tasks(story_id=story_id)
-        next_num = len(existing) + 1
+        """Allocate a task ID one past the highest suffix present on disk.
+
+        Counting the story's live tasks was wrong the moment a task file went
+        away: three tasks minus the middle one made ``len + 1`` equal to 3,
+        and the create silently rewrote ``-3``.  Scanning instead means IDs
+        only ever move forward, and a removed number is never handed out
+        again.  Archiving is a status change rather than a move, so the one
+        scan of the tasks dir already covers archived tasks.
+
+        The prefix carries the story's trailing dash, so ``US-TST-3-`` counts
+        ``US-TST-3-1.md`` and never ``US-TST-30-1.md``.
+
+        ``_task_high_water`` raises the floor further: a number this session
+        already handed out is not reissued even after its file is deleted,
+        so an ID stays attached to one task for as long as the process that
+        minted it is alive.
+        """
+        next_num = max(
+            self._highest_numbered(self.tasks_dir, f"{story_id}-") + 1,
+            self._task_high_water.get(story_id, 0) + 1,
+        )
+        self._task_high_water[story_id] = next_num
         return f"{story_id}-{next_num}"
 
     def _story_path(self, story_id: str) -> Path:
@@ -568,8 +693,14 @@ class Store:
         return self.tasks_dir / f"{task_id}.md"
 
     def _next_epic_id(self) -> str:
-        eid = f"EPIC-{self.config.prefix}-{self.config.next_epic_id}"
-        self.config.next_epic_id += 1
+        """Allocate an epic ID, reconciled with disk exactly as stories are."""
+        self._sync_counters_from_disk()
+        next_num = max(
+            self.config.next_epic_id,
+            self._highest_numbered(self.epics_dir, f"EPIC-{self.config.prefix}-") + 1,
+        )
+        eid = f"EPIC-{self.config.prefix}-{next_num}"
+        self.config.next_epic_id = next_num + 1
         self._save_config()
         return eid
 
@@ -777,6 +908,91 @@ class Store:
             entries = [e for e in entries if (e.evidence is not None) == has_evidence]
         return entries[offset : offset + limit]
 
+    # ------------------------------------------------------------------
+    # The next-session note (US-PM-28).
+    #
+    # ``.project/NEXT.md`` is scratch text with one owner and a short life:
+    # "we decided to fix X by doing Y and Z", left behind for whoever opens
+    # the project next.  It is deliberately *not* an item — no frontmatter,
+    # no id, not indexed, not audited, not searched — so it lives here as a
+    # document beside PROJECT.md rather than in ``stories/`` or ``tasks/``.
+    # The only bookkeeping it gets is one activity-log event per mutation,
+    # under :attr:`ItemType.note` and the literal item id ``NEXT``, so a
+    # note that appeared or vanished is explicable afterwards.
+    # ------------------------------------------------------------------
+
+    #: Item id every next-note activity event carries.  The note is a
+    #: singleton document, so this is a constant rather than an allocation.
+    NEXT_NOTE_ID = "NEXT"
+
+    @property
+    def next_note_path(self) -> Path:
+        """Where the next-session note lives: ``<project_dir>/NEXT.md``."""
+        return self.project_dir / "NEXT.md"
+
+    def read_next(self) -> str | None:
+        """The current next-session note, or ``None`` when there is none.
+
+        A missing file and a file holding only whitespace are the same
+        answer — "nothing was left for you" — so a note cleared by hand to
+        an empty file reads the same as a note that was never written.
+        """
+        path = self.next_note_path
+        if not path.exists():
+            return None
+        try:
+            text = path.read_text()
+        except OSError:
+            return None
+        return text.strip() or None
+
+    def write_next(self, text: str, append: bool = False) -> str:
+        """Replace (or append to) the note and return what it now says.
+
+        ``append`` keeps the existing note and adds a blank line, a
+        ``### <ISO date>`` heading and the new text, so a note built over
+        several sittings reads in the order it was written.  Appending to
+        an absent or blank note simply writes the first entry, heading and
+        all.  The write goes through :func:`_atomic_write_text`, so a
+        crash mid-write can never leave a half-written note behind.
+        """
+        body = text.strip()
+        if append:
+            existing = self.read_next()
+            today = datetime.now(timezone.utc).date().isoformat()
+            entry = f"### {today}\n\n{body}"
+            body = f"{existing}\n\n{entry}" if existing else entry
+        _atomic_write_text(self.next_note_path, body + "\n")
+        self._emit_log(
+            EventType.update,
+            self.NEXT_NOTE_ID,
+            ItemType.note,
+            changes={"mode": "append" if append else "replace"},
+        )
+        return body
+
+    def clear_next(self) -> bool:
+        """Delete the note; return whether there was one to delete.
+
+        Clearing an absent note is not an error — the caller asked for the
+        note to be gone and it is gone — so this returns ``False`` rather
+        than raising.  One event is logged per call either way, carrying
+        ``had_note`` so the log distinguishes a deletion from a no-op.
+        """
+        path = self.next_note_path
+        had_note = self.read_next() is not None
+        try:
+            path.unlink()
+        except FileNotFoundError:
+            pass
+        self._emit_log(
+            EventType.delete,
+            self.NEXT_NOTE_ID,
+            ItemType.note,
+            changes={"had_note": had_note},
+        )
+        return had_note
+
     def create_story(
         self,
         title: str,
@@ -794,6 +1010,12 @@ class Store:
         """
         self.stories_dir.mkdir(parents=True, exist_ok=True)
         story_id = self._next_story_id()
+        story_path = self._story_path(story_id)
+        # Last line of defence.  ID allocation reconciles with disk, so this
+        # should be unreachable — but a create must never be the thing that
+        # destroys an existing story, so refuse before touching anything.
+        if story_path.exists():
+            raise FileExistsError(f"{story_id} already exists: {story_path}")
         deps = depends_on or []
 
         self._validate_story_depends_on(story_id, deps)
@@ -817,7 +1039,7 @@ class Store:
             content=description,
             **meta.model_dump(mode="json"),
         )
-        self._story_path(story_id).write_text(frontmatter.dumps(post))
+        _atomic_write_text(story_path, frontmatter.dumps(post))
         self._cache_append("stories", meta, description)
         self._emit_log(EventType.create, story_id, ItemType.story)
         self._index_embedding(story_id, title, "story", description)
@@ -1369,7 +1591,7 @@ class Store:
                     return meta, body
         path = self._story_path(story_id)
         if not path.exists():
-            raise FileNotFoundError(f"Story not found: {story_id}")
+            raise NotFoundError(f"Story not found: {story_id}")
         post = frontmatter.load(str(path))
         meta = StoryFrontmatter(**post.metadata)
         return meta, post.content
@@ -1537,6 +1759,9 @@ class Store:
         """Create a new epic and write it to disk."""
         self.epics_dir.mkdir(parents=True, exist_ok=True)
         epic_id = self._next_epic_id()
+        epic_path = self._epic_path(epic_id)
+        if epic_path.exists():
+            raise FileExistsError(f"{epic_id} already exists: {epic_path}")
         today = date.today()
 
         meta = EpicFrontmatter(
@@ -1554,7 +1779,7 @@ class Store:
             content=description,
             **meta.model_dump(mode="json"),
         )
-        self._epic_path(epic_id).write_text(frontmatter.dumps(post))
+        _atomic_write_text(epic_path, frontmatter.dumps(post))
         self._cache_append("epics", meta, description)
         self._emit_log(EventType.create, epic_id, ItemType.epic)
 
@@ -1576,7 +1801,7 @@ class Store:
                     return meta, body
         path = self._epic_path(epic_id)
         if not path.exists():
-            raise FileNotFoundError(f"Epic not found: {epic_id}")
+            raise NotFoundError(f"Epic not found: {epic_id}")
         post = frontmatter.load(str(path))
         meta = EpicFrontmatter(**post.metadata)
         return meta, post.content
@@ -1648,12 +1873,12 @@ class Store:
             return
         for dep in depends_on:
             if dep == task_id:
-                raise ValueError(f"Task cannot depend on itself: {dep}")
+                raise ValidationError(f"Task cannot depend on itself: {dep}")
             # Check that the dependency exists (task or story)
             dep_task_path = self._task_path(dep)
             dep_story_path = self._story_path(dep)
             if not dep_task_path.exists() and not dep_story_path.exists():
-                raise ValueError(
+                raise ValidationError(
                     f"Dependency {dep} does not exist (not a task or story)"
                 )
 
@@ -1666,12 +1891,12 @@ class Store:
             return
         for dep in depends_on:
             if dep == story_id:
-                raise ValueError(f"Story cannot depend on itself: {dep}")
+                raise ValidationError(f"Story cannot depend on itself: {dep}")
             # Check that the dependency exists (story or task)
             dep_story_path = self._story_path(dep)
             dep_task_path = self._task_path(dep)
             if not dep_story_path.exists() and not dep_task_path.exists():
-                raise ValueError(
+                raise ValidationError(
                     f"Dependency {dep} does not exist (not a story or task)"
                 )
 
@@ -1690,9 +1915,12 @@ class Store:
         self.tasks_dir.mkdir(parents=True, exist_ok=True)
         # Verify story exists
         if not self._story_path(story_id).exists():
-            raise FileNotFoundError(f"Story not found: {story_id}")
+            raise NotFoundError(f"Story not found: {story_id}")
 
         task_id = self._next_task_id(story_id)
+        task_path = self._task_path(task_id)
+        if task_path.exists():
+            raise FileExistsError(f"{task_id} already exists: {task_path}")
         deps = depends_on or []
 
         self._validate_task_depends_on(task_id, deps)
@@ -1715,13 +1943,13 @@ class Store:
             content=description,
             **meta.model_dump(mode="json"),
         )
-        self._task_path(task_id).write_text(frontmatter.dumps(post))
+        _atomic_write_text(task_path, frontmatter.dumps(post))
         self._cache_append("tasks", meta, description)
         self._emit_log(EventType.create, task_id, ItemType.task)
         self._index_embedding(task_id, title, "task", description)
 
         if not _batch:
-            self._auto_commit([self._task_path(task_id)], f"pm: create {task_id}")
+            self._auto_commit([task_path], f"pm: create {task_id}")
 
         return meta
 
@@ -1744,7 +1972,7 @@ class Store:
         """
         self.tasks_dir.mkdir(parents=True, exist_ok=True)
         if not self._story_path(story_id).exists():
-            raise FileNotFoundError(f"Story not found: {story_id}")
+            raise NotFoundError(f"Story not found: {story_id}")
 
         # Pre-compute IDs for the entire batch so we can allow
         # forward references (task B depends on task C created later
@@ -1759,6 +1987,16 @@ class Store:
                 parts = cur.rsplit("-", 1)
                 cur = f"{parts[0]}-{int(parts[1]) + 1}"
                 batch_ids.append(cur)
+        # Refuse the whole batch before writing any of it: a half-landed batch
+        # is worse than a rejected one, and the caller can retry cleanly.
+        for task_id in batch_ids:
+            path = self._task_path(task_id)
+            if path.exists():
+                raise FileExistsError(f"{task_id} already exists: {path}")
+        if batch_ids:
+            # The seed above only recorded its own number; claim the rest of
+            # the run so a later create cannot land inside this batch.
+            self._task_high_water[story_id] = int(batch_ids[-1].rsplit("-", 1)[1])
         batch_id_set = set(batch_ids)
 
         today = date.today()
@@ -1772,7 +2010,7 @@ class Store:
             # self-ref check (existence is guaranteed once we write).
             for dep in deps:
                 if dep == task_id:
-                    raise ValueError(f"Task cannot depend on itself: {dep}")
+                    raise ValidationError(f"Task cannot depend on itself: {dep}")
                 if dep not in batch_id_set:
                     # Delegate to the standard validator for the single dep.
                     self._validate_task_depends_on(task_id, [dep])
@@ -1792,7 +2030,7 @@ class Store:
                 content=entry.get("description", ""),
                 **meta.model_dump(mode="json"),
             )
-            self._task_path(task_id).write_text(frontmatter.dumps(post))
+            _atomic_write_text(self._task_path(task_id), frontmatter.dumps(post))
             self._cache_append("tasks", meta, entry.get("description", ""))
             self._emit_log(EventType.create, task_id, ItemType.task)
             created.append(meta)
@@ -1821,8 +2059,11 @@ class Store:
 
         cycle = detect_cycle(graph)
         if cycle is not None:
-            path = " -> ".join(cycle)
-            raise ValueError(f"Dependency cycle detected: {path}")
+            # ``CycleError`` builds exactly this message and is a
+            # ``ValidationError`` (hence still a ``ValueError``), so the
+            # ``except ValueError`` rollback in ``create_tasks`` and every
+            # caller that matches on ``ValueError`` keep working.
+            raise CycleError(cycle)
 
     def get_task(self, task_id: str) -> tuple[TaskFrontmatter, str]:
         """Read a task, returning (frontmatter, body). Uses cache if populated and fresh."""
@@ -1835,7 +2076,7 @@ class Store:
                     return meta, body
         path = self._task_path(task_id)
         if not path.exists():
-            raise FileNotFoundError(f"Task not found: {task_id}")
+            raise NotFoundError(f"Task not found: {task_id}")
         post = frontmatter.load(str(path))
         meta = TaskFrontmatter(**post.metadata)
         return meta, post.content
@@ -1923,7 +2164,7 @@ class Store:
         elif item_type == "tasks":
             self.list_tasks()
         else:
-            raise ValueError(
+            raise ValidationError(
                 f"Unknown item type: {item_type}. Use: epics, stories, tasks"
             )
 
@@ -2039,7 +2280,7 @@ class Store:
         """
         path = self._task_path(task_id)
         if not path.exists():
-            raise FileNotFoundError(f"Task not found: {task_id}")
+            raise NotFoundError(f"Task not found: {task_id}")
 
         with _exclusive_file_lock(path):
             # Re-read by path, never from the cache and never through the
@@ -2116,12 +2357,12 @@ class Store:
             if not name:
                 continue
             if name not in CLEARABLE_FIELDS:
-                raise ValueError(
+                raise ValidationError(
                     f"cannot clear unknown field {name!r}; valid field names are: {valid}"
                 )
             _, applies_to = CLEARABLE_FIELDS[name]
             if item_kind not in applies_to:
-                raise ValueError(
+                raise ValidationError(
                     f"cannot clear {name!r} on a {item_kind} — "
                     f"it applies to: {', '.join(sorted(applies_to))}"
                 )
@@ -2129,7 +2370,7 @@ class Store:
             # call.  Loud and deterministic beats a silent precedence rule,
             # which would let a release silently become an assignment.
             if kwargs.get(name) is not None:
-                raise ValueError(
+                raise ValidationError(
                     f"conflicting instruction: clear={name!r} was given together "
                     f"with {name}={kwargs[name]!r}; pass one or the other"
                 )
@@ -2169,7 +2410,7 @@ class Store:
             path = self._story_path(item_id)
 
         if not path.exists():
-            raise FileNotFoundError(f"Item not found: {item_id}")
+            raise NotFoundError(f"Item not found: {item_id}")
 
         post = frontmatter.load(str(path))
 
@@ -2391,7 +2632,7 @@ class Store:
     def unarchive(self, item_id: str) -> None:
         """Clear a task's archived flag, restoring it to its recorded status."""
         if not self._is_task_id(item_id) or self._is_epic_id(item_id):
-            raise ValueError(f"unarchive only applies to tasks, got: {item_id}")
+            raise ValidationError(f"unarchive only applies to tasks, got: {item_id}")
         self.update(item_id, archived=False)
 
     def get(
@@ -2407,92 +2648,6 @@ class Store:
         if self._is_task_id(item_id):
             return self.get_task(item_id)
         return self.get_story(item_id)
-
-    # ─── Changesets ───────────────────────────────────────────────
-
-    @property
-    def changesets_dir(self) -> Path:
-        return self.project_dir / "changesets"
-
-    def _next_changeset_id(self) -> str:
-        cid = f"CS-{self.config.prefix}-{self.config.next_changeset_id}"
-        self.config.next_changeset_id += 1
-        self._save_config()
-        return cid
-
-    def _changeset_path(self, changeset_id: str) -> Path:
-        return self.changesets_dir / f"{changeset_id}.md"
-
-    def create_changeset(
-        self,
-        title: str,
-        projects: list[str],
-        description: str = "",
-    ) -> ChangesetFrontmatter:
-        """Create a changeset grouping changes across multiple projects."""
-        self.changesets_dir.mkdir(parents=True, exist_ok=True)
-        changeset_id = self._next_changeset_id()
-        today = date.today()
-
-        entries = [ChangesetEntry(project=p) for p in projects]
-
-        meta = ChangesetFrontmatter(
-            id=changeset_id,
-            title=title,
-            status=ChangesetStatus.open,
-            entries=entries,
-            created=today,
-            updated=today,
-        )
-
-        post = frontmatter.Post(
-            content=description,
-            **meta.model_dump(mode="json"),
-        )
-        self._changeset_path(changeset_id).write_text(frontmatter.dumps(post))
-        self._emit_log(EventType.create, changeset_id, ItemType.changeset)
-        return meta
-
-    def get_changeset(self, changeset_id: str) -> tuple[ChangesetFrontmatter, str]:
-        """Read a changeset, returning (frontmatter, body)."""
-        path = self._changeset_path(changeset_id)
-        if not path.exists():
-            raise FileNotFoundError(f"Changeset not found: {changeset_id}")
-        post = frontmatter.load(str(path))
-        meta = ChangesetFrontmatter(**post.metadata)
-        return meta, post.content
-
-    def list_changesets(
-        self, status: Optional[str] = None
-    ) -> list[ChangesetFrontmatter]:
-        """List all changesets, optionally filtered by status."""
-        if not self.changesets_dir.exists():
-            return []
-        changesets = []
-        for path in sorted(self.changesets_dir.glob("*.md")):
-            try:
-                post = frontmatter.load(str(path))
-                meta = ChangesetFrontmatter(**post.metadata)
-                if status is None or meta.status.value == status:
-                    changesets.append(meta)
-            except Exception:
-                continue
-        return changesets
-
-    def add_changeset_entry(
-        self, changeset_id: str, project: str, ref: str = ""
-    ) -> ChangesetFrontmatter:
-        """Add a project entry to an existing changeset."""
-        meta, body = self.get_changeset(changeset_id)
-        meta.entries.append(ChangesetEntry(project=project, ref=ref))
-        meta.updated = date.today()
-
-        post = frontmatter.Post(
-            content=body,
-            **meta.model_dump(mode="json"),
-        )
-        self._changeset_path(changeset_id).write_text(frontmatter.dumps(post))
-        return meta
 
     # ─── Sprints ─────────────────────────────────────────────────
 
@@ -2523,6 +2678,9 @@ class Store:
         """Create a sprint with optional planned stories."""
         self.sprints_dir.mkdir(parents=True, exist_ok=True)
         sprint_id = self._next_sprint_id()
+        sprint_path = self._sprint_path(sprint_id)
+        if sprint_path.exists():
+            raise FileExistsError(f"{sprint_id} already exists: {sprint_path}")
         today = date.today()
         stories = planned_stories or []
 
@@ -2552,7 +2710,7 @@ class Store:
             content=goal,
             **meta.model_dump(mode="json"),
         )
-        self._sprint_path(sprint_id).write_text(frontmatter.dumps(post))
+        _atomic_write_text(sprint_path, frontmatter.dumps(post))
         self._emit_log(EventType.create, sprint_id, ItemType.sprint)
         return meta
 
@@ -2560,7 +2718,7 @@ class Store:
         """Read a sprint, returning (frontmatter, body)."""
         path = self._sprint_path(sprint_id)
         if not path.exists():
-            raise FileNotFoundError(f"Sprint not found: {sprint_id}")
+            raise NotFoundError(f"Sprint not found: {sprint_id}")
         post = frontmatter.load(str(path))
         meta = SprintFrontmatter(**post.metadata)
         return meta, post.content
@@ -2808,7 +2966,7 @@ class Store:
             text=True,
         )
         if branch_result.returncode != 0:
-            raise RuntimeError(
+            raise StoreError(
                 "Cannot push from a detached HEAD state — checkout a branch first"
             )
 
@@ -2826,7 +2984,7 @@ class Store:
             r.strip() for r in remote_result.stdout.strip().splitlines() if r.strip()
         ]
         if remote not in remotes:
-            raise RuntimeError(
+            raise StoreError(
                 f"Remote '{remote}' not configured (available: {', '.join(remotes) or 'none'})"
             )
 
@@ -2834,7 +2992,7 @@ class Store:
         push_result = push_branch(self.root, branch, remote)
         if push_result.returncode != 0:
             stderr = push_result.stderr.strip()
-            raise RuntimeError(f"Push failed: {stderr}")
+            raise StoreError(f"Push failed: {stderr}")
 
         return {
             "branch": branch,

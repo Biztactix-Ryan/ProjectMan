@@ -1,6 +1,5 @@
 """Hub registry — manage subproject registration via git submodules."""
 
-import os
 import re
 import subprocess
 from concurrent.futures import ThreadPoolExecutor
@@ -14,6 +13,10 @@ from ..config import load_config, save_config
 
 
 REF_LOG_MAX_ENTRIES = 500
+
+#: How many fetch-rebase-push cycles ``hub_push_with_rebase`` will attempt
+#: before giving up on a remote that keeps moving under it.
+MAX_PUSH_RETRIES = 3
 
 
 def log_ref_update(
@@ -36,7 +39,7 @@ def log_ref_update(
         old_ref: Previous submodule commit SHA.
         new_ref: New submodule commit SHA.
         source: How the update happened (e.g. ``coordinated_push``,
-            ``changeset``, ``manual``, ``sync``).
+            ``manual``, ``sync``).
         root: Hub root directory.
         author: Who triggered the update (optional).
         commit: Hub commit SHA that recorded the change (optional).
@@ -522,38 +525,6 @@ def set_branch(name: str, branch: str, root: Optional[Path] = None) -> str:
     return f"project '{name}' now tracking branch '{branch}'"
 
 
-def set_deploy_branch(name: str, branch: str, root: Optional[Path] = None) -> str:
-    """Change the deploy branch for a subproject in its PM config.
-
-    The deploy branch is the protected target for PRs — distinct from
-    ``set_branch()`` which changes the .gitmodules tracking branch.
-    """
-    from ..config import find_project_root
-    root = root or find_project_root()
-    config = load_config(root)
-
-    if not config.hub:
-        return "error: not a hub project"
-
-    if name not in config.projects:
-        return f"error: project '{name}' not registered in hub"
-
-    pm_dir = root / ".project" / "projects" / name
-    config_path = pm_dir / "config.yaml"
-    if not config_path.exists():
-        return f"error: project '{name}' PM config not found"
-
-    with open(config_path) as f:
-        data = yaml.safe_load(f) or {}
-
-    data["deploy_branch"] = branch
-
-    with open(config_path, "w") as f:
-        yaml.dump(data, f, default_flow_style=False)
-
-    return f"project '{name}' deploy branch set to '{branch}'"
-
-
 def _get_deploy_branch(name: str, root: Path) -> str:
     """Return the deploy branch for a subproject from its PM config.
 
@@ -595,301 +566,10 @@ def validate_not_on_deploy_branch(
     if current == deploy and _has_tracked_changes(project_name, root):
         return (
             f"project '{project_name}' has uncommitted changes on the deploy "
-            f"branch '{deploy}' — create a feature branch before committing"
+            f"branch '{deploy}' — commit on a working branch instead"
         )
 
     return ""
-
-
-def _slugify(text: str) -> str:
-    """Convert text to a git-branch-safe slug."""
-    s = text.lower().strip()
-    s = re.sub(r"[^a-z0-9]+", "-", s)
-    return s.strip("-")
-
-
-def create_feature_branch(
-    project_name: str,
-    task_id: str,
-    description: str,
-    root: Optional[Path] = None,
-) -> str:
-    """Create a feature branch in a subproject linked to a task.
-
-    Branch naming convention: ``pm/{task_id}/{slugified-description}``.
-
-    Validates that the subproject exists, the working tree is clean,
-    and the current branch is the deploy branch before creating.
-
-    Returns the branch name on success, or an error string prefixed
-    with ``"error:"``.
-    """
-    from ..config import find_project_root
-
-    root = root or find_project_root()
-    config = load_config(root)
-
-    if not config.hub:
-        return "error: not a hub project"
-    if project_name not in config.projects:
-        return f"error: project '{project_name}' not registered in hub"
-
-    target = root / "projects" / project_name
-    if not target.exists():
-        return f"error: project '{project_name}' directory not found"
-
-    # Refuse if working tree is dirty
-    if _is_dirty(project_name, root):
-        return (
-            f"error: project '{project_name}' has uncommitted changes — "
-            "commit or stash before creating a feature branch"
-        )
-
-    # Must be on the deploy branch
-    deploy = _get_deploy_branch(project_name, root)
-    current = _get_current_branch(project_name, root)
-    if current != deploy:
-        return (
-            f"error: project '{project_name}' is on branch '{current}', "
-            f"not the deploy branch '{deploy}' — "
-            "switch to the deploy branch before creating a feature branch"
-        )
-
-    slug = _slugify(description)
-    if not slug:
-        return "error: description produces an empty slug"
-    branch_name = f"pm/{task_id}/{slug}"
-
-    try:
-        subprocess.run(
-            ["git", "checkout", "-b", branch_name],
-            cwd=str(target),
-            capture_output=True,
-            text=True,
-            check=True,
-        )
-    except subprocess.CalledProcessError as exc:
-        return f"error: failed to create branch '{branch_name}': {exc.stderr.strip()}"
-
-    return branch_name
-
-
-def list_feature_branches(
-    project_name: str,
-    root: Optional[Path] = None,
-) -> list[str]:
-    """List all ``pm/*`` feature branches in a subproject.
-
-    Returns a sorted list of branch names, or an empty list on error.
-    """
-    from ..config import find_project_root
-
-    root = root or find_project_root()
-    target = root / "projects" / project_name
-    if not target.exists():
-        return []
-
-    try:
-        result = subprocess.run(
-            ["git", "branch", "--list", "pm/*"],
-            cwd=str(target),
-            capture_output=True,
-            text=True,
-            check=True,
-        )
-    except (subprocess.CalledProcessError, FileNotFoundError, OSError):
-        return []
-
-    branches = []
-    for line in result.stdout.splitlines():
-        # git branch output has "  branch" or "* branch" prefix
-        branch = line.lstrip("* ").strip()
-        if branch:
-            branches.append(branch)
-    return sorted(branches)
-
-
-def create_pr(
-    project_name: str,
-    title: str,
-    body: str,
-    root: Optional[Path] = None,
-    *,
-    draft: bool = False,
-) -> dict:
-    """Create a pull request targeting the deploy branch in a subproject.
-
-    The current branch must be a ``pm/*`` feature branch — direct pushes
-    to the deploy branch are blocked.  The feature branch is pushed to
-    the remote before the PR is created.
-
-    Args:
-        project_name: Registered subproject name.
-        title: PR title.
-        body: PR body / description.
-        root: Hub root directory.  Auto-detected when ``None``.
-        draft: If ``True``, create a draft PR.
-
-    Returns:
-        A dict with keys:
-
-        - ``url``: PR URL on success.
-        - ``number``: PR number on success.
-        - ``error``: Error message on failure (only present on failure).
-    """
-    import json as _json
-
-    from ..config import find_project_root
-
-    root = root or find_project_root()
-    config = load_config(root)
-
-    if not config.hub:
-        return {"error": "not a hub project"}
-    if project_name not in config.projects:
-        return {"error": f"project '{project_name}' not registered in hub"}
-
-    target = root / "projects" / project_name
-    if not target.exists():
-        return {"error": f"project '{project_name}' directory not found"}
-
-    # Must be on a pm/* feature branch
-    current = _get_current_branch(project_name, root)
-    if not current or current == "HEAD":
-        return {"error": "detached HEAD — checkout a feature branch first"}
-    if not current.startswith("pm/"):
-        return {
-            "error": (
-                f"current branch '{current}' is not a pm/* feature branch — "
-                "create a feature branch first"
-            ),
-        }
-
-    deploy = _get_deploy_branch(project_name, root)
-
-    # Push feature branch to remote
-    try:
-        push_result = subprocess.run(
-            ["git", "push", "-u", "origin", current],
-            cwd=str(target),
-            capture_output=True,
-            text=True,
-        )
-        if push_result.returncode != 0:
-            stderr = (push_result.stderr or "").strip()
-            return {"error": f"failed to push branch '{current}': {stderr}"}
-    except FileNotFoundError:
-        return {"error": "git is not installed or not on PATH"}
-    except OSError as e:
-        return {"error": f"push failed: {e}"}
-
-    # Create PR via gh CLI
-    cmd = [
-        "gh", "pr", "create",
-        "--base", deploy,
-        "--head", current,
-        "--title", title,
-        "--body", body,
-    ]
-    if draft:
-        cmd.append("--draft")
-
-    try:
-        result = subprocess.run(
-            cmd,
-            cwd=str(target),
-            capture_output=True,
-            text=True,
-        )
-        if result.returncode != 0:
-            stderr = (result.stderr or "").strip()
-            if "gh auth" in stderr or "not logged" in stderr.lower():
-                return {"error": "gh CLI not authenticated — run 'gh auth login'"}
-            return {"error": f"gh pr create failed: {stderr}"}
-    except FileNotFoundError:
-        return {"error": "gh CLI is not installed — install from https://cli.github.com"}
-    except OSError as e:
-        return {"error": f"gh pr create failed: {e}"}
-
-    pr_url = result.stdout.strip()
-
-    # Extract PR number from the URL (last path segment)
-    pr_number = 0
-    if pr_url:
-        try:
-            pr_number = int(pr_url.rstrip("/").rsplit("/", 1)[-1])
-        except (ValueError, IndexError):
-            pass
-
-    return {"url": pr_url, "number": pr_number}
-
-
-def get_pr_status(
-    project_name: str,
-    root: Optional[Path] = None,
-) -> dict:
-    """Check open PRs targeting the deploy branch in a subproject.
-
-    Uses ``gh pr list`` to find all open PRs whose base is the deploy
-    branch.
-
-    Args:
-        project_name: Registered subproject name.
-        root: Hub root directory.  Auto-detected when ``None``.
-
-    Returns:
-        A dict with keys:
-
-        - ``deploy_branch``: The deploy branch name.
-        - ``prs``: List of dicts with ``number``, ``title``, ``state``,
-          and ``headRefName`` for each open PR.
-        - ``error``: Error message on failure (only present on failure).
-    """
-    import json as _json
-
-    from ..config import find_project_root
-
-    root = root or find_project_root()
-    config = load_config(root)
-
-    if not config.hub:
-        return {"error": "not a hub project"}
-    if project_name not in config.projects:
-        return {"error": f"project '{project_name}' not registered in hub"}
-
-    target = root / "projects" / project_name
-    if not target.exists():
-        return {"error": f"project '{project_name}' directory not found"}
-
-    deploy = _get_deploy_branch(project_name, root)
-
-    try:
-        result = subprocess.run(
-            [
-                "gh", "pr", "list",
-                "--base", deploy,
-                "--json", "number,title,state,headRefName",
-            ],
-            cwd=str(target),
-            capture_output=True,
-            text=True,
-        )
-        if result.returncode != 0:
-            stderr = (result.stderr or "").strip()
-            if "gh auth" in stderr or "not logged" in stderr.lower():
-                return {"error": "gh CLI not authenticated — run 'gh auth login'"}
-            return {"error": f"gh pr list failed: {stderr}"}
-    except FileNotFoundError:
-        return {"error": "gh CLI is not installed — install from https://cli.github.com"}
-    except OSError as e:
-        return {"error": f"gh pr list failed: {e}"}
-
-    try:
-        prs = _json.loads(result.stdout) if result.stdout.strip() else []
-    except _json.JSONDecodeError:
-        prs = []
-
-    return {"deploy_branch": deploy, "prs": prs}
 
 
 def _get_tracking_branch(name: str, root: Path) -> str:
@@ -1014,7 +694,6 @@ def push_preflight(
         3. ``validate_not_on_deploy_branch()`` — block dirty changes on deploy branch.
         4. For each dirty subproject: confirm it has staged changes (not just untracked).
         5. For each subproject to push: confirm remote is reachable.
-        6. Confirm ``gh`` is available if PR workflow is enabled (when available).
 
     Args:
         projects: Optional list of project names to check.  When ``None``,
@@ -1137,25 +816,6 @@ def push_preflight(
             continue
 
         ready.append(name)
-
-    # ── 6. gh availability (when PR workflow is enabled) ──────
-    # US-PRJ-7 not implemented yet — check config when available
-    if getattr(config, "pr_workflow", False):
-        try:
-            result = subprocess.run(
-                ["gh", "--version"],
-                capture_output=True,
-                text=True,
-                timeout=10,
-            )
-            if result.returncode != 0:
-                warnings.append(
-                    "gh CLI not available — PR workflow will not work"
-                )
-        except (FileNotFoundError, OSError, subprocess.TimeoutExpired):
-            warnings.append(
-                "gh CLI not found — PR workflow requires GitHub CLI"
-            )
 
     return {
         "ready": ready,
@@ -1456,623 +1116,19 @@ def list_projects(root: Optional[Path] = None) -> list[dict]:
     return results
 
 
-def is_project_blocked_by_changeset(
-    root: Path, project_name: str
-) -> Optional[str]:
-    """Check if a project is part of an open/partial changeset.
-
-    Returns the changeset ID if the project is blocked, or ``None``
-    if it's safe to update hub refs for this project.
-    """
-    from ..store import Store
-    from ..models import ChangesetStatus
-
-    store = Store(root)
-    for cs in store.list_changesets():
-        if cs.status in (ChangesetStatus.open, ChangesetStatus.partial):
-            for entry in cs.entries:
-                if entry.project == project_name:
-                    return cs.id
-    return None
-
-
-def get_changeset_context(root: Optional[Path] = None) -> dict[str, dict]:
-    """Get changeset context for each project that's part of an active changeset.
-
-    Designed to augment ``git_status_all()`` output with changeset info per project.
-
-    Returns a dict mapping project name to changeset context::
-
-        {
-            "api": {
-                "changeset_id": "CS-PRJ-1",
-                "changeset_name": "auth-v2",
-                "changeset_status": "partial",
-                "project_pr_status": "merged",
-                "merged_count": 2,
-                "total_count": 3,
-                "waiting_on": ["worker"],
-                "hub_ref_blocked": True,
-                "summary": "auth-v2 (2/3 merged, waiting on worker)",
-            },
-        }
-
-    Projects not in any active changeset are omitted from the result.
-    """
-    from ..config import find_project_root
-    from ..models import ChangesetStatus
-    from ..store import Store
-
-    root = root or find_project_root()
-    store = Store(root)
-
-    context: dict[str, dict] = {}
-
-    for cs in store.list_changesets():
-        if cs.status not in (ChangesetStatus.open, ChangesetStatus.partial):
-            continue
-
-        merged = [e for e in cs.entries if e.status == "merged"]
-        not_merged = [e for e in cs.entries if e.status != "merged"]
-        merged_count = len(merged)
-        total_count = len(cs.entries)
-
-        for entry in cs.entries:
-            waiting_on = [
-                e.project for e in cs.entries
-                if e.project != entry.project and e.status != "merged"
-            ]
-
-            if waiting_on:
-                waiting_str = ", ".join(waiting_on)
-                summary = f"{cs.title} ({merged_count}/{total_count} merged, waiting on {waiting_str})"
-            elif merged_count == total_count:
-                summary = f"{cs.title} ({total_count}/{total_count} merged)"
-            else:
-                summary = f"{cs.title} ({merged_count}/{total_count} merged)"
-
-            # Flag if THIS project's PR is merged but others aren't
-            this_merged = entry.status == "merged"
-            others_pending = any(
-                e.status != "merged"
-                for e in cs.entries
-                if e.project != entry.project
-            )
-            hub_ref_blocked = this_merged and others_pending
-
-            # Customize summary for the blocked case
-            if hub_ref_blocked:
-                waiting_str = ", ".join(waiting_on)
-                summary = f"{cs.title} ({merged_count}/{total_count} merged, THIS PR merged, waiting on {waiting_str})"
-
-            context[entry.project] = {
-                "changeset_id": cs.id,
-                "changeset_name": cs.title,
-                "changeset_status": cs.status.value,
-                "project_pr_status": entry.status,
-                "merged_count": merged_count,
-                "total_count": total_count,
-                "waiting_on": waiting_on,
-                "hub_ref_blocked": hub_ref_blocked,
-                "summary": summary,
-            }
-
-    return context
-
-
-def update_hub_refs(
-    changeset_id: str, root: Optional[Path] = None
-) -> str:
-    """Update hub submodule refs for all projects in a merged changeset.
-
-    Validates that the changeset is fully merged before updating.  Each
-    project's submodule ref is updated via ``git submodule update --remote``
-    and staged, then all updates are committed in a single commit with
-    message: ``hub: changeset {name} merged — update {project1}, {project2}, ...``
-
-    Args:
-        changeset_id: Changeset ID (e.g. ``CS-PRJ-1``).
-        root: Hub root directory.
-
-    Returns:
-        A summary message describing what was updated, or an error string.
-    """
-    from ..config import find_project_root
-    from ..models import ChangesetStatus
-    from ..store import Store
-
-    root = root or find_project_root()
-    config = load_config(root)
-
-    if not config.hub:
-        return "error: not a hub project"
-
-    store = Store(root)
-    meta, _body = store.get_changeset(changeset_id)
-
-    if meta.status != ChangesetStatus.merged:
-        return (
-            f"error: changeset {changeset_id} is not merged "
-            f"(status: {meta.status.value})"
-        )
-
-    # Check that no project is blocked by *another* open changeset
-    for entry in meta.entries:
-        blocker = is_project_blocked_by_changeset(root, entry.project)
-        if blocker and blocker != changeset_id:
-            return (
-                f"error: {entry.project} is blocked by open changeset "
-                f"{blocker} — resolve it first"
-            )
-
-    projects_updated: list[str] = []
-    ref_changes: list[tuple[str, str, str]] = []  # (project, old, new)
-    for entry in meta.entries:
-        project_path = root / "projects" / entry.project
-        if not project_path.exists():
-            continue
-
-        old_ref = _get_submodule_ref(entry.project, root)
-
-        try:
-            subprocess.run(
-                ["git", "submodule", "update", "--remote",
-                 f"projects/{entry.project}"],
-                cwd=str(root),
-                check=True,
-                capture_output=True,
-                text=True,
-            )
-            subprocess.run(
-                ["git", "add", f"projects/{entry.project}"],
-                cwd=str(root),
-                check=True,
-                capture_output=True,
-                text=True,
-            )
-            new_ref = _get_submodule_ref(entry.project, root)
-            projects_updated.append(entry.project)
-            ref_changes.append((entry.project, old_ref, new_ref))
-        except subprocess.CalledProcessError as e:
-            return f"error updating {entry.project}: {e.stderr}"
-
-    if not projects_updated:
-        return "no projects were updated"
-
-    project_list = ", ".join(projects_updated)
-    commit_msg = (
-        f"hub: changeset {meta.title} merged \u2014 update {project_list}"
-    )
-
-    try:
-        result = subprocess.run(
-            ["git", "commit", "-m", commit_msg],
-            cwd=str(root),
-            check=True,
-            capture_output=True,
-            text=True,
-        )
-    except subprocess.CalledProcessError as e:
-        return f"error committing: {e.stderr}"
-
-    # Log ref updates after successful commit
-    hub_sha = _get_hub_head(root)
-    for proj, old, new in ref_changes:
-        log_ref_update(proj, old, new, "changeset", root, commit=hub_sha)
-
-    return f"updated hub refs for {project_list}"
-
-
-def update_hub_refs_after_merge(
-    projects: Optional[list[str]] = None,
-    root: Optional[Path] = None,
-) -> dict:
-    """Update hub submodule refs only for projects whose PRs have been merged.
-
-    Checks PR status via ``gh pr list`` for each project and only advances
-    the submodule ref when all PRs targeting the deploy branch are merged
-    (no open PRs remain).
-
-    Args:
-        projects: List of project names to check.  Defaults to all
-            registered hub projects when ``None``.
-        root: Hub root directory.  Auto-detected when ``None``.
-
-    Returns:
-        A dict with keys:
-
-        - ``updated``: Projects whose submodule refs were advanced.
-        - ``skipped``: Projects skipped because open PRs remain.
-        - ``unchanged``: Projects with no ref change (no merged PRs or
-          already up-to-date).
-        - ``error``: A top-level error string, or ``None``.
-    """
-    import json as _json
-
-    from ..config import find_project_root
-
-    root = root or find_project_root()
-    config = load_config(root)
-
-    if not config.hub:
-        return {"updated": [], "skipped": [], "unchanged": [], "error": "not a hub project"}
-
-    target_projects = projects if projects is not None else list(config.projects)
-
-    # Validate project names
-    for name in target_projects:
-        if name not in config.projects:
-            return {
-                "updated": [], "skipped": [], "unchanged": [],
-                "error": f"project '{name}' not registered in hub",
-            }
-
-    updated: list[dict] = []
-    skipped: list[dict] = []
-    unchanged: list[str] = []
-    ref_changes: list[tuple[str, str, str]] = []  # (project, old, new)
-
-    for name in target_projects:
-        project_path = root / "projects" / name
-        if not project_path.exists():
-            unchanged.append(name)
-            continue
-
-        deploy = _get_deploy_branch(name, root)
-
-        # Check for open PRs targeting the deploy branch
-        open_prs: list[dict] = []
-        try:
-            result = subprocess.run(
-                [
-                    "gh", "pr", "list",
-                    "--base", deploy,
-                    "--state", "open",
-                    "--json", "number,title,headRefName",
-                ],
-                cwd=str(project_path),
-                capture_output=True,
-                text=True,
-            )
-            if result.returncode == 0 and result.stdout.strip():
-                open_prs = _json.loads(result.stdout)
-        except (FileNotFoundError, OSError, _json.JSONDecodeError):
-            pass
-
-        if open_prs:
-            skipped.append({
-                "project": name,
-                "reason": f"{len(open_prs)} open PR(s) pending",
-                "open_prs": open_prs,
-            })
-            continue
-
-        # Check for merged PRs targeting the deploy branch
-        merged_prs: list[dict] = []
-        try:
-            result = subprocess.run(
-                [
-                    "gh", "pr", "list",
-                    "--base", deploy,
-                    "--state", "merged",
-                    "--json", "number,title,mergedAt",
-                ],
-                cwd=str(project_path),
-                capture_output=True,
-                text=True,
-            )
-            if result.returncode == 0 and result.stdout.strip():
-                merged_prs = _json.loads(result.stdout)
-        except (FileNotFoundError, OSError, _json.JSONDecodeError):
-            pass
-
-        if not merged_prs:
-            unchanged.append(name)
-            continue
-
-        # Merged PRs exist, no open PRs — safe to update submodule ref
-        old_ref = _get_submodule_ref(name, root)
-
-        try:
-            subprocess.run(
-                ["git", "submodule", "update", "--remote", f"projects/{name}"],
-                cwd=str(root),
-                check=True,
-                capture_output=True,
-                text=True,
-            )
-            subprocess.run(
-                ["git", "add", f"projects/{name}"],
-                cwd=str(root),
-                check=True,
-                capture_output=True,
-                text=True,
-            )
-        except subprocess.CalledProcessError as e:
-            return {
-                "updated": updated, "skipped": skipped, "unchanged": unchanged,
-                "error": f"error updating {name}: {e.stderr}",
-            }
-
-        new_ref = _get_submodule_ref(name, root)
-
-        if old_ref == new_ref:
-            unchanged.append(name)
-            continue
-
-        updated.append({
-            "project": name,
-            "old_ref": old_ref,
-            "new_ref": new_ref,
-            "merged_prs": merged_prs,
-        })
-        ref_changes.append((name, old_ref, new_ref))
-
-    # Commit if anything was updated
-    if updated:
-        project_list = ", ".join(u["project"] for u in updated)
-        commit_msg = f"hub: update refs after merge — {project_list}"
-
-        try:
-            subprocess.run(
-                ["git", "commit", "-m", commit_msg],
-                cwd=str(root),
-                check=True,
-                capture_output=True,
-                text=True,
-            )
-        except subprocess.CalledProcessError as e:
-            return {
-                "updated": updated, "skipped": skipped, "unchanged": unchanged,
-                "error": f"error committing: {e.stderr}",
-            }
-
-        # Log ref updates
-        hub_sha = _get_hub_head(root)
-        for proj, old, new in ref_changes:
-            log_ref_update(proj, old, new, "pr_merge", root, commit=hub_sha)
-
-    return {"updated": updated, "skipped": skipped, "unchanged": unchanged, "error": None}
-
-
-MAX_PUSH_RETRIES = 3
-
-
-def _analyze_remote_changes(root: Path) -> dict:
-    """Analyze what changed between HEAD and origin/main.
-
-    Returns a dict with:
-        - ``submodule_only``: True if only ``projects/`` paths diverged.
-        - ``project_files_changed``: True if ``.project/`` files diverged.
-        - ``files``: list of all changed file paths.
-    """
-    try:
-        result = subprocess.run(
-            ["git", "diff", "--name-only", "HEAD", "origin/main"],
-            cwd=str(root),
-            capture_output=True,
-            text=True,
-            check=True,
-        )
-        files = [f.strip() for f in result.stdout.strip().splitlines() if f.strip()]
-    except subprocess.CalledProcessError:
-        return {"submodule_only": False, "project_files_changed": False, "files": []}
-
-    project_files = [f for f in files if f.startswith(".project/")]
-    submodule_files = [f for f in files if f.startswith("projects/")]
-
-    return {
-        "submodule_only": bool(submodule_files) and not project_files,
-        "project_files_changed": bool(project_files),
-        "files": files,
-    }
-
-
-def _classify_rebase_conflict(root: Path) -> str:
-    """Classify a rebase conflict by inspecting unmerged paths.
-
-    Returns ``"project_files"`` if ``.project/`` files are conflicting,
-    ``"submodule_ref"`` if only submodule paths conflict, or ``"unknown"``.
-    """
-    try:
-        result = subprocess.run(
-            ["git", "diff", "--name-only", "--diff-filter=U"],
-            cwd=str(root),
-            capture_output=True,
-            text=True,
-        )
-        conflicting = [f.strip() for f in result.stdout.strip().splitlines() if f.strip()]
-    except subprocess.CalledProcessError:
-        conflicting = []
-
-    if not conflicting:
-        return "unknown"
-
-    if any(f.startswith(".project/") for f in conflicting):
-        return "project_files"
-    if any(f.startswith("projects/") for f in conflicting):
-        return "submodule_ref"
-    return "unknown"
-
-
-def check_ref_fast_forward(
-    project_name: str,
-    our_ref: str,
-    their_ref: str,
-    root: Path,
-) -> dict:
-    """Check if two submodule refs can be fast-forwarded.
-
-    Uses ``git merge-base --is-ancestor`` in the subproject to determine
-    the relationship between two refs.
-
-    Args:
-        project_name: Subproject directory name.
-        our_ref: Our local submodule commit SHA.
-        their_ref: The remote submodule commit SHA.
-        root: Hub root directory.
-
-    Returns:
-        A dict with keys:
-            - ``resolution``: ``"ours"``, ``"theirs"``, or ``"diverged"``
-            - ``newer_ref``: the newer SHA (empty string if diverged)
-            - ``message``: human-readable explanation
-    """
-    sub_path = root / "projects" / project_name
-
-    # Check if their_ref is ancestor of our_ref → ours is newer
-    try:
-        result = subprocess.run(
-            ["git", "merge-base", "--is-ancestor", their_ref, our_ref],
-            cwd=str(sub_path),
-            capture_output=True,
-            text=True,
-        )
-        if result.returncode == 0:
-            return {
-                "resolution": "ours",
-                "newer_ref": our_ref,
-                "message": (
-                    f"project '{project_name}': ours ({our_ref[:7]}) is ahead "
-                    f"of theirs ({their_ref[:7]}) — keeping ours"
-                ),
-            }
-    except (FileNotFoundError, OSError):
-        pass
-
-    # Check if our_ref is ancestor of their_ref → theirs is newer
-    try:
-        result = subprocess.run(
-            ["git", "merge-base", "--is-ancestor", our_ref, their_ref],
-            cwd=str(sub_path),
-            capture_output=True,
-            text=True,
-        )
-        if result.returncode == 0:
-            return {
-                "resolution": "theirs",
-                "newer_ref": their_ref,
-                "message": (
-                    f"project '{project_name}': theirs ({their_ref[:7]}) is ahead "
-                    f"of ours ({our_ref[:7]}) — taking theirs"
-                ),
-            }
-    except (FileNotFoundError, OSError):
-        pass
-
-    # Neither is ancestor — diverged
-    return {
-        "resolution": "diverged",
-        "newer_ref": "",
-        "message": (
-            f"Conflict: project '{project_name}' ref diverged.\n"
-            f"  Local:  {our_ref}\n"
-            f"  Remote: {their_ref}\n"
-            f"  These branches diverged — resolve in the subproject first."
-        ),
-    }
-
-
-def _get_conflicting_submodule_refs(root: Path) -> dict[str, tuple[str, str]]:
-    """Extract conflicting submodule refs from the git index during a rebase.
-
-    Parses ``git ls-files --unmerged`` to find submodule entries at stage 2
-    (upstream/theirs in rebase context) and stage 3 (ours in rebase context).
-
-    Returns:
-        A dict mapping project name to ``(our_ref, their_ref)``.
-    """
-    try:
-        result = subprocess.run(
-            ["git", "ls-files", "--unmerged", "projects/"],
-            cwd=str(root),
-            capture_output=True,
-            text=True,
-            check=True,
-        )
-    except (subprocess.CalledProcessError, FileNotFoundError, OSError):
-        return {}
-
-    stages: dict[str, dict[int, str]] = {}
-    for line in result.stdout.strip().splitlines():
-        if not line:
-            continue
-        # Format: "<mode> <sha> <stage>\t<path>"
-        tab_parts = line.split("\t", 1)
-        if len(tab_parts) != 2:
-            continue
-        meta, path = tab_parts
-        fields = meta.split()
-        if len(fields) != 3:
-            continue
-        _mode, sha, stage_str = fields
-        if path.startswith("projects/"):
-            name = path.split("/")[1]
-            stage = int(stage_str)
-            if name not in stages:
-                stages[name] = {}
-            stages[name][stage] = sha
-
-    # In rebase: stage 2 = upstream (their_ref), stage 3 = replayed (our_ref)
-    conflicts = {}
-    for name, stage_map in stages.items():
-        our = stage_map.get(3, "")
-        their = stage_map.get(2, "")
-        if our and their:
-            conflicts[name] = (our, their)
-
-    return conflicts
-
-
-def _resolve_submodule_ref_conflict(
-    project_name: str, target_ref: str, root: Path,
-) -> bool:
-    """Resolve a submodule ref conflict by checking out the target ref.
-
-    Checks out the desired commit in the subproject, then stages the
-    resolution in the hub repo.
-
-    Returns:
-        ``True`` on success, ``False`` on failure.
-    """
-    sub_path = root / "projects" / project_name
-    try:
-        subprocess.run(
-            ["git", "checkout", target_ref],
-            cwd=str(sub_path),
-            capture_output=True,
-            text=True,
-            check=True,
-        )
-        subprocess.run(
-            ["git", "add", f"projects/{project_name}"],
-            cwd=str(root),
-            capture_output=True,
-            text=True,
-            check=True,
-        )
-        return True
-    except (subprocess.CalledProcessError, FileNotFoundError, OSError):
-        return False
-
-
 def hub_push_with_rebase(
     root: Optional[Path] = None, max_retries: int = MAX_PUSH_RETRIES
 ) -> dict:
-    """Push hub commits to remote with intelligent auto-rebase on conflict.
+    """Push hub commits to remote, rebasing when the remote has moved on.
 
     When ``git push origin main`` fails because the remote is ahead:
 
     1. ``git fetch origin main``
-    2. Analyze what diverged (submodule refs vs ``.project/`` files)
-    3. ``git rebase origin/main``
-    4. If rebase succeeds → retry push
-    5. If rebase has conflicts:
-
-       a. Submodule ref conflict on same project → flag for fast-forward check
-       b. ``.project/`` file conflict → abort rebase, flag for manual resolution
-
-    6. Retry up to *max_retries* times
+    2. ``git rebase origin/main``
+    3. If rebase succeeds → retry push
+    4. If rebase conflicts → abort the rebase and report that manual
+       resolution is required
+    5. Retry up to *max_retries* times
 
     Args:
         root: Hub root directory.
@@ -2125,9 +1181,6 @@ def hub_push_with_rebase(
                 "error": f"fetch failed: {(fetch.stderr or '').strip()}",
             }
 
-        # Step 2: analyze what diverged
-        _analyze_remote_changes(root)
-
         # Snapshot submodule refs before rebase
         pre_refs = {
             name: _get_submodule_ref(name, root)
@@ -2152,93 +1205,13 @@ def hub_push_with_rebase(
                     log_ref_update(name, old_ref, new_ref, "auto_rebase", root)
             continue
 
-        # Step 5: rebase has conflicts — classify and attempt auto-resolution
-        conflict_type = _classify_rebase_conflict(root)
-
-        if conflict_type == "submodule_ref":
-            # Try fast-forward auto-resolution before aborting
-            conflicts = _get_conflicting_submodule_refs(root)
-            if conflicts:
-                resolutions = {}
-                diverged_msgs = []
-
-                for name, (our_ref, their_ref) in conflicts.items():
-                    ff = check_ref_fast_forward(name, our_ref, their_ref, root)
-                    if ff["resolution"] == "diverged":
-                        diverged_msgs.append(ff["message"])
-                    else:
-                        resolutions[name] = ff
-
-                if not diverged_msgs and resolutions:
-                    # All fast-forwardable — resolve each conflict
-                    all_ok = True
-                    for name, ff in resolutions.items():
-                        if not _resolve_submodule_ref_conflict(
-                            name, ff["newer_ref"], root,
-                        ):
-                            all_ok = False
-                            break
-
-                    if all_ok:
-                        cont = subprocess.run(
-                            ["git", "rebase", "--continue"],
-                            cwd=str(root),
-                            capture_output=True,
-                            text=True,
-                            env={**os.environ, "GIT_EDITOR": "true"},
-                        )
-                        if cont.returncode == 0:
-                            rebased = True
-                            for name, old_ref in pre_refs.items():
-                                new_ref = _get_submodule_ref(name, root)
-                                if new_ref and old_ref != new_ref:
-                                    log_ref_update(
-                                        name, old_ref, new_ref,
-                                        "auto_rebase", root,
-                                    )
-                            continue  # retry push
-
-                # Auto-resolution failed or diverged — abort
-                subprocess.run(
-                    ["git", "rebase", "--abort"],
-                    cwd=str(root),
-                    capture_output=True,
-                    text=True,
-                )
-                if diverged_msgs:
-                    return {
-                        "pushed": False, "retries": retry + 1, "rebased": False,
-                        "error": "\n".join(diverged_msgs),
-                    }
-                return {
-                    "pushed": False, "retries": retry + 1, "rebased": False,
-                    "error": "submodule ref conflict \u2014 auto-resolution failed",
-                }
-
-            # No conflicts parsed — abort with original message
-            subprocess.run(
-                ["git", "rebase", "--abort"],
-                cwd=str(root),
-                capture_output=True,
-                text=True,
-            )
-            return {
-                "pushed": False, "retries": retry + 1, "rebased": False,
-                "error": "submodule ref conflict \u2014 check if fast-forwardable",
-            }
-
-        # Non-submodule conflicts — abort and report
+        # Step 5: rebase conflicted — abort and report
         subprocess.run(
             ["git", "rebase", "--abort"],
             cwd=str(root),
             capture_output=True,
             text=True,
         )
-        if conflict_type == "project_files":
-            return {
-                "pushed": False, "retries": retry + 1, "rebased": False,
-                "error": "rebase conflict in .project/ files \u2014 manual resolution required",
-            }
         return {
             "pushed": False, "retries": retry + 1, "rebased": False,
             "error": "rebase conflict \u2014 manual resolution required",
@@ -2458,7 +1431,7 @@ def push_subprojects(
     projects: list[str],
     root: Path,
 ) -> dict:
-    """Push feature branches for each specified subproject in order.
+    """Push the current branch of each specified subproject in order.
 
     For each project (order matters — push in the order given):
     1. Check if the project has unpushed commits (skip if up to date).
@@ -2707,14 +1680,7 @@ def coordinated_push(
         error = hub_result.get("error") or "unknown error"
         retries = hub_result["retries"]
 
-        if "diverged" in error:
-            report_lines.append("  main \u2192 origin  \u2717  (diverged ref conflict)")
-            report_lines.append(f"  {error}")
-            report_lines.append(
-                "  Suggestion: resolve the conflict in the "
-                "subproject first, then retry"
-            )
-        elif "max retries" in error:
+        if "max retries" in error:
             report_lines.append(
                 f"  main \u2192 origin  \u2717  "
                 f"(failed after {retries} retries, "
@@ -3243,54 +2209,6 @@ def _get_last_commit(name: str, root: Path) -> dict:
         return empty
 
 
-def _get_open_prs(name: str, root: Path, deploy_branch: str) -> list[dict]:
-    """Return open PRs targeting *deploy_branch* for a subproject.
-
-    Uses ``gh pr list`` to query GitHub.  Returns a (possibly empty) list of
-    dicts with ``number``, ``title``, ``branch``, ``draft``, and ``updated``
-    keys.
-
-    Fails gracefully — returns ``[]`` when ``gh`` is not installed, not
-    authenticated, or the remote is not a GitHub repo.
-    """
-    import json as _json
-
-    target = root / "projects" / name
-    try:
-        result = subprocess.run(
-            [
-                "gh", "pr", "list",
-                "--base", deploy_branch,
-                "--state", "open",
-                "--json", "number,title,headRefName,isDraft,updatedAt",
-                "--limit", "10",
-            ],
-            cwd=str(target),
-            capture_output=True,
-            text=True,
-        )
-        if result.returncode != 0:
-            return []
-    except (FileNotFoundError, OSError):
-        return []
-
-    try:
-        raw = _json.loads(result.stdout) if result.stdout.strip() else []
-    except _json.JSONDecodeError:
-        return []
-
-    return [
-        {
-            "number": pr.get("number", 0),
-            "title": pr.get("title", ""),
-            "branch": pr.get("headRefName", ""),
-            "draft": pr.get("isDraft", False),
-            "updated": pr.get("updatedAt", ""),
-        }
-        for pr in raw
-    ]
-
-
 def _collect_project_status(name: str, root: Path) -> dict:
     """Collect all git status fields for a single subproject.
 
@@ -3314,8 +2232,6 @@ def _collect_project_status(name: str, root: Path) -> dict:
             "branch_ok": False,
             "exists": False,
             "issues": ["Project directory missing"],
-            "open_prs": 0,
-            "prs": [],
         }
 
     branch = _get_current_branch(name, root)
@@ -3325,7 +2241,6 @@ def _collect_project_status(name: str, root: Path) -> dict:
     dirty_count = _get_dirty_count(name, root)
     ahead, behind = _get_ahead_behind(name, root)
     last_commit = _get_last_commit(name, root)
-    prs = _get_open_prs(name, root, deploy)
     detached = branch == "HEAD"
 
     # Branch alignment: ok if no tracking configured, or matches
@@ -3361,8 +2276,6 @@ def _collect_project_status(name: str, root: Path) -> dict:
         "branch_ok": branch_ok,
         "exists": True,
         "issues": issues,
-        "open_prs": len(prs),
-        "prs": prs,
     }
 
 
@@ -3386,9 +2299,6 @@ def git_status_all(root: Optional[Path] = None) -> dict:
       - ``branch_ok``: whether current branch matches tracking branch
       - ``exists``: whether the project directory exists
       - ``issues``: list of human-readable problem strings
-      - ``open_prs``: number of open PRs targeting the deploy branch
-      - ``prs``: list of open PR dicts (``number``, ``title``, ``branch``,
-        ``draft``, ``updated``); empty when ``gh`` is unavailable
     - ``total``: number of registered projects
     - ``issues``: count of projects with any problem (dirty/misaligned/missing)
     - ``ok``: ``True`` if no projects have issues
@@ -3505,8 +2415,7 @@ def format_git_status(data: dict, *, verbose: bool = False) -> str:
 
     Args:
         data: dict returned by ``git_status_all()``.
-        verbose: If True, include last commit info, PR titles, and dirty file
-            details.
+        verbose: If True, include last commit info and dirty file details.
 
     Returns:
         Multi-line formatted string ready for terminal output.
@@ -3523,7 +2432,7 @@ def format_git_status(data: dict, *, verbose: bool = False) -> str:
     sorted_projects = sorted(projects, key=_severity_score)
 
     # Column headers
-    header = ["Project", "Branch", "Deploy", "Dirty", "Ahead/Behind", "PRs", "Issues"]
+    header = ["Project", "Branch", "Deploy", "Dirty", "Ahead/Behind", "Issues"]
 
     # Build rows
     rows: list[list[str]] = []
@@ -3535,7 +2444,6 @@ def format_git_status(data: dict, *, verbose: bool = False) -> str:
         ahead = p.get("ahead", 0)
         behind = p.get("behind", 0)
         ab = f"{ahead}/{behind}" if (ahead or behind) else ""
-        prs = str(p.get("open_prs", 0)) if p.get("open_prs") else ""
 
         # Issues column: compact summary
         issues = p.get("issues", [])
@@ -3545,7 +2453,7 @@ def format_git_status(data: dict, *, verbose: bool = False) -> str:
         else:
             issue_str = ""
 
-        rows.append([name, branch, deploy, dirty, ab, prs, issue_str])
+        rows.append([name, branch, deploy, dirty, ab, issue_str])
 
     # Calculate column widths
     widths = [len(h) for h in header]
@@ -3583,13 +2491,6 @@ def format_git_status(data: dict, *, verbose: bool = False) -> str:
                     f"{commit.get('date', '')} "
                     f"({commit.get('author', '')}) "
                     f"{commit.get('message', '')}"
-                )
-            pr_list = p.get("prs", [])
-            for pr in pr_list:
-                draft = " [draft]" if pr.get("draft") else ""
-                lines.append(
-                    f"    PR #{pr['number']}: {pr['title']} "
-                    f"({pr['branch']}){draft}"
                 )
             issues = p.get("issues", [])
             for issue in issues:

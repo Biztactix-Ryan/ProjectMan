@@ -10,9 +10,7 @@ from pathlib import Path
 from projectman.hub.registry import (
     list_projects, repair, _init_subproject, _parse_github_repo,
     log_ref_update, REF_LOG_MAX_ENTRIES,
-    hub_push_with_rebase, _analyze_remote_changes, _classify_rebase_conflict,
-    check_ref_fast_forward, _get_conflicting_submodule_refs,
-    _resolve_submodule_ref_conflict,
+    hub_push_with_rebase,
     validate_branches,
     format_branch_validation,
     sync,
@@ -470,7 +468,7 @@ def test_log_ref_update_creates_file(tmp_hub):
 def test_log_ref_update_appends(tmp_hub):
     """Successive calls append to the log."""
     log_ref_update("api", "aaa", "bbb", "sync", tmp_hub)
-    log_ref_update("web", "ccc", "ddd", "changeset", tmp_hub, commit="abc123")
+    log_ref_update("web", "ccc", "ddd", "manual", tmp_hub, commit="abc123")
 
     entries = yaml.safe_load(
         (tmp_hub / ".project" / "ref-log.yaml").read_text()
@@ -515,7 +513,7 @@ def test_log_ref_update_rotation(tmp_hub):
     log_path.write_text(yaml.dump(seed, default_flow_style=False))
 
     # One more should trigger rotation
-    log_ref_update("web", "x", "y", "changeset", tmp_hub)
+    log_ref_update("web", "x", "y", "manual", tmp_hub)
 
     entries = yaml.safe_load(log_path.read_text())
     assert len(entries) == REF_LOG_MAX_ENTRIES
@@ -670,16 +668,11 @@ def test_hub_push_with_rebase_fetch_fails(mock_run, tmp_hub):
 
 @patch("projectman.hub.registry.subprocess.run")
 def test_hub_push_with_rebase_conflict_project_files(mock_run, tmp_hub):
-    """Rebase fails with .project/ file conflicts."""
+    """Rebase fails on conflicting files — aborted, manual resolution asked for."""
     mock_run.side_effect = _git_dispatcher({
         "push": _make_run_result(1, stderr="rejected non-fast-forward"),
         "fetch": _make_run_result(0),
-        "diff": [
-            # First call: _analyze_remote_changes
-            _make_run_result(0, stdout=".project/index.yaml\nprojects/api\n"),
-            # Second call: _classify_rebase_conflict
-            _make_run_result(0, stdout=".project/index.yaml\n"),
-        ],
+        "diff": _make_run_result(0, stdout=".project/index.yaml\n"),
         "rebase": [
             _make_run_result(1, stderr="CONFLICT"),  # rebase fails
             _make_run_result(0),  # --abort succeeds (subcommand still "rebase")
@@ -689,28 +682,6 @@ def test_hub_push_with_rebase_conflict_project_files(mock_run, tmp_hub):
     result = hub_push_with_rebase(root=tmp_hub)
     assert result["pushed"] is False
     assert "manual resolution required" in result["error"]
-    assert ".project/" in result["error"]
-
-
-@patch("projectman.hub.registry.subprocess.run")
-def test_hub_push_with_rebase_conflict_submodule_ref(mock_run, tmp_hub):
-    """Rebase fails with submodule ref conflict."""
-    mock_run.side_effect = _git_dispatcher({
-        "push": _make_run_result(1, stderr="rejected non-fast-forward"),
-        "fetch": _make_run_result(0),
-        "diff": [
-            _make_run_result(0, stdout="projects/api\n"),
-            _make_run_result(0, stdout="projects/api\n"),
-        ],
-        "rebase": [
-            _make_run_result(1, stderr="CONFLICT"),
-            _make_run_result(0),  # --abort
-        ],
-    })
-
-    result = hub_push_with_rebase(root=tmp_hub)
-    assert result["pushed"] is False
-    assert "fast-forwardable" in result["error"]
 
 
 @patch("projectman.hub.registry.subprocess.run")
@@ -797,327 +768,6 @@ def test_hub_push_with_rebase_logs_ref_changes(mock_run, tmp_hub):
     assert entries[0]["new_ref"] == "bbb222"
 
 
-# ─── _analyze_remote_changes ─────────────────────────────────────
-
-
-@patch("projectman.hub.registry.subprocess.run")
-def test_analyze_remote_changes_submodule_only(mock_run, tmp_hub):
-    mock_run.return_value = _make_run_result(0, stdout="projects/api\nprojects/web\n")
-    result = _analyze_remote_changes(tmp_hub)
-    assert result["submodule_only"] is True
-    assert result["project_files_changed"] is False
-    assert len(result["files"]) == 2
-
-
-@patch("projectman.hub.registry.subprocess.run")
-def test_analyze_remote_changes_mixed(mock_run, tmp_hub):
-    mock_run.return_value = _make_run_result(
-        0, stdout="projects/api\n.project/index.yaml\n"
-    )
-    result = _analyze_remote_changes(tmp_hub)
-    assert result["submodule_only"] is False
-    assert result["project_files_changed"] is True
-
-
-@patch("projectman.hub.registry.subprocess.run")
-def test_analyze_remote_changes_git_fails(mock_run, tmp_hub):
-    mock_run.side_effect = subprocess.CalledProcessError(1, "git diff")
-    result = _analyze_remote_changes(tmp_hub)
-    assert result["submodule_only"] is False
-    assert result["files"] == []
-
-
-# ─── _classify_rebase_conflict ────────────────────────────────────
-
-
-@patch("projectman.hub.registry.subprocess.run")
-def test_classify_rebase_conflict_project_files(mock_run, tmp_hub):
-    mock_run.return_value = _make_run_result(0, stdout=".project/config.yaml\n")
-    assert _classify_rebase_conflict(tmp_hub) == "project_files"
-
-
-@patch("projectman.hub.registry.subprocess.run")
-def test_classify_rebase_conflict_submodule_ref(mock_run, tmp_hub):
-    mock_run.return_value = _make_run_result(0, stdout="projects/api\n")
-    assert _classify_rebase_conflict(tmp_hub) == "submodule_ref"
-
-
-@patch("projectman.hub.registry.subprocess.run")
-def test_classify_rebase_conflict_unknown(mock_run, tmp_hub):
-    mock_run.return_value = _make_run_result(0, stdout="README.md\n")
-    assert _classify_rebase_conflict(tmp_hub) == "unknown"
-
-
-@patch("projectman.hub.registry.subprocess.run")
-def test_classify_rebase_conflict_no_conflicts(mock_run, tmp_hub):
-    mock_run.return_value = _make_run_result(0, stdout="")
-    assert _classify_rebase_conflict(tmp_hub) == "unknown"
-
-
-# ─── check_ref_fast_forward ──────────────────────────────────────
-
-
-@patch("projectman.hub.registry.subprocess.run")
-def test_check_ref_fast_forward_ours_ahead(mock_run, tmp_hub):
-    """When their_ref is ancestor of our_ref, resolution is 'ours'."""
-    (tmp_hub / "projects" / "api").mkdir(parents=True)
-    # First merge-base call: --is-ancestor their our → exit 0
-    mock_run.return_value = _make_run_result(0)
-
-    result = check_ref_fast_forward("api", "aaa1111", "bbb2222", tmp_hub)
-    assert result["resolution"] == "ours"
-    assert result["newer_ref"] == "aaa1111"
-    assert "keeping ours" in result["message"]
-
-
-@patch("projectman.hub.registry.subprocess.run")
-def test_check_ref_fast_forward_theirs_ahead(mock_run, tmp_hub):
-    """When our_ref is ancestor of their_ref, resolution is 'theirs'."""
-    (tmp_hub / "projects" / "api").mkdir(parents=True)
-    mock_run.side_effect = [
-        _make_run_result(1),  # first check: theirs NOT ancestor of ours
-        _make_run_result(0),  # second check: ours IS ancestor of theirs
-    ]
-
-    result = check_ref_fast_forward("api", "aaa1111", "bbb2222", tmp_hub)
-    assert result["resolution"] == "theirs"
-    assert result["newer_ref"] == "bbb2222"
-    assert "taking theirs" in result["message"]
-
-
-@patch("projectman.hub.registry.subprocess.run")
-def test_check_ref_fast_forward_diverged(mock_run, tmp_hub):
-    """When neither ref is ancestor, resolution is 'diverged'."""
-    (tmp_hub / "projects" / "api").mkdir(parents=True)
-    mock_run.side_effect = [
-        _make_run_result(1),  # first check fails
-        _make_run_result(1),  # second check fails
-    ]
-
-    result = check_ref_fast_forward("api", "aaa1111", "bbb2222", tmp_hub)
-    assert result["resolution"] == "diverged"
-    assert result["newer_ref"] == ""
-    assert "diverged" in result["message"]
-    assert "aaa1111" in result["message"]
-    assert "bbb2222" in result["message"]
-
-
-@patch("projectman.hub.registry.subprocess.run")
-def test_check_ref_fast_forward_missing_subproject(mock_run, tmp_hub):
-    """Returns diverged when subproject directory doesn't exist."""
-    mock_run.side_effect = FileNotFoundError("no such dir")
-
-    result = check_ref_fast_forward("missing", "aaa", "bbb", tmp_hub)
-    assert result["resolution"] == "diverged"
-
-
-# ─── _get_conflicting_submodule_refs ──────────────────────────────
-
-
-@patch("projectman.hub.registry.subprocess.run")
-def test_get_conflicting_submodule_refs_parses_output(mock_run, tmp_hub):
-    """Parses git ls-files --unmerged output into (our_ref, their_ref) pairs."""
-    output = (
-        "160000 remote_aaa 2\tprojects/api\n"
-        "160000 local_bbb 3\tprojects/api\n"
-        "160000 remote_ccc 2\tprojects/web\n"
-        "160000 local_ddd 3\tprojects/web\n"
-    )
-    mock_run.return_value = _make_run_result(0, stdout=output)
-
-    conflicts = _get_conflicting_submodule_refs(tmp_hub)
-    assert len(conflicts) == 2
-    # Stage 3 (git "theirs" in rebase) = our local ref
-    # Stage 2 (git "ours" in rebase) = remote/their ref
-    assert conflicts["api"] == ("local_bbb", "remote_aaa")
-    assert conflicts["web"] == ("local_ddd", "remote_ccc")
-
-
-@patch("projectman.hub.registry.subprocess.run")
-def test_get_conflicting_submodule_refs_empty_on_error(mock_run, tmp_hub):
-    """Returns empty dict when git command fails."""
-    mock_run.side_effect = subprocess.CalledProcessError(1, "git ls-files")
-
-    conflicts = _get_conflicting_submodule_refs(tmp_hub)
-    assert conflicts == {}
-
-
-@patch("projectman.hub.registry.subprocess.run")
-def test_get_conflicting_submodule_refs_incomplete_stages(mock_run, tmp_hub):
-    """Skips entries that only have one stage (missing the other)."""
-    output = "160000 aaa 2\tprojects/api\n"  # only stage 2, no stage 3
-    mock_run.return_value = _make_run_result(0, stdout=output)
-
-    conflicts = _get_conflicting_submodule_refs(tmp_hub)
-    assert conflicts == {}
-
-
-# ─── _resolve_submodule_ref_conflict ──────────────────────────────
-
-
-@patch("projectman.hub.registry.subprocess.run")
-def test_resolve_submodule_ref_conflict_success(mock_run, tmp_hub):
-    """Returns True when checkout and add both succeed."""
-    (tmp_hub / "projects" / "api").mkdir(parents=True)
-    mock_run.return_value = _make_run_result(0)
-
-    assert _resolve_submodule_ref_conflict("api", "abc123", tmp_hub) is True
-    assert mock_run.call_count == 2  # checkout + add
-
-
-@patch("projectman.hub.registry.subprocess.run")
-def test_resolve_submodule_ref_conflict_checkout_fails(mock_run, tmp_hub):
-    """Returns False when checkout fails."""
-    (tmp_hub / "projects" / "api").mkdir(parents=True)
-    mock_run.side_effect = subprocess.CalledProcessError(1, "git checkout")
-
-    assert _resolve_submodule_ref_conflict("api", "abc123", tmp_hub) is False
-
-
-# ─── hub_push_with_rebase + fast-forward integration ─────────────
-
-
-@patch("projectman.hub.registry.subprocess.run")
-def test_hub_push_rebase_auto_resolves_ff_conflict(mock_run, tmp_hub):
-    """Submodule ref conflict is auto-resolved via fast-forward check."""
-    _register_subproject(tmp_hub, "api", prefix="API")
-    (tmp_hub / "projects" / "api").mkdir(parents=True, exist_ok=True)
-
-    rev_parse_count = {"n": 0}
-
-    def dispatcher(cmd, **kwargs):
-        sub = None
-        for i, part in enumerate(cmd):
-            if part == "git" or part.endswith("/git"):
-                if i + 1 < len(cmd):
-                    sub = cmd[i + 1]
-                break
-
-        if sub == "push":
-            if not hasattr(dispatcher, "_push_n"):
-                dispatcher._push_n = 0
-            dispatcher._push_n += 1
-            if dispatcher._push_n == 1:
-                r = _make_run_result(1, stderr="rejected non-fast-forward")
-            else:
-                r = _make_run_result(0)
-        elif sub == "fetch":
-            r = _make_run_result(0)
-        elif sub == "diff":
-            r = _make_run_result(0, stdout="projects/api\n")
-        elif sub == "rev-parse":
-            rev_parse_count["n"] += 1
-            sha = "old_aaa" if rev_parse_count["n"] <= 1 else "new_bbb"
-            r = _make_run_result(0, stdout=sha + "\n")
-            if kwargs.get("check") and r.returncode != 0:
-                raise subprocess.CalledProcessError(
-                    r.returncode, cmd, output=r.stdout, stderr=r.stderr,
-                )
-            return r
-        elif sub == "rebase":
-            if not hasattr(dispatcher, "_rebase_n"):
-                dispatcher._rebase_n = 0
-            dispatcher._rebase_n += 1
-            if dispatcher._rebase_n == 1:
-                r = _make_run_result(1, stderr="CONFLICT")  # initial rebase fails
-            else:
-                r = _make_run_result(0)  # --continue succeeds
-        elif sub == "ls-files":
-            r = _make_run_result(
-                0,
-                stdout="160000 remote_ref 2\tprojects/api\n"
-                       "160000 local_ref 3\tprojects/api\n",
-            )
-        elif sub == "merge-base":
-            # local_ref is ahead of remote_ref → ours is newer
-            r = _make_run_result(0)
-        elif sub == "checkout":
-            r = _make_run_result(0)
-        elif sub == "add":
-            r = _make_run_result(0)
-        else:
-            r = _make_run_result(0)
-
-        if kwargs.get("check") and r.returncode != 0:
-            raise subprocess.CalledProcessError(
-                r.returncode, cmd, output=r.stdout, stderr=r.stderr,
-            )
-        return r
-
-    mock_run.side_effect = dispatcher
-
-    result = hub_push_with_rebase(root=tmp_hub)
-    assert result["pushed"] is True
-    assert result["rebased"] is True
-
-    # Verify ref change was logged
-    log_path = tmp_hub / ".project" / "ref-log.yaml"
-    assert log_path.exists()
-    entries = yaml.safe_load(log_path.read_text())
-    assert any(e["source"] == "auto_rebase" for e in entries)
-
-
-@patch("projectman.hub.registry.subprocess.run")
-def test_hub_push_rebase_diverged_conflict_reports_error(mock_run, tmp_hub):
-    """Diverged submodule refs are reported with a clear error message."""
-    _register_subproject(tmp_hub, "api", prefix="API")
-    (tmp_hub / "projects" / "api").mkdir(parents=True, exist_ok=True)
-
-    def dispatcher(cmd, **kwargs):
-        sub = None
-        for i, part in enumerate(cmd):
-            if part == "git" or part.endswith("/git"):
-                if i + 1 < len(cmd):
-                    sub = cmd[i + 1]
-                break
-
-        if sub == "push":
-            r = _make_run_result(1, stderr="rejected non-fast-forward")
-        elif sub == "fetch":
-            r = _make_run_result(0)
-        elif sub == "diff":
-            r = _make_run_result(0, stdout="projects/api\n")
-        elif sub == "rev-parse":
-            r = _make_run_result(0, stdout="some_sha\n")
-            if kwargs.get("check") and r.returncode != 0:
-                raise subprocess.CalledProcessError(
-                    r.returncode, cmd, output=r.stdout, stderr=r.stderr,
-                )
-            return r
-        elif sub == "rebase":
-            if not hasattr(dispatcher, "_rebase_n"):
-                dispatcher._rebase_n = 0
-            dispatcher._rebase_n += 1
-            if dispatcher._rebase_n == 1:
-                r = _make_run_result(1, stderr="CONFLICT")
-            else:
-                r = _make_run_result(0)  # --abort
-        elif sub == "ls-files":
-            r = _make_run_result(
-                0,
-                stdout="160000 aaa111 2\tprojects/api\n"
-                       "160000 bbb222 3\tprojects/api\n",
-            )
-        elif sub == "merge-base":
-            # Both checks fail → diverged
-            r = _make_run_result(1)
-        else:
-            r = _make_run_result(0)
-
-        if kwargs.get("check") and r.returncode != 0:
-            raise subprocess.CalledProcessError(
-                r.returncode, cmd, output=r.stdout, stderr=r.stderr,
-            )
-        return r
-
-    mock_run.side_effect = dispatcher
-
-    result = hub_push_with_rebase(root=tmp_hub)
-    assert result["pushed"] is False
-    assert "diverged" in result["error"]
-    assert "api" in result["error"]
-
-
 # ─── coordinated_push ────────────────────────────────────────────
 
 
@@ -1196,8 +846,8 @@ def test_coordinated_push_max_retries(mock_run, tmp_hub):
 
 
 @patch("projectman.hub.registry.subprocess.run")
-def test_coordinated_push_diverged_conflict(mock_run, tmp_hub):
-    """Diverged ref conflict suggests resolution in the subproject."""
+def test_coordinated_push_rebase_conflict(mock_run, tmp_hub):
+    """A rebase conflict aborts the push and is named in the report."""
     _register_subproject(tmp_hub, "api", prefix="API")
     (tmp_hub / "projects" / "api").mkdir(parents=True, exist_ok=True)
 
@@ -1242,8 +892,8 @@ def test_coordinated_push_diverged_conflict(mock_run, tmp_hub):
 
     result = coordinated_push(root=tmp_hub)
     assert result["pushed"] is False
-    assert "diverged" in result["report"]
-    assert "Suggestion" in result["report"]
+    assert "rebase conflict" in result["report"]
+    assert "manual resolution required" in result["report"]
 
 
 @patch("projectman.hub.registry.subprocess.run")

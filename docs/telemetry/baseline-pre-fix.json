@@ -13,7 +13,7 @@
     "match_rate": 1.0,
     "sessions": 484,
     "git": {
-      "repo": "/home/user/Repo/ProjectMan",
+      "repo": ".",
       "commit": "fca9f189a85c1bf31226290ce07d75fb906a6277",
       "branch": "main",
       "dirty": true

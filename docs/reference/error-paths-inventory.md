@@ -9,8 +9,11 @@ This document is the input to:
 - **US-PM-2-4** — keep expected negatives as successful, structured responses
 - **US-PM-2-5 / US-PM-2-6** — the tests for both
 
-It describes the code **as it is** in this checkout (v0.8.9). Nothing here
-changes behaviour; US-PM-2-2 is inventory only.
+It described the code **as it was** at v0.8.9. Nothing here changes
+behaviour; US-PM-2-2 is inventory only. The counts below have since been
+adjusted downward for the code US-PM-27 deleted — the sites in that removed
+machinery are simply gone, and none of them had ever been reached in the
+observed corpus.
 
 ---
 
@@ -23,18 +26,18 @@ story finds **52** sites. It misses ten. Four passes were used:
 |---|---|---|
 | 1 | `grep -n 'return f"error\|return "error'` over `src/projectman/` | the literal-prefix baseline (52 + 4 non-f-string) |
 | 2 | **AST walk** of every `ast.Return` in every `.py` under `src/projectman/`, resolving each return to its enclosing function, then regex-filtering the *rendered source segment* for `error / not found / failed / invalid / must be / required / cannot / unable` | catches multi-line returns, `dict` returns, `_yaml_dump({...})` returns and returns of a variable — grep on a single line cannot see these |
-| 3 | **AST enumeration of all 123 returns inside the 46 `@mcp.tool` functions**, then manual read of every return that was *not* a plain success payload | proves the error set is complete by elimination rather than by pattern — an error return that used no error-ish word at all would still be caught here |
+| 3 | **AST enumeration of every return inside every `@mcp.tool` function** (123 returns across 46 tools at v0.8.9), then manual read of every return that was *not* a plain success payload | proves the error set is complete by elimination rather than by pattern — an error return that used no error-ish word at all would still be caught here |
 | 4 | Call-graph check: which `hub/registry.py` functions are reachable from an `@mcp.tool` | separates error strings that reach an MCP caller from ones that only reach the CLI |
 
 Scripts used are throwaway; both are reproducible from the description above.
-Pass 3 is the completeness argument: 46 tools, 123 returns, every one read.
+Pass 3 is the completeness argument: every tool, every return, every one read.
 
 ### What the extra ten are
 
 Pass 1 finds 52. The ten it misses:
 
-- 4 × `return "error: ..."` — a plain string, not an f-string
-  (`server.py:1345, 1498, 1730, 1841`)
+- 3 × `return "error: ..."` — a plain string, not an f-string
+  (`server.py:1345, 1498, 1730`)
 - 6 × structured error payloads that never contain the literal token
   `return f"error` — `pm_grab`'s not-ready early return and the five
   `{"status": "error", ...}` returns in `pm_web_start` / `pm_web_stop`
@@ -52,17 +55,17 @@ not by design.
 
 | Location | Sites | Reaches an MCP caller |
 |---|---:|---|
-| `server.py` — generic `except Exception as e: return f"error: {e}"` | 45 | yes |
+| `server.py` — generic `except Exception as e: return f"error: {e}"` | 40 | yes |
 | `server.py` — parameterised `return f"error: ..."` inside the `try` | 7 | yes |
-| `server.py` — `return "error: ..."` (plain string) | 4 | yes |
+| `server.py` — `return "error: ..."` (plain string) | 3 | yes |
 | `server.py` — structured error payloads (no `error:` prefix token) | 6 | yes |
-| **`server.py` subtotal** | **62** | |
+| **`server.py` subtotal** | **56** | |
 | `hub/registry.py` — reachable from a tool (`repair`, `pm_push`, `push_hub`, `hub_push_with_rebase`, `_push_subproject`, `coordinated_push`) | 27 | yes, as a nested `error` key |
-| `hub/registry.py` — CLI/hub-internal only (`create_pr`, `get_pr_status`, `create_feature_branch`, `set_branch`, `set_deploy_branch`, `add_project`, `sync`, `update_hub_refs*`) | 49 | no |
+| `hub/registry.py` — CLI/hub-internal only (`set_branch`, `add_project`, `sync`) | 11 | no |
 | `cli.py:26`, `orchestrator_api.py:95`, `web/app.py:31` | 3 | no (CLI / HTTP) |
-| **Total error-return sites found** | **141** | **89** |
+| **Total error-return sites found** | **97** | **83** |
 
-**62 in `server.py`, 10 more than the grep finds.** 89 sites can reach an MCP
+**56 in `server.py`, still more than the grep finds.** 83 sites can reach an MCP
 caller once the hub delegation path is counted.
 
 ---
@@ -116,18 +119,18 @@ So the single highest-volume *remaining* soft error is the one that must **not**
 become an error, and the second is the one that clearly must. Both tasks have
 real traffic behind them; neither is speculative.
 
-**115 of the 141 sites have zero observed traffic** — mostly the hub/changeset
-and web families. They still need converting for consistency (US-PM-2's fourth
-AC is "no tool returns a body beginning with the error prefix"), but they carry
-no measured impact and should be done in bulk, last.
+**71 of the 97 sites have zero observed traffic** — mostly the hub and web
+families. They still need converting for consistency (US-PM-2's fourth AC is
+"no tool returns a body beginning with the error prefix"), but they carry no
+measured impact and should be done in bulk, last.
 
 ---
 
 ## 3. Site inventory — `server.py`
 
-### 3.1 Generic `except Exception as e: return f"error: {e}"` — 45 sites
+### 3.1 Generic `except Exception as e: return f"error: {e}"` — 40 sites
 
-All 45 wrap an entire tool body. Every one is **GENUINE FAILURE**: the tool did
+All 40 wrap an entire tool body. Every one is **GENUINE FAILURE**: the tool did
 not do what it was asked and the caller has no structured way to learn that.
 US-PM-2-3 should convert all 45 to raise (`ToolError`/re-raise) so `is_error` is
 set.
@@ -168,11 +171,6 @@ set.
 | 1770 | `pm_push` | `RuntimeError` — `store.py:1546 Push failed: <stderr>` |
 | 1772 | `pm_push` | catch-all `Exception` |
 | 1811 | `pm_push_all` | config missing; `coordinated_push` failures |
-| 1846 | `pm_changeset_create` | `ValidationError`; write errors |
-| 1879 | `pm_changeset_status` | `Changeset not found: <id>` (`store.py:1210`) |
-| 1907 | `pm_changeset_add_project` | `Changeset not found`; write errors |
-| 1934 | `pm_changeset_create_prs` | `Changeset not found`; PR-command build failures |
-| 2006 | `pm_changeset_push` | `Changeset not found`; write errors |
 | 2082 | `pm_create_sprint` | `ValidationError`; write errors |
 | 2175 | `pm_get_sprint` | `Sprint not found: <id>` (`store.py:1313`) |
 | 2202 | `pm_list_sprints` | `find_project_root` FileNotFoundError (**observed ×1**) |
@@ -196,14 +194,13 @@ expected negative currently flows through. US-PM-2-4 must intercept
 | 1562 | `pm_restore` | `<filename> not found in malformed/` | same | **GENUINE FAILURE** — see §5.3 |
 | 1677 | `pm_git_status` | `project '<p>' not found in hub status` | caller named an unregistered project | **GENUINE FAILURE** — asserted identifier |
 
-### 3.3 `return "error: ..."` (plain string) — 4 sites
+### 3.3 `return "error: ..."` (plain string) — 3 sites
 
 | Line | Tool | Message | Trigger | Class |
 |---:|---|---|---|---|
 | 1345 | `pm_repair` | `not a hub project` | hub-only tool called in a non-hub repo | **GENUINE FAILURE** — same class as "wrong directory" |
 | 1498 | `pm_fix_malformed` | `story_id is required for tasks` | required conditional argument omitted | **GENUINE FAILURE** — argument validation |
 | 1730 | `pm_commit` | `No .project/ changes to commit` | working tree clean | **EXPECTED NEGATIVE** — see §5.2 |
-| 1841 | `pm_changeset_create` | `at least one project is required` | empty `projects` list | **GENUINE FAILURE** — argument validation |
 
 ### 3.4 Structured error payloads the grep cannot see — 6 sites
 
@@ -252,8 +249,8 @@ before returning it. None currently do — `pm_push` and `pm_push_all` return
 | 2921, 2938, 2941, 2943 | `_push_subproject` — detached HEAD, push failed, git missing, generic | `coordinated_push` | **GENUINE FAILURE** (4) |
 | 2547 | `coordinated_push` — `report: "error: not a hub project"` | `pm_push_all` (`server.py:1809`) | **GENUINE FAILURE** |
 
-`hub_push_with_rebase:2103` and `update_hub_refs_after_merge:1835` return
-`"error": None` on success and are not failure sites.
+`hub_push_with_rebase` returns `"error": None` on success and is not a
+failure site.
 
 **Recommendation for US-PM-2-3:** do not rewrite `registry.py`'s return
 contract — the CLI depends on it. Instead have `pm_push`, `pm_push_all` and
@@ -263,9 +260,7 @@ changes and leaves the CLI untouched.
 
 ### Not reachable from MCP — no action, listed for completeness
 
-49 sites across `create_pr` (12), `get_pr_status` (7), `create_feature_branch`
-(7), `update_hub_refs` (5), `update_hub_refs_after_merge` (4), `set_branch` (5),
-`add_project` (4), `set_deploy_branch` (3), `sync` (2). Plus `cli.py:26`
+11 sites across `set_branch` (5), `add_project` (4) and `sync` (2). Plus `cli.py:26`
 (template not found), `orchestrator_api.py:95` (HTTP 404 — already correct) and
 `web/app.py:31` (HTTP 422 — already correct).
 
@@ -354,11 +349,24 @@ where the server *is* up and the caller's goal is met.
   `pm_docs` (2), `pm_repair` (1), `pm_list_sprints` (1). It reaches the caller
   through the generic handlers, so US-PM-2-3's blanket conversion covers it with
   no per-site work.
-- **`Item/Task/Story/Epic/Sprint/Changeset not found: <id>`** — GENUINE FAILURE
+- **`Item/Task/Story/Epic/Sprint not found: <id>`** — GENUINE FAILURE
   at every single-id site (`pm_get`, `pm_update`, `pm_archive`, `pm_grab`,
   `pm_estimate`, `pm_scope`, `pm_epic`, `pm_get_sprint`, `pm_update_sprint`,
-  `pm_changeset_*`, `pm_run_log`). The caller asserted the id. See §7 for the
+  `pm_run_log`). The caller asserted the id. See §7 for the
   multi-id variant, which is different.
+- **`<id> already exists: <path>`** — GENUINE FAILURE. Added by US-PM-24: every
+  `Store.create_*` refuses rather than overwriting a file that is already
+  there, raising `FileExistsError`. Every create tool (`pm_create_story`,
+  `pm_create_epic`, `pm_create_task`, `pm_create_tasks`, `pm_create_sprint`)
+  reaches the caller through its generic `except Exception` handler, so
+  US-PM-2-3's blanket conversion already covers it — the class is exercised as
+  `create_target_exists` in `tests/test_failure_classes_set_is_error.py`.
+  US-PM-24-8 extended the rule to the two creates that do not go through the
+  store: `pm_fix_malformed` (writes `<stories|tasks>/<id>.md` at a
+  caller-supplied id) and `pm_restore` (moves the quarantined file onto its own
+  name). Both raise `ToolError` themselves rather than a `FileExistsError` from
+  the store, with the same `<id> already exists: <path>` text, and both leave
+  the quarantined source in `malformed/` when they refuse.
 
 ---
 
@@ -495,3 +503,55 @@ not error returns, but which US-PM-2-6 must assert stay non-error) gives the
 4. **US-PM-2-3 on the hub path** — 3 call-site guards in `pm_push`,
    `pm_push_all`, `pm_repair` covering 27 registry sites. Zero observed traffic;
    do last.
+
+## 9. Error codes
+
+US-PM-2 made a genuine failure *visible* (`is_error`); US-PRJ-48 makes it
+*classifiable*. Every failure raised through `_failed` carries a code from
+`src/projectman/errors.py`, appended to the unchanged message as a trailing
+` [code: <code>]` token.
+
+### The taxonomy
+
+`errors.ERROR_CODES` is the closed set. Each class also inherits the builtin
+callers already catch, so no existing `except` clause changes behaviour.
+
+| Code | Class (builtin) | Meaning | Raised by | Example wire text |
+|---|---|---|---|---|
+| `not_found` | `NotFoundError` (`FileNotFoundError`) | A requested epic/story/task/sprint/doc/path does not exist | `Store.get_*`, `Store.update`, `Store.create_task` under a missing story; reaches the wire from `pm_get`, `pm_update`, `pm_grab`, `pm_archive`, … | `Task not found: US-TST-9-9 [code: not_found]` |
+| `invalid` | `ValidationError` (`ValueError`) | Caller input malformed, out of range or self-contradictory; includes `deps.CycleError` | `Store.update` (bad `depends_on`, unknown `clear` field), `Store.unarchive`, `deps.topo_sort` | `Task cannot depend on itself: US-TST-1-1 [code: invalid]` |
+| `conflict` | `ConflictError` (`RuntimeError`) | The request clashes with the current state; includes `store.NothingToCommit` | `Store.commit_project_changes` — but `pm_commit` intercepts it and answers with the expected-negative shape (§5.2), so `conflict` is not seen on the wire today | `No .project/ changes to commit [code: conflict]` |
+| `store` | `StoreError` (`RuntimeError`) | The on-disk store or a git operation against it failed; includes `worktree.MigrationError` | `Store.push` (detached HEAD, unknown remote, push failure), worktree migration | `Remote 'origin' not configured (available: none) [code: store]` |
+| `permission` | `PermissionDeniedError` (`PermissionError`) | The filesystem refused the access the operation needed | No deliberate raise site — mapped from an OS `PermissionError` reaching any tool body | `[Errno 13] Permission denied: '.project/index.yaml' [code: permission]` |
+| `internal` | `InternalError` | Unclassified — a bug, or an exception from a dependency | The generic `except Exception` every tool body still ends with (§3.1) | `<original message> [code: internal]` |
+| `error` | `ProjectManError` | The base class's own default | Nothing raises the bare base class, so this does not appear on the wire; it is `code_for`'s answer for an exception outside the taxonomy | — |
+
+`wire_code_for` also maps the builtins pre-taxonomy code still raises
+(`FileNotFoundError` → `not_found`, `PermissionError` → `permission`,
+`ValueError` → `invalid`) and falls back to `internal`, so the code on the
+wire is always a member of `ERROR_CODES`.
+
+### Backwards compatibility
+
+* **Message text is unchanged.** The code is *appended*, never substituted;
+  `str(exc)` still starts with exactly the prose it always was.
+* **`is_error` is still set for every failure.** `CodedToolError` subclasses
+  `ToolError`, so every `except ToolError` keeps matching and FastMCP still
+  renders `isError=True`.
+* **Builtin handlers keep working** — each class inherits the builtin it replaced.
+
+### Reading the code
+
+* **In-process** (`orchestrator_api`, the web routes, tests): read
+  `CodedToolError.code` and `.message` — no text parsing at all.
+* **Over the transport**: FastMCP re-wraps the raised error and prefixes
+  `Error executing tool <name>: `, so a remote client sees the prefix, the
+  original message, and the trailing ` [code: <code>]` token it can parse.
+* **A `ToolError` raised directly by a tool passes through unsuffixed.** Its
+  text is that tool's own contract — `pm_get`'s unknown-field message ends in
+  a machine-parsed `valid names:` list a trailing token would corrupt — and
+  `_failed` must not double-suffix an already-coded error caught by a nested
+  call.
+
+Asserted in `tests/test_errors.py`, `tests/test_store_error_codes.py` and the
+"code on the wire" section of `tests/test_genuine_failures_raise.py`.

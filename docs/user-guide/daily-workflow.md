@@ -82,10 +82,30 @@ When enabled, each create/update operation stages the affected files and commits
 
 **When to use auto-commit:** Best for solo workflows or when you want every PM change tracked individually. For team workflows, manual commits give more control over grouping related changes.
 
+## A Note to the Next Session
+
+Context runs out mid-plan. When it does, the thing that gets lost is not the backlog — that is on disk — but the reasoning: *we decided to fix X by doing Y and Z*. That is too small to be a story and too important to retype.
+
+`/pm-next` keeps it in `.project/NEXT.md`:
+
+```
+/pm-next                                    # read the note back
+/pm-next fix the cache by keying on digest  # save one (replaces what is there)
+/pm-next also check the hub path            # "also"/"add" appends, dated
+/pm-next clear                              # delete it
+```
+
+The note is plain markdown with no frontmatter. It is not indexed, not audited, and never comes back from `pm_search`, so it adds nothing to the backlog — but it *is* committed with the rest of `.project/`, so it follows the project between machines and branches.
+
+You do not have to remember it exists. `pm_context` returns it first, under `next_time`, so the next session surfaces it as soon as it reads project context; `/pm-next` with no arguments reads it back on demand and proposes the first concrete step it implies.
+
+Write one before you clear context, and clear it once the work it describes is finished — a stale note misdirects the next session further than an empty one does.
+
 ## End of Day
 
 - Mark completed tasks as done
 - Update in-progress tasks with notes
+- `/pm-next <what we decided>` if you are stopping mid-thread — see [A Note to the Next Session](#a-note-to-the-next-session)
 - `/pm commit` to commit any uncommitted `.project/` changes
 - `/pm push` to sync with remote (or `/pm push all` in hub mode)
 - `/pm-status` for a final check — confirm nothing is left in-progress unexpectedly

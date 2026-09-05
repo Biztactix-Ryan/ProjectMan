@@ -26,7 +26,7 @@ Epics (EPIC-PREFIX-N) — large structural initiatives
   ↓  decompose into
 Stories (US-PREFIX-N) — user-facing value, linked to epic via epic_id
   ↓  decompose into
-Tasks (US-PREFIX-N-N) — implementation units, 1-3 points each
+Tasks (US-PREFIX-N-N) — implementation units, 1-5 points each
   ↓  pass Definition of Ready gates
 Task Board — available pool, ordered by priority
   ↓  devs grab tasks
@@ -37,15 +37,20 @@ Continuous audit — checks alignment across all layers
 
 ## Core Workflow
 
-1. **Context** — `pm_context(project)` to load hub + project docs + active work
-2. **Status** — `pm_status` for overview
-3. **Create Epic** — `pm_create_epic` for large initiatives
-4. **Scope** — `pm_scope(story_id)` to decompose stories into tasks
-5. **Auto-Scope** — `pm_auto_scope(mode)` to bulk-discover and create epics/stories/tasks
-6. **Estimate** — `pm_estimate(id)` for point calibration; this step runs before any `points` value is written (create, update, or after auto-scope)
-7. **Board** — `pm_board` to see available work
-8. **Grab** — `pm_grab(task_id)` to claim a task with readiness validation
-9. **Execute** — `/pm-do <task-id>` to implement
+1. **Status** — `pm_status` for overview
+2. **Create Epic** — `pm_create_epic` for large initiatives
+3. **Scope** — `pm_scope(story_id)` to decompose stories into tasks
+4. **Auto-Scope** — `pm_auto_scope(mode)` to bulk-discover and create epics/stories/tasks
+5. **Estimate** — `pm_estimate(id)` returns the fibonacci bands and this project's averages if you want a calibration; otherwise set `points` directly
+6. **Board** — `pm_board` to see available work
+7. **Grab** — `pm_grab(task_id)` to claim a task with readiness validation
+8. **Execute** — `/pm-do <task-id>` to implement
+9. **Complete** — `pm_done_next(task_id, outcome, note)` (or `pm_accept`, the
+    orchestrator's verdict form) completes the task and closes the parent story
+    automatically when it was the story's last open task. Plain
+    `pm_update(status="done")` completes only the task — the story must then be
+    closed explicitly. Under `/pm-orchestrate` the worker never marks the task
+    done; only the orchestrator's `pm_accept` does.
 10. **Audit** — `pm_audit` to check for drift
 
 ## Entity Hierarchy
@@ -121,7 +126,7 @@ In hub mode, context flows downward:
 
 Each project then specializes with its own PROJECT.md, INFRASTRUCTURE.md, SECURITY.md.
 
-Use `pm_context(project)` at the start of any work session to get the full picture.
+- `pm_context(project, max_doc_chars=2000, limit=5)` → a bounded brief over those layers, for when you want the wider picture. `pm_grab` and `pm_get` already carry the item context you usually need, so this is a pointer rather than an opening call.
 
 ## Sprints
 
@@ -162,21 +167,27 @@ Sprints are the unit of orchestrated execution — `/pm-orchestrate` drives the 
 - Run `projectman repair` to discover and initialize projects (break-glass: CLI, not a tool)
 - Use `pm_context(project)` to get combined hub + project context
 
-## Audit Checks (16 total)
+## Audit Checks
 
-1. Done story with incomplete tasks [ERROR]
-2. Undecomposed story [WARNING]
-3. Stale in-progress tasks [WARNING]
-4. Point mismatch [INFO]
-5. Thin description [INFO]
-6. Stale documentation [INFO]
-7. Empty active epic [WARNING]
-8. Done epic with open stories [ERROR]
-9. Orphaned epic reference [WARNING]
-10. Stale draft epic [INFO]
-11. Missing/stale hub docs [WARNING/INFO]
-12. Stale task assignment [WARNING]
-13. Malformed files in quarantine [WARNING]
-14. Dependency cycles (project-wide) [ERROR]
-15. Orphaned dependency references [WARNING]
-16. Missing implementation tasks [WARNING]
+`pm_audit` runs these; see `docs/reference/cli.md` for the table with
+descriptions.
+
+- Done story with incomplete tasks [ERROR]
+- Undecomposed story [WARNING]
+- Stale in-progress tasks [WARNING]
+- Point mismatch [INFO]
+- Thin description [INFO]
+- Missing acceptance criteria [WARNING]
+- Missing/unfilled/stale project documentation [ERROR/WARNING/INFO]
+- Empty active epic [WARNING]
+- Done epic with open stories [ERROR]
+- Orphaned epic reference [WARNING]
+- Stale draft epic [INFO]
+- Missing/unfilled/stale hub docs [ERROR/WARNING/INFO]
+- Stale task assignment [WARNING]
+- Malformed files in quarantine [WARNING]
+- Dependency cycles (project-wide) [ERROR]
+- Orphaned dependency references [WARNING]
+- Missing implementation tasks [WARNING]
+- Acceptance-criteria / test-task drift [WARNING]
+- Completion carrying no evidence [WARNING]

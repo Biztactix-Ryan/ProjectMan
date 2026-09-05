@@ -50,14 +50,22 @@ import tempfile
 from pathlib import Path
 from typing import Optional
 
+from projectman.errors import StoreError
+
 DEFAULT_BRANCH = "projectman"
 ROOT_COMMIT_MESSAGE = "ProjectMan root"
 MAIN_COMMIT_MESSAGE = "Move .project onto the projectman worktree branch"
 IMPORT_COMMIT_MESSAGE = "Import ProjectMan state"
 
 
-class MigrationError(RuntimeError):
-    """A migration precondition failed, or a git command did."""
+class MigrationError(StoreError):
+    """A migration precondition failed, or a git command did.
+
+    Still a :class:`RuntimeError` (:class:`~projectman.errors.StoreError`
+    inherits from it), so every existing ``except RuntimeError`` /
+    ``pytest.raises(RuntimeError)`` around a migration keeps working; it now
+    also carries ``code="store"``.
+    """
 
 
 def _git(

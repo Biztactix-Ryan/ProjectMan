@@ -1,7 +1,7 @@
 """The shared ID-alias resolver, and every tool wired to it (US-PM-3-5, -3-6).
 
 Two conventions for the same argument grew side by side — the generic ``id``
-and a typed one (``task_id``, ``sprint_id``, ``item_id``, ``changeset_id``) —
+and a typed one (``task_id``, ``sprint_id``, ``item_id``) —
 and callers guess wrong in both directions.  ``server._resolve_id`` is the one
 mechanism that makes both spellings work; this file covers it in isolation
 (every combination of the two spellings, including the empty ones) and then
@@ -11,7 +11,7 @@ handler, in both directions:
 * canonical ``id``, typed alias — ``pm_get``, ``pm_update``, ``pm_archive``,
   ``pm_epic``, ``pm_estimate``, ``pm_scope``, ``pm_run_log``
 * canonical typed name, alias ``id`` — ``pm_grab``, ``pm_get_sprint``,
-  ``pm_update_sprint``, ``pm_activity``, and the four ``pm_changeset_*`` tools
+  ``pm_update_sprint`` and ``pm_activity``
 
 ``test_the_rollout_covers_every_id_taking_tool_that_should_have_one`` keeps the
 table honest: a tool that takes an ID and is in neither the wired set nor the
@@ -34,10 +34,10 @@ from mcp.server.fastmcp.exceptions import ToolError
 
 from projectman.server import _resolve_id
 
-#: The changeset and web families are hidden from ``tools/list`` by default
-#: (US-PM-15-5).  Four of the nine aliased tools are ``pm_changeset_*``, and the
-#: rollout checks read the alias set off a real ``tools/list``, so this
-#: module needs the full surface registered.  ``tests/test_tool_gating.py`` asserts the gate itself.
+#: The maintenance and web families are hidden from ``tools/list`` by default
+#: (US-PM-15-5), and the rollout checks read the alias set off a real
+#: ``tools/list``, so this module needs the full surface registered.
+#: ``tests/test_tool_gating.py`` asserts the gate itself.
 pytestmark = pytest.mark.usefixtures("all_tool_families")
 
 
@@ -165,7 +165,7 @@ def test_missing_argument_message_names_every_alias():
 
 
 def test_an_optional_id_resolves_to_none_when_neither_spelling_is_given():
-    """``pm_activity`` / ``pm_changeset_status`` mean "no filter", not "error"."""
+    """``pm_activity``'s ``item_id`` means "no filter", not "error"."""
     assert _resolve_id("item_id", None, required=False, id=None) is None
 
 
@@ -217,9 +217,8 @@ def call_over_the_wire(name: str, arguments: dict) -> tuple[bool, str]:
 
 @pytest.fixture
 def seeded():
-    """One target of every aliased shape: epic, story, tasks, sprints, changesets."""
+    """One target of every aliased shape: epic, story, tasks, sprints."""
     from projectman.server import (
-        pm_changeset_create,
         pm_create_epic,
         pm_create_sprint,
         pm_create_story,
@@ -234,8 +233,6 @@ def seeded():
         pm_create_task("US-TST-1", f"Grab me {n}", READY_TASK_BODY, points=3)
     pm_create_sprint("Sprint One", goal="Ship it")
     pm_create_sprint("Sprint Two", goal="Ship it again")
-    pm_changeset_create("cs-one", "alpha,beta")
-    pm_changeset_create("cs-two", "alpha,beta")
 
 
 class Wired:
@@ -271,7 +268,7 @@ class Wired:
         #: answers with a bare JSON array, so there is nothing to look for.
         self.echoes = echoes
         #: is omitting the id legal?  True where the ID is a *filter*, not the
-        #: operand: ``pm_activity`` (no filter), ``pm_changeset_status`` (list all).
+        #: operand: ``pm_activity`` (no filter).
         self.optional = optional
 
     def args(self, **kwargs):
@@ -325,25 +322,6 @@ WIRED = [
     Wired("pm_get_sprint", "sprint_id", "id", "SPRINT-TST-1", other="SPRINT-TST-9"),
     Wired("pm_update_sprint", "sprint_id", "id", "SPRINT-TST-1", other="SPRINT-TST-9"),
     Wired("pm_activity", "item_id", "id", "US-TST-1", other="US-TST-9", optional=True),
-    Wired("pm_changeset_status", "changeset_id", "id", "CS-TST-1", other="CS-TST-9", optional=True),
-    Wired(
-        "pm_changeset_add_project",
-        "changeset_id",
-        "id",
-        "CS-TST-1",
-        alias_ident="CS-TST-2",
-        other="CS-TST-9",
-        extra={"name": "gamma"},
-    ),
-    Wired("pm_changeset_create_prs", "changeset_id", "id", "CS-TST-1", other="CS-TST-9"),
-    Wired(
-        "pm_changeset_push",
-        "changeset_id",
-        "id",
-        "CS-TST-1",
-        alias_ident="CS-TST-2",
-        other="CS-TST-9",
-    ),
 ]
 WIRED_IDS = [repr(w) for w in WIRED]
 REQUIRED = [w for w in WIRED if not w.optional]
@@ -556,7 +534,7 @@ def test_every_wired_alias_is_visible_in_the_tool_schema():
     exists to end.  Both spellings are declared parameters, and *neither* is in
     ``required`` — either one alone has to be a complete call, which is the
     whole point.  Other required parameters are none of this test's business
-    (``pm_changeset_add_project`` still requires ``name``).
+    (``pm_fix_malformed`` still requires ``title``).
     """
     from projectman.server import mcp as mcp_server
 
@@ -596,7 +574,7 @@ def test_the_rollout_covers_every_id_taking_tool_that_should_have_one():
         # parameters, so aliasing would drop title/item_type out of `required`.
         "pm_fix_malformed": "story_id is the parent; id is mid-signature",
     }
-    spellings = {"id", "task_id", "story_id", "epic_id", "sprint_id", "item_id", "changeset_id"}
+    spellings = {"id", "task_id", "story_id", "epic_id", "sprint_id", "item_id"}
     wired = {w.tool for w in WIRED}
 
     id_taking = set()
@@ -658,8 +636,8 @@ def test_the_wired_table_is_exactly_the_set_of_tools_wired_to_the_resolver():
     ``wired | EXCLUDED`` — so deleting a tool from ``WIRED`` *and* adding it to
     ``EXCLUDED`` with a plausible-sounding reason keeps that test green while
     six parametrised sweeps quietly stop running for it.  Measured: dropping
-    ``pm_changeset_push`` that way took the file from 193 tests to 187 with
-    nothing failing.
+    ``pm_update_sprint`` that way takes several parametrised sweeps out of
+    the run with nothing failing.
 
     This closes that door.  A tool that calls ``_resolve_id`` *is* aliased, as a
     fact about the shipped code, and every one of them must be in ``WIRED`` —
@@ -856,7 +834,7 @@ def test_the_human_docs_agree_with_the_docstrings_about_every_alias():
 
 #: The typed spellings of "the identifier of the item this tool acts on".
 TYPED_ID_PARAMETERS = frozenset(
-    {"task_id", "story_id", "epic_id", "sprint_id", "item_id", "changeset_id"}
+    {"task_id", "story_id", "epic_id", "sprint_id", "item_id"}
 )
 
 #: ``(tool, parameter)`` pairs where a typed name is a *parent link* and so
@@ -875,9 +853,9 @@ PARENT_LINK_PARAMETERS = frozenset(
     }
 )
 
-#: The rollout covered 15 tools.  Asserting the floor is what stops the whole
+#: The rollout covers 11 tools.  Asserting the floor is what stops the whole
 #: section passing vacuously if discovery silently stops finding anything.
-MINIMUM_TYPED_ID_TOOLS = 15
+MINIMUM_TYPED_ID_TOOLS = 11
 
 #: A real item of each shape, as created by ``seeded``.
 SAMPLE_FOR_TYPED_PARAMETER = {
@@ -886,7 +864,6 @@ SAMPLE_FOR_TYPED_PARAMETER = {
     "epic_id": "EPIC-TST-1",
     "sprint_id": "SPRINT-TST-1",
     "item_id": "US-TST-1",
-    "changeset_id": "CS-TST-1",
 }
 
 #: Well-formed but absent — used to prove the value was actually *used*.
@@ -896,7 +873,6 @@ ABSENT_FOR_TYPED_PARAMETER = {
     "epic_id": "EPIC-TST-9",
     "sprint_id": "SPRINT-TST-9",
     "item_id": "US-TST-9",
-    "changeset_id": "CS-TST-9",
 }
 
 #: Values for a discovered tool's *other* required parameters.  A tool that
@@ -1028,8 +1004,8 @@ def test_every_discovered_typed_id_tool_takes_id_alone_over_the_wire(tool_name, 
 def test_the_generic_id_actually_reaches_the_operand(tool_name, seeded):
     """A tool could declare ``id``, ignore it, and pass every test above.
 
-    ``pm_activity`` and ``pm_changeset_status`` are the ones this really
-    catches: their id is a *filter*, so "no error, and the id appears in the
+    ``pm_activity`` is the one this really
+    catches: its id is a *filter*, so "no error, and the id appears in the
     body" is satisfied by an unfiltered listing that happens to contain the
     item.  Passing an id that exists nowhere separates the two — the value
     either reaches a lookup that fails on it, or reaches a filter that then
@@ -1109,30 +1085,6 @@ def test_pm_get_sprint_called_with_id_returns_that_exact_sprint(seeded):
     assert fetched["goal"] == "Ship it again"
 
 
-def test_pm_changeset_add_project_called_with_id_updates_that_exact_changeset(seeded):
-    from projectman.server import pm_changeset_status
-
-    is_error, body = call_over_the_wire(
-        "pm_changeset_add_project", {"id": "CS-TST-1", "name": "gamma"}
-    )
-    assert is_error is False, body
-
-    projects = {e["project"] for e in yaml.safe_load(pm_changeset_status("CS-TST-1"))["entries"]}
-    assert "gamma" in projects
-    untouched = {e["project"] for e in yaml.safe_load(pm_changeset_status("CS-TST-2"))["entries"]}
-    assert "gamma" not in untouched
-
-
-def test_pm_changeset_status_called_with_id_returns_only_that_changeset(seeded):
-    """The filter-shaped case, positively: one changeset, not the listing."""
-    is_error, body = call_over_the_wire("pm_changeset_status", {"id": "CS-TST-2"})
-
-    assert is_error is False, body
-    fetched = yaml.safe_load(body)
-    assert fetched["id"] == "CS-TST-2"
-    assert "changesets" not in fetched  # i.e. not the list-all response
-
-
 def test_pm_activity_called_with_id_filters_to_that_item(seeded):
     """The other filter-shaped case — and the one the sweep cannot see."""
     is_error, body = call_over_the_wire("pm_activity", {"id": "US-TST-1-1"})
@@ -1145,39 +1097,6 @@ def test_pm_activity_called_with_id_filters_to_that_item(seeded):
 
     _, unfiltered = call_over_the_wire("pm_activity", {})
     assert yaml.safe_load(unfiltered)["total"] > filtered["total"]
-
-
-def test_pm_changeset_push_called_with_id_reports_on_that_exact_changeset(seeded):
-    """Both changesets are otherwise identical, so only the id can tell them apart."""
-    from projectman.server import pm_changeset_add_project
-
-    pm_changeset_add_project("delta", "CS-TST-1")
-
-    is_error, body = call_over_the_wire("pm_changeset_push", {"id": "CS-TST-1"})
-
-    assert is_error is False, body
-    report = yaml.safe_load(body)
-    assert report["changeset"] == "CS-TST-1"
-    assert "delta" in {entry["project"] for entry in report["pending"]}
-
-    # The sibling changeset, reached the same way, does not know about delta.
-    is_error, sibling = call_over_the_wire("pm_changeset_push", {"id": "CS-TST-2"})
-    assert is_error is False, sibling
-    assert "delta" not in {
-        entry["project"] for entry in yaml.safe_load(sibling)["pending"]
-    }
-
-
-def test_pm_changeset_create_prs_called_with_id_describes_that_exact_changeset(seeded):
-    from projectman.server import pm_changeset_add_project
-
-    pm_changeset_add_project("delta", "CS-TST-2")
-
-    is_error, body = call_over_the_wire("pm_changeset_create_prs", {"id": "CS-TST-2"})
-
-    assert is_error is False, body
-    assert "CS-TST-2" in body
-    assert "delta" in body
 
 
 # ===========================================================================
@@ -1561,34 +1480,31 @@ def test_the_effect_tests_cover_every_id_canonical_tool_that_gained_an_alias():
 # ===========================================================================
 
 
-#: The two shapes ``twins`` does not build.  Two of each, for the same reason:
+#: The shape ``twins`` does not build.  Two of them, for the same reason:
 #: a conflicting call has to be shown to leave *both* named items alone, which
 #: is only observable when both of them exist and hold different state.
 ALPHA_SPRINT, BETA_SPRINT = "SPRINT-TST-1", "SPRINT-TST-2"
-ALPHA_CHANGESET, BETA_CHANGESET = "CS-TST-1", "CS-TST-2"
 
 
 def any_item_file(root, item_id):
-    """``item_file`` extended to sprints and changesets.
+    """``item_file`` extended to sprints.
 
     Same rule as ``item_file``: the path is derived from the id, never asked of
     the Store, so a tool cannot make this agree with it.
     """
     if item_id.startswith("SPRINT-"):
         return root / ".project" / "sprints" / f"{item_id}.md"
-    if item_id.startswith("CS-"):
-        return root / ".project" / "changesets" / f"{item_id}.md"
     return item_file(root, item_id)
 
 
 def full_state(root, item_id):
-    """``(frontmatter, body)`` for any of the five item shapes.
+    """``(frontmatter, body)`` for any of the four item shapes.
 
     Tasks, stories and epics go through US-PM-3-2's ``on_disk`` unchanged —
     the same hand-rolled reader, no Store, no cache, no ProjectMan tool.
-    Sprints and changesets are parsed identically, they just live elsewhere.
+    Sprints are parsed identically, they just live elsewhere.
     """
-    if item_id.startswith(("SPRINT-", "CS-")):
+    if item_id.startswith("SPRINT-"):
         text = any_item_file(root, item_id).read_text()
         assert text.startswith("---"), (item_id, text[:40])
         _, front, body = text.split("---", 2)
@@ -1614,7 +1530,7 @@ def item_trace(root, item_id):
 def project_snapshot(root):
     """Every byte of every file under ``.project/``, keyed by relative path.
 
-    The broadest observation available: item files, sprint and changeset files,
+    The broadest observation available: item files, sprint files,
     the run-log ``.jsonl``s, ``activity.jsonl``, ``index.yaml``, the rendered
     ``INDEX*.md``, and ``config.yaml`` (whose id counters a create would bump).
     A rejected call has to leave all of it identical — including files it might
@@ -1640,29 +1556,16 @@ def activity_log_on_disk(root):
 
 @pytest.fixture
 def conflict_twins(twins):
-    """``twins``, plus a twinned sprint pair and changeset pair.
+    """``twins``, plus a twinned sprint pair.
 
-    ``pm_update_sprint`` and the three changeset tools act on items ``twins``
-    does not build.  One entry of each changeset is marked merged *on disk*
-    because ``pm_changeset_push`` only writes when it has something to move to
-    ``partial`` — without that, the control test below could not show that the
-    call mutates when it is *not* rejected, and every "nothing changed"
-    assertion for that tool would be vacuous.
+    ``pm_update_sprint`` acts on an item ``twins`` does not build.
     """
-    from projectman.server import pm_changeset_create, pm_create_sprint
+    from projectman.server import pm_create_sprint
 
     pm_create_sprint("Sprint Alpha", goal=f"{marker(ALPHA_SPRINT)} goal")
     pm_create_sprint("Sprint Beta", goal=f"{marker(BETA_SPRINT)} goal")
-    pm_changeset_create("cs-alpha", "alpha,beta")
-    pm_changeset_create("cs-beta", "alpha,beta")
 
-    for changeset in (ALPHA_CHANGESET, BETA_CHANGESET):
-        path = any_item_file(twins, changeset)
-        text = path.read_text()
-        assert "status: pending" in text, (changeset, text)
-        path.write_text(text.replace("status: pending", "status: merged", 1))
-
-    for item_id in (ALPHA_SPRINT, BETA_SPRINT, ALPHA_CHANGESET, BETA_CHANGESET):
+    for item_id in (ALPHA_SPRINT, BETA_SPRINT):
         assert any_item_file(twins, item_id).exists(), item_id
     return twins
 
@@ -1690,16 +1593,12 @@ CONFLICT_PAIR = {
     "pm_get_sprint": (ALPHA_SPRINT, BETA_SPRINT),
     "pm_update_sprint": (ALPHA_SPRINT, BETA_SPRINT),
     "pm_activity": (ALPHA_TASK, BETA_TASK),
-    "pm_changeset_status": (ALPHA_CHANGESET, BETA_CHANGESET),
-    "pm_changeset_add_project": (ALPHA_CHANGESET, BETA_CHANGESET),
-    "pm_changeset_create_prs": (ALPHA_CHANGESET, BETA_CHANGESET),
-    "pm_changeset_push": (ALPHA_CHANGESET, BETA_CHANGESET),
 }
 
 #: The rest of the call, chosen to be as *damaging* as the tool allows.  A
 #: conflicting ``pm_update`` that carried no fields would leave nothing behind
 #: even if the resolver ran last, so every mutator is handed real work to do:
-#: a status change, a points change, a run-log note, a new changeset entry.
+#: a status change, a points change, a run-log note.
 CONFLICT_EXTRA = {
     "pm_update": {
         "status": "done",
@@ -1708,7 +1607,6 @@ CONFLICT_EXTRA = {
         "note": "MUST NEVER BE FILED",
     },
     "pm_update_sprint": {"status": "active", "goal": "MUST NEVER BE WRITTEN"},
-    "pm_changeset_add_project": {"name": "gamma"},
     # Completes the task *and* files a run-log entry, so a resolver that ran
     # late would leave two separate traces behind.
     "pm_done_next": {"outcome": "success", "note": "MUST NEVER BE FILED"},
@@ -1745,8 +1643,6 @@ MUTATING = [
     "pm_park",
     "pm_review",
     "pm_update_sprint",
-    "pm_changeset_add_project",
-    "pm_changeset_push",
 ]
 
 #: ``(wired tool, canonical value, alias value)`` — every wired tool, with the
@@ -1870,8 +1766,7 @@ def test_a_conflicting_call_leaves_the_whole_project_byte_identical(
     A rejected call must not touch the index, the rendered ``INDEX*.md``, the
     id counters in ``config.yaml``, any *other* item, or create a file that was
     not there before — which is the failure mode a per-item comparison cannot
-    see at all.  ``pm_changeset_add_project`` is the sharp case: its effect is
-    an appended entry in a file the test would otherwise never look at.
+    see at all.
     """
     before = project_snapshot(conflict_twins)
 

@@ -19,10 +19,8 @@
 │   └── US-PRJ-1-1.md   # Task files
 ├── sprints/
 │   └── SPRINT-PRJ-1.md # Sprint files
-├── logs/
-│   └── US-PRJ-1-1.jsonl # Per-item run logs
-└── changesets/
-    └── CS-PRJ-1.md      # Changeset files
+└── logs/
+    └── US-PRJ-1-1.jsonl # Per-item run logs
 ```
 
 With `--hub`, also creates:
@@ -56,11 +54,10 @@ auto_commit: false       # Auto-commit .project/ changes after writes
 deploy_branch: null      # Default branch for push operations
 next_story_id: 1         # Auto-incremented
 next_epic_id: 1          # Auto-incremented
-next_changeset_id: 1     # Auto-incremented
+next_sprint_id: 1        # Auto-incremented
 projects: []             # Hub mode: list of registered project names
 stale_claim_hours: 2.0   # Age at which an in-progress claim is flagged stale
 tools:                   # Optional — which gated tool families agents see
-  changesets: null       # null = follow `hub`; true/false to force
   maintenance: false     # Break-glass repair/restore tools, off by default
   web: false             # Web dashboard tools, off by default
 ```
@@ -75,20 +72,19 @@ tools:                   # Optional — which gated tool families agents see
 | `deploy_branch` | string\|null | Default branch for push operations |
 | `next_story_id` | int | Next story number to assign (auto-incremented) |
 | `next_epic_id` | int | Next epic number to assign (auto-incremented) |
-| `next_changeset_id` | int | Next changeset number to assign (auto-incremented) |
+| `next_sprint_id` | int | Next sprint number to assign (auto-incremented) |
 | `projects` | list[str] | Hub mode: names of registered subprojects |
 | `stale_claim_hours` | float | How long an in-progress claim may sit before `pm_active` / `pm_board` flag it `stale: true` — a claim must *pass* this age, so exactly at the threshold is not yet stale. Default `2.0`. A task with no `claimed_at` is never stale regardless. Turn it *up* rather than to `0` to disable — `0` flags every live claim. A value that is not a non-negative finite number falls back to `2.0` rather than failing the config load |
-| `tools.changesets` | bool\|null | Register the five `pm_changeset_*` tools. `null` (default) follows `hub` |
 | `tools.maintenance` | bool | Register the five break-glass tools (`pm_repair`, `pm_restore`, `pm_validate_branches`, `pm_fix_malformed`, `pm_push_all`). Default `false` |
 | `tools.web` | bool | Register the three `pm_web_*` tools. Default `false` |
 
 ### tools — gated tool families
 
-Three tool families are registered with the MCP server only when this project
+Two tool families are registered with the MCP server only when this project
 asks for them. Across ~14,200 recorded tool calls on four machines none of
 their members was ever called, so by default their schemas were paid for in
 every request and never used. Hiding them costs nothing that was in use and
-takes **thirteen** tools off `tools/list` — 54 registered, 41 visible with a
+takes **eight** tools off `tools/list` — 50 registered, 42 visible with a
 default config.
 
 Nothing is deleted: the code is untouched, and turning a family back on is
@@ -101,26 +97,17 @@ tools:
 
 ```yaml
 tools:
-  changesets: true       # the five pm_changeset_* tools
-```
-
-```yaml
-tools:
   maintenance: true      # pm_repair / pm_restore / pm_validate_branches
                          # pm_fix_malformed / pm_push_all
 ```
 
-`tools.changesets` is tri-state. Left unset — which is what an untouched
-`config.yaml` gives you — it **follows `hub`**: a changeset groups one change
-across several projects, which only a hub has, so a hub gets the family and a
-plain repo does not. Writing `changesets: false` in a hub config, or
-`changesets: true` in a leaf one, overrides that inference. `tools.web` and
-`tools.maintenance` get no such inference — a hub is no likelier than a leaf
+Neither flag takes any inference from `hub` or anything else: both are a
+plain `false` until someone writes `true`. A hub is no likelier than a leaf
 repo to want the dashboard driven from an agent's tool list, and it breaks no
-more often — so both are a plain `false` by default everywhere.
+more often.
 
-`tools.maintenance` is the odd one out in *why* it is hidden. The other two
-are hidden because nobody calls them; these five are hidden because they are
+`tools.maintenance` is the odd one out in *why* it is hidden. The web family
+is hidden because nobody calls it; these five are hidden because they are
 aimed at the wrong audience. Repairing a hub, un-quarantining a malformed
 file or driving a coordinated push is human recovery work, and every one of
 the five has a CLI equivalent, so hiding them from the agent's tool list
@@ -409,63 +396,6 @@ planning → active → completed
                  ↘ cancelled
 ```
 
-## Changeset Format (changesets/CS-PRJ-1.md)
-
-Changesets coordinate multi-project changes across a hub. They use YAML frontmatter with a list of project entries.
-
-```markdown
----
-id: CS-PRJ-1
-title: Add authentication across services
-status: open
-entries:
-  - project: my-api
-    ref: feature/auth
-    pr_number: null
-    status: pending
-  - project: my-frontend
-    ref: feature/auth-ui
-    pr_number: null
-    status: pending
-created: '2026-03-01'
-updated: '2026-03-01'
----
-
-## Description
-
-Coordinated authentication changes across the API and frontend services.
-```
-
-### Changeset Frontmatter Fields
-
-| Field | Type | Required | Values |
-|-------|------|----------|--------|
-| `id` | string | yes | Pattern: `CS-PREFIX-N` (e.g. `CS-PRJ-1`) |
-| `title` | string | yes | Short descriptive title |
-| `status` | enum | yes | `open`, `partial`, `merged`, `closed` |
-| `entries` | list | yes | List of project entries (see below) |
-| `created` | date | yes | ISO date |
-| `updated` | date | yes | ISO date |
-
-### Changeset Entry Fields
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `project` | string | Registered project name |
-| `ref` | string | Git branch/ref for this project's changes |
-| `pr_number` | int\|null | PR number once created |
-| `status` | string | `pending`, `open`, `merged`, `closed`, `no-pr` |
-
-### Changeset Status Lifecycle
-
-```
-open → partial → merged
-         ↓
-       closed
-```
-
-Status is determined automatically: all entries merged → `merged`, some merged → `partial`, any closed → `closed`.
-
 ## Activity Log Format (activity.jsonl)
 
 The activity log is an append-only JSONL file at `.project/activity.jsonl`. Each line is a JSON object recording a single event.
@@ -481,7 +411,7 @@ The activity log is an append-only JSONL file at `.project/activity.jsonl`. Each
 |-------|------|--------|
 | `event_type` | enum | `create`, `update`, `delete`, `archive` |
 | `item_id` | string | ID of the affected item |
-| `item_type` | enum | `story`, `task`, `epic`, `changeset` |
+| `item_type` | enum | `story`, `task`, `epic` |
 | `changes` | dict | Field changes (for updates, values are `[old, new]` pairs) |
 | `timestamp` | datetime | ISO 8601 with microseconds |
 | `actor` | string | Who performed the action (e.g. `claude`, a human name) |
@@ -544,4 +474,4 @@ Severity levels:
 - **WARNING** — likely needs action (undecomposed stories, stale items, orphaned references, malformed files)
 - **INFO** — suggestions (thin descriptions, point mismatches, stale drafts, stale documentation)
 
-The audit runs 18 checks covering stories, tasks, epics, documentation, hub docs, assignments, dependencies, malformed files, and completion evidence.
+The audit covers stories, tasks, epics, documentation, hub docs, assignments, dependencies, malformed files, and completion evidence. The full check list with severities is in [cli.md](cli.md#projectman-audit).

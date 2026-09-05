@@ -27,8 +27,8 @@ Triggered when no epics or stories exist yet. The tool returns codebase signals 
    - **Set story dependencies**: If a story depends on another story being done first, use `depends_on`
 8. For each story, propose 2-6 tasks
 9. Present tasks to the user for quick approval
-10. **Calibrate: `pm_estimate(<id>)`** — see *Estimation in bulk* below — before any `points` value is written
-11. Create approved tasks with `pm_create_task`, sizing each against the calibration from step 10
+10. **Size the tasks** — `pm_estimate(<id>)` returns the fibonacci bands and this project's averages if you want a calibration (see *Estimation in bulk* below); otherwise set `points` directly
+11. Create approved tasks with `pm_create_task`, carrying the `points` value proposed for each
 12. Show summary: N epics, N stories, N tasks created, total points
 
 ## Incremental Mode (existing stories need tasks)
@@ -41,8 +41,8 @@ Triggered when stories exist but some have no tasks. This is the primary use cas
    a. Call `pm_scope(story_id)` to get full decomposition context
    b. Propose 2-6 tasks for the story based on its content
    c. Present the task list to the user for quick approval (yes/edit/skip)
-   d. **Calibrate: `pm_estimate(<id>)`** — see *Estimation in bulk* below — before any `points` value is written
-   e. Create approved tasks with `pm_create_task`, sizing each against that calibration
+   d. **Size the tasks** — `pm_estimate(<id>)` returns the fibonacci bands and this project's averages if you want a calibration (see *Estimation in bulk* below); otherwise set `points` directly
+   e. Create approved tasks with `pm_create_task`, carrying the `points` value proposed for each
 3. After all stories are scoped, show summary:
    - N stories scoped
    - N tasks created
@@ -60,11 +60,11 @@ Triggered when stories exist but some have no tasks. This is the primary use cas
 
 ## Estimation in bulk
 
-An autoscope run writes dozens of `points` values, so calibration is an explicit step in both workflows above, not an afterthought.
+An autoscope run writes dozens of `points` values, so a calibration buys more here than it does on a one-line update — which is why the sizing step of both workflows above offers it.
 
-**Calibrate: `pm_estimate(<id>)`.** Read the `estimation_guidance` it returns — the fibonacci scale, the 1/2/3/5/8/13 calibration bands, and this project's historical average points — and size against those bands rather than by feel.
+`pm_estimate(<id>)` returns `estimation_guidance` — the fibonacci scale, the 1/2/3/5/8/13 calibration bands, and this project's historical average points — to size a batch against rather than by feel.
 
-With many items, call `pm_estimate` on the representative (first) story of each size band you are proposing rather than on every item, then apply that calibration to the rest of the band. That trade-off keeps the cost of a large run bounded — a handful of calls instead of one per item — while still anchoring the whole batch to real project data.
+With many items, call `pm_estimate` on one representative story per size band you are proposing rather than on every item, then apply that calibration to the rest of the band. That trade-off keeps the cost of a large run bounded — a handful of calls instead of one per item — while still anchoring the whole batch to real project data.
 
 ## Dependencies: `depends_on`
 

@@ -83,6 +83,27 @@ def _git(repo: Path, *args: str) -> str | None:
     return proc.stdout.strip()
 
 
+def _repo_relative_path(repo: Path) -> str | None:
+    """``repo`` expressed relative to its own git root -- ``"."`` for the root.
+
+    The commit SHA is what actually pins the code; the path only says *where in
+    that tree* the capture was taken. Recording it absolutely pinned the baseline
+    to one machine's directory layout, so any other checkout read a path that
+    does not exist there. A relative path says the same thing and stays true in
+    every clone.
+
+    ``None`` when the git root cannot be read -- same "unknown" convention the
+    other fields use.
+    """
+    top = _git(repo, "rev-parse", "--show-toplevel")
+    if not top:
+        return None
+    try:
+        return repo.resolve().relative_to(Path(top).resolve()).as_posix()
+    except (OSError, ValueError):
+        return None
+
+
 def git_provenance(repo: Path) -> dict[str, Any]:
     """Commit, branch and dirty flag for ``repo``.
 
@@ -94,7 +115,9 @@ def git_provenance(repo: Path) -> dict[str, Any]:
     branch = _git(repo, "rev-parse", "--abbrev-ref", "HEAD")
     status = _git(repo, "status", "--porcelain")
     return {
-        "repo": str(repo),
+        # Relative to the git root ("." for the root itself): an absolute path
+        # here would be true only on the machine that captured the baseline.
+        "repo": _repo_relative_path(repo),
         # An empty answer to either of these means no usable value: keep the
         # long-standing ``None`` for "unknown" rather than an empty string.
         "commit": commit or None,

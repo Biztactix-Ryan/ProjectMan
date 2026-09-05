@@ -161,8 +161,18 @@ def test_step_3_is_extractable_and_is_the_classification_step(doc):
     """Guard the slice: every assertion below is scoped to this text."""
     step = _step(_text(doc), CLASSIFY_STEP)
     assert "pm_active" in step, f"step {CLASSIFY_STEP} in {doc} no longer reads pm_active"
-    assert len(step.splitlines()) >= 4, (
-        f"step {CLASSIFY_STEP} in {doc} lost its classification branches:\n{step}"
+    branches = [line for line in step.splitlines() if line.lstrip().startswith("- ")]
+    assert len(branches) >= 2, (
+        f"step {CLASSIFY_STEP} in {doc} lost its classification branches — a "
+        f"claim from another orch- run and a claim held by anyone else:\n{step}"
+    )
+    assert any("orch-" in line and "pm_grab(" in line for line in branches), (
+        f"step {CLASSIFY_STEP} in {doc} no longer recovers a dead orch- run's "
+        f"claim:\n{step}"
+    )
+    assert any("orch-" in line and "never touch" in line.lower() for line in branches), (
+        f"step {CLASSIFY_STEP} in {doc} no longer leaves a non-orch- claim "
+        f"alone:\n{step}"
     )
 
 
@@ -339,7 +349,10 @@ def test_the_fields_step_3_reads_are_in_a_real_pm_active_response(
     task = result["active_tasks"][0]
 
     step = _step(_text(doc), CLASSIFY_STEP)
-    quoted = set(re.findall(r"`([a-z_]+)`", step))
+    # A key may be quoted with the value the step expects — ``stale: true`` —
+    # or with its call — ``pm_active(stale_after=<hours>)``; the name is what
+    # this test cross-checks against the payload.
+    quoted = set(re.findall(r"`([a-z_]+)(?:[:(][^`]*)?`", step))
 
     for key in CLAIM_KEYS:
         assert key in quoted, f"{doc}: step {CLASSIFY_STEP} stopped quoting `{key}`"
@@ -347,12 +360,27 @@ def test_the_fields_step_3_reads_are_in_a_real_pm_active_response(
             f"{doc} tells the orchestrator to read `{key}` on an in-progress "
             f"task, but a real stale entry is {task!r}"
         )
-    for key in ("stale_tasks", "stale_after_hours"):
+    for key in ("stale_tasks",):
         assert key in quoted, f"{doc}: step {CLASSIFY_STEP} stopped quoting `{key}`"
         assert key in result, (
             f"{doc} tells the orchestrator to read `{key}`, but a real "
             f"pm_active response has {sorted(result)}"
         )
+
+    # The override the step names is a real parameter, and the response still
+    # reports the window it applied — the step quotes the call rather than the
+    # response key since US-PM-25-6 shortened it.
+    assert "stale_after=" in step, (
+        f"{doc}: step {CLASSIFY_STEP} no longer says how to widen the stale "
+        "window, so a run with slow workers cannot raise it"
+    )
+    assert "stale_after" in inspect.signature(pm_active).parameters, (
+        "pm_active has no stale_after parameter, so the step names an argument "
+        "the orchestrator cannot pass"
+    )
+    assert "stale_after_hours" in result, (
+        f"pm_active no longer echoes the stale window it applied: {sorted(result)}"
+    )
 
     # ...and the values are the ones the classification branches on.
     assert task["stale"] is True

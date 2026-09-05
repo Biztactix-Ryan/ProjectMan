@@ -182,8 +182,14 @@ def test_the_default_payload_is_smaller_by_the_gated_schemas(measurement):
 
 
 def test_the_drop_is_measurable_not_marginal(measurement):
-    """"Measurably" needs a floor or it means nothing. 10% of the payload."""
-    assert measurement["reduction"]["pct"] >= 10.0, measurement["reduction"]
+    """"Measurably" needs a floor or it means nothing. 5% of the payload.
+
+    The floor was 10% when the changeset family was one of the three gated
+    ones; US-PM-27 deleted those five tools outright, so their bytes left the
+    "all families enabled" payload as well and the remaining gate saves a
+    smaller — but still real — share of a smaller payload.
+    """
+    assert measurement["reduction"]["pct"] >= 5.0, measurement["reduction"]
     assert measurement["reduction"]["tools"] == sum(
         len(names) for names in TOOL_FAMILIES.values()
     )
@@ -393,7 +399,7 @@ def test_a_started_server_serves_fewer_bytes_than_an_all_families_one(
     every = _wire_payload()
 
     assert every.bytes - default.bytes == tls.measure()["reduction"]["bytes"]
-    assert (every.bytes - default.bytes) / every.bytes >= 0.10
+    assert (every.bytes - default.bytes) / every.bytes >= 0.05
 
 
 # ------------------------------------------- the capture populates the keys --

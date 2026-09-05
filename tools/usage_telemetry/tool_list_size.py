@@ -1,6 +1,6 @@
 """Measure the ``tools/list`` payload with and without the gated families (US-PM-15-7).
 
-US-PM-15 hides three tool families (``changesets``, ``maintenance``, ``web``)
+US-PM-15 hides two tool families (``maintenance``, ``web``)
 behind config flags so their schemas are not paid for in every request. The
 story's last acceptance criterion is that the saving is *measurable*, which
 means a number produced by a repeatable command rather than an estimate.
@@ -66,8 +66,8 @@ COMMAND = "python -m tools.usage_telemetry.tool_list_size --markdown"
 ALL_FAMILIES: dict[str, bool] = {family: True for family in TOOL_FAMILIES}
 
 #: The shipped default for a plain single-project install: every gated family
-#: off. ``changesets`` follows ``hub`` when unset, so a hub measures between
-#: this and :data:`ALL_FAMILIES`; the headline number is the common case.
+#: off. No family is inferred from ``hub``, so this is what every install
+#: serves until someone opts one in.
 DEFAULT_FAMILIES: dict[str, bool] = {family: False for family in TOOL_FAMILIES}
 
 #: The doc this module writes and the test compares against.
@@ -223,7 +223,7 @@ assumption.
 | configuration | tools | `tools/list` bytes |
 | --- | ---: | ---: |
 | all families enabled | {all_f['tools']} | {all_f['bytes']:,} |
-| default (`changesets`, `maintenance`, `web` all off) | {default['tools']} | {default['bytes']:,} |
+| default (`maintenance`, `web` all off) | {default['tools']} | {default['bytes']:,} |
 | **saved** | **{reduction['tools']}** | **{reduction['bytes']:,} ({reduction['pct']}%)** |
 
 ## Per family

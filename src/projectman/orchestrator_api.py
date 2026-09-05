@@ -53,11 +53,6 @@ def register_routes(mcp_instance: Any, event_bus: EventBus, get_store: Any) -> N
         for entry in index.entries:
             status_groups[entry.status] = status_groups.get(entry.status, 0) + 1
 
-        changesets = store.list_changesets()
-        cs_by_status: dict[str, int] = {}
-        for cs in changesets:
-            cs_by_status[cs.status.value] = cs_by_status.get(cs.status.value, 0) + 1
-
         return JSONResponse({
             "project": store.config.name,
             "epics": index.epic_count,
@@ -67,8 +62,6 @@ def register_routes(mcp_instance: Any, event_bus: EventBus, get_store: Any) -> N
             "completedPoints": index.completed_points,
             "completion": f"{pct}%",
             "byStatus": status_groups,
-            "changesets": len(changesets),
-            "changesetsByStatus": cs_by_status,
         })
 
     @mcp_instance.custom_route("/api/tasks/current", methods=["GET"])

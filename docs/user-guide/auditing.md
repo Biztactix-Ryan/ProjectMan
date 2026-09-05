@@ -8,7 +8,11 @@
 
 Or via CLI: `projectman audit` (use `--all` for all hub projects)
 
-## Checks (13 total)
+## Checks
+
+The canonical list with severities lives in
+[reference/cli.md](../reference/cli.md#projectman-audit); it is repeated here
+for convenience.
 
 | # | Check | Severity | Description |
 |---|-------|----------|-------------|
@@ -17,14 +21,20 @@ Or via CLI: `projectman audit` (use `--all` for all hub projects)
 | 3 | Stale in-progress tasks | Warning | Task in-progress for >14 days without update |
 | 4 | Point mismatch | Info | Story points ≠ sum of task points |
 | 5 | Thin description | Info | Story or task body under 20 characters |
-| 6 | Documentation staleness | Error/Warning/Info | Missing docs, unfilled templates, or docs >30 days old |
-| 7 | Empty active epic | Warning | Active epic with no linked stories |
-| 8 | Done epic with open stories | Error | Epic marked done but has stories still open |
-| 9 | Orphaned epic reference | Warning | Story references a non-existent epic ID |
-| 10 | Stale draft epic | Info | Epic in draft >30 days with no linked stories |
-| 11 | Hub documentation checks | Warning/Info | Missing or stale hub docs (VISION.md, ARCHITECTURE.md, DECISIONS.md) |
-| 12 | Stale task assignment | Warning | Task assigned to someone with no updates for 14+ days |
-| 13 | Malformed files | Warning | Files quarantined in .project/malformed/ |
+| 6 | Missing acceptance criteria | Warning | Active/ready story with no acceptance criteria |
+| 7 | Documentation staleness | Error/Warning/Info | Missing docs, unfilled templates, or docs >30 days old |
+| 8 | Empty active epic | Warning | Active epic with no linked stories |
+| 9 | Done epic with open stories | Error | Epic marked done but has stories still open |
+| 10 | Orphaned epic reference | Warning | Story references a non-existent epic ID |
+| 11 | Stale draft epic | Info | Epic in draft >30 days with no linked stories |
+| 12 | Hub documentation checks | Error/Warning/Info | Missing, unfilled or stale hub docs (VISION.md, ARCHITECTURE.md, DECISIONS.md) |
+| 13 | Stale task assignment | Warning | Task assigned to someone with no updates for 14+ days |
+| 14 | Malformed files | Warning | Files quarantined in .project/malformed/ |
+| 15 | Dependency cycle | Error | A cycle exists in the task/story `depends_on` graph |
+| 16 | Orphaned dependency reference | Warning | A task/story depends on an ID that doesn't exist |
+| 17 | Missing implementation tasks | Warning | Story has only test tasks and no implementation tasks |
+| 18 | Acceptance-criteria / test-task drift | Warning | A criterion has no test task, or a test task names a criterion the story no longer has |
+| 19 | Completion carrying no evidence | Warning | Task marked done with no run-log entry or evidence recorded |
 
 ## Severity Levels
 
@@ -77,6 +87,6 @@ Each line in `activity.jsonl` is a JSON object:
 ```
 
 - **event_type**: `create`, `update`, `delete`, `archive`
-- **item_type**: `story`, `task`, `epic`, `changeset`
+- **item_type**: `story`, `task`, `epic`
 - **changes**: For creates, the initial field values. For updates, `[old, new]` pairs.
 - **source**: Where the action originated — `mcp`, `web`, or `cli`

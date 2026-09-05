@@ -144,7 +144,7 @@ def tmp_git_hub(tmp_hub):
 def all_tool_families():
     """Register the config-gated tool families for a whole module (US-PM-15-5).
 
-    The changeset, maintenance and web families are hidden from
+    The maintenance and web families are hidden from
     ``tools/list`` unless a project opts in, and a hidden tool answers
     ``tools/call`` with ``Unknown tool``.  A module that asserts a property of *every*
     ``@mcp.tool`` function — error-body shape, ``is_error`` on the wire, the

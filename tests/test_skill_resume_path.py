@@ -41,13 +41,25 @@ import re
 import pytest
 import yaml
 
+from tests.test_orchestrate_skill_size import design_section
 from tests.test_skill_guidance_tools import _worker_fence
 from tests.test_skill_verdict_verbs import DOCS, _text
 
 # ─── the section under test ──────────────────────────────────────
+#
+# US-PM-25-6 split this material in two: the *instruction* stayed in the skill,
+# shortened to the calls and the decisions a resuming orchestrator has to make,
+# while the reasoning behind each rule (R1–R5, the four-way sort, the
+# when-NOT-to-resume list) moved to ``docs/reference/orchestrate-design.md``.
+# Assertions below therefore run against whichever of the two documents now
+# owns the fact — never dropped, because a rule with no recorded reason is the
+# next reader's candidate for deletion.
 
-#: the heading this task filled in
-RESUME_HEADING = "## Resume — Picking Up an Interrupted Run"
+#: the heading this task filled in, as US-PM-25-6 shortened it
+RESUME_HEADING = "## Resume"
+
+#: where the resume rationale now lives
+DESIGN_RESUME_HEADING = "## Resume protocol"
 
 #: the flag that starts the procedure
 RESUME_FLAG = "--resume"
@@ -87,6 +99,16 @@ def _lower(text: str) -> str:
     return text.lower()
 
 
+def _design_resume() -> str:
+    """The rationale half of the procedure, in the doc the skill links."""
+    return design_section(DESIGN_RESUME_HEADING)
+
+
+def _flat(text: str) -> str:
+    """Lowercased, whitespace collapsed — both documents are hard-wrapped."""
+    return re.sub(r"\s+", " ", text.lower())
+
+
 # ═══ the flag ════════════════════════════════════════════════════
 
 
@@ -113,14 +135,30 @@ def test_the_frontmatter_args_line_advertises_resume(path):
 
 
 @pytest.mark.parametrize("path", DOCS)
-def test_without_the_flag_step_3_still_owns_the_classification(path):
-    """The procedure is opt-in — it must say what happens without it."""
+def test_the_procedure_is_opt_in_on_the_flag(path):
+    """The skill half: the section applies under ``--resume`` and nowhere else.
+
+    What a run does *without* the flag is step 3's business, and step 3 is
+    pinned by ``tests/test_skill_claim_recovery.py``; the reasoning for the
+    split is asserted against the design doc below.
+    """
     section = _lower(_resume(_text(path)))
-    assert "without `--resume`" in section, (
-        "the section never says what a run does when the flag is absent; "
-        "step 3's per-claim classification has to keep applying"
+    assert f"`{RESUME_FLAG}` only" in section or f"{RESUME_FLAG} only" in section, (
+        "the section never says it is entered by the flag alone, so a run "
+        f"without {RESUME_FLAG} might adopt claims wholesale:\n{section}"
     )
-    assert "step 3" in section
+
+
+def test_the_design_doc_says_what_a_run_without_the_flag_does():
+    """Ordinary per-claim classification keeps applying — say so somewhere."""
+    section = _flat(_design_resume())
+    assert "without the flag" in section, (
+        f"the design doc never covers the no-flag case:\n{section}"
+    )
+    assert "classification runs as written" in section, (
+        "the design doc no longer says the ordinary classification is what "
+        f"runs without the flag:\n{section}"
+    )
 
 
 # ═══ mint a new id, record the lineage ═══════════════════════════
@@ -132,7 +170,7 @@ def test_the_resuming_run_mints_a_new_id_rather_than_reusing_the_old_one(path):
     section = _resume(_text(path))
     low = _lower(section)
     assert "mint" in low, f"the section never says which id the run runs under:\n{section}"
-    assert re.search(r"does \*\*not\*\* reuse|not reuse the old id", low), (
+    assert re.search(r"does \*\*not\*\* reuse|ne(?:ver|ither) reuse|not reuse the old", low), (
         "the section must decide the reuse question outright, not leave it "
         f"to the reader:\n{section}"
     )
@@ -178,35 +216,49 @@ def test_the_dead_runs_record_is_read_from_the_activity_log(path):
 
 
 @pytest.mark.parametrize("path", DOCS)
-def test_the_adopt_leave_split_is_decided_for_every_state(path):
-    """in-progress → adopt; done → leave; released/parked → leave and report."""
+def test_the_skill_states_the_adopt_criterion_and_leaves_the_rest(path):
+    """The executable half of the sort: what is adopted, and by which call.
+
+    A task is adopted only when it is *still* in-progress *and* still held by
+    the dead run — the two conditions that make the claim an orphan rather
+    than someone else's live work.  Everything else is left, in one clause, so
+    the skill cannot be read as adopting a released or re-claimed task.
+    """
     section = _resume(_text(path))
     low = _lower(section)
 
-    adopt = next(line for line in section.splitlines() if "**adopt**" in line)
-    assert "in-progress" in adopt and "claimed_by_run: <old-run-id>" in adopt, adopt
-    assert "pm_grab(<task-id>, run_id=<this run>)" in adopt, (
-        f"adoption must name the call that performs it: {adopt}"
+    assert "adopt only" in low, (
+        f"the section no longer restricts what may be adopted:\n{section}"
+    )
+    assert "in-progress" in low and "claimed_by_run: <old-run-id>" in section, (
+        f"the adopt criterion no longer names both conditions:\n{section}"
+    )
+    assert "pm_grab(<task-id>, run_id=<this run>)" in section, (
+        f"adoption must name the call that performs it:\n{section}"
+    )
+    assert "leave the rest" in low, (
+        "the section must dispose of every non-adopted state in so many words, "
+        f"or a done/released/re-claimed task reads as adoptable:\n{section}"
     )
 
-    done = next(
-        line for line in section.splitlines() if "already `done`" in _lower(line)
-    )
-    assert "leave it" in _lower(done), done
 
-    parked = next(
-        line
-        for line in section.splitlines()
-        if "parked" in _lower(line) and "released" in _lower(line)
-    )
-    assert "leave the claim alone" in _lower(parked), parked
-    assert "report" in _lower(parked), (
-        f"a released or parked task is left, but it still belongs in the "
-        f"report: {parked}"
-    )
+def test_the_design_doc_decides_the_split_for_every_state():
+    """in-progress → adopt; done → leave; released/parked → leave and report.
 
-    assert "some other id" in low or "now held by someone else" in low, (
-        "the section must cover a claim another run already recovered"
+    Four branches with four reasons; the skill carries only the first.  Each
+    of the other three is executed against a real store further down this
+    module, so this pins the written decision they implement.
+    """
+    section = _flat(_design_resume())
+
+    assert "still in-progress under the old id" in section and "adopt" in section, section
+    assert "already done" in section and "leave it" in section, section
+    assert "released, parked, or back in todo" in section, section
+    assert "leave it and report it" in section, (
+        "a released or parked task is left, but it still belongs in the report"
+    )
+    assert "claimed under a different id" in section, (
+        "the doc must cover a claim another run already recovered"
     )
 
 
@@ -215,18 +267,39 @@ def test_the_adopt_leave_split_is_decided_for_every_state(path):
 
 @pytest.mark.parametrize("path", DOCS)
 def test_an_adopted_task_is_dispatched_as_a_retry(path):
-    """A dead worker may have left partial edits; the tree is validated first."""
-    section = _resume(_text(path))
+    """A dead worker may have left partial edits; the tree is validated first.
+
+    The snapshot itself is step 14's ``git status --short``, which runs before
+    *each* dispatch and so covers an adopted one — pinned in
+    ``tests/test_skill_activity_report.py`` and not restated here.  What this
+    checks is that the adopted dispatch is a retry carrying the warning.
+    """
+    text = _text(path)
+    section = _resume(text)
     low = _lower(section)
-    assert "retry" in low, f"the section never says an adopted task is retried:\n{section}"
-    assert "git status --short" in section, (
-        "validation can only separate this worker's edits from the dead "
-        "worker's leftovers if the tree is snapshotted first"
+    assert re.search(r"retr(?:y|ies|ied)", low), (
+        f"the section never says an adopted task is retried:\n{section}"
     )
-    assert "died mid-task" in low and "working tree" in low, (
+    assert ON_RESUME in section, (
+        f"the adopted dispatch carries no {ON_RESUME!r} warning:\n{section}"
+    )
+    assert "died mid-task" in _lower(_worker_fence(text)), (
         "the resume dispatch must warn the worker about the partial edits"
     )
-    assert "--max" in section, "an adopted dispatch still spends the budget"
+
+
+def test_the_design_doc_explains_why_an_adopted_task_is_a_retry():
+    """Partial edits, an unvalidated attempt, and a snapshot before dispatch."""
+    section = _flat(_design_resume())
+    assert "retry" in section and "never as fresh work" in section, section
+    assert "snapshotted first" in section, (
+        "validation can only separate this worker's edits from the dead "
+        f"worker's leftovers if the tree is snapshotted first:\n{section}"
+    )
+    assert "first* failure" in section or "first failure" in section, (
+        "the doc no longer says a failure on an adopted task is a first "
+        f"failure — the dead run's attempt was never validated:\n{section}"
+    )
 
 
 @pytest.mark.parametrize("path", DOCS)
@@ -244,7 +317,10 @@ def test_the_worker_prompt_has_an_on_resume_line_beside_on_retry(path):
     resume_line = resume_line[: resume_line.index(">\n") + 1]
     low = _lower(resume_line)
     assert "died mid-task" in low, resume_line
-    assert "validate the working" in low and "tree state first" in low, resume_line
+    assert re.search(r"validate the working[- ]tree", low), (
+        "the worker is not told to validate the tree it inherited: "
+        f"{resume_line}"
+    )
     assert "<old-run-id>" in resume_line, (
         f"the worker should be told *which* run died: {resume_line}"
     )
@@ -264,67 +340,118 @@ def test_the_section_points_at_the_on_resume_line_it_relies_on(path):
 
 @pytest.mark.parametrize("path", DOCS)
 def test_claims_from_other_runs_stay_with_step_3(path):
-    """``--resume`` narrows nothing: everything else is classified as before."""
-    section = _resume(_text(path))
+    """``--resume`` narrows nothing: everything else is classified as before.
+
+    The skill says it by scope — the section adopts only the named run's
+    claims and refuses the rest — while step 3 keeps recovering other runs'
+    stale claims the ordinary way.  Both halves are asserted, so a skill that
+    let ``--resume`` swallow every stale claim would fail here.
+    """
+    text = _text(path)
+    section = _resume(text)
     low = _lower(section)
-    assert "step 3" in low
-    assert "stale" in low, (
-        "the section must say stale claims from other runs are still "
-        "recovered the ordinary way"
+    assert "<old-run-id>" in section, (
+        f"the section no longer scopes adoption to the named run:\n{section}"
     )
-    assert "never touched" in low or "never adopt" in low, (
-        "human claims are untouchable, --resume or not"
+    assert "never adopt" in low, "human claims are untouchable, --resume or not"
+
+    step_3 = _step(text, "3.")
+    assert "stale" in _lower(step_3), (
+        "step 3 no longer recovers a stale claim from another run, so nothing "
+        f"handles the claims --resume does not name:\n{step_3}"
+    )
+
+
+def test_the_design_doc_says_the_flag_narrows_nothing():
+    """R4, in the doc that now carries the reasoning."""
+    section = _flat(_design_resume())
+    assert "narrows nothing" in section, section
+    assert "ordinary classification" in section, (
+        "the doc no longer says other runs' claims stay with the ordinary "
+        f"classification:\n{section}"
     )
 
 
 @pytest.mark.parametrize("path", DOCS)
-def test_the_report_names_the_resumed_run_and_its_adopted_claims(path):
-    """Phase 4 has to say where the adopted work came from."""
-    section = _resume(_text(path))
-    assert "step 22" in _lower(section), (
-        "the section must hand the adopted claims to the Phase 4 report step"
+def test_the_report_derives_the_adopted_claims_from_the_log(path):
+    """Phase 4 has to say where the adopted work came from.
+
+    No separate bookkeeping: an adopted claim is a ``claimed_by_run`` change
+    into this run, and Phase 4 reads exactly that out of this run's slice.
+    """
+    phase_4 = _section(_text(path), "## Phase 4")
+    low = _lower(phase_4)
+    assert "recovered claims" in low, (
+        "Phase 4 no longer reports the claims this run recovered, so a "
+        f"resumed run's report would not name the adopted work:\n{phase_4}"
     )
-    assert "claimed_by_run: <old-run-id> → <this run>" in section, (
-        "the adopted claims are exactly that transition in this run's slice; "
-        "say so, so no separate bookkeeping is invented"
+    assert "claimed_by_run" in phase_4 and "<this run>" in phase_4, (
+        "the recovered-claims list must be derived from the run-id transition "
+        f"in the log, not from memory:\n{phase_4}"
     )
-    step_22 = _section(_text(path), "## Phase 4")
-    assert RESUME_FLAG in step_22, (
-        "Phase 4 never mentions --resume, so a resumed run's report would not "
-        "name the run it resumed"
+
+
+def test_the_design_doc_says_the_report_needs_no_extra_bookkeeping():
+    """R5: the adopted claims are already in this run's slice, with lineage."""
+    section = _flat(_design_resume())
+    assert "no extra bookkeeping" in section, section
+    assert "claimed_by_run: <old> → <this run>" in section, (
+        "the doc no longer identifies the adopted claims with the transition "
+        f"the report reads:\n{section}"
     )
+    assert "lineage note" in section, section
 
 
 # ═══ when NOT to resume ══════════════════════════════════════════
 
 
-@pytest.mark.parametrize("path", DOCS)
-def test_there_is_a_when_not_to_resume_note(path):
-    """Four cases, each of which makes adoption the wrong move."""
-    section = _resume(_text(path))
-    low = _lower(section)
-    assert "when not to resume" in low, (
+def test_there_is_a_when_not_to_resume_note():
+    """Four cases, each of which makes adoption the wrong move.
+
+    The skill keeps the two that are executable refusals — never a claim
+    without the ``orch-`` prefix, never a live run
+    (``test_the_live_run_rule_reads_the_same_in_resume_and_stop_conditions``).
+    The enumeration with its reasons lives in the design doc.
+    """
+    section = _flat(_design_resume())
+    assert "when not to resume" in section, (
         f"no when-NOT-to-resume note:\n{section}"
     )
-    tail = low[low.index("when not to resume") :]
-    assert "human" in tail, "a human-held claim is never adopted"
-    assert "verdict" in tail and "done" in tail, (
+    tail = section[section.index("when not to resume") :]
+    assert "a human holds it" in tail, "a human-held claim is never adopted"
+    assert "verdict on a task now done" in tail, (
         "the 'last event is a verdict on a task that is now done' case is missing"
     )
     assert "still emitting events" in tail, (
         "resuming a run that is merely slow races a live process"
     )
+    assert "matched no events" in tail, (
+        "the typo/other-project case is missing, so a resume against an "
+        "unknown id has no documented outcome"
+    )
 
 
 @pytest.mark.parametrize("path", DOCS)
 def test_the_stop_conditions_agree_with_the_resume_section(path):
-    """A live resumed run stops the run; ``--auto`` skips instead of racing."""
-    stops = _section(_text(path), "## Stop Conditions")
+    """A live resumed run stops the run, and both places say so.
+
+    The ``--auto`` half — a live claim is skipped rather than raced — belongs
+    to step 3, which is where claims are classified; asserting it in both
+    places is what produced two wordings of one rule.
+    """
+    text = _text(path)
+    stops = _section(text, "## Stop Conditions")
     assert RESUME_FLAG in stops, (
         "the resume section can stop the run, but Stop Conditions never says "
         f"so:\n{stops}"
     )
-    assert "--auto" in stops
+    assert "live run" in _lower(stops), (
+        f"Stop Conditions no longer names the live-run case:\n{stops}"
+    )
+    assert "--auto" in _step(text, "3."), (
+        "step 3 no longer says what --auto does with a live claim, so nothing "
+        "in the skill decides between skipping and racing it"
+    )
 
 
 @pytest.mark.parametrize("path", DOCS)
@@ -338,13 +465,17 @@ def test_the_placeholder_admission_is_gone(path):
         )
 
 
-@pytest.mark.parametrize("path", DOCS)
-def test_the_section_is_self_contained_and_substantial(path):
-    """A one-line pointer at step 3 is what this task replaced."""
-    section = _resume(_text(path))
+def test_the_written_procedure_is_self_contained_and_substantial():
+    """A one-line pointer at step 3 is what US-PM-14-8 replaced.
+
+    The procedure moved into the design doc rather than shrinking away: the
+    skill's section is now the callable subset, and the full walkthrough — the
+    one a human reads after a crash — has to still be somewhere.
+    """
+    section = _design_resume()
     assert len(section.splitlines()) >= 15, (
-        f"the resume section is {len(section.splitlines())} lines — that is a "
-        "pointer, not a procedure"
+        f"the design doc's resume protocol is {len(section.splitlines())} "
+        "lines — that is a pointer, not a procedure"
     )
 
 
@@ -529,7 +660,6 @@ def test_the_accepted_task_is_not_re_adopted(resumable):
 #       same flag to a reader who never opens the skill.
 # ═══════════════════════════════════════════════════════════════════
 
-from tests.test_skill_claim_recovery import _run_id_section  # noqa: E402
 from tests.test_skill_guidance_tools import _step  # noqa: E402
 from tests.test_skill_release_instructions import REPO_ROOT  # noqa: E402
 from tests.test_skill_verdict_verbs import _schemas  # noqa: E402
@@ -623,14 +753,19 @@ def test_the_claim_fields_the_section_branches_on_are_real_pm_active_keys(
     store.claim_task("US-TST-1-1", "claude", run_id=RUN_A)
     _backdate_claim(store, "US-TST-1-1", minutes=600)
 
-    section = _resume(_text(path))
-    quoted = set(re.findall(r"`([a-z_]+)`", section))
+    # Since US-PM-25-6 the claim metadata is named once, at step 3, and the
+    # resume section spends it; both are read here so the fact stays pinned
+    # wherever it is written.  A key may be quoted with the value or the call
+    # it appears in — ``stale: true``, ``pm_active(stale_after=<hours>)``.
+    text = _text(path)
+    where = _resume(text) + "\n" + _step(text, "3.")
+    quoted = set(re.findall(r"`([a-z_]+)(?:[:(][^`]*)?`", where))
     task = yaml.safe_load(pm_active())["active_tasks"][0]
 
     for key in RESUME_CLAIM_KEYS:
         assert key in quoted, (
-            f"the resume section stopped naming `{key}`, which is one of the "
-            "facts it says the procedure is built on"
+            f"the procedure stopped naming `{key}`, which is one of the "
+            "facts it says the classification is built on"
         )
         assert key in task, (
             f"the section tells a resuming run to read `{key}`, but a real "
@@ -724,33 +859,45 @@ def test_a_claim_a_third_run_already_recovered_is_left_and_reported(resumable):
 
 
 @pytest.mark.parametrize("path", DOCS)
-def test_mint_versus_reuse_is_decided_the_same_way_in_every_place(path):
-    """Flags, Phase 0's run-id section and the Resume section must agree."""
+def test_mint_versus_reuse_is_decided_once_and_contradicted_nowhere(path):
+    """The id question is answered in the Resume section, and only there.
+
+    It used to be answered three times — Flags, Phase 0 and the section — which
+    is three chances to disagree.  US-PM-25-6 left one statement of the rule;
+    what still has to hold is that no *other* mention of reuse anywhere in the
+    skill reads as an instruction to do it.
+    """
     text = _text(path)
-    flag_line = next(
-        line for line in _flags(text).splitlines() if line.startswith(f"- `{RESUME_FLAG}")
-    )
-    run_id = _run_id_section(text)
     section = _resume(text)
+    low = _lower(section)
 
-    assert re.search(r"mints? its own id", flag_line), (
-        f"the Flags entry leaves the id question open: {flag_line}"
+    assert "mint" in low, f"the section does not decide the id question:\n{section}"
+    assert LINEAGE_NOTE in section, (
+        f"the old id survives as lineage or not at all:\n{section}"
     )
-    assert "lineage" in flag_line, flag_line
-    assert RESUME_FLAG in run_id, (
-        "Phase 0 mints the id but never says what --resume does to that, so a "
-        f"resuming run has two plausible readings:\n{run_id}"
-    )
-    assert re.search(r"mints a fresh id", run_id) and "lineage" in run_id, run_id
-    assert "lineage" in section, section
 
-    # No place may say to reuse the resumed id: every mention is a refusal.
-    for block, where in ((flag_line, "Flags"), (run_id, "Phase 0"), (section, "Resume")):
-        for window in _sentence_windows(block, r"[Rr]eus\w*"):
-            assert re.search(r"\bnot\b|rather than|would|never", window), (
-                f"{where} appears to instruct reusing the resumed run id, "
-                f"which contradicts R1: {window!r}"
-            )
+    # No place may say to reuse the resumed *id*: every such mention is a
+    # refusal.  Reuse of anything else — the pre-flight context excerpt, say —
+    # is not this rule's business, so windows without an id are skipped.
+    for window in _sentence_windows(text, r"[Rr]eus\w*"):
+        if not re.search(r"\bid\b|run id", window):
+            continue
+        assert re.search(r"\bnot\b|rather than|would|never", window), (
+            "the skill appears to instruct reusing the resumed run id, "
+            f"which contradicts R1: {window!r}"
+        )
+
+
+def test_the_design_doc_gives_the_reason_for_minting_a_fresh_id():
+    """R1's reasoning, in its new home: two runs must stay separable."""
+    section = _flat(_design_resume())
+    assert "new id, old id as lineage" in section, section
+    assert "merge two processes into one activity slice" in section, (
+        "the doc no longer says why reuse is wrong, so the rule reads as "
+        f"arbitrary:\n{section}"
+    )
+    for window in _sentence_windows(_design_resume(), r"[Rr]eus\w*"):
+        assert re.search(r"\bnot\b|rather than|would|never", window), window
 
 
 @pytest.mark.parametrize("path", DOCS)
@@ -763,32 +910,56 @@ def test_the_human_claim_rule_reads_the_same_in_all_three_places(path):
         "Does NOT do": _section(text, "## What This Skill Does NOT Do"),
     }
     for where, block in blocks.items():
-        assert "orch-" in block, (
-            f"{where} states the human-claim rule without the `orch-` prefix "
-            f"that decides it:\n{block}"
-        )
         low = _lower(block)
         assert any(
             phrase in low
             for phrase in ("never touch", "never adopt", "left alone", "not own")
         ), f"{where} does not say a human claim is left alone:\n{block}"
 
+    # The two places that *act* on the rule must say what decides it; the
+    # Does-NOT-Do line is a summary and needs no second copy of the test.
+    for where in ("step 3", "Resume"):
+        assert "orch-" in blocks[where], (
+            f"{where} states the human-claim rule without the `orch-` prefix "
+            f"that decides it:\n{blocks[where]}"
+        )
+
 
 @pytest.mark.parametrize("path", DOCS)
-def test_the_live_run_rule_reads_the_same_in_resume_and_stop_conditions(path):
-    """"Still emitting events" must resolve identically in both places."""
+def test_the_live_run_rule_reads_the_same_everywhere_it_appears(path):
+    """A live run is never adopted — and the three places must not disagree.
+
+    Step 3 decides it (still emitting → skip under ``--auto``), the Resume
+    section refuses adoption outright, and Stop Conditions stops a ``--resume``
+    aimed at one.  None of the three may read as "adopt anyway".
+    """
     text = _text(path)
+    step_3 = _lower(_step(text, "3."))
     section = _lower(_resume(text))
     stops = _lower(_section(text, "## Stop Conditions"))
-    for where, block in (("the Resume section", section), ("Stop Conditions", stops)):
-        assert "still emitting events" in block, (
-            f"{where} does not name the live-run case, so the two cannot be "
-            f"checked against each other:\n{block}"
-        )
-        assert "--auto" in block and "skip" in block, (
-            f"{where} does not say --auto skips the adoption rather than "
-            f"stopping:\n{block}"
-        )
+
+    assert "still emitting" in step_3 and "live" in step_3, (
+        f"step 3 no longer names the live-run case:\n{step_3}"
+    )
+    assert "--auto" in step_3 and "skip" in step_3, (
+        f"step 3 no longer says --auto skips a live claim rather than racing "
+        f"it:\n{step_3}"
+    )
+    assert "live run" in section and "never adopt" in section, (
+        f"the Resume section no longer refuses a live run's claims:\n{section}"
+    )
+    assert "live run" in stops and RESUME_FLAG in stops, (
+        f"Stop Conditions no longer stops a --resume aimed at a live run:\n{stops}"
+    )
+
+
+def test_the_design_doc_explains_the_live_run_refusal():
+    """Racing is the harm; under ``--auto`` skipping avoids it without stopping."""
+    section = _flat(_design_resume())
+    assert "still emitting events" in section, section
+    assert "racing is the harm" in section, (
+        f"the doc no longer says why --auto skips rather than stops:\n{section}"
+    )
 
 
 @pytest.mark.parametrize("path", DOCS)
@@ -798,9 +969,8 @@ def test_the_flags_entry_points_at_a_heading_that_exists(path):
     flag_line = next(
         line for line in _flags(text).splitlines() if line.startswith(f"- `{RESUME_FLAG}")
     )
-    title = RESUME_HEADING.removeprefix("## ")
-    assert title in flag_line, (
-        f"the Flags entry does not name the section holding the procedure: {flag_line}"
+    assert "<run-id>" in flag_line and "claims" in flag_line, (
+        f"the Flags entry no longer says what --resume takes and does: {flag_line}"
     )
     assert RESUME_HEADING in text
 

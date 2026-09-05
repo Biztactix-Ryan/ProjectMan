@@ -23,7 +23,7 @@ Call `pm_status`, then `pm_active`, then `pm_list_sprints(status="active")`. Sug
 - `get <id>` → `pm_get(id)` — epics, stories, tasks
 - `search <query>` → `pm_search(query)`
 - `board` → `pm_board` — available/in-progress/blocked work
-- `context [project]` → `pm_context(project)` — full hub + project context for starting work
+- `context [project]` → `pm_context(project, max_doc_chars=2000, limit=5)` — a bounded hub + project brief when you want one; `pm_grab` and `pm_get` already carry the item context you usually need
 - `burndown` → `pm_burndown`
 - `deps [id]` → show what an item depends on and what depends on it (from `pm_get` `depends_on` fields; `pm_audit` for graph-wide checks)
 - `history <id>` / `runs <id>` → `pm_run_log(id)` — attempt history: which agents worked it, outcomes, failures
@@ -40,19 +40,16 @@ Call `pm_status`, then `pm_active`, then `pm_list_sprints(status="active")`. Sug
 - `create epic "<title>" "<description>"` → `pm_create_epic`
 - `create story "<title>" "<description>"` → `pm_create_story` (optionally `epic <epic-id>`, `depends_on <ids>`)
 - `create task <story-id> "<title>" "<description>"` → `pm_create_task` (optionally `depends_on <ids>`)
-- `update <id> <field>=<value>` → `pm_update` — writing `points=`? Run the `pm_estimate` calibration step (**Estimation**, below) first
+- `update <id> <field>=<value>` → `pm_update` — writing `points=`? Set the value directly; `pm_estimate` offers calibration if you want it (**Estimation**, below)
 - `archive <id>` → `pm_archive`
 
 Note: sprints are updated via `pm_update_sprint` (statuses: planning/active/completed/cancelled), not `pm_update`.
 
-### Estimation — calibrate before writing points
+### Estimation
 
-Every operation that writes a `points` value — `pm_create_story`, `pm_create_task` / `pm_create_tasks`, `pm_update(points=...)`, and the tasks you create after `pm_auto_scope` — has two named steps in front of it:
+Points are fibonacci: 1/2/3/5/8/13. Write the value straight into the create or update call when you already know the size.
 
-- **Step 1 — Calibrate: `pm_estimate(<id>)`.** Call it on the item being sized, or for a not-yet-created item on the closest existing sibling story/task. Read the `estimation_guidance` it returns: the fibonacci scale, the 1/2/3/5/8/13 calibration bands, and this project's historical average points.
-- **Step 2 — Size and write.** Pick the fibonacci value whose calibration band matches the work, then write it via the create/update call.
-
-Do not skip step 1 and invent a number — the bands and the historical average are what keep points comparable across the backlog.
+`pm_estimate(<id>)` is available when you want a calibration: it returns `estimation_guidance` — the fibonacci scale, the 1/2/3/5/8/13 bands, and this project's historical average points — for the item being sized, or for the closest existing sibling when the item does not exist yet. Optional, not a gate.
 
 ### Dependencies
 Stories and tasks support cross-item dependencies via `depends_on` — task→task (any story), story→story, task→story, story→task. Cycles are rejected at creation/update; `pm_audit` checks for orphans and cycles project-wide; `pm_grab` requires all dependencies done.
@@ -63,13 +60,13 @@ Examples:
 - `update US-PRJ-2 depends_on=US-PRJ-1,US-PRJ-1-5`
 
 ### Workflows
-- `scope <story-id>` → `pm_scope(id)`, propose task breakdown, calibrate each estimate with `pm_estimate(<id>)` (**Estimation**, above), create approved tasks with their points
+- `scope <story-id>` → `pm_scope(id)`, propose task breakdown with points, create approved tasks (`pm_estimate(<id>)` offers calibration if you want it — **Estimation**, above)
 - `autoscope` → redirect to `/pm-autoscope`
 - `audit` → `pm_audit`, review findings, suggest and execute approved fixes
 - `init [project]` → set up project documentation (wizard for new, import for existing)
 - `fix` → `pm_malformed`, then fix quarantined files one at a time via `projectman fix-malformed <filename> --id ID --title T --type story|task` (break-glass: CLI, not a tool)
 - `grab <task-id> [assignee]` → `pm_grab(task_id, assignee)` — claim with readiness validation. On success, suggest `/pm-do <id>` to execute (spawned agents use `/pm-do <id> --complete`).
-- `done <task-id> [note]` → `pm_done_next(task_id, outcome, note)` — complete a task, auto-close its story if finished, and claim the next ready task in one call. Prefer this over separate `pm_update` + `pm_grab` when working through tasks.
+- `done <task-id> [note]` → `pm_done_next(task_id, outcome, note)` — complete a task, auto-close its story when this was its last open task, and claim the next ready task in one call. Prefer this over separate `pm_update` + `pm_grab` when working through tasks. `pm_update(status="done")` completes the task only — it does not close the story. Under `/pm-orchestrate` do not call it at all: the orchestrator's `pm_accept` is what closes the task and the story, and a worker-set `done` makes it answer `already_done`.
 
 ### Git Operations
 - `commit [scope] [--message "..."]` → `pm_commit(scope, message)` — commit .project/ changes. Scope: `all` (default), `hub`, `project:<name>`

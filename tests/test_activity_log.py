@@ -64,7 +64,7 @@ class TestLogEntrySchema:
             self._make_entry(event_type="invalid")
 
     def test_item_type_enum_values(self):
-        for it in ("story", "task", "epic", "changeset"):
+        for it in ("story", "task", "epic", "sprint"):
             entry = self._make_entry(item_type=it)
             assert entry.item_type == it
 

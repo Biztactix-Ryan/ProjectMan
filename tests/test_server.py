@@ -412,6 +412,102 @@ def test_pm_board_tag_filter(tmp_project):
     assert data["summary"]["available"] == 0
 
 
+def test_pm_board_note_distinguishes_blocked_from_not_ready(tmp_project):
+    """The board explains its two confusable groups, on every call.
+
+    ``blocked`` is a status a human sets; ``not_ready`` is derived from
+    readiness.  US-PRJ-31-4 ships one short line saying so, unconditionally,
+    so callers can rely on it rather than parsing group names.
+    """
+    from projectman.server import pm_board
+
+    note = yaml.safe_load(pm_board())["note"]
+    assert "blocked" in note
+    assert "not_ready" in note
+    # It has to actually draw the distinction, not just name the two groups.
+    assert "status" in note.lower()
+    assert "dependencies" in note.lower()
+    # Paid for on every call — keep it one line.
+    assert len(note) < 200
+
+
+def test_pm_board_note_is_present_on_an_empty_board(tmp_project):
+    """Not attached to any group, so an empty project still carries it."""
+    from projectman.server import pm_board
+
+    data = yaml.safe_load(pm_board())
+    assert data["summary"]["available"] == 0
+    assert "blocked" in data["note"] and "not_ready" in data["note"]
+
+
+def _tool_description(name: str) -> str:
+    """The description a client actually sees for *name* in tools/list."""
+    import anyio
+
+    from projectman.server import mcp as mcp_server
+
+    tools = {tool.name: tool for tool in anyio.run(mcp_server.list_tools)}
+    return " ".join((tools[name].description or "").split())
+
+
+def test_pm_board_description_draws_the_blocked_not_ready_distinction():
+    """US-PRJ-31-5: the docstring, not just the payload, explains the groups.
+
+    The `note` field ships on every call, but a caller reading the tool list
+    decides *whether* to call — so the distinction has to survive there too.
+    """
+    description = _tool_description("pm_board")
+
+    assert "blocked" in description
+    assert "not_ready" in description
+    # Named, not merely mentioned: blocked is a set status, not_ready derives
+    # from readiness inputs.
+    assert "status" in description.lower()
+    assert "dependencies" in description.lower()
+
+
+def test_pm_create_tasks_description_documents_forward_references():
+    """US-PRJ-31-5: batch depends_on may point at a not-yet-created sibling.
+
+    Verified behaviour (see the forward-reference tests below and
+    ``tests/test_store.py::test_forward_reference_in_batch_valid``), so it is
+    documented where the caller writing the batch will read it.
+    """
+    description = _tool_description("pm_create_tasks").lower()
+
+    assert "forward" in description or "same batch" in description
+    assert "depends_on" in description
+
+
+def test_pm_create_tasks_forward_reference_is_wired(tmp_project):
+    """A batch entry may depend on the id of a task created after it.
+
+    Through the MCP tool, not just the store: this is the behaviour the
+    docstring above promises.
+    """
+    from projectman.server import pm_create_story, pm_create_tasks, pm_get
+
+    pm_create_story("Story", "Description for the forward reference batch.")
+    created = yaml.safe_load(
+        pm_create_tasks(
+            "US-TST-1",
+            [
+                {
+                    "title": "First",
+                    "description": "Depends on a sibling created later.",
+                    "depends_on": ["US-TST-1-2"],
+                },
+                {"title": "Second", "description": "Created after its dependent."},
+            ],
+        )
+    )["created"]
+
+    assert [t["id"] for t in created] == ["US-TST-1-1", "US-TST-1-2"]
+    assert created[0]["depends_on"] == ["US-TST-1-2"]
+    # And it is on disk, not just in the create response.
+    assert yaml.safe_load(pm_get("US-TST-1-1"))["depends_on"] == ["US-TST-1-2"]
+
+
 def test_pm_board_incomplete_deps_not_ready(tmp_project):
     """Tasks with incomplete dependencies appear in not_ready on the board."""
     from projectman.server import pm_create_story, pm_create_tasks, pm_update, pm_board
@@ -1654,3 +1750,74 @@ def test_json_encoded_list_string_arrives_as_a_list(tmp_project):
         },
     )
     assert _criteria_on_disk(tmp_project) == [GHERKIN, SECOND_CRITERION]
+
+
+class TestCreateCollisionIsAnErrorNotACrash:
+    """A refused create reaches the caller as a normal tool error (US-PM-24-7).
+
+    ``Store.create_*`` raises ``FileExistsError`` rather than overwriting.
+    Every create tool already funnels exceptions through ``_failed``, so the
+    caller sees a ``ToolError`` — ``isError=True`` on the wire — carrying the
+    store's message.  These tests pin that: an unhandled ``FileExistsError``
+    escaping the MCP layer would be a crash, not a result.
+    """
+
+    def _sprint_target(self, tmp_project):
+        sprints = tmp_project / ".project" / "sprints"
+        sprints.mkdir(parents=True, exist_ok=True)
+        target = sprints / "SPRINT-TST-1.md"
+        target.write_text("---\nid: SPRINT-TST-1\n---\nMine.\n")
+        return target
+
+    def test_pm_create_story_returns_an_error_result(self, tmp_project, monkeypatch):
+        from mcp.server.fastmcp.exceptions import ToolError
+
+        from projectman.server import _store, pm_create_story
+
+        store = _store(None)
+        target = tmp_project / ".project" / "stories" / "US-TST-9.md"
+        target.write_text("---\nid: US-TST-9\n---\nMine.\n")
+        monkeypatch.setattr(store, "_next_story_id", lambda: "US-TST-9")
+
+        with pytest.raises(ToolError) as excinfo:
+            pm_create_story("Clobberer", "Description")
+
+        assert "US-TST-9 already exists" in str(excinfo.value)
+        assert not str(excinfo.value).startswith("error:")
+        assert target.read_text().endswith("Mine.\n")
+
+    def test_pm_create_sprint_returns_an_error_result(self, tmp_project):
+        from mcp.server.fastmcp.exceptions import ToolError
+
+        from projectman.server import pm_create_sprint
+
+        target = self._sprint_target(tmp_project)
+
+        with pytest.raises(ToolError) as excinfo:
+            pm_create_sprint("Clobberer")
+
+        assert "SPRINT-TST-1 already exists" in str(excinfo.value)
+        assert target.read_text().endswith("Mine.\n")
+
+    def test_the_wire_marks_the_refusal_as_an_error(self, tmp_project):
+        """What the caller on the other side of the transport actually sees."""
+        import anyio
+        import mcp.types as types
+
+        from projectman.server import mcp as server
+
+        self._sprint_target(tmp_project)
+
+        async def call():
+            handler = server._mcp_server.request_handlers[types.CallToolRequest]
+            request = types.CallToolRequest(
+                method="tools/call",
+                params=types.CallToolRequestParams(
+                    name="pm_create_sprint", arguments={"name": "Clobberer"}
+                ),
+            )
+            return await handler(request)
+
+        result = anyio.run(call)
+        assert result.root.isError is True
+        assert "SPRINT-TST-1 already exists" in str(result.root.content)

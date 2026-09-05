@@ -79,6 +79,44 @@ pip install -e ".[all,dev]"
 projectman --help
 ```
 
+## Upgrading
+
+`pipx upgrade projectman` reinstalls from the source pipx recorded — for a git URL that
+means the published branch, **not** your working tree. A plain `pipx upgrade` never picks
+up local changes.
+
+**Stale install symptoms:** the CLI or MCP server behaves like an older version than your
+checkout — a tool argument the code accepts is rejected as unexpected, a flag you can see
+in `src/` is missing, or an installed pm skill mentions a tool that does not exist.
+
+Reinstall from the checkout, re-render the skills, then restart Claude Code:
+
+```bash
+# 1. Reinstall from the local tree (--force: the version number may not have changed)
+pipx install --force "/path/to/ProjectMan[all]"
+
+# 2. Re-render the pm agent + skills from the newly installed templates
+projectman refresh-skills --keep-local
+```
+
+`--keep-local` keeps and refreshes project-local `.claude/` skill copies; without it they
+are pruned when the same skills are installed globally in `~/.claude`.
+
+Then **restart Claude Code** (or start a new session): the MCP server is a long-lived child
+process, so a running session keeps the old code until that process is replaced.
+
+### The `mcp<2` requirement
+
+ProjectMan pins `mcp[cli]>=1.0,<2` because mcp 2.x renamed `FastMCP`, which `projectman
+serve` imports. An environment holding mcp 2.x fails with:
+
+```
+Error: MCP extras not installed. Run: pip install projectman[mcp]
+```
+
+Reinstalling as above resolves the pin. In a hand-managed environment, force it with
+`pipx inject projectman "mcp[cli]<2"` or `pip install "mcp[cli]<2"`.
+
 ## Optional Dependencies
 
 | Extra | Packages | Purpose |

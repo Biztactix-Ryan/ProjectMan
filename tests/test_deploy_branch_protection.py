@@ -129,7 +129,7 @@ def hub_with_deploy_branches(tmp_path):
     # Set up PM structure
     proj = hub / ".project"
     proj.mkdir()
-    for d in ("stories", "tasks", "projects", "dashboards", "changesets"):
+    for d in ("stories", "tasks", "projects", "dashboards"):
         (proj / d).mkdir()
     config = {
         "name": "test-hub",
@@ -137,7 +137,6 @@ def hub_with_deploy_branches(tmp_path):
         "description": "test",
         "hub": True,
         "next_story_id": 1,
-        "next_changeset_id": 1,
         "projects": ["api", "web"],
     }
     (proj / "config.yaml").write_text(yaml.dump(config))
@@ -560,7 +559,7 @@ class TestValidateNotOnDeployBranch:
 
         If a developer edits a tracked file while on the deploy branch (main),
         validate_not_on_deploy_branch must return an error directing them
-        to create a feature branch first.
+        to a working branch first.
         """
         hub = hub_with_deploy_branches["hub"]
         api_sub = hub / "projects" / "api"
@@ -574,7 +573,7 @@ class TestValidateNotOnDeployBranch:
         assert result != ""
         assert "uncommitted changes" in result
         assert "deploy branch" in result
-        assert "feature branch" in result
+        assert "working branch" in result
 
     def test_allows_untracked_files_on_deploy_branch(self, hub_with_deploy_branches):
         """Returns empty string when only untracked files exist on deploy branch.

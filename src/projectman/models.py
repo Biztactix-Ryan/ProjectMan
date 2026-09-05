@@ -10,6 +10,26 @@ from pydantic import BaseModel, Field, field_validator
 
 FIBONACCI_POINTS = {1, 2, 3, 5, 8, 13}
 
+#: Charset for the project prefix embedded in every ID (US-PRJ-50-6).
+#:
+#: Uppercase alphanumeric, because that is what actually produces prefixes:
+#: ``cli.py`` defaults to ``PRJ`` and ``hub/registry.py`` derives one as
+#: ``clean[:3].upper()``.  Kept as a raw *fragment* rather than a compiled
+#: pattern because its only job is to be interpolated into the four anchored
+#: patterns below — it is not anchored and must never be matched on its own.
+PREFIX = r"[A-Z][A-Z0-9]*"
+
+#: Anchored, compiled ID patterns.  These replace the permissive
+#: ``^[A-Za-z][\w-]*$`` that previously accepted anything vaguely
+#: identifier-shaped, so a malformed ID is caught at creation time instead of
+#: surfacing later as a dangling reference.  Exported so callers outside this
+#: module (store lookups, ID resolution) can reuse one definition rather than
+#: re-deriving the shapes.
+STORY_ID = re.compile(rf"^US-{PREFIX}-\d+$")
+TASK_ID = re.compile(rf"^US-{PREFIX}-\d+-\d+$")
+EPIC_ID = re.compile(rf"^EPIC-{PREFIX}-\d+$")
+SPRINT_ID = re.compile(rf"^SPRINT-{PREFIX}-\d+$")
+
 #: Default claim-staleness threshold, in hours (US-PM-14-5).  Named once so
 #: the field default and the fallback a malformed config value lands on cannot
 #: drift apart.
@@ -88,17 +108,24 @@ class StoryFrontmatter(BaseModel):
     @field_validator("id")
     @classmethod
     def validate_id(cls, v: str) -> str:
-        if not re.match(r"^[A-Za-z][\w-]*$", v):
-            raise ValueError(f"Story ID must be alphanumeric with hyphens, got: {v}")
+        if not STORY_ID.match(v):
+            raise ValueError(
+                f"Story ID must match {STORY_ID.pattern} "
+                f"(e.g. US-PRJ-1), got: {v}"
+            )
         return v
 
     @field_validator("depends_on")
     @classmethod
     def validate_depends_on(cls, v: list[str]) -> list[str]:
+        # A story may depend on another story or on a single task — see the
+        # pm_create_story docstring — so both shapes are accepted here.
         for dep in v:
-            if not re.match(r"^[A-Za-z][\w-]*$", dep):
+            if not (STORY_ID.match(dep) or TASK_ID.match(dep)):
                 raise ValueError(
-                    f"depends_on entries must be valid IDs, got: {dep}"
+                    f"Story depends_on entries must be a story ID matching "
+                    f"{STORY_ID.pattern} (e.g. US-PRJ-1) or a task ID matching "
+                    f"{TASK_ID.pattern} (e.g. US-PRJ-1-1), got: {dep}"
                 )
         return v
 
@@ -126,9 +153,10 @@ class EpicFrontmatter(BaseModel):
     @field_validator("id")
     @classmethod
     def validate_id(cls, v: str) -> str:
-        if not re.match(r"^[A-Za-z][\w-]*$", v):
+        if not EPIC_ID.match(v):
             raise ValueError(
-                f"Epic ID must be alphanumeric with hyphens, got: {v}"
+                f"Epic ID must match {EPIC_ID.pattern} "
+                f"(e.g. EPIC-PRJ-1), got: {v}"
             )
         return v
 
@@ -196,19 +224,23 @@ class TaskFrontmatter(BaseModel):
     @field_validator("id")
     @classmethod
     def validate_id(cls, v: str) -> str:
-        if not re.match(r"^[A-Za-z][\w-]*$", v):
+        if not TASK_ID.match(v):
             raise ValueError(
-                f"Task ID must be alphanumeric with hyphens, got: {v}"
+                f"Task ID must match {TASK_ID.pattern} "
+                f"(e.g. US-PRJ-1-1), got: {v}"
             )
         return v
 
     @field_validator("depends_on")
     @classmethod
     def validate_depends_on(cls, v: list[str]) -> list[str]:
+        # Tasks block on other tasks only: a story is not a unit of work that
+        # can be observed to finish, so a story ID here would never clear.
         for dep in v:
-            if not re.match(r"^[A-Za-z][\w-]*$", dep):
+            if not TASK_ID.match(dep):
                 raise ValueError(
-                    f"depends_on entries must be valid task IDs, got: {dep}"
+                    f"Task depends_on entries must be task IDs matching "
+                    f"{TASK_ID.pattern} (e.g. US-PRJ-1-1), got: {dep}"
                 )
         return v
 
@@ -236,43 +268,10 @@ class SprintFrontmatter(BaseModel):
     @field_validator("id")
     @classmethod
     def validate_id(cls, v: str) -> str:
-        if not re.match(r"^[A-Za-z][\w-]*$", v):
+        if not SPRINT_ID.match(v):
             raise ValueError(
-                f"Sprint ID must be alphanumeric with hyphens, got: {v}"
-            )
-        return v
-
-
-class ChangesetStatus(str, Enum):
-    open = "open"
-    partial = "partial"
-    merged = "merged"
-    closed = "closed"
-
-
-class ChangesetEntry(BaseModel):
-    """A single project's participation in a changeset."""
-
-    project: str
-    ref: str = ""
-    pr_number: Optional[int] = None
-    status: str = "pending"
-
-
-class ChangesetFrontmatter(BaseModel):
-    id: str
-    title: str
-    status: ChangesetStatus = ChangesetStatus.open
-    entries: list[ChangesetEntry] = []
-    created: date
-    updated: date
-
-    @field_validator("id")
-    @classmethod
-    def validate_id(cls, v: str) -> str:
-        if not re.match(r"^[A-Za-z][\w-]*$", v):
-            raise ValueError(
-                f"Changeset ID must be alphanumeric with hyphens, got: {v}"
+                f"Sprint ID must match {SPRINT_ID.pattern} "
+                f"(e.g. SPRINT-PRJ-1), got: {v}"
             )
         return v
 
@@ -286,12 +285,6 @@ class ToolFlags(BaseModel):
     request (US-PM-15).  The functions are untouched and stay importable —
     only their MCP registration is conditional.
 
-    ``changesets`` is deliberately tri-state.  ``None`` (the default, and
-    what an untouched ``config.yaml`` yields) means *follow hub mode*: a
-    changeset groups a change across several projects, which only a hub
-    has, so a hub gets the family and a single-project repo does not.  An
-    explicit ``true``/``false`` always wins over that inference.
-
     ``maintenance`` is the break-glass cluster — ``pm_repair``,
     ``pm_restore``, ``pm_validate_branches``, ``pm_fix_malformed`` and
     ``pm_push_all``.  These are human recovery tools, not agent work, and
@@ -300,7 +293,6 @@ class ToolFlags(BaseModel):
     because a hub needs repairing no more routinely than a leaf repo does.
     """
 
-    changesets: Optional[bool] = None
     maintenance: bool = False
     web: bool = False
 
@@ -315,7 +307,6 @@ class ProjectConfig(BaseModel):
     deploy_branch: Optional[str] = None
     next_story_id: int = 1
     next_epic_id: int = 1
-    next_changeset_id: int = 1
     next_sprint_id: int = 1
     projects: list[str] = []
     tools: ToolFlags = Field(default_factory=ToolFlags)
@@ -471,8 +462,13 @@ class ItemType(str, Enum):
     story = "story"
     task = "task"
     epic = "epic"
-    changeset = "changeset"
     sprint = "sprint"
+    #: The next-session note (``.project/NEXT.md``) — a document, not an
+    #: item, so it has no id of its own and its events carry the literal
+    #: ``NEXT``.  It exists so a write to the note is auditable in the
+    #: activity log without pretending the note is a backlog item: the
+    #: indexer, the audit and search all skip it deliberately (US-PM-28).
+    note = "note"
 
 
 class LogSource(str, Enum):

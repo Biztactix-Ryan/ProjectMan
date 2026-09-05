@@ -329,20 +329,40 @@ def _all_templates() -> list[Path]:
 
 
 def _is_task_path(expr: str) -> bool:
-    """Does a path expression address a ``.project/tasks/*.md`` file?"""
-    return "_task_path" in expr or "tasks_dir" in expr
+    """Does a path expression address a ``.project/tasks/*.md`` file?
+
+    ``task_path`` rather than ``_task_path`` so the local a caller binds
+    (``task_path = self._task_path(task_id)``) is caught as well as the
+    method call itself — otherwise hoisting the path into a variable would
+    hide the write from this scan.
+    """
+    return "task_path" in expr or "tasks_dir" in expr
 
 
 def _write_targets(source: str) -> list[str]:
-    """Receiver expressions of every ``X.write_text(...)`` / ``X.write(...)``."""
+    """Path expressions of every write in *source*.
+
+    Two shapes: the receiver of ``X.write_text(...)`` / ``X.write_bytes(...)``,
+    and the first argument of ``_atomic_write_text(path, text)``.  The helper
+    is a bare function with no receiver to read, and since US-PM-24-7 every
+    ``create_*`` writes through it — a scan that knew only about the method
+    form would see no task writer at all and pass vacuously.
+    """
     targets = []
     for node in ast.walk(ast.parse(source)):
-        if (
-            isinstance(node, ast.Call)
-            and isinstance(node.func, ast.Attribute)
-            and node.func.attr in ("write_text", "write_bytes")
+        if not isinstance(node, ast.Call):
+            continue
+        if isinstance(node.func, ast.Attribute) and node.func.attr in (
+            "write_text",
+            "write_bytes",
         ):
             targets.append(ast.unparse(node.func.value))
+        elif (
+            isinstance(node.func, ast.Name)
+            and node.func.id == "_atomic_write_text"
+            and node.args
+        ):
+            targets.append(ast.unparse(node.args[0]))
     return targets
 
 

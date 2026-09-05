@@ -5,11 +5,16 @@ from __future__ import annotations
 from collections import defaultdict, deque
 from typing import Union
 
+from projectman.errors import ValidationError
 from projectman.models import StoryFrontmatter, TaskFrontmatter, is_archived
 
 
-class CycleError(ValueError):
+class CycleError(ValidationError):
     """Raised when a dependency cycle is detected.
+
+    Still a :class:`ValueError` (``ValidationError`` inherits from it), so
+    every existing ``except ValueError`` / ``pytest.raises(ValueError)``
+    around a cycle keeps working; it now also carries ``code="invalid"``.
 
     Attributes:
         cycle: List of task IDs forming the cycle path.

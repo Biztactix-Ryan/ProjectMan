@@ -1,6 +1,6 @@
 # Skills Reference
 
-ProjectMan installs 5 Claude Code skills (slash commands) via `projectman setup-claude`. These provide the primary interface for interacting with ProjectMan from Claude Code.
+ProjectMan installs 8 Claude Code skills (slash commands) via `projectman setup-claude` — `/pm`, `/pm-status`, `/pm-plan`, `/pm-do`, `/pm-orchestrate`, `/pm-autoscope`, `/pm-cleanup` and `/pm-next`. These provide the primary interface for interacting with ProjectMan from Claude Code. This page is the single place that states the count; other docs point here rather than repeating it.
 
 ## /pm
 
@@ -111,11 +111,13 @@ Drive the active sprint to done by dispatching worker subagents task-by-task and
 
 **Final report, rebuilt from the log:** Phase 4 does not summarise from the orchestrator's memory of a loop that may have run for hours. Step 22 calls `pm_activity(run_id=<this run>)` — paging with `offset` while the response reports `has_more: true` — and derives every section of the report from the returned entries: accepted (`status: ... → done`, with the evidence one-liner read back from `pm_run_log`), retried (`→ todo`), parked versus accept-as-review (both `→ review`, separated by the run-log outcome `blocked` vs `partial`), recovered claims (`claimed_by_run: <old run> → <this run>`), releases, stories closed (`pm_accept` stamps the closure with the run that caused it), points moved (one projected `pm_get` over the accepted ids) and untouched tasks (the plan minus all of the above). The lists the orchestrator kept while looping are a **cross-check, not the source**: where the two disagree the log wins and the disagreement is reported outright, since a mismatch means a write that never landed. Step 23 keeps `git diff --stat` against the pre-flight snapshot — the log records which items moved, never which files did. Edits that are not claims or verdicts (the step 3 recovery note, the step 24 sprint close) are tagged with the same `run_id=` so they land in that slice too. See [`pm_activity`](mcp-tools.md#pm_activityitem_id-event_type-from_date-to_date-actor-run_id-limit-offset-project).
 
-**Resume after a crash (`--resume <run-id>`):** A run that dies mid-loop leaves claims behind, so the skill has a documented resume path (section *Resume — Picking Up an Interrupted Run*). `--resume <old-run-id>` adopts that run's claims as one decision instead of leaving step 3 to infer them task by task; without the flag, step 3's per-claim classification applies unchanged. The resuming run **mints its own fresh id** rather than reusing the old one — reuse would merge two processes into one `pm_activity(run_id=)` slice — and records the lineage on each adopted claim as a `recovered from run <old>` run-log note. It reads the dead run's record with `pm_activity(run_id=<old>)`, paging on `has_more`, and sorts what it finds: tasks still `in-progress` under the old id are **adopted** (`pm_grab(<id>, run_id=<this run>)`, which resets `claimed_at`), tasks already `done` are **left** (the verdict landed), and tasks released, parked or back in `todo` are **left and reported** — those were deliberate decisions of the dead run. An adopted task is re-dispatched as a **retry**, never as fresh work: its worker may have left partial edits, so the worker prompt carries an `<on resume: ...>` line telling it that the previous run died mid-task and to validate the working-tree state first. Claims held by other runs remain step 3's business, and a claim held by a human — or any `claimed_by_run` without the `orch-` prefix — is never adopted. Phase 4 names the resumed run id and lists the adopted claims. Do not resume when a human holds the claim, when the old run's last event is a verdict on a task that is now done, when the old run is still emitting events (it is alive, not dead), or when the id matches no activity entries at all.
+**Resume after a crash (`--resume <run-id>`):** A run that dies mid-loop leaves claims behind, so the skill has a documented resume path (section *Resume*, with the reasoning in `docs/reference/orchestrate-design.md`). `--resume <old-run-id>` adopts that run's claims as one decision instead of leaving step 3 to infer them task by task; without the flag, step 3's per-claim classification applies unchanged. The resuming run **mints its own fresh id** rather than reusing the old one — reuse would merge two processes into one `pm_activity(run_id=)` slice — and records the lineage on each adopted claim as a `recovered from run <old>` run-log note. It reads the dead run's record with `pm_activity(run_id=<old>)`, paging on `has_more`, and sorts what it finds: tasks still `in-progress` under the old id are **adopted** (`pm_grab(<id>, run_id=<this run>)`, which resets `claimed_at`), tasks already `done` are **left** (the verdict landed), and tasks released, parked or back in `todo` are **left and reported** — those were deliberate decisions of the dead run. An adopted task is re-dispatched as a **retry**, never as fresh work: its worker may have left partial edits, so the worker prompt carries an `<on resume: ...>` line telling it that the previous run died mid-task and to validate the working-tree state first. Claims held by other runs remain step 3's business, and a claim held by a human — or any `claimed_by_run` without the `orch-` prefix — is never adopted. Phase 4 names the resumed run id and lists the adopted claims. Do not resume when a human holds the claim, when the old run's last event is a verdict on a task that is now done, when the old run is still emitting events (it is alive, not dead), or when the id matches no activity entries at all.
 
 **Health check:** Pre-flight runs `pm_audit` and records the `digest: <16 hex>` line from the report as the *last audit digest*. Every 3 accepted tasks the loop re-runs `pm_audit(since=<last audit digest>)`: an `unchanged: true` answer (under 100 bytes, no checks run) passes the check outright, and anything else is a full report — the run stops on a new ERROR-level finding, otherwise the digest is refreshed and the loop continues. The repeat is the point: it is what catches drift mid-run, so `pm_audit` is never cached per session — `since` removes the cost without removing the poll. See [`pm_audit`](mcp-tools.md#pm_auditinclude_info-project-since).
 
 **Note:** Has `disable-model-invocation: true` — only runs when explicitly invoked with `/pm-orchestrate`.
+
+**Design rationale:** why the loop is sequential and stage-only, why the run id is minted and spent the way it is, what each worker safety rule was bought with, and the full resume protocol are in [`orchestrate-design.md`](orchestrate-design.md). The skill itself is instruction only.
 
 ## /pm-cleanup
 
@@ -134,6 +136,27 @@ Archive completed epics, stories, tasks, and old sprints to reduce context noise
 5. Suggests committing the archive and planning the next sprint
 
 Also accessible via natural language like "clean up" or "archive done work".
+
+## /pm-next
+
+Read, save or clear the short note the next session should see first — the one that carries "we decided to fix X by doing Y and Z" across a context clear.
+
+```
+/pm-next                          # read the note back
+/pm-next we decided to fix the    # save a note (replaces what is there)
+        cache by keying on digest
+/pm-next also check the hub path  # "also"/"add" appends under a dated heading
+/pm-next clear                    # delete the note
+```
+
+**Workflow:**
+
+1. No arguments — calls [`pm_next`](mcp-tools.md#pm_nexttext-append-clear-project), restates the note in a sentence or two, proposes the first concrete step it implies, and asks whether to start
+2. With text — `pm_next(text=...)`, confirming what was saved; `append=true` when the user says "add" or "also"
+3. `clear` — `pm_next(clear=true)`, confirming the note is gone
+4. Offers to clear the note once the work it describes is finished
+
+The note is scratch text with one owner and a short life: plain markdown in `.project/NEXT.md`, deliberately not a story or an epic, not indexed, not audited, not returned by `pm_search`. It is committed with the rest of `.project/`, so it travels with the project. `pm_context` returns it ahead of everything else under `next_time`, so a fresh session sees it without anyone remembering it exists — `/pm-next` is for writing it, reading it back on demand, and retiring it. See [A note to the next session](../user-guide/daily-workflow.md#a-note-to-the-next-session).
 
 ## Web Dashboard via /pm
 

@@ -118,8 +118,8 @@ class TestCacheStalenessIntegration:
         store.list_tasks()  # populate
 
         # Externally add a new task
-        (store.tasks_dir / "US-TST-2.md").write_text(
-            "---\nid: US-TST-2\nstory_id: US-TST-1\ntitle: External Task\nstatus: todo\npoints: null\ntags: []\ncreated: 2026-01-01\nupdated: 2026-01-01\n---\nBody\n"
+        (store.tasks_dir / "US-TST-1-2.md").write_text(
+            "---\nid: US-TST-1-2\nstory_id: US-TST-1\ntitle: External Task\nstatus: todo\npoints: null\ntags: []\ncreated: 2026-01-01\nupdated: 2026-01-01\n---\nBody\n"
         )
 
         tasks = store.list_tasks()

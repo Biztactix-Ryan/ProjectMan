@@ -46,6 +46,7 @@ import re
 
 import pytest
 
+from tests.test_orchestrate_skill_size import design_section
 from tests.test_skill_verdict_verbs import (
     DOCS,
     _fences,
@@ -251,11 +252,29 @@ def test_steps_17_18_say_to_collect_the_three_lists(path, term):
 
 
 @pytest.mark.parametrize("path", DOCS)
-@pytest.mark.parametrize("term", ["has_evidence", "done-without-evidence"])
-def test_operating_model_names_the_evidence_query_and_finding(path, term):
-    """Structured evidence earns its keep by being queryable and auditable."""
-    assert term in _text(path), (
-        f"{path.name}: the Operating Model never names {term!r}"
+def test_operating_model_names_the_evidence_query(path):
+    """Structured evidence earns its keep by being queryable."""
+    assert "has_evidence" in _text(path), (
+        f"{path.name}: the Operating Model never names 'has_evidence', so "
+        "nothing says the evidence is read back by a query"
+    )
+
+
+def test_the_design_doc_names_the_audit_finding_evidence_answers():
+    """...and auditable: ``done-without-evidence`` is what a bare done costs.
+
+    The finding's name was the *reason* half of the Operating Model line, and
+    US-PM-25-6 moved reasons into the reference doc.  It stays pinned there:
+    without it, nothing connects the evidence fields to the audit warning they
+    exist to clear.
+    """
+    section = design_section("## Stage-only model")
+    assert "done-without-evidence" in section, (
+        "the design doc's evidence paragraph no longer names the pm_audit "
+        f"finding evidence answers:\n{section}"
+    )
+    assert "pm_run_log(id, has_evidence=true)" in section, (
+        "the design doc no longer names the query that reads the evidence back"
     )
 
 
@@ -265,7 +284,7 @@ def test_operating_model_names_the_evidence_query_and_finding(path, term):
     [
         r"files changed",
         r"pass/fail|pass or fail|passed/failed",
-        r"DoD items met (?:vs\.?|versus) unmet",
+        r"DoD (?:items )?met (?:and|vs\.?|versus) unmet",
     ],
 )
 def test_worker_prompt_fence_asks_for_the_three_lists(path, pattern):

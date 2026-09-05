@@ -41,6 +41,7 @@ import pytest
 import yaml
 
 from projectman.store import Store
+from tests.test_orchestrate_skill_size import design_section
 from tests.test_skill_guidance_tools import _step
 from tests.test_skill_verdict_verbs import DOCS, _outside_fences, _text
 
@@ -225,12 +226,23 @@ def test_step_23_still_shows_the_working_tree_diff(path):
     )
 
 
-@pytest.mark.parametrize("path", DOCS)
-def test_step_23_says_why_the_log_does_not_replace_the_diff(path):
-    """Reader must not conclude step 22 made step 23 redundant."""
-    step = _step(_text(path), DIFF_STEP).lower()
-    assert "log" in step, (
-        "step 23 never explains its relationship to the log step before it"
+def test_the_design_doc_says_why_the_log_does_not_replace_the_diff():
+    """Reader must not conclude step 22 made step 23 redundant.
+
+    US-PM-25-6 moved this rationale out of the skill (the instruction stayed:
+    ``test_step_23_still_shows_the_working_tree_diff`` pins the call and the
+    ``.project/`` split).  The reasoning still has to exist somewhere a reader
+    can reach — the reference doc the skill links once — or the next reader
+    deletes step 23 as duplicated work.
+    """
+    section = design_section("## Final report from the activity log")
+    lowered = section.lower()
+    assert "git diff --stat" in lowered, (
+        "the design doc's report section no longer defends the working-tree diff"
+    )
+    assert "activity log" in lowered and "never what changed in the repository" in lowered, (
+        "the doc no longer says the log cannot supply what the diff supplies:\n"
+        f"{section}"
     )
 
 

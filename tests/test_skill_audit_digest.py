@@ -44,6 +44,7 @@ from projectman.audit import (
     run_audit,
 )
 from projectman.store import clear_all_caches
+from tests.test_orchestrate_skill_size import design_section
 from tests.test_skill_guidance_tools import _step
 from tests.test_skill_verdict_verbs import DOCS, _text
 
@@ -170,21 +171,28 @@ def test_the_stop_conditions_stay_consistent_with_the_cheap_answer(doc):
     )
 
 
-@pytest.mark.parametrize("doc", DOCS)
-def test_the_reviewer_note_defends_the_repeat(doc):
-    """The studies' 'waste' finding must not be re-applied by a later reader."""
-    step = _step(_text(doc), HEALTH_STEP)
-    lowered = step.lower()
-    assert "reviewers" in lowered, (
-        f"step {HEALTH_STEP} in {doc} lost the note for reviewers explaining "
-        "why the repeated pm_audit calls are intentional"
+def test_the_design_doc_defends_the_repeat_against_the_waste_finding():
+    """The studies' 'waste' finding must not be re-applied by a later reader.
+
+    The defence used to sit inside step 21 as a note addressed to reviewers;
+    US-PM-25-6 moved every such aside into the reference doc so the skill
+    carries instruction only.  The argument still has to be written down — it
+    is the reason a future "optimisation" must not cache ``pm_audit`` per
+    session — so it is pinned in its new home instead of deleted.
+    """
+    section = design_section("## Health checks")
+    # The doc is hard-wrapped, so a phrase may straddle a line break.
+    lowered = re.sub(r"\s+", " ", section.lower())
+    assert "waste" in lowered, (
+        "the design doc no longer names the usage studies' waste finding, so "
+        f"nothing answers it:\n{section}"
     )
     assert "by design" in lowered or "as designed" in lowered, (
-        f"{doc}: the reviewer note no longer says the repeat is deliberate"
+        "the design doc no longer says the repeated pm_audit call is deliberate"
     )
     assert "cach" in lowered, (
-        f"{doc}: the reviewer note no longer rejects caching pm_audit per "
-        "session — the recommendation it exists to refuse"
+        "the design doc no longer rejects caching pm_audit per session — the "
+        "recommendation this argument exists to refuse"
     )
 
 

@@ -387,8 +387,6 @@ def test_missing_project_reported_no_crash(tmp_hub):
     assert gone["dirty"] is False
     assert gone["ahead"] == 0
     assert gone["behind"] == 0
-    assert gone["open_prs"] == 0
-    assert gone["prs"] == []
     assert any("missing" in i.lower() or "Missing" in i for i in gone["issues"])
 
 
@@ -578,7 +576,7 @@ def test_twenty_plus_projects_all_fields_present(mock_run, tmp_hub):
     all_fields = {
         "name", "branch", "tracking_branch", "deploy_branch", "aligned",
         "dirty", "dirty_count", "ahead", "behind", "detached",
-        "last_commit", "branch_ok", "exists", "issues", "open_prs", "prs",
+        "last_commit", "branch_ok", "exists", "issues",
     }
     for proj in result["projects"]:
         assert all_fields.issubset(proj.keys()), (
@@ -586,141 +584,3 @@ def test_twenty_plus_projects_all_fields_present(mock_run, tmp_hub):
         )
         assert isinstance(proj["last_commit"], dict)
         assert isinstance(proj["issues"], list)
-        assert isinstance(proj["prs"], list)
-
-
-# ─── 8. PR data unavailable: gh not installed or not authed ──
-
-
-@patch("projectman.hub.registry.subprocess.run")
-def test_pr_unavailable_gh_not_installed(mock_run, tmp_hub):
-    """gh CLI not installed → PR fields default to empty, core status works."""
-    _register_subproject(tmp_hub, "api", prefix="API")
-
-    def dispatcher(cmd, **kwargs):
-        if "gh" in cmd:
-            raise FileNotFoundError("gh not found")
-        if "config" in cmd and ".gitmodules" in cmd:
-            return _make_run_result(0, stdout="main\n")
-        if "rev-parse" in cmd and "--abbrev-ref" in cmd:
-            return _make_run_result(0, stdout="main\n")
-        if "status" in cmd and "--porcelain" in cmd:
-            return _make_run_result(0, stdout="")
-        if "rev-list" in cmd and "--left-right" in cmd:
-            return _make_run_result(0, stdout="0\t0\n")
-        if "log" in cmd and "--format" in str(cmd):
-            return _make_run_result(0, stdout="sha|2026-01-01|Dev|msg\n")
-        return _make_run_result(0)
-
-    mock_run.side_effect = dispatcher
-
-    result = git_status_all(root=tmp_hub)
-    proj = result["projects"][0]
-
-    # PR fields gracefully empty
-    assert proj["open_prs"] == 0
-    assert proj["prs"] == []
-    # Core status still works
-    assert proj["branch"] == "main"
-    assert proj["dirty"] is False
-    assert proj["exists"] is True
-    assert proj["aligned"] is True
-
-
-@patch("projectman.hub.registry.subprocess.run")
-def test_pr_unavailable_gh_not_authenticated(mock_run, tmp_hub):
-    """gh CLI not authenticated → PR fields empty, core status works."""
-    _register_subproject(tmp_hub, "api", prefix="API")
-
-    def dispatcher(cmd, **kwargs):
-        if "gh" in cmd and "pr" in cmd:
-            return _make_run_result(1, stderr="gh: auth login required")
-        if "config" in cmd and ".gitmodules" in cmd:
-            return _make_run_result(0, stdout="main\n")
-        if "rev-parse" in cmd and "--abbrev-ref" in cmd:
-            return _make_run_result(0, stdout="main\n")
-        if "status" in cmd and "--porcelain" in cmd:
-            return _make_run_result(0, stdout="")
-        if "rev-list" in cmd and "--left-right" in cmd:
-            return _make_run_result(0, stdout="0\t0\n")
-        if "log" in cmd and "--format" in str(cmd):
-            return _make_run_result(0, stdout="sha|2026-01-01|Dev|msg\n")
-        return _make_run_result(0)
-
-    mock_run.side_effect = dispatcher
-
-    result = git_status_all(root=tmp_hub)
-    proj = result["projects"][0]
-
-    assert proj["open_prs"] == 0
-    assert proj["prs"] == []
-    # Core status unaffected
-    assert proj["branch"] == "main"
-    assert proj["exists"] is True
-
-
-@patch("projectman.hub.registry.subprocess.run")
-def test_pr_unavailable_malformed_json(mock_run, tmp_hub):
-    """Malformed JSON from gh → PR fields empty, no crash."""
-    _register_subproject(tmp_hub, "api", prefix="API")
-
-    def dispatcher(cmd, **kwargs):
-        if "gh" in cmd and "pr" in cmd:
-            return _make_run_result(0, stdout="this is not json")
-        if "config" in cmd and ".gitmodules" in cmd:
-            return _make_run_result(0, stdout="main\n")
-        if "rev-parse" in cmd and "--abbrev-ref" in cmd:
-            return _make_run_result(0, stdout="main\n")
-        if "status" in cmd and "--porcelain" in cmd:
-            return _make_run_result(0, stdout="")
-        if "rev-list" in cmd and "--left-right" in cmd:
-            return _make_run_result(0, stdout="0\t0\n")
-        if "log" in cmd and "--format" in str(cmd):
-            return _make_run_result(0, stdout="sha|2026-01-01|Dev|msg\n")
-        return _make_run_result(0)
-
-    mock_run.side_effect = dispatcher
-
-    result = git_status_all(root=tmp_hub)
-    proj = result["projects"][0]
-
-    assert proj["open_prs"] == 0
-    assert proj["prs"] == []
-    assert proj["branch"] == "main"
-
-
-@patch("projectman.hub.registry.subprocess.run")
-def test_pr_unavailable_core_status_with_issues_still_detected(mock_run, tmp_hub):
-    """Even when gh fails, dirty/branch issues are still detected correctly."""
-    _register_subproject(tmp_hub, "messy-api", prefix="API")
-
-    def dispatcher(cmd, **kwargs):
-        if "gh" in cmd:
-            raise FileNotFoundError("gh not found")
-        if "config" in cmd and ".gitmodules" in cmd:
-            return _make_run_result(0, stdout="main\n")
-        if "rev-parse" in cmd and "--abbrev-ref" in cmd:
-            return _make_run_result(0, stdout="feature-y\n")
-        if "status" in cmd and "--porcelain" in cmd:
-            return _make_run_result(0, stdout=" M dirty.py\n")
-        if "rev-list" in cmd and "--left-right" in cmd:
-            return _make_run_result(0, stdout="1\t0\n")
-        if "log" in cmd and "--format" in str(cmd):
-            return _make_run_result(0, stdout="sha|2026-01-01|Dev|msg\n")
-        return _make_run_result(0)
-
-    mock_run.side_effect = dispatcher
-
-    result = git_status_all(root=tmp_hub)
-    proj = result["projects"][0]
-
-    # PR data gracefully empty
-    assert proj["open_prs"] == 0
-    assert proj["prs"] == []
-    # But all other issues are detected
-    assert proj["dirty"] is True
-    assert proj["branch_ok"] is False
-    assert proj["behind"] == 1
-    assert result["ok"] is False
-    assert result["issues"] == 1
-    assert len(proj["issues"]) >= 2

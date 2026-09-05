@@ -6,8 +6,7 @@ Verifies acceptance criterion for story US-PRJ-7:
 Uses real git repos with bare remotes to verify that:
 1. Changes are committed on a feature branch, not deploy (main)
 2. Pushing the feature branch does NOT update main on the remote
-3. The changeset workflow tracks the feature branch ref correctly
-4. Hub refs are only updated after all PRs merge (not on feature push)
+3. Hub refs are only updated after all PRs merge (not on feature push)
 """
 
 import os
@@ -18,8 +17,6 @@ import pytest
 import yaml
 
 from projectman.hub.registry import push_subprojects, coordinated_push
-from projectman.changesets import create_changeset
-from projectman.store import Store
 
 
 # ─── Helpers ──────────────────────────────────────────────────────
@@ -89,7 +86,7 @@ def hub_with_deploy_branches(tmp_path):
             hub/              hub working copy
                 projects/api/ submodule checkout (on main)
                 projects/web/ submodule checkout (on main)
-                .project/     PM metadata with changeset support
+                .project/     PM metadata
     """
     env = {"tmp": tmp_path}
 
@@ -121,10 +118,10 @@ def hub_with_deploy_branches(tmp_path):
     _git(["config", "user.name", "Dev1"], hub)
     _git(["config", "protocol.file.allow", "always"], hub)
 
-    # Set up PM structure with changeset support
+    # Set up PM structure
     proj = hub / ".project"
     proj.mkdir()
-    for d in ("stories", "tasks", "projects", "dashboards", "changesets"):
+    for d in ("stories", "tasks", "projects", "dashboards"):
         (proj / d).mkdir()
     config = {
         "name": "test-hub",
@@ -132,7 +129,6 @@ def hub_with_deploy_branches(tmp_path):
         "description": "test",
         "hub": True,
         "next_story_id": 1,
-        "next_changeset_id": 1,
         "projects": ["api", "web"],
     }
     (proj / "config.yaml").write_text(yaml.dump(config))
@@ -268,38 +264,6 @@ class TestFeatureBranchNotDirectDeploy:
         # Deploy branches on both remotes are UNCHANGED
         assert _remote_sha(api_bare, "main") == api_main_before
         assert _remote_sha(web_bare, "main") == web_main_before
-
-    def test_changeset_tracks_feature_branch_ref(self, hub_with_deploy_branches):
-        """A changeset entry records the feature branch name, not 'main'.
-
-        When working in the PR-based workflow, the changeset tracks which
-        feature branch each project's changes live on. This ensures the
-        PR will be created from the correct branch.
-        """
-        hub = hub_with_deploy_branches["hub"]
-        store = Store(hub)
-
-        # Create a changeset for a cross-repo feature
-        cs = create_changeset(store, "add-auth", ["api", "web"])
-
-        # Add feature branch refs to each entry
-        updated = store.add_changeset_entry(cs.id, "api", ref="feature/auth")
-        # The first add_changeset_entry adds to existing, so we update the ref
-        # by re-reading and checking the entries
-        meta, _ = store.get_changeset(cs.id)
-
-        # Set refs on existing entries (simulating the workflow)
-        api_entry = next(e for e in meta.entries if e.project == "api")
-        web_entry = next(e for e in meta.entries if e.project == "web")
-
-        # Verify the changeset tracks feature branches, not deploy branches
-        store.add_changeset_entry(cs.id, "web", ref="feature/auth-ui")
-        meta, _ = store.get_changeset(cs.id)
-
-        refs = {e.project: e.ref for e in meta.entries if e.ref}
-        assert "feature/auth-ui" in refs.values(), (
-            "changeset must track feature branch refs, not deploy branch"
-        )
 
     def test_coordinated_push_rejects_direct_to_deploy_when_misaligned(
         self, hub_with_deploy_branches

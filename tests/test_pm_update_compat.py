@@ -20,7 +20,7 @@ Web/CLI note: the web API's `PATCH /api/tasks/{id}` reaches the same
 `Store.update` contract (`src/projectman/web/routes/api.py`), covered by
 `tests/web/test_tasks_board_docs.py::test_task_lifecycle` and
 `tests/web/test_archived_metrics.py::test_archive_route_leaves_the_task_status_alone_on_disk`.  The Click CLI has no task-status write
-of its own — `src/projectman/cli.py` is init/git/changeset commands only.
+of its own — `src/projectman/cli.py` is init/git commands only.
 """
 
 import inspect

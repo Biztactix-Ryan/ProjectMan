@@ -20,8 +20,8 @@ other side of the transport sees.  Both are run for every case.
 Beyond the per-class sweep there are three whole-surface checks:
 
 * :func:`test_no_registered_tool_can_return_an_error_prefixed_body` — a static
-  scan of every ``return`` in every one of the 53 registered tools;
-* two dynamic sweeps that *drive* all 54 tools (in a broken environment and
+  scan of every ``return`` in every one of the 50 registered tools;
+* two dynamic sweeps that *drive* all 50 tools (in a broken environment and
   against hostile arguments) and assert no response body begins with ``error:``;
 * :func:`test_the_instrument_scores_every_converted_failure_as_a_hard_error` —
   the epic's own instrument, ``tools/usage_telemetry/classify.py``, run over the
@@ -57,10 +57,10 @@ from tools.usage_telemetry.extract import ToolCall, ToolResult
 SERVER_PY = Path(__file__).resolve().parents[1] / "src" / "projectman" / "server.py"
 
 
-#: The changeset and web families are hidden from ``tools/list`` by default
+#: The maintenance and web families are hidden from ``tools/list`` by default
 #: (US-PM-15-5), but their failure paths are catalogued in the error-paths
 #: inventory and driven by :data:`CASES` below, and the whole-surface checks
-#: count all 54 tools.  Gating them out here would shrink the sweep rather
+#: count all 50 tools.  Gating them out here would shrink the sweep rather
 #: than test the gate, so this module sweeps the full surface;
 #: ``tests/test_tool_gating.py`` asserts the gate.
 pytestmark = pytest.mark.usefixtures("all_tool_families")
@@ -127,10 +127,6 @@ CASES: list[Case] = [
     Case("nonexistent_task", "3.1", "pm_grab", {"task_id": "US-TST-9-9"}, "Task not found: US-TST-9-9"),
     Case("nonexistent_sprint", "3.1", "pm_get_sprint", {"sprint_id": "SPRINT-TST-99"}, "Sprint not found: SPRINT-TST-99"),
     Case("nonexistent_sprint", "3.1", "pm_update_sprint", {"sprint_id": "SPRINT-TST-99", "name": "x"}, "Sprint not found: SPRINT-TST-99"),
-    Case("nonexistent_changeset", "3.1", "pm_changeset_status", {"changeset_id": "CS-TST-99"}, "Changeset not found: CS-TST-99"),
-    Case("nonexistent_changeset", "3.1", "pm_changeset_add_project", {"changeset_id": "CS-TST-99", "name": "p", "ref": "b"}, "Changeset not found: CS-TST-99"),
-    Case("nonexistent_changeset", "3.1", "pm_changeset_create_prs", {"changeset_id": "CS-TST-99"}, "Changeset not found: CS-TST-99"),
-    Case("nonexistent_changeset", "3.1", "pm_changeset_push", {"changeset_id": "CS-TST-99"}, "Changeset not found: CS-TST-99"),
     Case("nonexistent_item", "3.1", "pm_update", {"id": "US-TST-99"}, "Item not found: US-TST-99"),
     Case("nonexistent_item", "3.1", "pm_archive", {"id": "US-TST-99"}, "Item not found: US-TST-99"),
     # -- malformed / invalid input (inventory 3.2).
@@ -157,7 +153,6 @@ CASES: list[Case] = [
     Case("invalid_points", "3.1", "pm_create_task", {"story_id": "US-TST-1", "title": "T", "description": READY_BODY, "points": 7}, "Points must be fibonacci"),
     Case("invalid_priority", "3.1", "pm_create_story", {"title": "S", "description": "d", "priority": "urgent"}, "'urgent' is not a valid Priority"),
     # -- argument validation, the explicit plain-string sites (inventory 3.3).
-    Case("empty_required_argument", "3.3", "pm_changeset_create", {"title": "cs", "projects": ""}, "at least one project is required"),
     Case(
         "missing_required_argument", "3.3", "pm_fix_malformed",
         {"filename": "REAL-1.md", "id": "US-TST-2-1", "title": "T", "item_type": "task"},
@@ -166,6 +161,15 @@ CASES: list[Case] = [
     # -- a mutation whose target file is absent (inventory 3.2, 5.3).
     Case("not_found_file", "5.3", "pm_fix_malformed", {"filename": "GHOST-1.md", "id": "US-TST-2", "title": "T", "item_type": "story"}, "GHOST-1.md not found in malformed/"),
     Case("not_found_file", "5.3", "pm_restore", {"filename": "GHOST-1.md"}, "GHOST-1.md not found in malformed/"),
+    # -- a create whose target file is already on disk (inventory 3.1,
+    #    US-PM-24).  The store refuses rather than overwriting; the tool must
+    #    turn that FileExistsError into an error result, not a crash.
+    Case("create_target_exists", "3.1", "pm_create_sprint", {"name": "S"}, "SPRINT-TST-1 already exists", world="target_exists"),
+    # ...and the two creates that live outside the store: both lift a file out
+    # of the quarantine onto a caller-supplied id (US-PM-24-8).  Refusing
+    # writes nothing and consumes nothing, so the seeded world survives them.
+    Case("create_target_exists", "3.1", "pm_fix_malformed", {"filename": "REAL-1.md", "id": "US-TST-1", "title": "T", "item_type": "story"}, "US-TST-1 already exists"),
+    Case("create_target_exists", "3.1", "pm_restore", {"filename": "US-TST-1.md"}, "US-TST-1 already exists"),
     # -- an asserted hub project that is not registered (inventory 3.2).
     Case("unregistered_hub_project", "3.2", "pm_audit", {"project": "nope"}, "project 'nope' not found in hub", world="hub"),
     Case("unregistered_hub_project", "3.2", "pm_git_status", {"project": "nope"}, "project 'nope' not found in hub status", world="hub"),
@@ -180,6 +184,12 @@ CASES: list[Case] = [
     Case("no_project_for_web", "3.4", "pm_web_start", {}, "No project found", world="empty"),
     Case("web_subprocess_failure", "3.4", "pm_web_start", {}, "no subprocess in tests", world="free_port", from_world=("port",)),
     Case("web_process_failure", "3.4", "pm_web_stop", {}, "cannot signal this process", world="web_running_broken"),
+
+    # -- contradictory arguments (US-PM-28): two flags that cannot both be
+    #    meant.  The call is rejected before anything is written, so an
+    #    ambiguous `pm_next` never half-happens.
+    Case("contradictory_arguments", "3.2", "pm_next", {"text": "a note", "clear": True}, "pass text or clear, not both"),
+    Case("contradictory_arguments", "3.2", "pm_next", {"append": True}, "append needs text"),
 ]
 
 #: Every failure class the inventory catalogues as MCP-reachable.  Asserted
@@ -190,7 +200,6 @@ EXPECTED_CLASSES = {
     "nonexistent_story",
     "nonexistent_task",
     "nonexistent_sprint",
-    "nonexistent_changeset",
     "nonexistent_item",
     "bad_enum_value",
     "bad_type",
@@ -200,9 +209,9 @@ EXPECTED_CLASSES = {
     "invalid_status",
     "invalid_points",
     "invalid_priority",
-    "empty_required_argument",
     "missing_required_argument",
     "not_found_file",
+    "create_target_exists",
     "unregistered_hub_project",
     "hub_error_string",
     "hub_error_dict",
@@ -212,6 +221,7 @@ EXPECTED_CLASSES = {
     "no_project_for_web",
     "web_subprocess_failure",
     "web_process_failure",
+    "contradictory_arguments",
 }
 
 
@@ -320,6 +330,13 @@ class Worlds:
         malformed = root / ".project" / "malformed"
         malformed.mkdir(exist_ok=True)
         (malformed / "REAL-1.md").write_text("junk with no frontmatter\n")
+        # A quarantined file whose *name* collides with the seeded story, so
+        # ``pm_restore`` has a live target to refuse.  Its frontmatter must be
+        # valid: pm_restore validates before it looks at the destination, and
+        # the class under test here is the collision, not the validation.
+        (malformed / "US-TST-1.md").write_text(
+            (root / ".project" / "stories" / "US-TST-1.md").read_text()
+        )
 
     def _hub_root(self) -> Path:
         if "hub" not in self._roots:
@@ -332,6 +349,27 @@ class Worlds:
             )
             self._roots["hub"] = root
         return self._roots["hub"]
+
+    def _target_exists_root(self) -> Path:
+        """A project where the sprint the counter would mint is already written.
+
+        Sprint IDs come straight from the config counter, so this collision
+        needs no stub: another session wrote ``SPRINT-TST-1.md`` and this
+        project's counter still points at 1.  Refusing writes nothing, so the
+        world stays valid however many cases reuse it.
+        """
+        if "target_exists" not in self._roots:
+            root = self._factory.mktemp("target_exists")
+            proj = root / ".project"
+            (proj / "stories").mkdir(parents=True)
+            (proj / "tasks").mkdir()
+            (proj / "sprints").mkdir()
+            (proj / "config.yaml").write_text(yaml.safe_dump(PROJECT_CONFIG))
+            (proj / "sprints" / "SPRINT-TST-1.md").write_text(
+                "---\nid: SPRINT-TST-1\n---\nWritten by another session.\n"
+            )
+            self._roots["target_exists"] = root
+        return self._roots["target_exists"]
 
     def _empty_root(self) -> Path:
         if "empty" not in self._roots:
@@ -351,6 +389,9 @@ class Worlds:
             return {}
         if name == "hub":
             self._mp.chdir(self._hub_root())
+            return {}
+        if name == "target_exists":
+            self._mp.chdir(self._target_exists_root())
             return {}
 
         self._mp.chdir(self._project_root())
@@ -501,7 +542,7 @@ def test_every_inventory_failure_class_is_covered():
     """
     covered = {case.failure_class for case in CASES}
     assert covered == EXPECTED_CLASSES, covered.symmetric_difference(EXPECTED_CLASSES)
-    assert len(CASES) >= 45, len(CASES)
+    assert len(CASES) >= 42, len(CASES)
     # Every case names the inventory section it came from.
     assert all(case.inventory for case in CASES)
     # The sweep spans the tool surface, not one convenient tool.
@@ -558,7 +599,7 @@ def test_no_registered_tool_can_return_an_error_prefixed_body():
     assert set(tools) == registered_tool_names(), set(tools).symmetric_difference(
         registered_tool_names()
     )
-    assert len(tools) == 54, len(tools)
+    assert len(tools) == 50, len(tools)
 
     # 2. Every return in every tool.
     checked_returns = 0
@@ -630,7 +671,7 @@ def sweep_every_tool() -> tuple[dict[str, tuple[bool, str]], int]:
 
 def assert_sweep_is_clean(responses: dict[str, tuple[bool, str]], total: int):
     assert len(responses) == total, (len(responses), total)
-    assert total == 54, total
+    assert total == 50, total
     for name, (is_error, text) in responses.items():
         assert not text.lstrip().startswith("error:"), (name, text[:200])
         if not is_error:
@@ -645,9 +686,9 @@ def assert_sweep_is_clean(responses: dict[str, tuple[bool, str]], total: int):
 
 
 def test_driving_every_tool_in_a_broken_environment_yields_no_error_body(worlds):
-    """AC 4 driven, not inferred: all 54 tools, in a directory with no project.
+    """AC 4 driven, not inferred: all 50 tools, in a directory with no project.
 
-    Every tool's generic handler is reached here — that is 47 of the 63
+    Every tool's generic handler is reached here — that is 48 of the 64
     ``server.py`` sites in one sweep — and every response is checked.  The two
     tools that legitimately answer without a project (``pm_web_stop``,
     ``pm_web_status``) return their idempotent no-op bodies, which is why the
@@ -660,7 +701,7 @@ def test_driving_every_tool_in_a_broken_environment_yields_no_error_body(worlds)
     # The sweep really did exercise the failure paths, rather than finding a
     # working project by accident.
     errored = [name for name, (is_error, _) in responses.items() if is_error]
-    assert len(errored) == 52, sorted(set(responses) - set(errored))
+    assert len(errored) == 48, sorted(set(responses) - set(errored))
 
 
 def test_driving_every_tool_with_hostile_arguments_yields_no_error_body(worlds):

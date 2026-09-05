@@ -127,17 +127,6 @@ Verify branch alignment at any time:
 projectman validate-branches
 ```
 
-### Changeset Configuration
-
-Changesets use an auto-incrementing ID counter in your hub config:
-
-```yaml
-# .project/config.yaml
-next_changeset_id: 1
-```
-
-This increments automatically when you create changesets. No manual setup needed.
-
 ## Syncing and Repairing
 
 Pull the latest submodule changes before running audits or dashboards:

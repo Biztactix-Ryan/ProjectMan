@@ -1,15 +1,13 @@
 # MCP Tools Reference
 
-`server.py` defines 54 tools; a default single-project install registers 41 of
-them. Three families are gated behind `tools.changesets` /
-`tools.maintenance` / `tools.web` in `.project/config.yaml` — off by default,
-one line to turn on, nothing deleted:
+`server.py` defines 50 tools; a default single-project install registers 42 of
+them. Two families are gated behind `tools.maintenance` / `tools.web` in
+`.project/config.yaml` — off by default, one line to turn on, nothing deleted:
 
-- [Changeset](#changeset-tools) (5) — `tools.changesets`, which follows `hub` when unset
 - [Break-glass](#break-glass-tools) (5) — `tools.maintenance`; every one reachable from the CLI
 - [Web Dashboard](#web-dashboard-tools) (3) — `tools.web`
 
-Gating the 13 removes **11,828 bytes (12.66%)** from every `tools/list` —
+Gating the 8 removes **6,365 bytes (6.53%)** from every `tools/list` —
 measured, not estimated: see
 [telemetry/tool-list-size.md](../telemetry/tool-list-size.md) for the numbers,
 the per-family breakdown and the command that reproduces them.
@@ -24,7 +22,7 @@ See [file-formats.md § tools](file-formats.md#tools--gated-tool-families).
 > not appear in `tools/list` and calling one returns `Unknown tool: <name>`
 > with `is_error` set.
 >
-> These five are hidden for a different reason from the other two families.
+> These five are hidden for a different reason from the web family.
 > They are not unwanted — they are human recovery tools, and every one has a
 > CLI equivalent that works whether or not the tool is registered:
 > `projectman repair`, `projectman restore <filename>`,
@@ -74,6 +72,37 @@ Note the boundary: `pm_docs("nonsense")` is *not* an expected negative.
 Asking for an absent-but-valid document is a lookup over an optional set;
 naming a document that does not exist at all is a bad argument, and stays an
 error.
+
+## Error codes
+
+Every genuine failure is raised, sets `is_error`, and carries a code appended
+to the message as a trailing ` [code: <code>]` token. The set is closed —
+`ERROR_CODES` in `src/projectman/errors.py`.
+
+| Code | Meaning | Raised by | Example wire text |
+|---|---|---|---|
+| `not_found` | The epic, story, task, sprint or doc does not exist | any lookup — `pm_get`, `pm_update`, `pm_grab`, `pm_archive`, `pm_run_log`, … | `Task not found: US-TST-9-9 [code: not_found]` |
+| `invalid` | Bad argument — malformed, out of range, self-contradictory, or a dependency cycle | `pm_update`, `pm_create_task`, `pm_update_many`, … | `Task cannot depend on itself: US-TST-1-1 [code: invalid]` |
+| `conflict` | The request clashes with the current state | `pm_commit`'s nothing-to-commit path — intercepted and answered as an expected negative, so not seen on the wire today | `No .project/ changes to commit [code: conflict]` |
+| `store` | The `.project/` store or a git operation against it failed | `pm_push`, `pm_commit`, worktree migration | `Remote 'origin' not configured (available: none) [code: store]` |
+| `permission` | The filesystem refused the access | any tool, from an OS `PermissionError` | `[Errno 13] Permission denied: '.project/index.yaml' [code: permission]` |
+| `internal` | Unclassified — a bug, or a dependency's exception | any tool's catch-all handler | `<original message> [code: internal]` |
+| `error` | The taxonomy's base default | nothing raises it, so it does not appear on the wire | — |
+
+**The guarantee.** The message text is unchanged — the code is appended, not
+substituted — and `is_error` is still set for every failure. A client that
+only reads prose loses nothing; a client that wants to branch parses one
+stable trailing token. In-process callers read `.code` / `.message` off the
+raised `CodedToolError` instead of parsing anything. Over a transport FastMCP
+re-wraps the error and prefixes `Error executing tool <name>: `, so the code
+stays at the end of the text.
+
+**One exception.** A `ToolError` a tool raises *directly* passes through
+without a suffix: its exact text is that tool's own contract — `pm_get`'s
+unknown-field message ends in a machine-parsed `valid names:` list a trailing
+token would corrupt.
+
+Full taxonomy and raise sites: `docs/reference/error-paths-inventory.md` §9.
 
 ## Partial failure
 
@@ -151,7 +180,7 @@ item.
 
 Every tool that acts on an item accepts **two spellings of its ID**: the
 generic `id` and the typed one for what it acts on (`task_id`, `story_id`,
-`epic_id`, `sprint_id`, `item_id`, `changeset_id`). The documented name below
+`epic_id`, `sprint_id`, `item_id`). The documented name below
 is the canonical one; the marker `(alias: X)` on an ID argument means `X` is
 accepted for it too. Either spelling alone is a complete call, both with the
 same value is fine, and passing both with **different** values is an error —
@@ -163,6 +192,47 @@ alias marker: `pm_update`'s and `pm_create_story`'s `epic_id` link a story to
 an epic, and `story_id` on `pm_create_task`, `pm_create_tasks` and
 `pm_fix_malformed` is the parent story.
 
+## Token-list parameters
+
+Arguments whose entries are **tokens** — item IDs, tags, dependency IDs,
+field names, planned story IDs — accept **two interchangeable shapes**:
+
+- a JSON list — `["US-PRJ-1", "US-PRJ-2"]`
+- a comma-separated string — `"US-PRJ-1,US-PRJ-2"`
+
+Both normalise through the same code (`_as_list`): entries are stripped and
+blank ones dropped, so `"a, b,,c"` and `["a ", " b", "", "c"]` are the same
+three tokens and land byte-identically on disk. The comma string is the
+original form and stays fully supported; the list form exists so a client
+holding a list no longer has to join it for the server to split it apart
+again. `tools/list` advertises both — the parameter's schema is a
+`string`/`array` union.
+
+The one place the shapes differ is a token that **contains** a comma: a list
+says where the boundaries are, so `["a,b"]` is one entry, while `"a,b"` is
+two. Prefer the list when an entry might contain a comma.
+
+Parameters that take both shapes:
+
+| Tool | Parameters |
+|---|---|
+| `pm_get` | `id` (and its `task_id` alias) |
+| `pm_batch_get` | `ids` |
+| `pm_create_story` | `tags`, `depends_on` |
+| `pm_create_epic` | `tags` |
+| `pm_create_task` | `tags`, `depends_on` |
+| `pm_update` | `tags`, `depends_on`, `clear` |
+| `pm_update_many` | `ids`, `tags`, `depends_on`, `clear` |
+| `pm_archive_many` | `ids` |
+| `pm_create_sprint` | `planned_stories` |
+| `pm_update_sprint` | `planned_stories` |
+
+> **`acceptance_criteria` is not one of these.** Criteria are natural
+> language, not tokens, so a comma inside one is punctuation and is never a
+> separator. It takes a JSON list (a bare string is taken as exactly *one*
+> criterion) and is never split on commas. Same for `fields`, which is a
+> comma-separated string only.
+
 ## Query Tools
 
 ### pm_status(project?)
@@ -172,7 +242,7 @@ Get project status summary.
 
 ### pm_get(id, include_log?, fields?)
 Get full details of one or more epics, stories, or tasks.
-- **id**: One or more comma-separated IDs — epic (e.g. `EPIC-PRJ-1`), story (e.g. `US-PRJ-1`), or task (e.g. `US-PRJ-1-1,US-PRJ-1-2`) (alias: `task_id`). Prefer one multi-ID call over repeated single-ID calls.
+- **id**: One or more IDs — epic (e.g. `EPIC-PRJ-1`), story (e.g. `US-PRJ-1`), or task (e.g. `US-PRJ-1-1`) (alias: `task_id`). Pass a list `["US-PRJ-1-1", "US-PRJ-1-2"]` or a comma-separated string `"US-PRJ-1-1,US-PRJ-1-2"` ([both shapes](#token-list-parameters)) — the alias takes the same two. Prefer one multi-ID call over repeated single-ID calls.
 - **include_log** (optional, default `false`): Include the 3 most recent run-log entries per item. Each entry carries `has_evidence` and, when true, a compact one-line `evidence_summary` (e.g. `"3 files, 1/1 tests passed, 2/2 DoD"`) — **never the evidence object itself**; `pm_get` is the high-frequency context call, and the full detail is one `pm_run_log` away.
 - **fields** (optional): Comma-separated key names to return — everything else is omitted. `pm_get("US-PRJ-1-1", fields="status,assignee")` is the verification read after a worker reports done, and costs ~1.5% of the full item. Names are the item's own serialized keys (`status`, `assignee`, `points`, `title`, `story_id`, `depends_on`, `tags`, `body`, `acceptance_criteria`, `recent_run_log`, …), so each item type accepts its own; `id` is always returned so a multi-ID result stays addressable. Whitespace around names is stripped and duplicates are fine. An unknown name is a hard error listing the valid names for that item type — a typo must not silently return an empty projection that a verification read would read as a pass. `include_log=true` with a `fields` that does not name `recent_run_log` does not read the log at all. Omitting it (or passing an empty string) leaves the response byte-identical to before this parameter existed.
 - **Returns**: Full frontmatter + body content. A single ID returns one object; multiple IDs return a list (missing IDs become `{id, error}` entries).
@@ -180,7 +250,7 @@ Get full details of one or more epics, stories, or tasks.
 ### pm_batch_get(type?, ids?, project?, brief?, fields?)
 Get every item of a type (or a specific ID list) with full data in a single call.
 - **type**: Item type to fetch: `"epics"`, `"stories"`, or `"tasks"`
-- **ids** (optional): Comma-separated item IDs to fetch; takes precedence over `type`
+- **ids** (optional): Item IDs to fetch — a list or a comma-separated string ([both shapes](#token-list-parameters)); takes precedence over `type`
 - **project** (optional): Project name for hub mode
 - **brief** (optional, default `false`): A fixed projection that drops the heavy free-text. Keeps whichever of `id`, `title`, `status`, `points`, `priority`, `story_id`, `epic_id`, `assignee`, `tags`, `depends_on` the item type has, and omits `body`, `acceptance_criteria` and any run log. `pm_batch_get(type="stories", brief=True)` is the scan-the-backlog call and costs a small fraction of the full listing — this is a list-*everything* tool, so full mode returns every body and every criterion in the project. Keys the type does not have are simply absent, never an error.
 - **fields** (optional): Comma-separated key names to return, with exactly the semantics it has on `pm_get` — everything else is omitted, `id` is always kept, whitespace is stripped, and an unknown name is a hard error listing the valid names for that item type. Valid names are the item's own serialized keys, so a heterogeneous `ids` list must name keys every listed item has. **If both are given, `fields` wins** — explicit beats preset.
@@ -191,6 +261,21 @@ Read project documentation files.
 - **doc** (optional): Specific doc to read — `project`, `infrastructure`, `security`, `vision`, `architecture`, `decisions`
 - **project** (optional): Project name for hub mode
 - **Returns**: Document content, or an expected negative `{outcome: expected_negative, status: not_created, message, doc, file}` when that document has not been created
+
+### pm_next(text?, append?, clear?, project?)
+Read, write or clear the short note the next session should see first — the
+one that carries "we decided to fix X by doing Y and Z" across a context
+clear. It is scratch text with one owner and a short life: plain markdown in
+`.project/NEXT.md`, no frontmatter, not indexed, not audited, not returned by
+`pm_search`. Committed with the rest of `.project/`, so it follows the project
+between machines.
+- **text** (optional): The note to save. Omit to read it, which is the common call.
+- **append** (optional, default `false`): Add `text` below the existing note under a `### <ISO date>` heading instead of replacing it. Requires `text`.
+- **clear** (optional, default `false`): Delete the note. Cannot be combined with `text`.
+- **project** (optional): Project name for hub mode
+- **Returns**: `{note: <text>}`, or `{note: null, message: "no note saved"}` when there is none; `{cleared: true|false}` for `clear`
+- **Errors**: `text` together with `clear`; `append` without `text`
+- Each write and each clear logs one activity event (`item_type: note`, `item_id: NEXT`).
 
 ### pm_active(project?, tag?, limit?, offset?, stale_after?)
 List active/in-progress items, flagging stale claims.
@@ -259,21 +344,23 @@ Get epic details with story and task rollup.
 
 ## Write Tools
 
-### pm_create_story(title, description, priority?, points?, epic_id?, acceptance_criteria?, tags?, project?)
+### pm_create_story(title, description, priority?, points?, epic_id?, acceptance_criteria?, tags?, depends_on?, project?)
 Create a new user story.
 - **epic_id** (optional): Link story to an epic
 - **acceptance_criteria** (optional): List of acceptance criteria, one entry per criterion — e.g. `["Users can log in", "Error shown on invalid password"]`. Pass a JSON list, **not** a comma-joined string: criteria are natural language, so a comma inside one is punctuation and is never treated as a separator. A bare string is accepted and taken as exactly one criterion. Each criterion auto-generates a test task.
-- **tags** (optional): Comma-separated tags
+- **tags** (optional): Tags — a list `["security", "mvp"]` or a comma-separated string `"security,mvp"` ([both shapes](#token-list-parameters))
+- **depends_on** (optional): Story or task IDs this story depends on — a list or a comma-separated string ([both shapes](#token-list-parameters))
 - **Returns**: Created story `id`/`title`/`status` plus any set fields, and `id`/`title` of auto-created test tasks
 
 ### pm_create_epic(title, description, priority?, target_date?, tags?, project?)
 Create a new epic.
+- **tags** (optional): Tags — a list or a comma-separated string ([both shapes](#token-list-parameters))
 - **Returns**: Created epic metadata
 
 ### pm_create_task(story_id, title, description, points?, tags?, depends_on?, project?)
 Create a task under a story.
-- **tags** (optional): Comma-separated tags
-- **depends_on** (optional): Comma-separated sibling task IDs
+- **tags** (optional): Tags — a list or a comma-separated string ([both shapes](#token-list-parameters))
+- **depends_on** (optional): Sibling task IDs — a list or a comma-separated string ([both shapes](#token-list-parameters))
 - **Returns**: Created task `id`/`title`/`story_id` plus any set fields
 
 ### pm_create_tasks(story_id, tasks, project?)
@@ -288,11 +375,11 @@ Update an epic, story, or task.
 - **id**: Epic, story, or task ID (alias: `task_id`). `epic_id` is **not** an alias — it links a story to an epic.
 - **assignee** (optional): Assignee name (tasks only). To remove one, pass `unassign=true` — never an empty assignee.
 - **unassign** (optional, default `false`): Remove the assignee (tasks only). Changes nothing else — no status reset, no run-log entry; use `pm_release` for the whole hand-back. Passing `unassign=true` together with a non-empty `assignee` is an error.
-- **clear** (optional): Comma-separated **field names** to reset to empty — e.g. `"depends_on"`, `"tags"`, `"depends_on,tags"`. Valid names and what they clear to: `assignee` → null (tasks), `depends_on` → `[]` (tasks, stories), `tags` → `[]` (epics, stories, tasks), `points` → null, `epic_id` → null (stories). Clearing an already-empty field succeeds — `clear` states a desired end state. An unknown name, a name that does not apply to this item type, or naming a field here *and* setting it in the same call is an error.
+- **clear** (optional): **Field names** to reset to empty — a list `["depends_on", "tags"]` or a comma-separated string `"depends_on,tags"` ([both shapes](#token-list-parameters)). Valid names and what they clear to: `assignee` → null (tasks), `depends_on` → `[]` (tasks, stories), `tags` → `[]` (epics, stories, tasks), `points` → null, `epic_id` → null (stories). Clearing an already-empty field succeeds — `clear` states a desired end state. An unknown name, a name that does not apply to this item type, or naming a field here *and* setting it in the same call is an error.
 - **body** (optional): New markdown body/description content
 - **acceptance_criteria** (optional): List of acceptance criteria, one entry per criterion (stories only) — e.g. `["Users can log in", "Error shown on invalid password"]`. Pass a JSON list, **not** a comma-joined string: criteria are natural language, so a comma inside one is punctuation and is never treated as a separator. A bare string is accepted and taken as exactly one criterion; an empty list clears the criteria. Editing criteria reconciles the auto-generated test tasks.
-- **tags** (optional): Comma-separated tags
-- **depends_on** (optional): Comma-separated sibling task IDs (tasks only)
+- **tags** (optional): Tags — a list or a comma-separated string ([both shapes](#token-list-parameters))
+- **depends_on** (optional): Sibling task IDs (tasks only) — a list or a comma-separated string ([both shapes](#token-list-parameters))
 - **outcome** (optional): Run-log outcome — `success`, `partial`, `blocked`, `failed`, or `info`. When provided, appends a run-log entry for tracking work attempts.
 - **note** (optional): Run-log note describing what was accomplished or blocked. Notes longer than 4096 characters are truncated server-side with a visible `...[truncated N chars]` marker rather than rejected, so the status/outcome write always lands. Defaults outcome to `info` if outcome is omitted.
 - **evidence** (optional): Structured proof for the run-log entry — an object with `files` (paths changed), `tests` (`{command, passed, summary?}` objects), `dod_met` and `dod_unmet`. **Lists go here, never in the note**; the note stays a one-line human summary. See [Structured evidence](#structured-evidence) below.
@@ -307,7 +394,7 @@ Update an epic, story, or task.
 
 ### pm_update_many(ids?, updates?, status?, points?, title?, assignee?, unassign?, clear?, body?, tags?, depends_on?, outcome?, note?, run_id?, evidence?, project?)
 Update many items in one call — the bulk form of `pm_update`, shaped like `pm_create_tasks`. Every field means exactly what it means on `pm_update`, and the same code performs each item's write, so nothing behaves differently for being in a batch.
-- **ids** (optional): Comma-separated item IDs the uniform patch applies to (e.g. `"US-PRJ-1-1,US-PRJ-1-2"`). Epics, stories and tasks may be mixed. Passing `ids` with no patch field is an error.
+- **ids** (optional): Item IDs the uniform patch applies to — a list `["US-PRJ-1-1", "US-PRJ-1-2"]` or a comma-separated string `"US-PRJ-1-1,US-PRJ-1-2"` ([both shapes](#token-list-parameters)). Epics, stories and tasks may be mixed. Passing `ids` with no patch field is an error. `tags`, `depends_on` and `clear` take the same two shapes here as on `pm_update`.
 - **updates** (optional): Per-item patches — a list of objects, each with `id` (alias: `task_id`) plus any of `status`, `points`, `title`, `assignee`, `unassign`, `clear`, `epic_id`, `body`, `acceptance_criteria`, `tags`, `depends_on`, `outcome`, `note`, `evidence`. An unknown key is an error naming the valid ones, raised **before** anything is written.
 - Top-level patch fields given alongside `updates` are defaults each entry may override — e.g. `updates=[{"id": "a", "note": "..."}, ...], status="done", outcome="success"` is one status flip with per-item notes.
 - Up to 250 items per call.
@@ -323,7 +410,7 @@ Archive an epic, story, or task.
 
 ### pm_archive_many(ids, project?)
 Archive many items in one call, from an explicit ID list — the bulk form of `pm_archive`, shaped like `pm_update_many`. The same code performs each item's write, so nothing behaves differently for being in a batch.
-- **ids**: Comma-separated item IDs to archive (e.g. `"US-PRJ-1-1,US-PRJ-1-2"`). Epics, stories and tasks may be mixed.
+- **ids**: Item IDs to archive — a list `["US-PRJ-1-1", "US-PRJ-1-2"]` or a comma-separated string `"US-PRJ-1-1,US-PRJ-1-2"` ([both shapes](#token-list-parameters)). Epics, stories and tasks may be mixed.
 - The list is the whole input — there is **no criteria or sweep form** and no default. This tool never decides for itself what to archive, so what it touches is exactly what the caller wrote down. An empty list is an error, never a no-op, and a duplicate ID is rejected before any write.
 - Up to 250 items per call.
 - **Returns**: `archived:` — one entry per item written, each with `id`, the `status` it ends up with and `archived: true` — plus `count`. A task keeps the status the work really reached (archiving sets an orthogonal flag); epics and stories move to `archived`.
@@ -459,7 +546,7 @@ Create a sprint with a name, goal, dates, and planned stories.
 - **name**: Sprint name (e.g. `Sprint 1 — Auth & Onboarding`)
 - **goal** (optional): Sprint goal summary
 - **start_date** / **end_date** (optional): Dates in `YYYY-MM-DD` format
-- **planned_stories** (optional): Comma-separated story IDs (e.g. `US-PRJ-1,US-PRJ-2`)
+- **planned_stories** (optional): Story IDs — a list `["US-PRJ-1", "US-PRJ-2"]` or a comma-separated string `"US-PRJ-1,US-PRJ-2"` ([both shapes](#token-list-parameters))
 - **Returns**: Created sprint metadata, plus `dependency_warnings` if any planned story has unmet dependencies external to the sprint
 
 ### pm_get_sprint(sprint_id, project?)
@@ -478,7 +565,7 @@ List sprints, optionally filtered by status.
 Update sprint fields (status, stories, dates, etc.).
 - **sprint_id**: Sprint ID (alias: `id`)
 - **status** (optional): New status — `planning`, `active`, `completed`, or `cancelled`
-- **planned_stories** (optional): Comma-separated story IDs (replaces the planned set)
+- **planned_stories** (optional): Story IDs replacing the planned set — a list `["US-PRJ-1", "US-PRJ-2"]` or a comma-separated string `"US-PRJ-1,US-PRJ-2"` ([both shapes](#token-list-parameters))
 - **run_id** (optional): Opaque id of the orchestrator run closing (or otherwise editing) the sprint, stamped on the activity-log event so the close appears in `pm_activity(run_id=...)` beside that run's claims and verdicts. Not a sprint field.
 - **Returns**: Updated sprint metadata, plus `dependency_warnings` if newly planned stories have unmet dependencies
 
@@ -501,7 +588,7 @@ Discover what needs scoping — returns codebase signals or undecomposed stories
 - **Returns**: Full scan returns documentation, build files, source tree, and creation guidance. Incremental returns a paginated batch of undecomposed story IDs/titles with `has_more` and `next_offset` for pagination.
 
 ### pm_audit(include_info?, project?, since?)
-Run project audit for drift detection. Performs 18 checks covering stories, tasks, epics, documentation, hub docs, assignments, dependencies, malformed files, and completion evidence.
+Run project audit for drift detection. Covers stories, tasks, epics, documentation, hub docs, assignments, dependencies, malformed files, and completion evidence — the full check list with severities is in [cli.md](cli.md#projectman-audit).
 - Findings include `done-without-evidence` (warning): one aggregate finding listing every non-archived `done` task whose run log carries no entry with structured `evidence`. A done task with no run log at all qualifies; an `evidence` object with all lists empty does not (presence, never truthiness). It is a warning, not an error, so it never halts an orchestrator run — every task completed before evidence shipped trips it. Use `pm_run_log(id, has_evidence=false)` to see the evidence-less entries for one item.
 - **include_info** (optional, default `false`): Include info-level findings in the response. By default only errors and warnings are returned, with omitted info findings summarized as a count. The full report is always written to `DRIFT.md`.
 - Every report starts with a `digest: <16 hex chars>` line, immediately after the `# Project Audit Report` title and before the `**Errors:** …` counts. It is a fixed-width fingerprint of everything the audit reads — item files, `config.yaml`, project and hub docs, `malformed/`, `logs/*.jsonl`, sprints, indexes — hashed by content, so two calls with no writes between them return the same digest and any change to audit inputs returns a different one. The same digest appears in the default response, the `include_info` response, and `DRIFT.md`. Audit output and caches (`DRIFT.md` itself, `embeddings.db`) are excluded, so an audit never invalidates its own answer. Keep the digest between polls to tell an unchanged project from a changed one without diffing reports.
@@ -603,52 +690,6 @@ Coordinated push: preflight checks, push subprojects, then push hub.
 
 Validate that hub submodule branches match their configured tracking branches.
 - **Returns**: Per-project branch validation results
-
-## Changeset Tools
-
-> **Off by default outside hub mode.** These five tools are registered when
-> `.project/config.yaml` sets `tools.changesets: true`, and — because a
-> changeset spans several projects — automatically in hub mode unless
-> `tools.changesets: false` says otherwise. When hidden they do not appear in
-> `tools/list` and calling one returns `Unknown tool: <name>` with `is_error`
-> set. See [file-formats.md § tools](file-formats.md#tools--gated-tool-families).
-> The CLI is unaffected either way — `projectman changeset create/add-project/status`
-> works whether or not the tools are registered.
-
-### pm_changeset_create(title, projects, description?, project?)
-Create a changeset to coordinate multi-project changes.
-- **title**: Changeset title
-- **projects**: Comma-separated project names
-- **description** (optional): Changeset description
-- **Returns**: Created changeset metadata
-
-### pm_changeset_status(changeset_id?, project?)
-Get changeset details or list all changesets.
-- **changeset_id** (optional): Specific changeset ID. Omit to list all. (alias: `id`)
-- **Returns**: Changeset metadata and entry statuses
-
-### pm_changeset_add_project(name, changeset_id, ref?, project?)
-Add a project entry to an existing changeset.
-- **name**: Project name to add
-- **changeset_id**: Changeset ID (e.g. `CS-PRJ-1`) (alias: `id`)
-- **ref** (optional): Git branch/ref for this project's changes
-- **Returns**: Updated changeset metadata
-
-### pm_changeset_create_prs(changeset_id, project?)
-Generate `gh` CLI commands for creating cross-referenced PRs.
-- **changeset_id**: Changeset ID (alias: `id`)
-- **Returns**: `changeset`, `title`, and `pr_commands` — one entry per project. An entry with a ref carries `project`, `ref`, `argv` and `command`; an entry without a ref carries `project` and `status` ("skipped — no ref/branch set") only.
-- **argv**: the `gh pr create` invocation as a list of arguments (`["gh", "pr", "create", "--title", …, "--body", …, "--head", ref]`). Execute this form directly — `subprocess.run(argv, cwd=project)` — never a shell string.
-- **command**: the same invocation rendered for a human to read/paste, built with `shlex.quote`/`shlex.join`: `cd <project> && gh pr create …`. Titles, bodies and refs containing `"`, `'`, backticks, `$(…)`, `;`, `&&`, `|` or newlines are quoted, so `shlex.split(command)` always round-trips to `["cd", project, "&&", *argv]`.
-- The PR body uses real newlines, so the cross-reference list renders as separate lines on GitHub.
-- **NUL bytes are rejected, not rendered.** If the changeset id, title, description, a project name or a ref contains a NUL byte (`0x00`), the call raises `ValueError: changeset <id> <field> contains a NUL byte (0x00), which cannot be carried in a command argument; remove it from the changeset before generating PR commands`. No argv element can carry a NUL — `execve` arguments are NUL-terminated, `subprocess.run` raises `embedded null byte`, and a shell truncates the argument there — so a rendered `command` would differ from what actually executes. The error names the offending field rather than handing back an unrunnable command.
-
-The commands are **not** executed — review them, then run them yourself.
-
-### pm_changeset_push(changeset_id, project?)
-Check PR merge status and update changeset status.
-- **changeset_id**: Changeset ID (alias: `id`)
-- **Returns**: Per-entry merge status, overall changeset status, `needs_review` flag
 
 ## Run Log
 

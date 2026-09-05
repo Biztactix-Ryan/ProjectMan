@@ -42,6 +42,8 @@ projectman setup-claude
 #    /pm web start       — launch the web dashboard
 ```
 
+Running from a checkout? Reinstall from your local path after every pull — [Upgrading](docs/installation.md#upgrading) covers how to spot a stale install and the `mcp<2` pin a stale environment breaks on.
+
 ## Features
 
 - **Stories & Tasks** — structured work items with frontmatter metadata
@@ -56,12 +58,11 @@ projectman setup-claude
 - **Hub Mode** — multi-repo management via git submodules
 - **Tags** — free-form labels on stories, epics, and tasks; filterable in search, board, and active views
 - **Task Dependencies** — `depends_on` links between sibling tasks with cycle detection and topological ordering
-- **Changesets** — coordinate multi-project changes with cross-referenced PRs
 - **Activity Log** — append-only JSONL audit trail of every create, update, delete, and archive
 - **Run Log** — per-item history of work attempts, outcomes, and notes, recorded via `pm_update` and read with `pm_run_log`
 - **Sprint Tracking** — create sprints with goals, dates, and planned stories; live progress rollup via `pm_get_sprint`
 - **Auto-Commit & Push** — `pm_commit`, `pm_push`, and coordinated `pm_push_all` for hub workflows
-- **Git Status Dashboard** — `pm_git_status` shows branch, dirty state, ahead/behind, and open PRs across all submodules
+- **Git Status Dashboard** — `pm_git_status` shows branch, alignment, dirty state, and ahead/behind across all submodules
 - **Burndown Tracking** — points completed vs remaining
 
 ## Architecture
@@ -116,6 +117,7 @@ projectman upgrade --check
 - [Hub Mode](docs/hub-mode/setup.md)
 - [Hub Git Workflow](docs/hub-mode/git-workflow.md)
 - [Reference](docs/reference/cli.md)
+- [Orchestrator Design](docs/reference/orchestrate-design.md)
 
 ## License
 

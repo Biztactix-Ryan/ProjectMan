@@ -8,6 +8,8 @@ This directory holds **measurements**, not code. The code is
 | --- | --- |
 | `baseline-pre-fix.json` | the machine-readable **pre-fix baseline**. Every later claim of improvement is diffed against this. Do not overwrite it. |
 | `baseline-pre-fix.md` | human summary of the same capture: provenance, headline numbers, busiest tools. |
+| `baseline-post-subtraction.json` | the machine-readable **post-subtraction baseline** (US-PM-30), captured after Sprints 1-8. Same extractor, same schema, same `capture` command as the pre-fix file. Do not overwrite it either. |
+| `baseline-post-subtraction.md` | human summary of that capture **plus the comparison against pre-fix**: calls per task, context per worker, and the `BULK_RUN_TOOLS` longest-run metrics. Also records why the two corpora turned out to be disjoint rather than nested, and the `git.dirty: true` provenance caveat. |
 | `tool-list-size.md` | the US-PM-15-7 **tool-list payload measurement**: `tools/list` bytes with and without the gated tool families, per family, plus the command that regenerates it. Not a corpus measurement -- it describes the schema surface the server offers, so it is regenerated on demand rather than pinned. |
 
 ## What a baseline is
@@ -29,7 +31,7 @@ a `provenance` block:
     "matched_calls": 3416,
     "unmatched_calls": 0,
     "match_rate": 1.0,         // the call→result join rate; distrust anything below ~1.0
-    "git": { "commit": "…", "branch": "…", "dirty": true },
+    "git": { "repo": ".", "commit": "…", "branch": "…", "dirty": true },
     "corpus_is_live": true
   },
   "report": { "corpus": …, "totals": …, "by_tool": …, "runs": …, "bigrams": …, "failures": … }
@@ -44,6 +46,14 @@ tells you which.
 `git.dirty` is not decoration: a capture taken from a dirty tree is **not**
 reproducible from `git.commit` alone. `dirty: null` means git could not be read
 at all — unknown, not clean.
+
+`git.repo` is a path **relative to the git root** — `"."` when the capture was
+taken from the root itself, `"tools/usage_telemetry"` when taken from that
+subdirectory, and `null` when the git root could not be read. It used to be the
+absolute path of the capturing machine, which made the artifact readable only
+there; `docs/telemetry/baseline-pre-fix.json` was rewritten to the relative form
+(`"."`) and no measured number in it changed. What pins the code is
+`git.commit`; `git.repo` only says where in that tree the capture ran.
 
 ## The corpus is live
 
@@ -60,6 +70,13 @@ proceeds. Consequences:
    see the undiluted number, scope the capture to a fresh corpus subtree with
    `--root`.
 3. The baseline is a snapshot at a stated instant, not a fixed dataset.
+4. **The corpus also shrinks at the far end.** Transcripts age out of
+   `~/.claude/projects`, so point 2 stops holding once enough time passes: the
+   pre-fix corpus (2026-07-29) had rolled off entirely before the
+   post-subtraction capture (2026-09-05), whose oldest transcript dates from
+   2026-08-03. Those two captures are therefore *disjoint*, which makes them a
+   clean before/after — and makes each committed baseline the only surviving
+   record of its own corpus. Never overwrite one.
 
 ## Re-capture
 

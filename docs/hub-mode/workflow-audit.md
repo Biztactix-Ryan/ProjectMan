@@ -190,32 +190,40 @@ Optional config flag to auto-commit `.project/` changes after every PM
 mutation. Eliminates the "fire-and-forget" gap where PM writes leave dirty
 files. Does not auto-push — that remains explicit.
 
-### R5: PR-Based Workflow for Subprojects (US-PRJ-7)
+### R5: PR-Based Workflow for Subprojects (US-PRJ-7) — built, then removed
 
-Route subproject changes through feature branches and PRs instead of direct
-commits to deploy branches. Hub refs update only after PRs merge. Addresses
-PP-6 by giving each subproject independent branching while the hub stays on
-main. Adds review gates that prevent accidental pushes to wrong branches.
+Routing subproject changes through ProjectMan-created feature branches and
+pull requests was built under US-PRJ-7 and **removed again under US-PM-27**.
+It was called nine times across 484 recorded sessions: teams already had a
+branching and review convention of their own and did not want a second one
+imposed by their project-management tool. PP-6 stands unaddressed by
+ProjectMan, deliberately — how a subproject's commits reach its tracked branch
+is the team's decision, and ProjectMan only advances the hub ref once they are
+on the remote.
 
 ### R6: Git Status Dashboard (US-PRJ-8)
 
 Single command showing git state of all submodules: branch, dirty/clean,
-ahead/behind, PR status, mismatches with `.gitmodules`. Makes PP-3 (dirty
+ahead/behind, mismatches with `.gitmodules`. Makes PP-3 (dirty
 trees), PP-5 (detached HEAD), and PP-8 (no post-sync validation) immediately
 visible instead of silently ignored.
 
-### R7: Cross-Repo Changesets (US-PRJ-10)
+### R7: Cross-Repo Changesets (US-PRJ-10) — built, then removed
 
-Group related changes across N repos into a named changeset. Create PRs
-together with cross-references. Gate hub ref updates on all PRs merging.
-Addresses PP-1 at the workflow level by providing atomic-like semantics across
-repos without requiring actual cross-repo transactions.
+Grouping related changes across N repos into a named changeset was built under
+US-PRJ-10 and **removed again under US-PM-27**, for the same reason as R5 and
+in the same pass. PP-1 stands unaddressed: there is still no atomic multi-repo
+commit, and the ordering guarantee in `projectman push` (subprojects first,
+hub ref only after) is what the hub relies on instead.
 
-### R8: Hub Ref Conflict Resolution (US-PRJ-11)
+### R8: Hub Ref Conflict Resolution (US-PRJ-11) — partly removed
 
-Auto-rebase hub push conflicts when submodule refs are fast-forwardable. Flag
-non-fast-forward conflicts for manual resolution. Log ref update history for
-audit. Directly addresses PP-7.
+The auto-rebase and the ref-update log survive: a hub push rejected because
+the remote moved on fetches, rebases and pushes again. What was **removed
+under US-PM-27** is the part that tried to pick a winner — a conflicting
+rebase is now aborted and reported, and the operator resolves it. PP-7 is
+therefore made loud rather than made automatic, which is the safer half of the
+original recommendation.
 
 ### R9: Updated Workflow Documentation (US-PRJ-6)
 

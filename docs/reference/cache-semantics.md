@@ -28,17 +28,16 @@ The models are **not** `frozen`. None of the classes in `models.py` declare a
 `model_config`, so Pydantic permits attribute assignment and nothing enforces the
 rule above at runtime — "effectively immutable" is a convention here, not a
 guarantee. Freezing them is feasible in principle but not free: `Store.update_sprint`
-assigns via `setattr` and the changeset writers below assign attributes directly, so
-all of those would have to move to `model_copy` first. That is a larger change than
-this audit, and is left deliberately undone.
+assigns via `setattr`, so that would have to move to `model_copy` first. That is a
+larger change than this audit, and is left deliberately undone.
 
 ---
 
 ## What each cached-return site hands out
 
 Three item types are cached: **stories**, **tasks**, **epics** (the module-level
-`_cache`, keyed by `(project_dir, item_type)`). Sprints and changesets are **not
-cached** — every read re-parses the file.
+`_cache`, keyed by `(project_dir, item_type)`). Sprints are **not cached** — every
+read re-parses the file.
 
 | Site | Returns | List identity |
 | --- | --- | --- |
@@ -51,8 +50,6 @@ cached** — every read re-parses the file.
 | `list_tasks_with_bodies` (store.py:1865) | cached `(meta, body)` pairs | `list(result)` — fresh, even on the unfiltered path |
 | `list_all` (store.py:1907) | fresh `model_dump()` dicts | fresh list; nothing cached escapes |
 | `get` (store.py:2397) | dispatches to `get_epic`/`get_story`/`get_task`/`get_sprint` | inherits |
-| `get_changeset` (store.py:2456) | fresh parse from disk | n/a — uncached |
-| `list_changesets` (store.py:2465) | fresh parses from disk | fresh list — uncached |
 | `get_sprint` / `list_sprints` (store.py:2559/2568) | fresh parses from disk | fresh list — uncached |
 | `_read_stories_from_disk` / `_read_epics_from_disk` / `_read_tasks_from_disk` | fresh parses | fresh list — cache bypassed |
 
@@ -74,12 +71,7 @@ Every in-place attribute assignment on a fetched model in the codebase:
 
 | Site | Object | Verdict |
 | --- | --- | --- |
-| `changesets.py:73-74` (`update_changeset_status`) | `ChangesetFrontmatter` from `get_changeset` | **Safe — uncached.** Freshly parsed per call, mutated, then immediately written back to the changeset file. |
-| `changesets.py:229-233` (`check_pr_status`) | `ChangesetEntry` nested in the above | **Safe — uncached**, same object, written back at `changesets.py:266`. |
-| `changesets.py:264-265` | `ChangesetFrontmatter` from `get_changeset` | **Safe — uncached**, written back on the next line. |
-| `store.py:2487-2488` (`add_changeset_entry`) | `ChangesetFrontmatter` from `get_changeset` | **Safe — uncached**, written back immediately. |
 | `store.py:2609/2641` (`update_sprint`) | `SprintFrontmatter` from `get_sprint` | **Safe — uncached**, written back immediately. |
-| `server.py:4235-4236`, `server.py:4253-4254` | `ChangesetFrontmatter` from `get_changeset` | **Safe — uncached**, written back immediately in each branch. |
 
 No mutation site touches a story, task, or epic — the three cached types. Nothing
 needed converting to `model_copy`.
@@ -106,8 +98,8 @@ reads". US-PRJ-37-3 proved it currently does. Three ways out were considered:
   inner lists (`tags`, `depends_on`, plus `acceptance_criteria` on stories)
   copied too. Every frontmatter model is flat — scalars and `list[str]` — so
   this would give genuine isolation, not partial isolation.
-* **C — freeze the models.** Rejected as out of scope: `update_sprint` and the
-  changeset writers all assign attributes in place.
+* **C — freeze the models.** Rejected as out of scope: `update_sprint` assigns
+  attributes in place.
 
 **A was chosen, on measurement.** On a 1000-task store (400-char bodies, mean of
 20 runs, isolating the copy step from `_is_cache_stale`'s directory scan):

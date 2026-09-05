@@ -40,10 +40,12 @@ from .store import Store
 #   * embeddings.db and sqlite sidecars — a derived cache whose bytes move on
 #     access, not on project state;
 #   * __pycache__ / *.pyc and *.lock / *.tmp — scratch, not state.
+#   * NEXT.md — the next-session note (US-PM-28): scratch text for a human,
+#     read by no check, so rewriting it must not force a full re-audit.
 DIGEST_LENGTH = 16
 DIGEST_LINE_PREFIX = "digest: "
 
-_DIGEST_SKIP_NAMES = frozenset({"DRIFT.md"})
+_DIGEST_SKIP_NAMES = frozenset({"DRIFT.md", "NEXT.md"})
 _DIGEST_SKIP_SUFFIXES = (
     ".db",
     ".db-wal",

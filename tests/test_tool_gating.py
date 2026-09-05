@@ -1,13 +1,13 @@
 """US-PM-15-5/-6 — the gated tool families are registered on request.
 
-Every tool in the three families was called zero times across ~14,200
+Every tool in the two families was called zero times across ~14,200
 recorded tool calls, so by default their schemas were paid for in every
 request and never used. They are gated by config rather than deleted: the
 functions are untouched and still importable, and one line in
 ``.project/config.yaml`` brings a family back.
 
-``changesets`` and ``web`` (US-PM-15-5) are hidden because nobody calls
-them. ``maintenance`` (US-PM-15-6) is hidden because it is aimed at the
+``web`` (US-PM-15-5) is hidden because nobody calls
+it. ``maintenance`` (US-PM-15-6) is hidden because it is aimed at the
 wrong audience — ``pm_repair``, ``pm_restore``, ``pm_validate_branches``,
 ``pm_fix_malformed`` and ``pm_push_all`` are human break-glass tools — so
 this module also asserts that each of the five is still reachable through
@@ -44,14 +44,13 @@ from projectman.server import (
     mcp as mcp_server,
 )
 
-CHANGESET_TOOLS = set(TOOL_FAMILIES["changesets"])
 MAINTENANCE_TOOLS = set(TOOL_FAMILIES["maintenance"])
 WEB_TOOLS = set(TOOL_FAMILIES["web"])
-GATED_TOOLS = CHANGESET_TOOLS | MAINTENANCE_TOOLS | WEB_TOOLS
+GATED_TOOLS = MAINTENANCE_TOOLS | WEB_TOOLS
 
 #: Written out rather than derived, so renaming or dropping a family member
 #: has to be a deliberate edit here too.
-ALL_OFF = {"changesets": False, "maintenance": False, "web": False}
+ALL_OFF = {"maintenance": False, "web": False}
 ALL_ON = {family: True for family in ALL_OFF}
 
 #: Carved out by the story: their zero usage is a wiring gap, not a signal
@@ -94,7 +93,7 @@ def all_on() -> set[str]:
 
 
 def _every_combination() -> list[dict[str, bool]]:
-    """All 2^3 flag settings, so "in every configuration" means every one."""
+    """All 2^N flag settings, so "in every configuration" means every one."""
     families = sorted(ALL_OFF)
     return [
         dict(zip(families, values))
@@ -110,31 +109,18 @@ def test_every_family_is_off_for_a_plain_project():
     assert enabled_tool_families(config) == ALL_OFF
 
 
-def test_a_hub_gets_changesets_and_still_no_web():
-    """The documented inference: a changeset spans projects, so a hub has them.
-
-    ``tools.changesets`` unset means "follow hub mode". The web UI gets no
-    such treatment — a hub is no more likely to want the dashboard driven
-    from the agent's tool list than a leaf repo is.
-    """
+def test_a_hub_gets_no_family_by_inference():
+    """Hub mode turns nothing on by itself: every family is opt-in."""
     config = ProjectConfig(name="h", prefix="HUB", hub=True)
-    assert enabled_tool_families(config) == {**ALL_OFF, "changesets": True}
-
-
-def test_an_explicit_flag_beats_the_hub_inference():
-    hub_off = ProjectConfig(name="h", prefix="HUB", hub=True, tools={"changesets": False})
-    leaf_on = ProjectConfig(name="p", prefix="TST", tools={"changesets": True})
-    assert enabled_tool_families(hub_off)["changesets"] is False
-    assert enabled_tool_families(leaf_on)["changesets"] is True
+    assert enabled_tool_families(config) == ALL_OFF
 
 
 def test_maintenance_takes_no_hub_inference(tmp_project):
     """US-PM-15-6: break-glass is off until a human writes ``true``.
 
-    ``changesets`` follows ``hub`` because a changeset needs several
-    projects to mean anything. Repairing does not — a hub breaks no more
-    often than a leaf repo — so the flag is a plain bool with no inference,
-    and opting in stays a one-line config change.
+    Repairing takes no inference — a hub breaks no more often than a leaf
+    repo — so the flag is a plain bool, and opting in stays a one-line
+    config change.
     """
     hub = ProjectConfig(name="h", prefix="HUB", hub=True)
     assert enabled_tool_families(hub)["maintenance"] is False
@@ -179,12 +165,12 @@ def test_config_round_trips_through_save(tmp_project):
 # ------------------------------------------------------------- tools/list --
 
 
-def test_the_default_hides_exactly_the_thirteen_gated_tools():
+def test_the_default_hides_exactly_the_eight_gated_tools():
     """AC 1, over a real ``tools/list``: those and nothing else disappear.
 
     Asserted as a set difference rather than a count, so a change that hid a
-    fourteenth tool by accident fails here even if the arithmetic still
-    works out.
+    ninth tool by accident fails here even if the arithmetic still works
+    out.
     """
     everything = all_on()
     apply_tool_gating(ALL_OFF)
@@ -192,14 +178,14 @@ def test_the_default_hides_exactly_the_thirteen_gated_tools():
 
     assert everything - default == GATED_TOOLS
     assert not GATED_TOOLS & default
-    assert len(everything) - len(default) == 13
-    assert len(default) == 41
+    assert len(everything) - len(default) == 8
+    # 42 since US-PM-28 added ``pm_next`` to the ungated core.
+    assert len(default) == 42
 
 
 def test_each_flag_restores_only_its_own_family():
     everything = all_on()
     families = {
-        "changesets": CHANGESET_TOOLS,
         "maintenance": MAINTENANCE_TOOLS,
         "web": WEB_TOOLS,
     }
@@ -236,7 +222,7 @@ def test_gating_is_idempotent():
     assert listed() == once
     apply_tool_gating(ALL_ON)
     apply_tool_gating(ALL_ON)
-    assert len(listed()) == len(once) + 13
+    assert len(listed()) == len(once) + 8
 
 
 def test_a_family_survives_a_round_trip_intact():
@@ -268,7 +254,7 @@ def test_gating_reads_the_project_config_when_asked_to(tmp_project, monkeypatch)
     monkeypatch.chdir(tmp_project)
     assert apply_tool_gating() == {**ALL_OFF, "web": True}
     assert WEB_TOOLS <= listed()
-    assert not CHANGESET_TOOLS & listed()
+    assert not MAINTENANCE_TOOLS & listed()
 
 
 def test_gating_outside_a_project_hides_everything_rather_than_raising(
@@ -315,8 +301,8 @@ def test_an_enabled_tool_is_callable_again():
 def test_the_hidden_functions_are_still_importable_and_callable():
     """Gating is registration-only: nothing is deleted, nothing is stubbed.
 
-    This is what keeps ``tests/test_changeset.py`` and the web tests working
-    against the real code while the families are hidden from agents.
+    This is what keeps the web tests working against the real code while
+    the families are hidden from agents.
     """
     apply_tool_gating(ALL_OFF)
 
@@ -382,7 +368,6 @@ def test_a_default_config_on_disk_hides_exactly_the_thirteen(
     "family, flag",
     [
         ("web", {"web": True}),
-        ("changesets", {"changesets": True}),
         ("maintenance", {"maintenance": True}),
     ],
 )
@@ -398,25 +383,13 @@ def test_one_flag_in_the_file_restores_exactly_that_family(
     apply_tool_gating()
 
     assert listed() == (everything - GATED_TOOLS) | set(hidden)
-    assert len(hidden) == {"web": 3, "changesets": 5, "maintenance": 5}[family]
+    assert len(hidden) == {"web": 3, "maintenance": 5}[family]
 
 
-def test_a_hub_on_disk_gets_changesets_and_can_still_turn_them_off(
-    tmp_hub, monkeypatch
-):
-    """The hub inference, over a real ``tools/list`` rather than the flags.
-
-    ``tools.changesets`` unset in a hub config exposes the five changeset
-    tools and still none of the three web ones; writing ``false`` puts them
-    back out of sight.
-    """
-    everything = all_on()
+def test_a_hub_on_disk_gets_no_family_by_inference(tmp_hub, monkeypatch):
+    """Hub mode over a real ``tools/list`` rather than the flags: still off."""
     enter(monkeypatch, tmp_hub)
 
-    assert apply_tool_gating() == {**ALL_OFF, "changesets": True}
-    assert listed() == (everything - GATED_TOOLS) | CHANGESET_TOOLS
-
-    write_config(tmp_hub, tools={"changesets": False})
     assert apply_tool_gating() == ALL_OFF
     assert not GATED_TOOLS & listed()
 
@@ -535,23 +508,23 @@ def test_the_cli_restores_a_quarantined_file_while_the_tool_is_hidden(
     assert "pm_restore" not in listed()
 
     proj = tmp_project / ".project"
-    (proj / "stories" / "TST-1.md").write_text(
-        "---\nid: TST-1\ntitle: A story\nstatus: ready\npriority: should\n"
+    (proj / "stories" / "US-TST-1.md").write_text(
+        "---\nid: US-TST-1\ntitle: A story\nstatus: ready\npriority: should\n"
         "created: 2026-08-21\nupdated: 2026-08-21\n---\n\nBody.\n"
     )
     malformed = proj / "malformed"
     malformed.mkdir()
-    (malformed / "TST-1-1.md").write_text(
-        "---\nid: TST-1-1\nstory_id: TST-1\ntitle: A task\nstatus: todo\n"
+    (malformed / "US-TST-1-1.md").write_text(
+        "---\nid: US-TST-1-1\nstory_id: US-TST-1\ntitle: A task\nstatus: todo\n"
         "created: 2026-08-21\nupdated: 2026-08-21\n---\n\nBody.\n"
     )
 
     monkeypatch.delenv("PROJECTMAN_ROOT", raising=False)
     monkeypatch.chdir(tmp_project)
-    result = CliRunner().invoke(cli, ["restore", "TST-1-1.md"])
+    result = CliRunner().invoke(cli, ["restore", "US-TST-1-1.md"])
 
     assert result.exit_code == 0, result.output
-    assert (proj / "tasks" / "TST-1-1.md").exists()
+    assert (proj / "tasks" / "US-TST-1-1.md").exists()
     assert not malformed.exists()
     assert "pm_restore" not in listed()
 
@@ -576,7 +549,7 @@ def test_the_cli_fixes_a_malformed_file_while_the_tool_is_hidden(
             "fix-malformed",
             "broken.md",
             "--id",
-            "TST-2",
+            "US-TST-2",
             "--title",
             "Recovered story",
             "--type",
@@ -585,7 +558,7 @@ def test_the_cli_fixes_a_malformed_file_while_the_tool_is_hidden(
     )
 
     assert result.exit_code == 0, result.output
-    fixed = proj / "stories" / "TST-2.md"
+    fixed = proj / "stories" / "US-TST-2.md"
     assert fixed.exists()
     assert "Recovered story" in fixed.read_text()
     assert not (malformed / "broken.md").exists()
@@ -793,10 +766,10 @@ def test_the_carve_outs_are_listed_for_every_config_on_disk(
 
 
 def test_the_carve_outs_are_listed_in_hub_mode(tmp_hub, monkeypatch):
-    """The one configuration that turns a family on by inference."""
+    """Hub mode is no different: the carve-outs are listed there too."""
     enter(monkeypatch, tmp_hub)
 
-    assert apply_tool_gating() == {**ALL_OFF, "changesets": True}
+    assert apply_tool_gating() == ALL_OFF
     assert NEVER_GATED <= listed()
 
 

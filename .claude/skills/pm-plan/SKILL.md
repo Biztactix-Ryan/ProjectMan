@@ -28,7 +28,7 @@ A sprint is the unit of orchestrated work: `/pm-orchestrate` drives the *active*
 6. Select stories whose summed points fit the velocity from step 2. Say explicitly when you're leaving something out for capacity reasons — an honest sprint beats an aspirational one.
 7. Scoping gate — every selected story must be executable:
    - Check audit findings for `missing-implementation-tasks`; for flagged stories call `pm_auto_scope` and create the proposed tasks on approval.
-   - For each undecomposed story: `pm_scope(story_id)`, propose a task breakdown with `depends_on` (intra- and cross-story), `pm_estimate(id)` per task, create on approval.
+   - For each undecomposed story: `pm_scope(story_id)`, propose a task breakdown with `depends_on` (intra- and cross-story) and points — `pm_estimate(id)` returns the fibonacci bands and this project's averages if you want a calibration — create on approval.
    - A story still lacking tasks or estimates does not enter the sprint.
 
 ## Phase 4 — Persist and activate

@@ -68,11 +68,6 @@ class TestCreateReturnValues:
         assert epic.title == "Epic"
         assert epic.status.value == "draft"
 
-    def test_create_changeset_returns_changeset_meta(self, store):
-        cs = store.create_changeset("Deploy v1", ["api", "web"])
-        assert cs.id.startswith("CS-TST-")
-        assert cs.title == "Deploy v1"
-
 
 class TestUpdateReturnValues:
     """update() returns correct updated metadata with logging active."""
@@ -245,12 +240,6 @@ class TestLoggingFailureResilience:
             store.archive("US-TST-1")
         meta, _ = store.get_story("US-TST-1")
         assert meta.status.value == "archived"
-
-    def test_create_changeset_succeeds_when_logging_fails(self, store):
-        with patch(self._PATCH_TARGET, side_effect=Exception("nope")):
-            cs = store.create_changeset("Deploy", ["api"])
-        assert cs.id.startswith("CS-TST-")
-        assert cs.title == "Deploy"
 
     def test_no_activity_log_written_when_writer_fails(self, store):
         """When the writer raises, no log file should be created."""

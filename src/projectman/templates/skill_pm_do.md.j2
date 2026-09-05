@@ -10,6 +10,7 @@ args: "<task-id> [--complete]"
 ## Flags
 
 - `--complete` — Autonomous mode for spawned agents: no human is watching. Mark the task `done` only when every DoD item is verified with evidence; otherwise mark it `review` with a note. Then end the session without suggesting further actions.
+  - **Not for `/pm-orchestrate` workers.** An orchestrator dispatches `/pm-do <task-id>` *without* `--complete`: the worker leaves the task `in-progress` and the orchestrator's `pm_accept` records the verdict and closes the task and its story. A worker-set `done` makes `pm_accept` answer `already_done` and the evidence never lands.
 
 ## Phase 1: Claim & Context
 
@@ -32,7 +33,7 @@ args: "<task-id> [--complete]"
    - Partially done / needs human judgment → `pm_update(task_id, status="review", outcome="partial", note="<what's unmet>")`
    - Couldn't proceed → keep/restore an accurate status and log `outcome="blocked"` or `outcome="failed"` with why
 7. **`--complete` mode rule**: `status="done"` only if step 5 produced evidence for every DoD item — anything less is `review`. Never mark done on unverified claims; the orchestrator independently validates and a false "done" becomes a failed retry.
-8. Story rollup: `pm_done_next` closes the story automatically when its last task completes. If you used `pm_update` instead and all sibling tasks are now `done` — in `--complete` mode set the story `done`; interactively, suggest it.
+8. Story rollup: `pm_done_next` (and the orchestrator's `pm_accept`, which shares its body) closes the story automatically when this was its last open task. `pm_update(status="done")` does **not** — if you used it and all sibling tasks are now `done`, in `--complete` mode set the story `done` yourself; interactively, suggest it.
 9. Note downstream effects: tasks that were waiting on this one are now unblocked — name them.
 10. Summarize: what was done, files changed, tests run and their results.
     - **`--complete` mode**: end the session here. Include status, files, and test evidence in your final report — it will be independently verified.

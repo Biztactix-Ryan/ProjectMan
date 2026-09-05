@@ -269,6 +269,21 @@ def test_inserting_step_4b_did_not_renumber_the_verdict_steps(path):
 # assertion below is about the calibration step preceding the write step, and
 # every one runs against both the template (source of truth) and the tracked
 # rendered copy.
+#
+# US-PM-26 narrowed that criterion.  The ordering mandate was adopted for the
+# orchestrator's benefit (workers that size against real bands) and then applied
+# everywhere; interactively it costs a round trip on a one-line update.  So for
+# every interactive document — `/pm`, `/pm-plan`, `/pm-autoscope` and the ``pm``
+# agent — what is pinned here is now REACHABILITY: the tool is named where
+# sizing happens, as an option.  ``/pm-autoscope`` lost its ordering assertions
+# in US-PM-26-5: a bulk run is where a calibration pays off best, which is an
+# argument for offering it at the sizing step, not for gating the create step
+# behind it.  What remains pinned for it is the offer's *placement* (on the step
+# that sizes, immediately before the one that creates) and the per-size-band
+# bound that keeps a large run affordable.  The absence of a mandate in the
+# interactive documents is asserted in
+# ``tests/test_interactive_skills_optional_calibration.py``; keep the two in
+# step — an ordering *mandate* restored here would contradict that module.
 
 #: workflow → (template filename, tracked rendered copy)
 #: ``agent_pm`` renders outside ``.claude/skills/``, hence the explicit paths.
@@ -322,19 +337,32 @@ def test_every_estimation_workflow_names_pm_estimate(path):
 
 
 @pytest.mark.parametrize("path", _both("pm"))
-def test_pm_skill_calibrates_before_it_sizes_and_writes(path):
-    """`/pm`'s Estimation section: step 1 calibrates, step 2 writes — in that order."""
+def test_pm_skill_estimation_section_offers_the_calibration_it_no_longer_gates(path):
+    """`/pm`'s Estimation section: the call and what it returns, as an option.
+
+    US-PM-26 replaced the two-step gate with guidance, so the assertion moved
+    from ordering to content: the section must still name ``pm_estimate()``, say
+    what it hands back (``estimation_guidance`` is the field the tool returns —
+    naming it is what makes the offer actionable), and keep the fibonacci scale
+    the points are written on.  Without that the section degrades into a bare
+    tool name and the guidance the tool exists to deliver stops being reachable.
+    """
     text = _text(path)
-    calibrate = _line_index(text, "Step 1 — Calibrate", path)
-    write = _line_index(text, "Step 2 — Size and write", path)
-    assert calibrate < write, (
-        f"{path.name}: the write step (line {write}) precedes calibration (line {calibrate})"
+    start = _line_index(text, "### Estimation", path)
+    body = "\n".join(text.splitlines()[start:]).split("\n### ", 2)[0]
+    assert PM_ESTIMATE_CALL.search(body), (
+        f"{path.name}: the Estimation section no longer calls pm_estimate():\n{body}"
     )
-    step_one = text.splitlines()[calibrate]
-    assert PM_ESTIMATE_CALL.search(step_one), (
-        f"{path.name}: the calibrate step does not call pm_estimate(): {step_one!r}"
+    assert "estimation_guidance" in body, (
+        f"{path.name}: the section never says pm_estimate returns "
+        f"estimation_guidance:\n{body}"
     )
-    assert "points" in text.splitlines()[write].lower() or "write" in text.splitlines()[write]
+    assert re.search(r"fibonacci", body, re.IGNORECASE), (
+        f"{path.name}: the section dropped the fibonacci scale:\n{body}"
+    )
+    assert "1/2/3/5/8/13" in body, (
+        f"{path.name}: the section dropped the calibration bands:\n{body}"
+    )
 
 
 @pytest.mark.parametrize("path", _both("pm"))
@@ -355,23 +383,32 @@ def test_pm_skill_points_write_paths_point_back_at_the_calibration_step(path, bu
 
 @pytest.mark.parametrize("path", _both("pm-autoscope"))
 @pytest.mark.parametrize(
-    "calibrate_step,create_step",
-    [("10. **Calibrate:", "11. Create approved tasks"), ("d. **Calibrate:", "e. Create approved tasks")],
+    "sizing_step,create_step",
+    [("10. **Size the tasks**", "11. Create approved tasks"), ("d. **Size the tasks**", "e. Create approved tasks")],
     ids=["full-scan", "incremental"],
 )
-def test_autoscope_calibrate_step_precedes_the_create_step(path, calibrate_step, create_step):
-    """Both autoscope workflows calibrate at the step before the one writing points."""
+def test_autoscope_offers_calibration_on_the_step_that_sizes_tasks(path, sizing_step, create_step):
+    """Both autoscope workflows offer the calibration where the points are chosen.
+
+    US-PM-26-5 turned the gate into an offer, so what is asserted is placement,
+    not obligation: the sizing step names ``pm_estimate()``, and the step that
+    writes those points via ``pm_create_task`` is the next one — a pointer
+    parked in another section is not reachable from the step that sizes.
+    """
     text = _text(path)
-    calibrate = _line_index(text, calibrate_step, path)
+    sizing = _line_index(text, sizing_step, path)
     create = _line_index(text, create_step, path)
-    assert calibrate < create, (
-        f"{path.name}: {create_step!r} (line {create}) is not preceded by "
-        f"{calibrate_step!r} (line {calibrate})"
+    assert PM_ESTIMATE_CALL.search(text.splitlines()[sizing]), (
+        f"{path.name}: {sizing_step!r} names no pm_estimate() — the calibration "
+        "is no longer reachable from the step that chooses points"
     )
-    assert PM_ESTIMATE_CALL.search(text.splitlines()[calibrate])
     assert "pm_create_task" in text.splitlines()[create], (
-        f"{path.name}: the step after calibration no longer creates tasks — "
-        "the ordering assertion has gone vacuous"
+        f"{path.name}: {create_step!r} no longer creates tasks — the placement "
+        "assertion has gone vacuous"
+    )
+    assert create == sizing + 1, (
+        f"{path.name}: {create_step!r} (line {create}) no longer directly follows "
+        f"{sizing_step!r} (line {sizing}) — the offer drifted away from the write"
     )
 
 
@@ -395,8 +432,15 @@ def test_autoscope_bounds_bulk_estimation_to_one_call_per_size_band(path):
 
 
 @pytest.mark.parametrize("path", _both("pm-plan"))
-def test_plan_scoping_gate_estimates_before_it_creates(path):
-    """`/pm-plan`'s Phase 3 gate: pm_estimate comes before "create on approval"."""
+def test_plan_scoping_gate_offers_estimation_where_it_creates(path):
+    """`/pm-plan`'s Phase 3 gate names pm_estimate on the line that creates tasks.
+
+    US-PM-26 turned "``pm_estimate(id)`` per task" into an offer, so the
+    ordering assertion this test used to make is gone (it would now pass or fail
+    on where in one sentence the offer sits).  What still matters is that the
+    offer lives on the gate line itself: the scoping gate is where points get
+    proposed, and a pointer parked in another phase is not reachable from it.
+    """
     lines = [line for line in _text(path).splitlines() if PM_ESTIMATE_CALL.search(line)]
     assert lines, f"{path.name}: the scoping gate never calls pm_estimate()"
     gate = [line for line in lines if "create on approval" in line]
@@ -404,21 +448,29 @@ def test_plan_scoping_gate_estimates_before_it_creates(path):
         f"{path.name}: no scoping-gate line pairs pm_estimate() with creation: {lines}"
     )
     for line in gate:
-        assert line.index("pm_estimate(") < line.index("create on approval"), (
-            f"{path.name}: creation precedes estimation on the gate line: {line!r}"
+        assert re.search(r"\bpoints\b|\bestimat", line, re.IGNORECASE), (
+            f"{path.name}: the gate line names pm_estimate but never ties it to "
+            f"sizing the tasks it creates: {line!r}"
         )
 
 
 @pytest.mark.parametrize("path", _both("agent-pm"))
-def test_agent_estimate_step_says_it_runs_before_points_are_written(path):
-    """The agent has no numbered write step to order against — it says so in prose."""
+def test_agent_estimate_step_offers_calibration_for_the_points_it_writes(path):
+    """The agent keeps a named Estimate step; US-PM-26 made it an offer.
+
+    The step used to declare that it "runs before any ``points`` value is
+    written".  What survives that relaxation is the pairing: the workflow step
+    that mentions points is the one that names ``pm_estimate()``, so the tool
+    stays attached to the activity that would use it rather than floating in a
+    tool list.
+    """
     lines = [line for line in _text(path).splitlines() if "**Estimate**" in line]
     assert lines, f"{path.name}: the agent lost its Estimate step"
     for line in lines:
         assert PM_ESTIMATE_CALL.search(line), f"{path.name}: {line!r} names no pm_estimate()"
-        assert re.search(r"before\b[^\n]*\bpoints\b", line), (
-            f"{path.name}: the Estimate step never says it runs before points "
-            f"are written: {line!r}"
+        assert re.search(r"\bpoints\b", line), (
+            f"{path.name}: the Estimate step no longer connects the tool to the "
+            f"points it sizes: {line!r}"
         )
 
 
@@ -833,4 +885,50 @@ def test_at_least_one_skill_template_names_a_step_for_each_guidance_tool(tool):
     assert named, (
         f"no skill template names a step that calls {tool} — the guidance is "
         "registered but unreachable from any workflow"
+    )
+
+
+# ═══ the five worker safety rules (US-PM-25-3/7) ════════════════
+#
+# Sprints 5–7 each cost a task's worth of work to a worker that took one of
+# these five actions.  US-PM-25-7 wrote them into the Worker Prompt Template so
+# the lesson travels with every dispatch instead of living in an orchestrator's
+# memory; this pins them verbatim, because a paraphrase of "never run git
+# checkout" is exactly what a summarising edit produces and exactly what the
+# worker then fails to obey.
+
+#: the rules as they must read inside the fence, character for character
+WORKER_SAFETY_RULES = [
+    "Never run git checkout, git restore, git stash, or git reset",
+    "Never call pm_create_* or any Store write outside a tmp_path-isolated fixture",
+    "Edit tracked files directly with the Edit tool; do not stage code through scratchpad files",
+    "they must end byte-identical — the orchestrator checks md5s",
+    "must never run the new command against the real repo",
+]
+
+
+@pytest.mark.parametrize("path", DOCS)
+@pytest.mark.parametrize("rule", WORKER_SAFETY_RULES)
+def test_worker_prompt_fence_carries_the_five_safety_rules_verbatim(path, rule):
+    """Each rule is in the prompt the worker actually receives, not just nearby.
+
+    The fence is what gets pasted into the subagent's context, so a rule that
+    drifted into the surrounding prose would never reach a worker.
+    """
+    fence = _worker_fence(_text(path))
+    assert rule in fence, (
+        f"{path.name}: the worker prompt no longer says {rule!r} verbatim — a "
+        "hard-won rule from Sprints 5–7 would stop travelling with dispatches"
+    )
+
+
+@pytest.mark.parametrize("path", DOCS)
+def test_the_safety_rules_are_five_separate_bullets(path):
+    """Merging two rules into one bullet is how the shortest one gets dropped."""
+    fence = _worker_fence(_text(path))
+    bullets = [line for line in fence.splitlines() if line.lstrip().startswith("- ")]
+    carrying = [b for b in bullets if any(rule in b for rule in WORKER_SAFETY_RULES)]
+    assert len(carrying) == len(WORKER_SAFETY_RULES), (
+        f"{path.name}: {len(carrying)} bullets carry the "
+        f"{len(WORKER_SAFETY_RULES)} safety rules:\n" + "\n".join(carrying)
     )
