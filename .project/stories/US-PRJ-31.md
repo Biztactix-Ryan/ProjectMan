@@ -8,13 +8,13 @@ epic_id: EPIC-PRJ-6
 id: US-PRJ-31
 points: 1
 priority: must
-status: backlog
+status: done
 tags:
 - tier-1
 - dependencies
 - documentation
 title: Document blocked status vs dependency blocking distinction
-updated: '2026-03-06'
+updated: '2026-09-05'
 ---
 
 As a user, I want clear documentation distinguishing user-set "blocked" status from automatic dependency-based blocking so that I understand why tasks appear in different board sections. Currently "blocked" is an explicit status users set, while incomplete dependencies cause tasks to appear in "not_ready" — these are independent concepts that can confuse users.

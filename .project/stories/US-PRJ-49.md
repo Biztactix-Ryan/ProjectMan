@@ -9,12 +9,12 @@ epic_id: EPIC-PRJ-9
 id: US-PRJ-49
 points: 1
 priority: must
-status: backlog
+status: done
 tags:
 - quality
 - mcp
 title: Fix destructive annotations on mutation tools
-updated: '2026-03-09'
+updated: '2026-09-05'
 ---
 
 As an MCP client, I want accurate destructive hints so that I can warn users appropriately. Currently only pm_archive is marked destructive=True, but pm_fix_malformed, pm_restore, pm_push, and pm_push_all all modify remote state or move files and should also be marked destructive.

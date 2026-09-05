@@ -1,14 +1,17 @@
 ---
-assignee: null
+assignee: claude
+claimed_at: null
+claimed_by_run: null
 created: '2026-07-30'
-depends_on: []
+depends_on:
+- US-PRJ-54-4
 id: US-PRJ-54-5
 points: 2
-status: todo
+status: done
 story_id: US-PRJ-54
 tags: []
-title: Write CHANGELOG.md in Keep a Changelog format
-updated: '2026-07-30'
+title: Add versioned sections 0.8.0 through 0.8.15 to the existing CHANGELOG.md
+updated: '2026-09-06'
 ---
 
-Create CHANGELOG.md at the repo root following the Keep a Changelog convention: newest version first, ISO dates, Added/Changed/Fixed/Removed subsections per release, and an Unreleased section at the top. Populate from the compiled history. Satisfies US-PRJ-54-1, -2 and -3.
+CHANGELOG.md already exists with an Unreleased section in Keep a Changelog format. Insert the per-version sections compiled in US-PRJ-54-4 below Unreleased, newest first, each with Added, Changed and Fixed subsections, and add the version comparison links at the bottom. Do not rewrite the Unreleased section.

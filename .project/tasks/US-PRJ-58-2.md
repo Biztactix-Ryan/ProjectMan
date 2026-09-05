@@ -1,14 +1,17 @@
 ---
 assignee: null
+claimed_at: null
+claimed_by_run: null
 created: '2026-03-09'
-depends_on: []
+depends_on:
+- US-PRJ-58-5
 id: US-PRJ-58-2
-points: null
-status: todo
+points: 1
+status: done
 story_id: US-PRJ-58
 tags: []
 title: 'Test: pm_create_story acceptance_criteria accepts list'
-updated: '2026-03-09'
+updated: '2026-09-05'
 ---
 
 Verify acceptance criterion for story US-PRJ-58:

@@ -4,9 +4,14 @@ description: Git-native project management with MCP server for Claude Code
 hub: false
 name: ProjectMan
 next_changeset_id: 1
-next_epic_id: 4
-next_sprint_id: 8
-next_story_id: 23
+next_epic_id: 5
+next_sprint_id: 10
+next_story_id: 31
 prefix: PM
 projects: []
 repo: ''
+stale_claim_hours: 2.0
+tools:
+  changesets: null
+  maintenance: false
+  web: false
