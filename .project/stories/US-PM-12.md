@@ -11,13 +11,13 @@ epic_id: EPIC-PM-2
 id: US-PM-12
 points: 5
 priority: should
-status: ready
+status: done
 tags:
 - workflow
 - api-design
 - safety
 title: Bulk write verbs for update and archive
-updated: '2026-08-21'
+updated: '2026-09-06'
 ---
 
 As an agent doing multi-item work, I want to express it as one call, so that it reads as one reviewable intent instead of a runaway sweep.

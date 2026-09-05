@@ -5,7 +5,7 @@
 | [US-PM-1](stories/US-PM-1.md) | Stop rejecting oversized run-log notes | ✅ done | must | 2 | reliability, quick-win | [EPIC-PM-1](epics/EPIC-PM-1.md) | 4 | 6 |
 | [US-PM-10](stories/US-PM-10.md) | Field projection on pm_get and pm_grab | ✅ done | should | 5 | context-cost, orchestrator, api-design | [EPIC-PM-2](epics/EPIC-PM-2.md) | 5 | 8 |
 | [US-PM-11](stories/US-PM-11.md) | Change detection for pm_audit | ✅ done | should | 3 | context-cost, orchestrator, audit | [EPIC-PM-2](epics/EPIC-PM-2.md) | 4 | 7 |
-| [US-PM-12](stories/US-PM-12.md) | Bulk write verbs for update and archive | 🟢 ready | should | 5 | workflow, api-design, safety | [EPIC-PM-2](epics/EPIC-PM-2.md) | 5 | 8 |
+| [US-PM-12](stories/US-PM-12.md) | Bulk write verbs for update and archive | ✅ done | should | 5 | workflow, api-design, safety | [EPIC-PM-2](epics/EPIC-PM-2.md) | 5 | 8 |
 | [US-PM-13](stories/US-PM-13.md) | Wire pm_context and pm_estimate into the workflows that need them | ✅ done | should | 2 | orchestrator, skills, quality, docs | [EPIC-PM-2](epics/EPIC-PM-2.md) | 4 | 6 |
 | [US-PM-14](stories/US-PM-14.md) | Activity-backed resume and recovery for orchestrator runs | ✅ done | could | 5 | orchestrator, recovery, activity-log | [EPIC-PM-2](epics/EPIC-PM-2.md) | 4 | 8 |
 | [US-PM-15](stories/US-PM-15.md) | Gate the unused tool families behind config flags | ✅ done | could | 3 | context-cost, config, api-surface | [EPIC-PM-2](epics/EPIC-PM-2.md) | 4 | 7 |
@@ -23,9 +23,16 @@
 | [US-PM-26](stories/US-PM-26.md) | pm_estimate and session-start pm_context are mandatory only under the orchestrator | ✅ done | should | 2 | skills, subtraction | [EPIC-PM-4](epics/EPIC-PM-4.md) | 3 | 5 |
 | [US-PM-27](stories/US-PM-27.md) | Changesets and the hub PR workflow are removed from the main package | ✅ done | must | 8 | hub, changesets, subtraction | [EPIC-PM-4](epics/EPIC-PM-4.md) | 5 | 8 |
 | [US-PM-28](stories/US-PM-28.md) | A note to the next session: pm_next and /pm-next | ✅ done | should | 3 | feature, workflow, skills | [EPIC-PM-4](epics/EPIC-PM-4.md) | 4 | 7 |
-| [US-PM-29](stories/US-PM-29.md) | A write leaves only the item file and the activity log dirty | 📋 backlog | should | 5 | store, indexer, subtraction | [EPIC-PM-4](epics/EPIC-PM-4.md) | 3 | 3 |
+| [US-PM-29](stories/US-PM-29.md) | A write leaves only the item file and the activity log dirty | 🟢 ready | should | 5 | store, indexer, subtraction | [EPIC-PM-4](epics/EPIC-PM-4.md) | 3 | 6 |
 | [US-PM-3](stories/US-PM-3.md) | Accept id and task_id as aliases on every tool | ✅ done | must | 3 | reliability, quick-win, ergonomics | [EPIC-PM-1](epics/EPIC-PM-1.md) | 4 | 7 |
 | [US-PM-30](stories/US-PM-30.md) | Post-subtraction telemetry baseline | ✅ done | should | 2 | telemetry, subtraction | [EPIC-PM-4](epics/EPIC-PM-4.md) | 3 | 5 |
+| [US-PM-31](stories/US-PM-31.md) | Subproject PM data lives at projects/{name}/.project on the repo's own projectman branch | 🟢 ready | should | 8 | hub, worktree, storage | [EPIC-PM-5](epics/EPIC-PM-5.md) | 5 | 9 |
+| [US-PM-32](stories/US-PM-32.md) | Telemetry re-capture windowed to sessions after the note-length fix | 🟢 ready | should | 2 | telemetry, measurement | [EPIC-PM-4](epics/EPIC-PM-4.md) | 3 | 5 |
+| [US-PM-33](stories/US-PM-33.md) | Two worker-flagged leftovers: agent doc ordering and web create endpoints return 409 on ID collision | 📋 backlog | could | 2 | docs, web, subtraction | [EPIC-PM-4](epics/EPIC-PM-4.md) | 2 | 2 |
+| [US-PM-34](stories/US-PM-34.md) | The ID prefix names the store: the project argument is dropped from every tool | 🟢 ready | should | 8 | hub, mcp, api | [EPIC-PM-5](epics/EPIC-PM-5.md) | 5 | 8 |
+| [US-PM-35](stories/US-PM-35.md) | The hub is a read-only rollup: cross-project commit, push and repair leave the package | 📋 backlog | should | 5 | hub, subtraction, git | [EPIC-PM-5](epics/EPIC-PM-5.md) | 5 | 5 |
+| [US-PM-36](stories/US-PM-36.md) | Epics exist at hub level only and roll up stories from every subproject | 📋 backlog | should | 5 | hub, epics | [EPIC-PM-5](epics/EPIC-PM-5.md) | 5 | 5 |
+| [US-PM-37](stories/US-PM-37.md) | Hub-mode docs describe the projects/{name}/.project layout and the prefix-routed tool surface | 📋 backlog | should | 3 | hub, docs | [EPIC-PM-5](epics/EPIC-PM-5.md) | 3 | 3 |
 | [US-PM-4](stories/US-PM-4.md) | Remove the always-on readiness warnings | ✅ done | should | 2 | context-cost, quick-win | [EPIC-PM-1](epics/EPIC-PM-1.md) | 4 | 6 |
 | [US-PM-5](stories/US-PM-5.md) | Reconcile test tasks when acceptance criteria change | ✅ done | should | 5 | reliability, audit, found-in-planning | [EPIC-PM-1](epics/EPIC-PM-1.md) | 4 | 10 |
 | [US-PM-6](stories/US-PM-6.md) | Repeatable usage-telemetry analysis script | ✅ done | should | 3 | observability, measurement, tooling | [EPIC-PM-1](epics/EPIC-PM-1.md) | 5 | 9 |

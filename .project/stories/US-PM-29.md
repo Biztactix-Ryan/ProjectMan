@@ -9,13 +9,13 @@ epic_id: EPIC-PM-4
 id: US-PM-29
 points: 5
 priority: should
-status: backlog
+status: ready
 tags:
 - store
 - indexer
 - subtraction
 title: A write leaves only the item file and the activity log dirty
-updated: '2026-09-05'
+updated: '2026-09-06'
 ---
 
 As a developer, I want .project to stop showing five regenerated index files as modified after every single pm call so that git status on this repo means something and pm_commit commits the change I made rather than a re-render of everything.

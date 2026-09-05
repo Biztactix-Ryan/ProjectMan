@@ -7,11 +7,11 @@ depends_on:
 - US-PM-30-5
 id: US-PM-12-5
 points: 1
-status: review
+status: done
 story_id: US-PM-12
 tags: []
 title: 'Test: Longest consecutive-run length drops sharply in the next telemetry baseline'
-updated: '2026-09-05'
+updated: '2026-09-06'
 ---
 
 Verify acceptance criterion for story US-PM-12:

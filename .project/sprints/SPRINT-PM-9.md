@@ -1,5 +1,5 @@
 ---
-completed_points: 0
+completed_points: 23
 created: '2026-09-05'
 end_date: '2026-09-18'
 goal: 'The MCP surface stops lying to its clients and the sprint claims get measured:
@@ -24,8 +24,8 @@ planned_stories:
 - US-PRJ-48
 - US-PRJ-54
 start_date: '2026-09-05'
-status: active
-updated: '2026-09-05'
+status: completed
+updated: '2026-09-06'
 ---
 
 The MCP surface stops lying to its clients and the sprint claims get measured:

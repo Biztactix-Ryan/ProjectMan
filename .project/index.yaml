@@ -35,6 +35,15 @@ entries:
   story_id: null
   epic_id: null
   tags: []
+- id: EPIC-PM-5
+  title: "Hub redesign \u2014 PM data lives with its code"
+  type: epic
+  status: active
+  archived: false
+  points: null
+  story_id: null
+  epic_id: null
+  tags: []
 - id: EPIC-PRJ-1
   title: 'Hub Push Workflow: Fix Submodule Commit & Push Alignment'
   type: epic
@@ -173,7 +182,7 @@ entries:
 - id: US-PM-12
   title: Bulk write verbs for update and archive
   type: story
-  status: ready
+  status: done
   archived: false
   points: 5
   story_id: null
@@ -338,7 +347,7 @@ entries:
 - id: US-PM-29
   title: A write leaves only the item file and the activity log dirty
   type: story
-  status: backlog
+  status: ready
   archived: false
   points: 5
   story_id: null
@@ -361,6 +370,74 @@ entries:
   points: 2
   story_id: null
   epic_id: EPIC-PM-4
+  tags: []
+- id: US-PM-31
+  title: Subproject PM data lives at projects/{name}/.project on the repo's own projectman
+    branch
+  type: story
+  status: ready
+  archived: false
+  points: 8
+  story_id: null
+  epic_id: EPIC-PM-5
+  tags: []
+- id: US-PM-32
+  title: Telemetry re-capture windowed to sessions after the note-length fix
+  type: story
+  status: ready
+  archived: false
+  points: 2
+  story_id: null
+  epic_id: EPIC-PM-4
+  tags: []
+- id: US-PM-33
+  title: 'Two worker-flagged leftovers: agent doc ordering and web create endpoints
+    return 409 on ID collision'
+  type: story
+  status: backlog
+  archived: false
+  points: 2
+  story_id: null
+  epic_id: EPIC-PM-4
+  tags: []
+- id: US-PM-34
+  title: 'The ID prefix names the store: the project argument is dropped from every
+    tool'
+  type: story
+  status: ready
+  archived: false
+  points: 8
+  story_id: null
+  epic_id: EPIC-PM-5
+  tags: []
+- id: US-PM-35
+  title: 'The hub is a read-only rollup: cross-project commit, push and repair leave
+    the package'
+  type: story
+  status: backlog
+  archived: false
+  points: 5
+  story_id: null
+  epic_id: EPIC-PM-5
+  tags: []
+- id: US-PM-36
+  title: Epics exist at hub level only and roll up stories from every subproject
+  type: story
+  status: backlog
+  archived: false
+  points: 5
+  story_id: null
+  epic_id: EPIC-PM-5
+  tags: []
+- id: US-PM-37
+  title: Hub-mode docs describe the projects/{name}/.project layout and the prefix-routed
+    tool surface
+  type: story
+  status: backlog
+  archived: false
+  points: 3
+  story_id: null
+  epic_id: EPIC-PM-5
   tags: []
 - id: US-PM-4
   title: Remove the always-on readiness warnings
@@ -1225,7 +1302,7 @@ entries:
   title: 'Test: Longest consecutive-run length drops sharply in the next telemetry
     baseline'
   type: task
-  status: review
+  status: done
   archived: false
   points: 1
   story_id: US-PM-12
@@ -2397,7 +2474,7 @@ entries:
   type: task
   status: todo
   archived: false
-  points: null
+  points: 1
   story_id: US-PM-29
   epic_id: null
   tags: []
@@ -2407,7 +2484,7 @@ entries:
   type: task
   status: todo
   archived: false
-  points: null
+  points: 1
   story_id: US-PM-29
   epic_id: null
   tags: []
@@ -2417,7 +2494,36 @@ entries:
   type: task
   status: todo
   archived: false
-  points: null
+  points: 1
+  story_id: US-PM-29
+  epic_id: null
+  tags: []
+- id: US-PM-29-4
+  title: Drop the per-write write_index calls and rebuild indexes only in pm_reindex,
+    pm_commit and the CLI reindex
+  type: task
+  status: todo
+  archived: false
+  points: 2
+  story_id: US-PM-29
+  epic_id: null
+  tags: []
+- id: US-PM-29-5
+  title: Readers of index.yaml rebuild when it is older than the newest item file
+  type: task
+  status: todo
+  archived: false
+  points: 2
+  story_id: US-PM-29
+  epic_id: null
+  tags: []
+- id: US-PM-29-6
+  title: Decide tracked versus generated for the five index files with the churn numbers
+    and document it
+  type: task
+  status: todo
+  archived: false
+  points: 1
   story_id: US-PM-29
   epic_id: null
   tags: []
@@ -2531,6 +2637,369 @@ entries:
   archived: false
   points: 2
   story_id: US-PM-30
+  epic_id: null
+  tags: []
+- id: US-PM-31-1
+  title: 'Test: A hub store map lists every subproject with its prefix and store path
+    read from projects/{name}/.project/config...'
+  type: task
+  status: todo
+  archived: false
+  points: 1
+  story_id: US-PM-31
+  epic_id: null
+  tags: []
+- id: US-PM-31-2
+  title: 'Test: projectman add-project attaches the submodule''s origin/projectman
+    branch as projects/{name}/.project when it ex...'
+  type: task
+  status: todo
+  archived: false
+  points: 1
+  story_id: US-PM-31
+  epic_id: null
+  tags: []
+- id: US-PM-31-3
+  title: 'Test: projectman migrate-hub moves every .project/projects/{name} store
+    onto that submodule''s projectman branch workt...'
+  type: task
+  status: todo
+  archived: false
+  points: 1
+  story_id: US-PM-31
+  epic_id: null
+  tags: []
+- id: US-PM-31-4
+  title: 'Test: migrate-hub refuses to run on a dirty hub or subproject tree and is
+    a friendly no-op when nothing is left to mi...'
+  type: task
+  status: todo
+  archived: false
+  points: 1
+  story_id: US-PM-31
+  epic_id: null
+  tags: []
+- id: US-PM-31-5
+  title: 'Test: pm_status and the hub rollup report a subproject whose store is not
+    attached as not attached instead of raising'
+  type: task
+  status: todo
+  archived: false
+  points: 1
+  story_id: US-PM-31
+  epic_id: null
+  tags: []
+- id: US-PM-31-6
+  title: 'hub/stores.py: the store map that locates each subproject''s store at projects/{name}/.project'
+  type: task
+  status: todo
+  archived: false
+  points: 3
+  story_id: US-PM-31
+  epic_id: null
+  tags: []
+- id: US-PM-31-7
+  title: add-project attaches or creates the submodule's projectman branch worktree
+  type: task
+  status: todo
+  archived: false
+  points: 3
+  story_id: US-PM-31
+  epic_id: null
+  tags: []
+- id: US-PM-31-8
+  title: projectman migrate-hub moves each .project/projects/{name} store onto its
+    submodule's branch
+  type: task
+  status: todo
+  archived: false
+  points: 3
+  story_id: US-PM-31
+  epic_id: null
+  tags: []
+- id: US-PM-31-9
+  title: Rollup, dashboards and pm_status report unattached stores instead of raising
+  type: task
+  status: todo
+  archived: false
+  points: 2
+  story_id: US-PM-31
+  epic_id: null
+  tags: []
+- id: US-PM-32-1
+  title: 'Test: baseline capture accepts a --since timestamp and excludes sessions
+    that started before it and the provenance bl...'
+  type: task
+  status: todo
+  archived: false
+  points: 1
+  story_id: US-PM-32
+  epic_id: null
+  tags: []
+- id: US-PM-32-2
+  title: 'Test: docs/telemetry/baseline-windowed-post-fix.md and .json exist and compare
+    against both the pre-fix and the post-...'
+  type: task
+  status: todo
+  archived: false
+  points: 1
+  story_id: US-PM-32
+  epic_id: null
+  tags: []
+- id: US-PM-32-3
+  title: 'Test: The windowed markdown states for each Sprint 1 to 9 claim whether
+    it holds once sessions predating the note-len...'
+  type: task
+  status: todo
+  archived: false
+  points: 1
+  story_id: US-PM-32
+  epic_id: null
+  tags: []
+- id: US-PM-32-4
+  title: baseline capture --since filters sessions by start time and records the window
+    in provenance
+  type: task
+  status: todo
+  archived: false
+  points: 1
+  story_id: US-PM-32
+  epic_id: null
+  tags: []
+- id: US-PM-32-5
+  title: Capture baseline-windowed-post-fix and write the three-way comparison
+  type: task
+  status: todo
+  archived: false
+  points: 1
+  story_id: US-PM-32
+  epic_id: null
+  tags: []
+- id: US-PM-33-1
+  title: 'Test: docs/reference/agent.md no longer lists a mandatory pm_context call
+    ahead of pm_status and matches the agent te...'
+  type: task
+  status: todo
+  archived: false
+  points: null
+  story_id: US-PM-33
+  epic_id: null
+  tags: []
+- id: US-PM-33-2
+  title: 'Test: POST create endpoints in the web API return 409 with the error code
+    when the target ID already exists and 422 o...'
+  type: task
+  status: todo
+  archived: false
+  points: null
+  story_id: US-PM-33
+  epic_id: null
+  tags: []
+- id: US-PM-34-1
+  title: 'Test: No tool in the MCP tool list has a project parameter and the tools/list
+    schema byte count drops from the 88441 ...'
+  type: task
+  status: todo
+  archived: false
+  points: 1
+  story_id: US-PM-34
+  epic_id: null
+  tags: []
+- id: US-PM-34-2
+  title: 'Test: In a hub pm_get and pm_update and the verdict verbs find the store
+    named by the ID prefix with no other argumen...'
+  type: task
+  status: todo
+  archived: false
+  points: 1
+  story_id: US-PM-34
+  epic_id: null
+  tags: []
+- id: US-PM-34-3
+  title: 'Test: Multi-ID tools accept IDs from several stores in one call and return
+    them grouped correctly'
+  type: task
+  status: todo
+  archived: false
+  points: 1
+  story_id: US-PM-34
+  epic_id: null
+  tags: []
+- id: US-PM-34-4
+  title: 'Test: ID-less verbs take an optional prefix and pm_create_story without
+    one in a hub is a coded invalid error while p...'
+  type: task
+  status: todo
+  archived: false
+  points: 1
+  story_id: US-PM-34
+  epic_id: null
+  tags: []
+- id: US-PM-34-5
+  title: 'Test: Single-project mode behaviour and responses are unchanged and the
+    full unit suite passes'
+  type: task
+  status: todo
+  archived: false
+  points: 1
+  story_id: US-PM-34
+  epic_id: null
+  tags: []
+- id: US-PM-34-6
+  title: '_store_for_id resolver: prefix parsed from the ID picks the store'
+  type: task
+  status: todo
+  archived: false
+  points: 3
+  story_id: US-PM-34
+  epic_id: null
+  tags: []
+- id: US-PM-34-7
+  title: Route every ID-taking tool through the resolver and remove its project parameter
+  type: task
+  status: todo
+  archived: false
+  points: 3
+  story_id: US-PM-34
+  epic_id: null
+  tags: []
+- id: US-PM-34-8
+  title: ID-less verbs take an optional prefix; docs and skill templates lose every
+    mention of project
+  type: task
+  status: todo
+  archived: false
+  points: 3
+  story_id: US-PM-34
+  epic_id: null
+  tags: []
+- id: US-PM-35-1
+  title: 'Test: hub/registry.py no longer contains coordinated_push or push_subprojects
+    or hub_push_with_rebase or push_hub or ...'
+  type: task
+  status: todo
+  archived: false
+  points: null
+  story_id: US-PM-35
+  epic_id: null
+  tags: []
+- id: US-PM-35-2
+  title: 'Test: pm_commit and pm_push in a hub act on the one store named by prefix
+    and land commits on that subproject''s proje...'
+  type: task
+  status: todo
+  archived: false
+  points: null
+  story_id: US-PM-35
+  epic_id: null
+  tags: []
+- id: US-PM-35-3
+  title: 'Test: pm_git_status in a hub reports each subproject store''s branch and
+    dirty and ahead-behind state through the work...'
+  type: task
+  status: todo
+  archived: false
+  points: null
+  story_id: US-PM-35
+  epic_id: null
+  tags: []
+- id: US-PM-35-4
+  title: 'Test: projectman sync pulls every submodule and re-attaches any store whose
+    worktree is missing'
+  type: task
+  status: todo
+  archived: false
+  points: null
+  story_id: US-PM-35
+  epic_id: null
+  tags: []
+- id: US-PM-35-5
+  title: 'Test: Removed tests are deleted rather than skipped and the full unit suite
+    passes'
+  type: task
+  status: todo
+  archived: false
+  points: null
+  story_id: US-PM-35
+  epic_id: null
+  tags: []
+- id: US-PM-36-1
+  title: 'Test: In a hub pm_create_epic writes only to the hub store and a subproject
+    store never gains a new epic file'
+  type: task
+  status: todo
+  archived: false
+  points: null
+  story_id: US-PM-36
+  epic_id: null
+  tags: []
+- id: US-PM-36-2
+  title: 'Test: A subproject story can set epic_id to a hub epic and an epic_id that
+    exists in neither the hub nor the story''s ...'
+  type: task
+  status: todo
+  archived: false
+  points: null
+  story_id: US-PM-36
+  epic_id: null
+  tags: []
+- id: US-PM-36-3
+  title: 'Test: pm_epic on a hub epic rolls up stories and points from every subproject
+    store grouped by project'
+  type: task
+  status: todo
+  archived: false
+  points: null
+  story_id: US-PM-36
+  epic_id: null
+  tags: []
+- id: US-PM-36-4
+  title: 'Test: migrate-hub moves subproject-local epics to the hub with hub-prefixed
+    IDs and rewrites every affected story''s e...'
+  type: task
+  status: todo
+  archived: false
+  points: null
+  story_id: US-PM-36
+  epic_id: null
+  tags: []
+- id: US-PM-36-5
+  title: 'Test: Single-project epic behaviour is unchanged'
+  type: task
+  status: todo
+  archived: false
+  points: null
+  story_id: US-PM-36
+  epic_id: null
+  tags: []
+- id: US-PM-37-1
+  title: 'Test: docs/hub-mode/setup.md shows the projects/{name}/.project layout and
+    the add-project and migrate-hub and attach...'
+  type: task
+  status: todo
+  archived: false
+  points: null
+  story_id: US-PM-37
+  epic_id: null
+  tags: []
+- id: US-PM-37-2
+  title: 'Test: No doc under docs/ describes a project tool argument or the coordinated
+    push or repair commands'
+  type: task
+  status: todo
+  archived: false
+  points: null
+  story_id: US-PM-37
+  epic_id: null
+  tags: []
+- id: US-PM-37-3
+  title: 'Test: ADR-003 in .project/DECISIONS.md records the hub redesign decision
+    and the alternatives considered'
+  type: task
+  status: todo
+  archived: false
+  points: null
+  story_id: US-PM-37
   epic_id: null
   tags: []
 - id: US-PM-4-1
@@ -6612,8 +7081,8 @@ entries:
   story_id: US-PRJ-9
   epic_id: null
   tags: []
-total_points: 1145
-completed_points: 1052
-story_count: 94
-task_count: 616
-epic_count: 16
+total_points: 1221
+completed_points: 1058
+story_count: 101
+task_count: 656
+epic_count: 17
