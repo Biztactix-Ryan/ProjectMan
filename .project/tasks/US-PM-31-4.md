@@ -8,7 +8,7 @@ depends_on:
 - US-PM-31-8
 id: US-PM-31-4
 points: 1
-status: todo
+status: done
 story_id: US-PM-31
 tags: []
 title: 'Test: migrate-hub refuses to run on a dirty hub or subproject tree and is

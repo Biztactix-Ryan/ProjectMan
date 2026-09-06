@@ -3,15 +3,13 @@ deploy_branch: null
 description: Git-native project management with MCP server for Claude Code
 hub: false
 name: ProjectMan
-next_changeset_id: 1
 next_epic_id: 6
-next_sprint_id: 11
+next_sprint_id: 12
 next_story_id: 38
 prefix: PM
 projects: []
 repo: ''
 stale_claim_hours: 2.0
 tools:
-  changesets: null
   maintenance: false
   web: false

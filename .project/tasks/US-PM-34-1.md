@@ -8,7 +8,7 @@ depends_on:
 - US-PM-34-8
 id: US-PM-34-1
 points: 1
-status: todo
+status: done
 story_id: US-PM-34
 tags: []
 title: 'Test: No tool in the MCP tool list has a project parameter and the tools/list

@@ -4,7 +4,7 @@
 | ------ | ----- |
 | Epics | 17 |
 | Stories | 101 |
-| Tasks | 656 |
+| Tasks | 669 |
 
 ## Indexes
 

@@ -1,6 +1,6 @@
 ---
 archived: false
-assignee: null
+assignee: claude
 claimed_at: null
 claimed_by_run: null
 created: '2026-09-06'
@@ -8,7 +8,7 @@ depends_on:
 - US-PM-34-7
 id: US-PM-34-8
 points: 3
-status: todo
+status: done
 story_id: US-PM-34
 tags: []
 title: ID-less verbs take an optional prefix; docs and skill templates lose every

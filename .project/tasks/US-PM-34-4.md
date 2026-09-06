@@ -8,7 +8,7 @@ depends_on:
 - US-PM-34-8
 id: US-PM-34-4
 points: 1
-status: todo
+status: done
 story_id: US-PM-34
 tags: []
 title: 'Test: ID-less verbs take an optional prefix and pm_create_story without one

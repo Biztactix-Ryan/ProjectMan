@@ -9,7 +9,7 @@ epic_id: EPIC-PM-4
 id: US-PM-29
 points: 5
 priority: should
-status: ready
+status: done
 tags:
 - store
 - indexer

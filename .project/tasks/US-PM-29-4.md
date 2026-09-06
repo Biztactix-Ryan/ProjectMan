@@ -1,13 +1,13 @@
 ---
 archived: false
-assignee: null
+assignee: claude
 claimed_at: null
 claimed_by_run: null
 created: '2026-09-06'
 depends_on: []
 id: US-PM-29-4
 points: 2
-status: todo
+status: done
 story_id: US-PM-29
 tags: []
 title: Drop the per-write write_index calls and rebuild indexes only in pm_reindex,

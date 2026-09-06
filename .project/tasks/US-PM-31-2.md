@@ -8,7 +8,7 @@ depends_on:
 - US-PM-31-7
 id: US-PM-31-2
 points: 1
-status: todo
+status: done
 story_id: US-PM-31
 tags: []
 title: 'Test: projectman add-project attaches the submodule''s origin/projectman branch

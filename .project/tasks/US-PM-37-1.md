@@ -4,10 +4,11 @@ assignee: null
 claimed_at: null
 claimed_by_run: null
 created: '2026-09-06'
-depends_on: []
+depends_on:
+- US-PM-37-4
 id: US-PM-37-1
-points: null
-status: todo
+points: 1
+status: done
 story_id: US-PM-37
 tags: []
 title: 'Test: docs/hub-mode/setup.md shows the projects/{name}/.project layout and

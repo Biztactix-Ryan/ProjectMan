@@ -1,6 +1,6 @@
 ---
 archived: false
-assignee: null
+assignee: claude
 claimed_at: null
 claimed_by_run: null
 created: '2026-09-06'
@@ -8,7 +8,7 @@ depends_on:
 - US-PM-31-7
 id: US-PM-31-8
 points: 3
-status: todo
+status: done
 story_id: US-PM-31
 tags: []
 title: projectman migrate-hub moves each .project/projects/{name} store onto its submodule's

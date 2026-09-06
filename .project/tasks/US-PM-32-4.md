@@ -1,13 +1,13 @@
 ---
 archived: false
-assignee: null
+assignee: claude
 claimed_at: null
 claimed_by_run: null
 created: '2026-09-06'
 depends_on: []
 id: US-PM-32-4
 points: 1
-status: todo
+status: done
 story_id: US-PM-32
 tags: []
 title: baseline capture --since filters sessions by start time and records the window

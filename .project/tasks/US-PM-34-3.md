@@ -8,7 +8,7 @@ depends_on:
 - US-PM-34-7
 id: US-PM-34-3
 points: 1
-status: todo
+status: done
 story_id: US-PM-34
 tags: []
 title: 'Test: Multi-ID tools accept IDs from several stores in one call and return

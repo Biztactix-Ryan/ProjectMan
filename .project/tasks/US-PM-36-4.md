@@ -4,10 +4,11 @@ assignee: null
 claimed_at: null
 claimed_by_run: null
 created: '2026-09-06'
-depends_on: []
+depends_on:
+- US-PM-36-8
 id: US-PM-36-4
-points: null
-status: todo
+points: 1
+status: done
 story_id: US-PM-36
 tags: []
 title: 'Test: migrate-hub moves subproject-local epics to the hub with hub-prefixed

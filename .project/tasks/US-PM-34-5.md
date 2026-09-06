@@ -8,7 +8,7 @@ depends_on:
 - US-PM-34-8
 id: US-PM-34-5
 points: 1
-status: todo
+status: done
 story_id: US-PM-34
 tags: []
 title: 'Test: Single-project mode behaviour and responses are unchanged and the full

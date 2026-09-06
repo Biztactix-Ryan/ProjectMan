@@ -4,6 +4,45 @@ Architectural decision record for ProjectMan. Newest first. Each entry: context,
 
 ---
 
+<a id="adr-003"></a>
+
+## ADR-003: PM data lives with its code — the hub is a read-only rollup (2026-09-06)
+
+**Status:** Accepted — scoped from the 2026-09-05 audit, implemented in EPIC-PM-5 (US-PM-31, US-PM-34, US-PM-35, US-PM-36, US-PM-37).
+
+**Context.** The 2026-09-05 audit of hub mode (recorded in the EPIC-PM-5 body, and at length in the five `docs/hub-mode` audit documents now folded into a History section of `setup.md`) found four structural problems, not a list of bugs:
+
+- **Per-project data was far from its code.** Each subproject's backlog lived in the hub's own store under `.project/projects/{name}/`. A backlog for `my-api` that exists only in a hub is invisible to anyone cloning `my-api`, and is lost outright if the hub is rebuilt.
+- **Every task edit was a hub commit.** Five projects updating tasks all day produced five streams of unrelated commits on one repo, with the `index.yaml` merge conflicts that implies.
+- **An optional `project` argument sat on 42 tools** restating what the ID prefix already said. `pm_get("US-API-3", project="api")` is the prefix twice, and the two could disagree.
+- **Docs promised cross-project epics the store did not deliver.** Epics were stored per store, so a "cross-repo" epic could not roll up across repos at all.
+- **`hub/registry.py` had grown to roughly 2,700 lines** driving git *inside repositories the hub did not own* — a hub-wide push that walked every dirty subproject, a rebuild-everything repair command, and a branch-alignment check.
+
+**Decision.** Four moves, taken together:
+
+1. **PM data lives with its code.** Each subproject's store is `projects/{name}/.project`, mounted as a worktree of *that repo's own* `projectman` branch — ADR-001's design applied per submodule (US-PM-31). The hub keeps its own store for hub-level docs, epics and dashboards.
+2. **The ID prefix names the store.** The `project` argument is gone from every tool; the prefix inside an ID *is* the address, and the few ID-less verbs take an optional `prefix` (US-PM-34).
+3. **Epics are hub-level only** and roll up linked stories from every attached subproject, with `by_project` in the rollup and a `not_attached` list when a store is unmounted. `projectman migrate-hub` moves legacy per-store epics up (US-PM-36).
+4. **The hub is a read-only rollup.** The coordinated push, the repair command and the branch validator left the package entirely; `pm_commit` and `pm_push` act on exactly one store named by prefix, running git inside that store's own repo, and `projectman sync` — pull every submodule, re-attach any missing store — is the one hub-wide git verb (US-PM-35).
+
+**Alternatives rejected.**
+
+- *Keep per-project data in the hub store under `.project/projects/{name}`, and fix the ergonomics around it.* This is the design being replaced. It cannot be fixed by ergonomics: the data's distance from its code is the defect, and every symptom above (invisible backlogs, hub-commit churn, `index.yaml` conflicts) follows from the location, not from the interface over it.
+- *A private sibling repo per project — the `<repo>-pm` variant ADR-001 documents.* It solves separate permissions well, and stays available for a project that needs it. Rejected as the default because it doubles the repository count for every subproject, and a hub that must clone a second repo per project to read a backlog is strictly more fragile than one reading a branch of a repo it already has as a submodule.
+- *Keep an optional `project` argument alongside the prefix, for compatibility.* Rejected: two addresses for one store is the bug, not the migration path. A caller passing both invites a silent disagreement the server must arbitrate, and every tool signature and doc page keeps carrying an argument that never changes an answer. An ID with an unknown prefix now returns a coded `not_found` listing the prefixes that exist — a better answer than a redundant parameter.
+- *Per-store epics with a hub-level index over them.* Rejected: an index is a second source of truth that drifts. A story linked to an epic in another store would need its link validated against a file the store cannot see, and the rollup would be as stale as the last index write. Epics at hub level make `epic_id` checkable before it is written.
+- *Keep the coordinated push as an opt-in flag.* Rejected: opt-in or not, it is the hub committing and pushing inside repos it does not own, and it was the source of the retry, rebase and submodule-ref-conflict machinery that made up most of those 2,700 lines. It had zero observed traffic in the error-path corpus. `projectman sync` pulls; pushing a subproject is that subproject's own `pm_push`.
+
+**Consequences and known edges.**
+
+- **Single-project mode is unchanged.** One store, no prefix, no hub — every path above is hub-only.
+- **Hub reads never fail on an unattached store.** A registered project whose worktree is missing shows up as a `not_attached` row with a hint (`projectman sync`), so a partial rollup says it is partial instead of silently omitting a repo.
+- **A hub built before this change needs `projectman migrate-hub` once.** It moves each `.project/projects/{name}` into that subproject's own `projectman` branch, lifts per-store epics to the hub, and leaves the hub's commit and submodule pointers for a human to push.
+- **Advancing submodule refs stays manual.** ProjectMan reports what each subproject's ref says; it does not move code between repos.
+- **The web API's `?project=` query parameter remains** (`get_store` in `src/projectman/web/routes/api.py`). It is an HTTP route parameter, not a tool argument, and is out of scope here; it goes in the web layer's own cleanup.
+
+---
+
 ## ADR-002: An archive is identified only by a positive archive signal, never by a status footprint (2026-08-20)
 
 **Status:** Accepted — decided in US-PM-17-6, binding on US-PM-17-7 (implementation), US-PM-17-1..-5 and -8 (tests), and US-PM-17-9 (the live candidates in this repo). The `migrations.py` module docstring is the normative statement; this ADR records why.

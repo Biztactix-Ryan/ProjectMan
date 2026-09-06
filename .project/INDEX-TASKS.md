@@ -153,12 +153,12 @@
 | [US-PM-28-5](tasks/US-PM-28-5.md) | Store next-note methods and the pm_next MCP tool | ✅ done | 2 |  | claude | — | [US-PM-28](stories/US-PM-28.md) |
 | [US-PM-28-6](tasks/US-PM-28-6.md) | Surface the note in pm_context and keep it out of the indexer and audit and search | ✅ done | 1 |  | claude | US-PM-28-5 | [US-PM-28](stories/US-PM-28.md) |
 | [US-PM-28-7](tasks/US-PM-28-7.md) | The /pm-next skill template with refresh-skills wiring and docs | ✅ done | 1 |  | claude | US-PM-28-5 | [US-PM-28](stories/US-PM-28.md) |
-| [US-PM-29-1](tasks/US-PM-29-1.md) | Test: After a pm_update on a clean tree git status shows only the item file and activity.jsonl | ⚪ todo | 1 |  | — | US-PM-29-4 | [US-PM-29](stories/US-PM-29.md) |
-| [US-PM-29-2](tasks/US-PM-29-2.md) | Test: pm_reindex and pm_commit and the CLI reindex command regenerate all five index files | ⚪ todo | 1 |  | — | US-PM-29-4 | [US-PM-29](stories/US-PM-29.md) |
-| [US-PM-29-3](tasks/US-PM-29-3.md) | Test: No reader of index.yaml serves stale data after a write that skipped reindexing | ⚪ todo | 1 |  | — | US-PM-29-5 | [US-PM-29](stories/US-PM-29.md) |
-| [US-PM-29-4](tasks/US-PM-29-4.md) | Drop the per-write write_index calls and rebuild indexes only in pm_reindex, pm_commit and the CLI reindex | ⚪ todo | 2 |  | — | — | [US-PM-29](stories/US-PM-29.md) |
-| [US-PM-29-5](tasks/US-PM-29-5.md) | Readers of index.yaml rebuild when it is older than the newest item file | ⚪ todo | 2 |  | — | US-PM-29-4 | [US-PM-29](stories/US-PM-29.md) |
-| [US-PM-29-6](tasks/US-PM-29-6.md) | Decide tracked versus generated for the five index files with the churn numbers and document it | ⚪ todo | 1 |  | — | US-PM-29-4 | [US-PM-29](stories/US-PM-29.md) |
+| [US-PM-29-1](tasks/US-PM-29-1.md) | Test: After a pm_update on a clean tree git status shows only the item file and activity.jsonl | ✅ done | 1 |  | claude | US-PM-29-4 | [US-PM-29](stories/US-PM-29.md) |
+| [US-PM-29-2](tasks/US-PM-29-2.md) | Test: pm_reindex and pm_commit and the CLI reindex command regenerate all five index files | ✅ done | 1 |  | claude | US-PM-29-4 | [US-PM-29](stories/US-PM-29.md) |
+| [US-PM-29-3](tasks/US-PM-29-3.md) | Test: No reader of index.yaml serves stale data after a write that skipped reindexing | ✅ done | 1 |  | claude | US-PM-29-5 | [US-PM-29](stories/US-PM-29.md) |
+| [US-PM-29-4](tasks/US-PM-29-4.md) | Drop the per-write write_index calls and rebuild indexes only in pm_reindex, pm_commit and the CLI reindex | ✅ done | 2 |  | claude | — | [US-PM-29](stories/US-PM-29.md) |
+| [US-PM-29-5](tasks/US-PM-29-5.md) | Readers of index.yaml rebuild when it is older than the newest item file | ✅ done | 2 |  | claude | US-PM-29-4 | [US-PM-29](stories/US-PM-29.md) |
+| [US-PM-29-6](tasks/US-PM-29-6.md) | Decide tracked versus generated for the five index files with the churn numbers and document it | ✅ done | 1 |  | claude | US-PM-29-4 | [US-PM-29](stories/US-PM-29.md) |
 | [US-PM-3-1](tasks/US-PM-3-1.md) | Test: Every tool taking a typed ID also accepts the generic id parameter | ✅ done | 1 |  | claude | US-PM-3-6 | [US-PM-3](stories/US-PM-3.md) |
 | [US-PM-3-2](tasks/US-PM-3-2.md) | Test: Tools taking id also accept the typed alias where one exists | ✅ done | 1 |  | claude | US-PM-3-6 | [US-PM-3](stories/US-PM-3.md) |
 | [US-PM-3-3](tasks/US-PM-3-3.md) | Test: Passing both a typed ID and id with conflicting values is a clear error | ✅ done | 1 |  | claude | US-PM-3-5 | [US-PM-3](stories/US-PM-3.md) |
@@ -171,43 +171,53 @@
 | [US-PM-30-3](tasks/US-PM-30-3.md) | Test: The post-subtraction markdown compares calls per task and context per worker against the pre-fix numbers | ✅ done | 1 |  | claude | US-PM-30-5 | [US-PM-30](stories/US-PM-30.md) |
 | [US-PM-30-4](tasks/US-PM-30-4.md) | Pin baseline provenance to a commit and a repo-relative path | ✅ done | 2 |  | claude | — | [US-PM-30](stories/US-PM-30.md) |
 | [US-PM-30-5](tasks/US-PM-30-5.md) | Capture baseline-post-subtraction and write the comparison against pre-fix | ✅ done | 2 |  | claude | US-PM-30-4 | [US-PM-30](stories/US-PM-30.md) |
-| [US-PM-31-1](tasks/US-PM-31-1.md) | Test: A hub store map lists every subproject with its prefix and store path read from projects/{name}/.project/config... | ⚪ todo | 1 |  | — | US-PM-31-6 | [US-PM-31](stories/US-PM-31.md) |
-| [US-PM-31-2](tasks/US-PM-31-2.md) | Test: projectman add-project attaches the submodule's origin/projectman branch as projects/{name}/.project when it ex... | ⚪ todo | 1 |  | — | US-PM-31-7 | [US-PM-31](stories/US-PM-31.md) |
-| [US-PM-31-3](tasks/US-PM-31-3.md) | Test: projectman migrate-hub moves every .project/projects/{name} store onto that submodule's projectman branch workt... | ⚪ todo | 1 |  | — | US-PM-31-8 | [US-PM-31](stories/US-PM-31.md) |
-| [US-PM-31-4](tasks/US-PM-31-4.md) | Test: migrate-hub refuses to run on a dirty hub or subproject tree and is a friendly no-op when nothing is left to mi... | ⚪ todo | 1 |  | — | US-PM-31-8 | [US-PM-31](stories/US-PM-31.md) |
-| [US-PM-31-5](tasks/US-PM-31-5.md) | Test: pm_status and the hub rollup report a subproject whose store is not attached as not attached instead of raising | ⚪ todo | 1 |  | — | US-PM-31-9 | [US-PM-31](stories/US-PM-31.md) |
-| [US-PM-31-6](tasks/US-PM-31-6.md) | hub/stores.py: the store map that locates each subproject's store at projects/{name}/.project | ⚪ todo | 3 |  | — | — | [US-PM-31](stories/US-PM-31.md) |
-| [US-PM-31-7](tasks/US-PM-31-7.md) | add-project attaches or creates the submodule's projectman branch worktree | ⚪ todo | 3 |  | — | US-PM-31-6 | [US-PM-31](stories/US-PM-31.md) |
-| [US-PM-31-8](tasks/US-PM-31-8.md) | projectman migrate-hub moves each .project/projects/{name} store onto its submodule's branch | ⚪ todo | 3 |  | — | US-PM-31-7 | [US-PM-31](stories/US-PM-31.md) |
-| [US-PM-31-9](tasks/US-PM-31-9.md) | Rollup, dashboards and pm_status report unattached stores instead of raising | ⚪ todo | 2 |  | — | US-PM-31-6 | [US-PM-31](stories/US-PM-31.md) |
-| [US-PM-32-1](tasks/US-PM-32-1.md) | Test: baseline capture accepts a --since timestamp and excludes sessions that started before it and the provenance bl... | ⚪ todo | 1 |  | — | US-PM-32-4 | [US-PM-32](stories/US-PM-32.md) |
-| [US-PM-32-2](tasks/US-PM-32-2.md) | Test: docs/telemetry/baseline-windowed-post-fix.md and .json exist and compare against both the pre-fix and the post-... | ⚪ todo | 1 |  | — | US-PM-32-5 | [US-PM-32](stories/US-PM-32.md) |
-| [US-PM-32-3](tasks/US-PM-32-3.md) | Test: The windowed markdown states for each Sprint 1 to 9 claim whether it holds once sessions predating the note-len... | ⚪ todo | 1 |  | — | US-PM-32-5 | [US-PM-32](stories/US-PM-32.md) |
-| [US-PM-32-4](tasks/US-PM-32-4.md) | baseline capture --since filters sessions by start time and records the window in provenance | ⚪ todo | 1 |  | — | — | [US-PM-32](stories/US-PM-32.md) |
-| [US-PM-32-5](tasks/US-PM-32-5.md) | Capture baseline-windowed-post-fix and write the three-way comparison | ⚪ todo | 1 |  | — | US-PM-32-4 | [US-PM-32](stories/US-PM-32.md) |
-| [US-PM-33-1](tasks/US-PM-33-1.md) | Test: docs/reference/agent.md no longer lists a mandatory pm_context call ahead of pm_status and matches the agent te... | ⚪ todo | — |  | — | — | [US-PM-33](stories/US-PM-33.md) |
-| [US-PM-33-2](tasks/US-PM-33-2.md) | Test: POST create endpoints in the web API return 409 with the error code when the target ID already exists and 422 o... | ⚪ todo | — |  | — | — | [US-PM-33](stories/US-PM-33.md) |
-| [US-PM-34-1](tasks/US-PM-34-1.md) | Test: No tool in the MCP tool list has a project parameter and the tools/list schema byte count drops from the 88441 ... | ⚪ todo | 1 |  | — | US-PM-34-8 | [US-PM-34](stories/US-PM-34.md) |
-| [US-PM-34-2](tasks/US-PM-34-2.md) | Test: In a hub pm_get and pm_update and the verdict verbs find the store named by the ID prefix with no other argumen... | ⚪ todo | 1 |  | — | US-PM-34-7 | [US-PM-34](stories/US-PM-34.md) |
-| [US-PM-34-3](tasks/US-PM-34-3.md) | Test: Multi-ID tools accept IDs from several stores in one call and return them grouped correctly | ⚪ todo | 1 |  | — | US-PM-34-7 | [US-PM-34](stories/US-PM-34.md) |
-| [US-PM-34-4](tasks/US-PM-34-4.md) | Test: ID-less verbs take an optional prefix and pm_create_story without one in a hub is a coded invalid error while p... | ⚪ todo | 1 |  | — | US-PM-34-8 | [US-PM-34](stories/US-PM-34.md) |
-| [US-PM-34-5](tasks/US-PM-34-5.md) | Test: Single-project mode behaviour and responses are unchanged and the full unit suite passes | ⚪ todo | 1 |  | — | US-PM-34-8 | [US-PM-34](stories/US-PM-34.md) |
-| [US-PM-34-6](tasks/US-PM-34-6.md) | _store_for_id resolver: prefix parsed from the ID picks the store | ⚪ todo | 3 |  | — | US-PM-31-6 | [US-PM-34](stories/US-PM-34.md) |
-| [US-PM-34-7](tasks/US-PM-34-7.md) | Route every ID-taking tool through the resolver and remove its project parameter | ⚪ todo | 3 |  | — | US-PM-34-6 | [US-PM-34](stories/US-PM-34.md) |
-| [US-PM-34-8](tasks/US-PM-34-8.md) | ID-less verbs take an optional prefix; docs and skill templates lose every mention of project | ⚪ todo | 3 |  | — | US-PM-34-7 | [US-PM-34](stories/US-PM-34.md) |
-| [US-PM-35-1](tasks/US-PM-35-1.md) | Test: hub/registry.py no longer contains coordinated_push or push_subprojects or hub_push_with_rebase or push_hub or ... | ⚪ todo | — |  | — | — | [US-PM-35](stories/US-PM-35.md) |
-| [US-PM-35-2](tasks/US-PM-35-2.md) | Test: pm_commit and pm_push in a hub act on the one store named by prefix and land commits on that subproject's proje... | ⚪ todo | — |  | — | — | [US-PM-35](stories/US-PM-35.md) |
-| [US-PM-35-3](tasks/US-PM-35-3.md) | Test: pm_git_status in a hub reports each subproject store's branch and dirty and ahead-behind state through the work... | ⚪ todo | — |  | — | — | [US-PM-35](stories/US-PM-35.md) |
-| [US-PM-35-4](tasks/US-PM-35-4.md) | Test: projectman sync pulls every submodule and re-attaches any store whose worktree is missing | ⚪ todo | — |  | — | — | [US-PM-35](stories/US-PM-35.md) |
-| [US-PM-35-5](tasks/US-PM-35-5.md) | Test: Removed tests are deleted rather than skipped and the full unit suite passes | ⚪ todo | — |  | — | — | [US-PM-35](stories/US-PM-35.md) |
-| [US-PM-36-1](tasks/US-PM-36-1.md) | Test: In a hub pm_create_epic writes only to the hub store and a subproject store never gains a new epic file | ⚪ todo | — |  | — | — | [US-PM-36](stories/US-PM-36.md) |
-| [US-PM-36-2](tasks/US-PM-36-2.md) | Test: A subproject story can set epic_id to a hub epic and an epic_id that exists in neither the hub nor the story's ... | ⚪ todo | — |  | — | — | [US-PM-36](stories/US-PM-36.md) |
-| [US-PM-36-3](tasks/US-PM-36-3.md) | Test: pm_epic on a hub epic rolls up stories and points from every subproject store grouped by project | ⚪ todo | — |  | — | — | [US-PM-36](stories/US-PM-36.md) |
-| [US-PM-36-4](tasks/US-PM-36-4.md) | Test: migrate-hub moves subproject-local epics to the hub with hub-prefixed IDs and rewrites every affected story's e... | ⚪ todo | — |  | — | — | [US-PM-36](stories/US-PM-36.md) |
-| [US-PM-36-5](tasks/US-PM-36-5.md) | Test: Single-project epic behaviour is unchanged | ⚪ todo | — |  | — | — | [US-PM-36](stories/US-PM-36.md) |
-| [US-PM-37-1](tasks/US-PM-37-1.md) | Test: docs/hub-mode/setup.md shows the projects/{name}/.project layout and the add-project and migrate-hub and attach... | ⚪ todo | — |  | — | — | [US-PM-37](stories/US-PM-37.md) |
-| [US-PM-37-2](tasks/US-PM-37-2.md) | Test: No doc under docs/ describes a project tool argument or the coordinated push or repair commands | ⚪ todo | — |  | — | — | [US-PM-37](stories/US-PM-37.md) |
-| [US-PM-37-3](tasks/US-PM-37-3.md) | Test: ADR-003 in .project/DECISIONS.md records the hub redesign decision and the alternatives considered | ⚪ todo | — |  | — | — | [US-PM-37](stories/US-PM-37.md) |
+| [US-PM-31-1](tasks/US-PM-31-1.md) | Test: A hub store map lists every subproject with its prefix and store path read from projects/{name}/.project/config... | ✅ done | 1 |  | claude | US-PM-31-6 | [US-PM-31](stories/US-PM-31.md) |
+| [US-PM-31-2](tasks/US-PM-31-2.md) | Test: projectman add-project attaches the submodule's origin/projectman branch as projects/{name}/.project when it ex... | ✅ done | 1 |  | — | US-PM-31-7 | [US-PM-31](stories/US-PM-31.md) |
+| [US-PM-31-3](tasks/US-PM-31-3.md) | Test: projectman migrate-hub moves every .project/projects/{name} store onto that submodule's projectman branch workt... | ✅ done | 1 |  | — | US-PM-31-8 | [US-PM-31](stories/US-PM-31.md) |
+| [US-PM-31-4](tasks/US-PM-31-4.md) | Test: migrate-hub refuses to run on a dirty hub or subproject tree and is a friendly no-op when nothing is left to mi... | ✅ done | 1 |  | — | US-PM-31-8 | [US-PM-31](stories/US-PM-31.md) |
+| [US-PM-31-5](tasks/US-PM-31-5.md) | Test: pm_status and the hub rollup report a subproject whose store is not attached as not attached instead of raising | ✅ done | 1 |  | — | US-PM-31-9 | [US-PM-31](stories/US-PM-31.md) |
+| [US-PM-31-6](tasks/US-PM-31-6.md) | hub/stores.py: the store map that locates each subproject's store at projects/{name}/.project | ✅ done | 3 |  | claude | — | [US-PM-31](stories/US-PM-31.md) |
+| [US-PM-31-7](tasks/US-PM-31-7.md) | add-project attaches or creates the submodule's projectman branch worktree | ✅ done | 3 |  | claude | US-PM-31-6 | [US-PM-31](stories/US-PM-31.md) |
+| [US-PM-31-8](tasks/US-PM-31-8.md) | projectman migrate-hub moves each .project/projects/{name} store onto its submodule's branch | ✅ done | 3 |  | claude | US-PM-31-7 | [US-PM-31](stories/US-PM-31.md) |
+| [US-PM-31-9](tasks/US-PM-31-9.md) | Rollup, dashboards and pm_status report unattached stores instead of raising | ✅ done | 2 |  | claude | US-PM-31-6 | [US-PM-31](stories/US-PM-31.md) |
+| [US-PM-32-1](tasks/US-PM-32-1.md) | Test: baseline capture accepts a --since timestamp and excludes sessions that started before it and the provenance bl... | ✅ done | 1 |  | claude | US-PM-32-4 | [US-PM-32](stories/US-PM-32.md) |
+| [US-PM-32-2](tasks/US-PM-32-2.md) | Test: docs/telemetry/baseline-windowed-post-fix.md and .json exist and compare against both the pre-fix and the post-... | ✅ done | 1 |  | — | US-PM-32-5 | [US-PM-32](stories/US-PM-32.md) |
+| [US-PM-32-3](tasks/US-PM-32-3.md) | Test: The windowed markdown states for each Sprint 1 to 9 claim whether it holds once sessions predating the note-len... | ✅ done | 1 |  | — | US-PM-32-5 | [US-PM-32](stories/US-PM-32.md) |
+| [US-PM-32-4](tasks/US-PM-32-4.md) | baseline capture --since filters sessions by start time and records the window in provenance | ✅ done | 1 |  | claude | — | [US-PM-32](stories/US-PM-32.md) |
+| [US-PM-32-5](tasks/US-PM-32-5.md) | Capture baseline-windowed-post-fix and write the three-way comparison | ✅ done | 1 |  | claude | US-PM-32-4 | [US-PM-32](stories/US-PM-32.md) |
+| [US-PM-33-1](tasks/US-PM-33-1.md) | Test: docs/reference/agent.md no longer lists a mandatory pm_context call ahead of pm_status and matches the agent te... | ✅ done | 1 |  | — | US-PM-33-3 | [US-PM-33](stories/US-PM-33.md) |
+| [US-PM-33-2](tasks/US-PM-33-2.md) | Test: POST create endpoints in the web API return 409 with the error code when the target ID already exists and 422 o... | ✅ done | 1 |  | — | US-PM-33-4 | [US-PM-33](stories/US-PM-33.md) |
+| [US-PM-33-3](tasks/US-PM-33-3.md) | Reorder agent.md token discipline so pm_status comes first and pm_context is a pointer | ✅ done | 1 |  | claude | — | [US-PM-33](stories/US-PM-33.md) |
+| [US-PM-33-4](tasks/US-PM-33-4.md) | Map coded errors to HTTP status in the web create endpoints | ✅ done | 1 |  | claude | — | [US-PM-33](stories/US-PM-33.md) |
+| [US-PM-34-1](tasks/US-PM-34-1.md) | Test: No tool in the MCP tool list has a project parameter and the tools/list schema byte count drops from the 88441 ... | ✅ done | 1 |  | — | US-PM-34-8 | [US-PM-34](stories/US-PM-34.md) |
+| [US-PM-34-2](tasks/US-PM-34-2.md) | Test: In a hub pm_get and pm_update and the verdict verbs find the store named by the ID prefix with no other argumen... | ✅ done | 1 |  | — | US-PM-34-7 | [US-PM-34](stories/US-PM-34.md) |
+| [US-PM-34-3](tasks/US-PM-34-3.md) | Test: Multi-ID tools accept IDs from several stores in one call and return them grouped correctly | ✅ done | 1 |  | — | US-PM-34-7 | [US-PM-34](stories/US-PM-34.md) |
+| [US-PM-34-4](tasks/US-PM-34-4.md) | Test: ID-less verbs take an optional prefix and pm_create_story without one in a hub is a coded invalid error while p... | ✅ done | 1 |  | — | US-PM-34-8 | [US-PM-34](stories/US-PM-34.md) |
+| [US-PM-34-5](tasks/US-PM-34-5.md) | Test: Single-project mode behaviour and responses are unchanged and the full unit suite passes | ✅ done | 1 |  | — | US-PM-34-8 | [US-PM-34](stories/US-PM-34.md) |
+| [US-PM-34-6](tasks/US-PM-34-6.md) | _store_for_id resolver: prefix parsed from the ID picks the store | ✅ done | 3 |  | claude | US-PM-31-6 | [US-PM-34](stories/US-PM-34.md) |
+| [US-PM-34-7](tasks/US-PM-34-7.md) | Route every ID-taking tool through the resolver and remove its project parameter | ✅ done | 3 |  | claude | US-PM-34-6 | [US-PM-34](stories/US-PM-34.md) |
+| [US-PM-34-8](tasks/US-PM-34-8.md) | ID-less verbs take an optional prefix; docs and skill templates lose every mention of project | ✅ done | 3 |  | claude | US-PM-34-7 | [US-PM-34](stories/US-PM-34.md) |
+| [US-PM-35-1](tasks/US-PM-35-1.md) | Test: hub/registry.py no longer contains coordinated_push or push_subprojects or hub_push_with_rebase or push_hub or ... | ✅ done | 1 |  | — | US-PM-35-6 | [US-PM-35](stories/US-PM-35.md) |
+| [US-PM-35-2](tasks/US-PM-35-2.md) | Test: pm_commit and pm_push in a hub act on the one store named by prefix and land commits on that subproject's proje... | ✅ done | 1 |  | — | US-PM-35-7 | [US-PM-35](stories/US-PM-35.md) |
+| [US-PM-35-3](tasks/US-PM-35-3.md) | Test: pm_git_status in a hub reports each subproject store's branch and dirty and ahead-behind state through the work... | ✅ done | 1 |  | — | US-PM-35-8 | [US-PM-35](stories/US-PM-35.md) |
+| [US-PM-35-4](tasks/US-PM-35-4.md) | Test: projectman sync pulls every submodule and re-attaches any store whose worktree is missing | ✅ done | 1 |  | — | US-PM-35-8 | [US-PM-35](stories/US-PM-35.md) |
+| [US-PM-35-5](tasks/US-PM-35-5.md) | Test: Removed tests are deleted rather than skipped and the full unit suite passes | ✅ done | 1 |  | — | US-PM-35-6, US-PM-35-7, US-PM-35-8 | [US-PM-35](stories/US-PM-35.md) |
+| [US-PM-35-6](tasks/US-PM-35-6.md) | Delete the cross-project push, repair and branch-validation machinery and its tests | ✅ done | 3 |  | claude | — | [US-PM-35](stories/US-PM-35.md) |
+| [US-PM-35-7](tasks/US-PM-35-7.md) | pm_commit and pm_push act on the one store a prefix names | ✅ done | 2 |  | claude | US-PM-35-6 | [US-PM-35](stories/US-PM-35.md) |
+| [US-PM-35-8](tasks/US-PM-35-8.md) | pm_git_status reads each store through the worktree helpers and sync re-attaches missing stores | ✅ done | 2 |  | claude | US-PM-35-6 | [US-PM-35](stories/US-PM-35.md) |
+| [US-PM-36-1](tasks/US-PM-36-1.md) | Test: In a hub pm_create_epic writes only to the hub store and a subproject store never gains a new epic file | ✅ done | 1 |  | — | US-PM-36-6 | [US-PM-36](stories/US-PM-36.md) |
+| [US-PM-36-2](tasks/US-PM-36-2.md) | Test: A subproject story can set epic_id to a hub epic and an epic_id that exists in neither the hub nor the story's ... | ✅ done | 1 |  | — | US-PM-36-6 | [US-PM-36](stories/US-PM-36.md) |
+| [US-PM-36-3](tasks/US-PM-36-3.md) | Test: pm_epic on a hub epic rolls up stories and points from every subproject store grouped by project | ✅ done | 1 |  | — | US-PM-36-7 | [US-PM-36](stories/US-PM-36.md) |
+| [US-PM-36-4](tasks/US-PM-36-4.md) | Test: migrate-hub moves subproject-local epics to the hub with hub-prefixed IDs and rewrites every affected story's e... | ✅ done | 1 |  | — | US-PM-36-8 | [US-PM-36](stories/US-PM-36.md) |
+| [US-PM-36-5](tasks/US-PM-36-5.md) | Test: Single-project epic behaviour is unchanged | ✅ done | 1 |  | — | US-PM-36-6, US-PM-36-7, US-PM-36-8 | [US-PM-36](stories/US-PM-36.md) |
+| [US-PM-36-6](tasks/US-PM-36-6.md) | Hub-only epic creation and epic_id links validated against the hub store | ✅ done | 2 |  | claude | — | [US-PM-36](stories/US-PM-36.md) |
+| [US-PM-36-7](tasks/US-PM-36-7.md) | pm_epic on a hub epic rolls up stories from every store grouped by project | ✅ done | 2 |  | claude | US-PM-36-6 | [US-PM-36](stories/US-PM-36.md) |
+| [US-PM-36-8](tasks/US-PM-36-8.md) | migrate-hub moves subproject epics up to the hub and rewrites story links | ✅ done | 2 |  | claude | US-PM-36-6 | [US-PM-36](stories/US-PM-36.md) |
+| [US-PM-37-1](tasks/US-PM-37-1.md) | Test: docs/hub-mode/setup.md shows the projects/{name}/.project layout and the add-project and migrate-hub and attach... | ✅ done | 1 |  | — | US-PM-37-4 | [US-PM-37](stories/US-PM-37.md) |
+| [US-PM-37-2](tasks/US-PM-37-2.md) | Test: No doc under docs/ describes a project tool argument or the coordinated push or repair commands | ✅ done | 1 |  | — | US-PM-37-4, US-PM-37-5 | [US-PM-37](stories/US-PM-37.md) |
+| [US-PM-37-3](tasks/US-PM-37-3.md) | Test: ADR-003 in .project/DECISIONS.md records the hub redesign decision and the alternatives considered | ✅ done | 1 |  | — | US-PM-37-5 | [US-PM-37](stories/US-PM-37.md) |
+| [US-PM-37-4](tasks/US-PM-37-4.md) | Rewrite docs/hub-mode for the projects/{name}/.project layout and retire the audit-era documents | ✅ done | 2 |  | claude | US-PM-35-7, US-PM-35-8, US-PM-36-7, US-PM-36-8 | [US-PM-37](stories/US-PM-37.md) |
+| [US-PM-37-5](tasks/US-PM-37-5.md) | Sweep the reference docs for the removed surface and record ADR-003 | ✅ done | 1 |  | claude | US-PM-35-6, US-PM-36-6 | [US-PM-37](stories/US-PM-37.md) |
 | [US-PM-4-1](tasks/US-PM-4-1.md) | Test: Warnings that would fire on every item in a project are suppressed | ✅ done | 1 |  | claude | US-PM-4-6 | [US-PM-4](stories/US-PM-4.md) |
 | [US-PM-4-2](tasks/US-PM-4-2.md) | Test: Determine whether the templates or the checks are at fault before removing | ✅ done | 1 |  | claude | US-PM-4-5 | [US-PM-4](stories/US-PM-4.md) |
 | [US-PM-4-3](tasks/US-PM-4-3.md) | Test: Payload size for pm_grab drops measurably | ✅ done | 1 |  | claude | US-PM-4-6 | [US-PM-4](stories/US-PM-4.md) |
@@ -508,10 +518,12 @@
 | [US-PRJ-41-1](tasks/US-PRJ-41-1.md) | Test: Status collection uses max 2 git calls per project instead of 4+ | ⚪ todo | — |  | — | — | [US-PRJ-41](stories/US-PRJ-41.md) |
 | [US-PRJ-41-2](tasks/US-PRJ-41-2.md) | Test: ThreadPoolExecutor still used for parallelism | ⚪ todo | — |  | — | — | [US-PRJ-41](stories/US-PRJ-41.md) |
 | [US-PRJ-41-3](tasks/US-PRJ-41-3.md) | Test: Results match current output format | ⚪ todo | — |  | — | — | [US-PRJ-41](stories/US-PRJ-41.md) |
-| [US-PRJ-42-1](tasks/US-PRJ-42-1.md) | Test: All stories/tasks/epics loaded once at audit start | ⚪ todo | — |  | — | — | [US-PRJ-42](stories/US-PRJ-42.md) |
-| [US-PRJ-42-2](tasks/US-PRJ-42-2.md) | Test: 15 checks run against pre-loaded data | ⚪ todo | — |  | — | — | [US-PRJ-42](stories/US-PRJ-42.md) |
-| [US-PRJ-42-3](tasks/US-PRJ-42-3.md) | Test: No repeated list_stories or get_story calls | ⚪ todo | — |  | — | — | [US-PRJ-42](stories/US-PRJ-42.md) |
-| [US-PRJ-42-4](tasks/US-PRJ-42-4.md) | Test: Duplicate doc check logic extracted to shared function | ⚪ todo | — |  | — | — | [US-PRJ-42](stories/US-PRJ-42.md) |
+| [US-PRJ-42-1](tasks/US-PRJ-42-1.md) | Test: All stories/tasks/epics loaded once at audit start | ✅ done | 1 |  | — | US-PRJ-42-5 | [US-PRJ-42](stories/US-PRJ-42.md) |
+| [US-PRJ-42-2](tasks/US-PRJ-42-2.md) | Test: 15 checks run against pre-loaded data | ✅ done | 1 |  | — | US-PRJ-42-5 | [US-PRJ-42](stories/US-PRJ-42.md) |
+| [US-PRJ-42-3](tasks/US-PRJ-42-3.md) | Test: No repeated list_stories or get_story calls | ✅ done | 1 |  | — | US-PRJ-42-5 | [US-PRJ-42](stories/US-PRJ-42.md) |
+| [US-PRJ-42-4](tasks/US-PRJ-42-4.md) | Test: Duplicate doc check logic extracted to shared function | ✅ done | 1 |  | — | US-PRJ-42-6 | [US-PRJ-42](stories/US-PRJ-42.md) |
+| [US-PRJ-42-5](tasks/US-PRJ-42-5.md) | Pre-load stories, tasks, epics and bodies once and run every audit check against them | ✅ done | 2 |  | claude | — | [US-PRJ-42](stories/US-PRJ-42.md) |
+| [US-PRJ-42-6](tasks/US-PRJ-42-6.md) | Extract the documentation checks into one shared helper | ✅ done | 1 |  | claude | US-PRJ-42-5 | [US-PRJ-42](stories/US-PRJ-42.md) |
 | [US-PRJ-43-1](tasks/US-PRJ-43-1.md) | Test: pm_board uses list_all or cache for task bodies instead of per-task get | ✅ done | 1 |  | claude | US-PRJ-43-5, US-PRJ-43-6 | [US-PRJ-43](stories/US-PRJ-43.md) |
 | [US-PRJ-43-2](tasks/US-PRJ-43-2.md) | Test: pm_epic pre-fetches all tasks and partitions by story_id locally | ✅ done | 1 |  | claude | US-PRJ-43-7 | [US-PRJ-43](stories/US-PRJ-43.md) |
 | [US-PRJ-43-3](tasks/US-PRJ-43-3.md) | Test: pm_search tag filter batch-loads metadata instead of individual gets | ✅ done | 1 |  | claude | US-PRJ-43-8 | [US-PRJ-43](stories/US-PRJ-43.md) |
@@ -614,10 +626,11 @@
 | [US-PRJ-61-1](tasks/US-PRJ-61-1.md) | Test: All 6 cache test files committed and tracked | ✅ done | — |  | — | — | [US-PRJ-61](stories/US-PRJ-61.md) |
 | [US-PRJ-61-2](tasks/US-PRJ-61-2.md) | Test: Tests pass in CI | ✅ done | — |  | — | — | [US-PRJ-61](stories/US-PRJ-61.md) |
 | [US-PRJ-61-3](tasks/US-PRJ-61-3.md) | Test: No duplicate test names or conflicts | ✅ done | — |  | — | — | [US-PRJ-61](stories/US-PRJ-61.md) |
-| [US-PRJ-62-1](tasks/US-PRJ-62-1.md) | Test: test_search.py created with direct keyword_search tests | ⚪ todo | — |  | — | — | [US-PRJ-62](stories/US-PRJ-62.md) |
-| [US-PRJ-62-2](tasks/US-PRJ-62-2.md) | Test: Snippet generation tested with various content lengths | ⚪ todo | — |  | — | — | [US-PRJ-62](stories/US-PRJ-62.md) |
-| [US-PRJ-62-3](tasks/US-PRJ-62-3.md) | Test: Score calculation verified (title match vs content match) | ⚪ todo | — |  | — | — | [US-PRJ-62](stories/US-PRJ-62.md) |
-| [US-PRJ-62-4](tasks/US-PRJ-62-4.md) | Test: Empty results and case-insensitive matching tested | ⚪ todo | — |  | — | — | [US-PRJ-62](stories/US-PRJ-62.md) |
+| [US-PRJ-62-1](tasks/US-PRJ-62-1.md) | Test: test_search.py created with direct keyword_search tests | ✅ done | 1 |  | — | US-PRJ-62-5 | [US-PRJ-62](stories/US-PRJ-62.md) |
+| [US-PRJ-62-2](tasks/US-PRJ-62-2.md) | Test: Snippet generation tested with various content lengths | ✅ done | 1 |  | — | US-PRJ-62-5 | [US-PRJ-62](stories/US-PRJ-62.md) |
+| [US-PRJ-62-3](tasks/US-PRJ-62-3.md) | Test: Score calculation verified (title match vs content match) | ✅ done | 1 |  | — | US-PRJ-62-5 | [US-PRJ-62](stories/US-PRJ-62.md) |
+| [US-PRJ-62-4](tasks/US-PRJ-62-4.md) | Test: Empty results and case-insensitive matching tested | ✅ done | 1 |  | — | US-PRJ-62-5 | [US-PRJ-62](stories/US-PRJ-62.md) |
+| [US-PRJ-62-5](tasks/US-PRJ-62-5.md) | Write tests/test_search.py covering keyword_search directly | ✅ done | 2 |  | claude | — | [US-PRJ-62](stories/US-PRJ-62.md) |
 | [US-PRJ-63-1](tasks/US-PRJ-63-1.md) | Test: test_performance_n1.py created | ✅ done | 1 |  | claude | US-PRJ-63-5 | [US-PRJ-63](stories/US-PRJ-63.md) |
 | [US-PRJ-63-2](tasks/US-PRJ-63-2.md) | Test: Tests verify pm_board uses batch loads not per-task fetches | ✅ done | 1 |  | claude | US-PRJ-63-6 | [US-PRJ-63](stories/US-PRJ-63.md) |
 | [US-PRJ-63-3](tasks/US-PRJ-63-3.md) | Test: Tests verify pm_epic uses single list_tasks call | ✅ done | 1 |  | claude | US-PRJ-63-6 | [US-PRJ-63](stories/US-PRJ-63.md) |

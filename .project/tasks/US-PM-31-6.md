@@ -1,13 +1,13 @@
 ---
 archived: false
-assignee: null
+assignee: claude
 claimed_at: null
 claimed_by_run: null
 created: '2026-09-06'
 depends_on: []
 id: US-PM-31-6
 points: 3
-status: todo
+status: done
 story_id: US-PM-31
 tags: []
 title: 'hub/stores.py: the store map that locates each subproject''s store at projects/{name}/.project'

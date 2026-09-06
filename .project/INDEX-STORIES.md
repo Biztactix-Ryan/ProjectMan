@@ -23,16 +23,16 @@
 | [US-PM-26](stories/US-PM-26.md) | pm_estimate and session-start pm_context are mandatory only under the orchestrator | ✅ done | should | 2 | skills, subtraction | [EPIC-PM-4](epics/EPIC-PM-4.md) | 3 | 5 |
 | [US-PM-27](stories/US-PM-27.md) | Changesets and the hub PR workflow are removed from the main package | ✅ done | must | 8 | hub, changesets, subtraction | [EPIC-PM-4](epics/EPIC-PM-4.md) | 5 | 8 |
 | [US-PM-28](stories/US-PM-28.md) | A note to the next session: pm_next and /pm-next | ✅ done | should | 3 | feature, workflow, skills | [EPIC-PM-4](epics/EPIC-PM-4.md) | 4 | 7 |
-| [US-PM-29](stories/US-PM-29.md) | A write leaves only the item file and the activity log dirty | 🟢 ready | should | 5 | store, indexer, subtraction | [EPIC-PM-4](epics/EPIC-PM-4.md) | 3 | 6 |
+| [US-PM-29](stories/US-PM-29.md) | A write leaves only the item file and the activity log dirty | ✅ done | should | 5 | store, indexer, subtraction | [EPIC-PM-4](epics/EPIC-PM-4.md) | 3 | 6 |
 | [US-PM-3](stories/US-PM-3.md) | Accept id and task_id as aliases on every tool | ✅ done | must | 3 | reliability, quick-win, ergonomics | [EPIC-PM-1](epics/EPIC-PM-1.md) | 4 | 7 |
 | [US-PM-30](stories/US-PM-30.md) | Post-subtraction telemetry baseline | ✅ done | should | 2 | telemetry, subtraction | [EPIC-PM-4](epics/EPIC-PM-4.md) | 3 | 5 |
-| [US-PM-31](stories/US-PM-31.md) | Subproject PM data lives at projects/{name}/.project on the repo's own projectman branch | 🟢 ready | should | 8 | hub, worktree, storage | [EPIC-PM-5](epics/EPIC-PM-5.md) | 5 | 9 |
-| [US-PM-32](stories/US-PM-32.md) | Telemetry re-capture windowed to sessions after the note-length fix | 🟢 ready | should | 2 | telemetry, measurement | [EPIC-PM-4](epics/EPIC-PM-4.md) | 3 | 5 |
-| [US-PM-33](stories/US-PM-33.md) | Two worker-flagged leftovers: agent doc ordering and web create endpoints return 409 on ID collision | 📋 backlog | could | 2 | docs, web, subtraction | [EPIC-PM-4](epics/EPIC-PM-4.md) | 2 | 2 |
-| [US-PM-34](stories/US-PM-34.md) | The ID prefix names the store: the project argument is dropped from every tool | 🟢 ready | should | 8 | hub, mcp, api | [EPIC-PM-5](epics/EPIC-PM-5.md) | 5 | 8 |
-| [US-PM-35](stories/US-PM-35.md) | The hub is a read-only rollup: cross-project commit, push and repair leave the package | 📋 backlog | should | 5 | hub, subtraction, git | [EPIC-PM-5](epics/EPIC-PM-5.md) | 5 | 5 |
-| [US-PM-36](stories/US-PM-36.md) | Epics exist at hub level only and roll up stories from every subproject | 📋 backlog | should | 5 | hub, epics | [EPIC-PM-5](epics/EPIC-PM-5.md) | 5 | 5 |
-| [US-PM-37](stories/US-PM-37.md) | Hub-mode docs describe the projects/{name}/.project layout and the prefix-routed tool surface | 📋 backlog | should | 3 | hub, docs | [EPIC-PM-5](epics/EPIC-PM-5.md) | 3 | 3 |
+| [US-PM-31](stories/US-PM-31.md) | Subproject PM data lives at projects/{name}/.project on the repo's own projectman branch | ✅ done | should | 8 | hub, worktree, storage | [EPIC-PM-5](epics/EPIC-PM-5.md) | 5 | 9 |
+| [US-PM-32](stories/US-PM-32.md) | Telemetry re-capture windowed to sessions after the note-length fix | ✅ done | should | 2 | telemetry, measurement | [EPIC-PM-4](epics/EPIC-PM-4.md) | 3 | 5 |
+| [US-PM-33](stories/US-PM-33.md) | Two worker-flagged leftovers: agent doc ordering and web create endpoints return 409 on ID collision | ✅ done | could | 2 | docs, web, subtraction | [EPIC-PM-4](epics/EPIC-PM-4.md) | 2 | 4 |
+| [US-PM-34](stories/US-PM-34.md) | The ID prefix names the store: the project argument is dropped from every tool | ✅ done | should | 8 | hub, mcp, api | [EPIC-PM-5](epics/EPIC-PM-5.md) | 5 | 8 |
+| [US-PM-35](stories/US-PM-35.md) | The hub is a read-only rollup: cross-project commit, push and repair leave the package | ✅ done | should | 5 | hub, subtraction, git | [EPIC-PM-5](epics/EPIC-PM-5.md) | 5 | 8 |
+| [US-PM-36](stories/US-PM-36.md) | Epics exist at hub level only and roll up stories from every subproject | ✅ done | should | 5 | hub, epics | [EPIC-PM-5](epics/EPIC-PM-5.md) | 5 | 8 |
+| [US-PM-37](stories/US-PM-37.md) | Hub-mode docs describe the projects/{name}/.project layout and the prefix-routed tool surface | ✅ done | should | 3 | hub, docs | [EPIC-PM-5](epics/EPIC-PM-5.md) | 3 | 5 |
 | [US-PM-4](stories/US-PM-4.md) | Remove the always-on readiness warnings | ✅ done | should | 2 | context-cost, quick-win | [EPIC-PM-1](epics/EPIC-PM-1.md) | 4 | 6 |
 | [US-PM-5](stories/US-PM-5.md) | Reconcile test tasks when acceptance criteria change | ✅ done | should | 5 | reliability, audit, found-in-planning | [EPIC-PM-1](epics/EPIC-PM-1.md) | 4 | 10 |
 | [US-PM-6](stories/US-PM-6.md) | Repeatable usage-telemetry analysis script | ✅ done | should | 3 | observability, measurement, tooling | [EPIC-PM-1](epics/EPIC-PM-1.md) | 5 | 9 |
@@ -75,7 +75,7 @@
 | [US-PRJ-4](stories/US-PRJ-4.md) | Add coordinated multi-project push command | ✅ done | must | 8 |  | [EPIC-PRJ-1](epics/EPIC-PRJ-1.md) | 5 | 10 |
 | [US-PRJ-40](stories/US-PRJ-40.md) | Add incremental index rebuilds with dirty tracking | 📋 backlog | could | 8 | performance, indexer | [EPIC-PRJ-7](epics/EPIC-PRJ-7.md) | 4 | 4 |
 | [US-PRJ-41](stories/US-PRJ-41.md) | Optimize hub git subprocess calls with batching | 📋 backlog | could | 5 | performance, hub | [EPIC-PRJ-7](epics/EPIC-PRJ-7.md) | 3 | 3 |
-| [US-PRJ-42](stories/US-PRJ-42.md) | Fix N+1 audit queries with pre-loaded data | 📋 backlog | should | 3 | performance, audit | [EPIC-PRJ-7](epics/EPIC-PRJ-7.md) | 4 | 4 |
+| [US-PRJ-42](stories/US-PRJ-42.md) | Fix N+1 audit queries with pre-loaded data | ✅ done | should | 3 | performance, audit | [EPIC-PRJ-7](epics/EPIC-PRJ-7.md) | 4 | 6 |
 | [US-PRJ-43](stories/US-PRJ-43.md) | Fix N+1 patterns in pm_board, pm_epic, pm_search | ✅ done | must | 5 | batch, performance | [EPIC-PRJ-8](epics/EPIC-PRJ-8.md) | 4 | 8 |
 | [US-PRJ-44](stories/US-PRJ-44.md) | Implement pm_batch_update MCP tool | 📦 archived | must | 5 | batch, mcp | [EPIC-PRJ-8](epics/EPIC-PRJ-8.md) | 5 | 5 |
 | [US-PRJ-45](stories/US-PRJ-45.md) | Implement pm_batch_archive MCP tool | 📦 archived | should | 3 | batch, mcp | [EPIC-PRJ-8](epics/EPIC-PRJ-8.md) | 4 | 4 |
@@ -97,7 +97,7 @@
 | [US-PRJ-6](stories/US-PRJ-6.md) | Update workflow documentation and skills for new git integration | ✅ done | should | 3 |  | [EPIC-PRJ-1](epics/EPIC-PRJ-1.md) | 4 | 7 |
 | [US-PRJ-60](stories/US-PRJ-60.md) | Add tag management and export MCP tools | 📋 backlog | could | 5 | mcp, features | [EPIC-PRJ-11](epics/EPIC-PRJ-11.md) | 4 | 4 |
 | [US-PRJ-61](stories/US-PRJ-61.md) | Commit pending cache test files | ✅ done | must | 1 | testing | [EPIC-PRJ-12](epics/EPIC-PRJ-12.md) | 3 | 3 |
-| [US-PRJ-62](stories/US-PRJ-62.md) | Add direct search.py unit tests | 📋 backlog | should | 3 | testing | [EPIC-PRJ-12](epics/EPIC-PRJ-12.md) | 4 | 4 |
+| [US-PRJ-62](stories/US-PRJ-62.md) | Add direct search.py unit tests | ✅ done | should | 3 | testing | [EPIC-PRJ-12](epics/EPIC-PRJ-12.md) | 4 | 5 |
 | [US-PRJ-63](stories/US-PRJ-63.md) | Add N+1 regression tests for board and epic views | ✅ done | should | 3 | testing, performance | [EPIC-PRJ-12](epics/EPIC-PRJ-12.md) | 4 | 6 |
 | [US-PRJ-64](stories/US-PRJ-64.md) | Expand estimator.py test coverage | 📋 backlog | could | 2 | testing | [EPIC-PRJ-12](epics/EPIC-PRJ-12.md) | 4 | 4 |
 | [US-PRJ-7](stories/US-PRJ-7.md) | Add PR-based workflow for subproject changes into deploy branch | ✅ done | must | 8 |  | [EPIC-PRJ-1](epics/EPIC-PRJ-1.md) | 5 | 11 |

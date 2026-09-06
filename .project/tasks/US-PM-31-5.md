@@ -8,7 +8,7 @@ depends_on:
 - US-PM-31-9
 id: US-PM-31-5
 points: 1
-status: todo
+status: done
 story_id: US-PM-31
 tags: []
 title: 'Test: pm_status and the hub rollup report a subproject whose store is not

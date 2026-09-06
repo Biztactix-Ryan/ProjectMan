@@ -1,6 +1,6 @@
 ---
 archived: false
-assignee: null
+assignee: claude
 claimed_at: null
 claimed_by_run: null
 created: '2026-09-05'
@@ -8,7 +8,7 @@ depends_on:
 - US-PM-29-4
 id: US-PM-29-2
 points: 1
-status: todo
+status: done
 story_id: US-PM-29
 tags: []
 title: 'Test: pm_reindex and pm_commit and the CLI reindex command regenerate all

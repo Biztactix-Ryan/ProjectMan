@@ -4,10 +4,11 @@ assignee: null
 claimed_at: null
 claimed_by_run: null
 created: '2026-09-06'
-depends_on: []
+depends_on:
+- US-PM-35-6
 id: US-PM-35-1
-points: null
-status: todo
+points: 1
+status: done
 story_id: US-PM-35
 tags: []
 title: 'Test: hub/registry.py no longer contains coordinated_push or push_subprojects

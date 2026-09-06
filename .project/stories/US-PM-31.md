@@ -18,7 +18,7 @@ epic_id: EPIC-PM-5
 id: US-PM-31
 points: 8
 priority: should
-status: ready
+status: done
 tags:
 - hub
 - worktree

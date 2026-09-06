@@ -1,5 +1,5 @@
 ---
-completed_points: 0
+completed_points: 23
 created: '2026-09-06'
 end_date: '2026-09-19'
 goal: 'A hub stops being a second copy of everyone''s PM data: each subproject''s
@@ -21,7 +21,7 @@ planned_stories:
 - US-PM-31
 - US-PM-34
 start_date: '2026-09-06'
-status: active
+status: completed
 updated: '2026-09-06'
 ---
 

@@ -8,7 +8,7 @@ depends_on:
 - US-PM-34-7
 id: US-PM-34-2
 points: 1
-status: todo
+status: done
 story_id: US-PM-34
 tags: []
 title: 'Test: In a hub pm_get and pm_update and the verdict verbs find the store named

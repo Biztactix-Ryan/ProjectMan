@@ -16,7 +16,7 @@ epic_id: EPIC-PM-5
 id: US-PM-36
 points: 5
 priority: should
-status: backlog
+status: done
 tags:
 - hub
 - epics

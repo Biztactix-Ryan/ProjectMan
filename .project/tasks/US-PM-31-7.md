@@ -1,6 +1,6 @@
 ---
 archived: false
-assignee: null
+assignee: claude
 claimed_at: null
 claimed_by_run: null
 created: '2026-09-06'
@@ -8,7 +8,7 @@ depends_on:
 - US-PM-31-6
 id: US-PM-31-7
 points: 3
-status: todo
+status: done
 story_id: US-PM-31
 tags: []
 title: add-project attaches or creates the submodule's projectman branch worktree

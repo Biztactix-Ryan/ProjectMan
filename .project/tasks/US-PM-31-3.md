@@ -8,7 +8,7 @@ depends_on:
 - US-PM-31-8
 id: US-PM-31-3
 points: 1
-status: todo
+status: done
 story_id: US-PM-31
 tags: []
 title: 'Test: projectman migrate-hub moves every .project/projects/{name} store onto

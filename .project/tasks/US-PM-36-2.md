@@ -4,10 +4,11 @@ assignee: null
 claimed_at: null
 claimed_by_run: null
 created: '2026-09-06'
-depends_on: []
+depends_on:
+- US-PM-36-6
 id: US-PM-36-2
-points: null
-status: todo
+points: 1
+status: done
 story_id: US-PM-36
 tags: []
 title: 'Test: A subproject story can set epic_id to a hub epic and an epic_id that

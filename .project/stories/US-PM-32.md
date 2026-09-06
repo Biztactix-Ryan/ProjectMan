@@ -12,7 +12,7 @@ epic_id: EPIC-PM-4
 id: US-PM-32
 points: 2
 priority: should
-status: ready
+status: done
 tags:
 - telemetry
 - measurement

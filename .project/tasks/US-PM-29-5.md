@@ -1,6 +1,6 @@
 ---
 archived: false
-assignee: null
+assignee: claude
 claimed_at: null
 claimed_by_run: null
 created: '2026-09-06'
@@ -8,7 +8,7 @@ depends_on:
 - US-PM-29-4
 id: US-PM-29-5
 points: 2
-status: todo
+status: done
 story_id: US-PM-29
 tags: []
 title: Readers of index.yaml rebuild when it is older than the newest item file
