@@ -3,14 +3,14 @@ created: '2026-09-05'
 id: EPIC-PM-4
 points: null
 priority: must
-status: active
+status: done
 tags:
 - subtraction
 - quality
 - audit
 target_date: null
 title: Subtraction — a smaller, honest ProjectMan
-updated: '2026-09-05'
+updated: '2026-09-06'
 ---
 
 Outcome of the 2026-09-05 full audit. ProjectMan has grown to 13.5k source lines, 4:1 test-to-source, a 31KB orchestrate skill, and a hub/changeset subsystem used 9 times in 484 sessions. This epic removes what is not earning its keep, fixes the data-integrity holes the audit found in the store, makes the skills say true and consistent things, and adds the one small thing the restart workflow was missing: a note to your next session.

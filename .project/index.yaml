@@ -29,7 +29,7 @@ entries:
 - id: EPIC-PM-4
   title: "Subtraction \u2014 a smaller, honest ProjectMan"
   type: epic
-  status: active
+  status: done
   archived: false
   points: null
   story_id: null
@@ -38,7 +38,7 @@ entries:
 - id: EPIC-PM-5
   title: "Hub redesign \u2014 PM data lives with its code"
   type: epic
-  status: active
+  status: done
   archived: false
   points: null
   story_id: null

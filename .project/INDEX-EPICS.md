@@ -5,8 +5,8 @@
 | [EPIC-PM-1](epics/EPIC-PM-1.md) | Correctness & Observability | 📝 draft | must | reliability, mcp, agent-facing | 8 | 28 |
 | [EPIC-PM-2](epics/EPIC-PM-2.md) | Workflow API for Agent Orchestration | 🏃 active | must | workflow, orchestrator, mcp, agent-facing | 9 | 44 |
 | [EPIC-PM-3](epics/EPIC-PM-3.md) | Orphan-branch worktree storage for PM data | 📝 draft | should | git, storage, architecture | 3 | 21 |
-| [EPIC-PM-4](epics/EPIC-PM-4.md) | Subtraction — a smaller, honest ProjectMan | 🏃 active | must | subtraction, quality, audit | 10 | 33 |
-| [EPIC-PM-5](epics/EPIC-PM-5.md) | Hub redesign — PM data lives with its code | 🏃 active | should | hub, architecture, subtraction | 5 | 29 |
+| [EPIC-PM-4](epics/EPIC-PM-4.md) | Subtraction — a smaller, honest ProjectMan | ✅ done | must | subtraction, quality, audit | 10 | 33 |
+| [EPIC-PM-5](epics/EPIC-PM-5.md) | Hub redesign — PM data lives with its code | ✅ done | should | hub, architecture, subtraction | 5 | 29 |
 | [EPIC-PRJ-1](epics/EPIC-PRJ-1.md) | Hub Push Workflow: Fix Submodule Commit & Push Alignment | ✅ done | must | workflow, submodules, hub, devops | 10 | 66 |
 | [EPIC-PRJ-10](epics/EPIC-PRJ-10.md) | Documentation & Changelog | 📝 draft | should | docs, v0.9 | 4 | 9 |
 | [EPIC-PRJ-11](epics/EPIC-PRJ-11.md) | MCP Tools, Skills & CLI Parity | 📝 draft | should | mcp, cli, skills, v0.9 | 4 | 13 |

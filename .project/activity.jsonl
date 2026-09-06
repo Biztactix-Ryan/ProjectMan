@@ -1166,3 +1166,5 @@
 {"event_type":"update","item_id":"US-PM-37-3","item_type":"task","changes":{"status":{"before":"todo","after":"done"}},"timestamp":"2026-09-06T13:21:57.585659Z","actor":"Farhan Rich","source":"cli","run_id":"orch-2026-09-06-7e27"}
 {"event_type":"update","item_id":"US-PM-37","item_type":"story","changes":{"status":{"before":"active","after":"done"}},"timestamp":"2026-09-06T13:21:58.119542Z","actor":"Farhan Rich","source":"cli","run_id":"orch-2026-09-06-7e27"}
 {"event_type":"update","item_id":"SPRINT-PM-11","item_type":"sprint","changes":{"status":{"before":"active","after":"completed"}},"timestamp":"2026-09-06T13:22:09.350271Z","actor":"Farhan Rich","source":"cli","run_id":"orch-2026-09-06-7e27"}
+{"event_type":"update","item_id":"EPIC-PM-4","item_type":"epic","changes":{"status":{"before":"active","after":"done"}},"timestamp":"2026-09-06T13:35:17.297180Z","actor":"Farhan Rich","source":"cli","run_id":null}
+{"event_type":"update","item_id":"EPIC-PM-5","item_type":"epic","changes":{"status":{"before":"active","after":"done"}},"timestamp":"2026-09-06T13:35:19.081368Z","actor":"Farhan Rich","source":"cli","run_id":null}
