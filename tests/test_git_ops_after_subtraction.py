@@ -76,6 +76,16 @@ def _write_store(root: Path, *, hub: bool) -> Path:
         "projects": [],
     }
     (proj / "config.yaml").write_text(yaml.dump(config))
+    # Since US-PM-29 the five index files are derived and pm_commit rebuilds
+    # them immediately before staging.  A scaffolded store has them on disk
+    # and gitignored (US-PM-29-6), so this one does too — otherwise the
+    # rebuild would stage five files behind every commit and "a clean store
+    # is nothing to commit" could never hold.
+    from projectman.indexer import write_index, write_store_gitignore
+    from projectman.store import Store
+
+    write_index(Store(root))
+    write_store_gitignore(proj)
     return proj
 
 
@@ -130,7 +140,7 @@ class TestPmCommitEndToEnd:
 
         _story(proj, "US-TST-1")
 
-        result = pm_commit(scope="all", root=repo)
+        result = pm_commit(proj)
 
         assert "nothing_to_commit" not in result, result
         assert result["commit_hash"], result
@@ -166,7 +176,7 @@ class TestPmCommitEndToEnd:
         _task(proj, "US-TST-1-1")
         _task(proj, "US-TST-1-2")
 
-        result = pm_commit(scope="all", root=repo)
+        result = pm_commit(proj)
 
         assert result["commit_hash"]
         assert len(result["files_committed"]) == 5
@@ -177,9 +187,9 @@ class TestPmCommitEndToEnd:
     def test_commit_reports_nothing_to_commit_on_clean_store(self, tmp_path):
         """A clean store is still an expected negative, not an error."""
         repo = tmp_path / "work"
-        _make_repo(repo, hub=False)
+        proj = _make_repo(repo, hub=False)
 
-        assert pm_commit(scope="all", root=repo) == {"nothing_to_commit": True}
+        assert pm_commit(proj) == {"nothing_to_commit": True}
 
 
 # ─── 2. pm_push pushes to a bare remote ───────────────────────────
@@ -208,28 +218,34 @@ class TestPmPushEndToEnd:
         remote_before = _git(["rev-parse", "main"], bare).stdout.strip()
 
         _story(hub_with_bare_remote["proj"], "US-TST-9")
-        commit = pm_commit(scope="all", root=repo)
+        commit = pm_commit(hub_with_bare_remote["proj"])
         local_sha = commit["commit_hash"]
 
         # Committing must not push (US-PRJ-5-4 behaviour is unchanged).
         assert _git(["rev-parse", "main"], bare).stdout.strip() == remote_before
 
-        result = pm_push(scope="hub", root=repo)
+        result = pm_push(hub_with_bare_remote["proj"])
 
         assert result["pushed"] is True, result
-        assert result["scope"] == "hub"
-        assert result["status"] == "pushed"
-        assert result["attempts"] == 1
+        assert result["branch"] == "main"
+        assert result["remote"] == "origin"
+        assert result["worktree"] is False
         assert "error" not in result
 
         assert _git(["rev-parse", "main"], bare).stdout.strip() == local_sha
 
-    def test_push_rejects_unknown_scope_without_pushing(self, hub_with_bare_remote):
-        """Scope validation still returns an error dict rather than raising."""
-        result = pm_push(scope="bogus", root=hub_with_bare_remote["repo"])
+    def test_push_refuses_a_store_that_is_not_there_without_pushing(self, hub_with_bare_remote):
+        """An unmounted store is the coded not_found — and nothing is pushed."""
+        from projectman.errors import NotFoundError
 
-        assert result["pushed"] is False
-        assert "invalid scope" in result["error"]
+        bare = hub_with_bare_remote["bare"]
+        before = _git(["rev-parse", "main"], bare).stdout.strip()
+
+        with pytest.raises(NotFoundError, match="nothing to push") as exc:
+            pm_push(hub_with_bare_remote["repo"] / "projects" / "ghost" / ".project")
+
+        assert exc.value.code == "not_found"
+        assert _git(["rev-parse", "main"], bare).stdout.strip() == before
 
 
 # ─── 3. git_status_all returns the non-hub payload ────────────────
@@ -238,7 +254,7 @@ class TestPmPushEndToEnd:
 class TestGitStatusAllPayload:
     """git_status_all keeps the shape the dashboard renders."""
 
-    # Keys read by tests/test_git_status_dashboard.py off the top level.
+    # Keys read by tests/test_hub_git_status.py off the top level.
     DASHBOARD_KEYS = {"projects", "total", "issues", "ok", "summary", "pm_store"}
 
     def test_non_hub_payload_keys(self, tmp_path):

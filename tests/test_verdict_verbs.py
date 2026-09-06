@@ -661,19 +661,22 @@ def test_pm_done_next_keeps_its_signature(tmp_project):
     before it, and their defaults, are what is actually pinned.
     """
     parameters = inspect.signature(_verb("pm_done_next")).parameters
-    assert list(parameters)[:7] == [
+    # `project` sat between `same_story_only` and `id` until US-PM-34-7 removed
+    # it: the task id's prefix now names the store, so nothing addresses a task
+    # twice.  That is a deliberate signature change for the whole ID-taking
+    # surface, not drift in this one wrapper.
+    assert list(parameters)[:6] == [
         "task_id",
         "outcome",
         "note",
         "assignee",
         "same_story_only",
-        "project",
         "id",
     ]
     # `run_id` was appended by US-PM-14-5 on the same terms as `evidence`:
     # trailing, optional, defaulted, so no existing call site moves.  It sits
     # before `evidence`, which the evidence contract requires to stay last.
-    assert list(parameters)[7:] == ["run_id", "evidence"]
+    assert list(parameters)[6:] == ["run_id", "evidence"]
     assert parameters["run_id"].default is None
     assert parameters["evidence"].default is None
     assert parameters["outcome"].default == "success"

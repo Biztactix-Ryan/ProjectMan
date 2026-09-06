@@ -11,8 +11,7 @@ Five checks, all against the real artefacts rather than a memory of them:
    subtraction deleted — the ``pm_changeset_*`` tools, the ``projectman
    changeset`` CLI group and ``changeset-status``, ``next_changeset_id``,
    ``.project/changesets``, ``create_pr`` / ``get_pr_status``,
-   ``update_hub_refs``, ``create_feature_branch``, ``set_deploy_branch``, and
-   the *automatic* submodule-ref resolution inside ``hub_push_with_rebase`` —
+   ``update_hub_refs``, ``create_feature_branch`` and ``set_deploy_branch`` —
    is searched for over ``docs/**/*.md`` and ``README.md``.
 2. **The word "changeset" survives only in the past tense.** A handful of
    historical notes legitimately record that the feature existed and was taken
@@ -28,6 +27,17 @@ Five checks, all against the real artefacts rather than a memory of them:
    walked over the real command tree, groups included.
 5. **``CHANGELOG.md`` still records the removal**, so the trail back to *why*
    these things are absent is not itself swept away.
+
+US-PM-37-5 added three more of the same shape, for the *second* subtraction —
+EPIC-PM-5's hub redesign:
+
+6. **No doc names the removed hub surface** — ``.project/projects``, the
+   coordinated push, the repair command or the branch-alignment check — and no
+   doc gives a ``pm_`` tool a ``project`` argument. ``docs/telemetry/`` and the
+   History section of ``docs/hub-mode/setup.md`` are excluded; the latter exists
+   to name retired commands *as* retired.
+7. **``.project/DECISIONS.md`` records ADR-003**, with its Alternatives section
+   and above ADR-002, since ``docs/hub-mode/setup.md`` links at that anchor.
 
 Scope note: ``docs/telemetry/`` is excluded from checks 1 and 2. Those files are
 recorded measurements of a past state, not instructions, and rewriting them
@@ -78,11 +88,6 @@ FORBIDDEN = [
     r"update_hub_refs",
     r"create_feature_branch",
     r"set_deploy_branch",
-    # ``hub_push_with_rebase`` itself survived — fetch, rebase, push again is
-    # still how a rejected hub push is retried. What went is the part that
-    # resolved a submodule-ref conflict *automatically* instead of aborting and
-    # reporting, so only the pairing of the function with "auto" is forbidden.
-    r"hub_push_with_rebase.*auto|auto.*hub_push_with_rebase",
 ]
 
 FORBIDDEN_RES = [re.compile(pattern, re.IGNORECASE) for pattern in FORBIDDEN]
@@ -329,4 +334,153 @@ def test_changelog_unreleased_records_the_removal():
     assert CHANGESET_RE.search(body), (
         "the `### Removed` entry under `## [Unreleased]` does not mention "
         "changesets; the only surviving record of the subtraction is gone."
+    )
+
+
+# ─── 6. US-PM-37-5 — the hub redesign's removed surface is swept too ─────
+#
+# EPIC-PM-5 removed a second family of things the docs used to describe: the
+# optional ``project`` argument on every tool (US-PM-34), the hub's per-project
+# store directory ``.project/projects/{name}`` (US-PM-31), and the cross-repo
+# git verbs — the coordinated push, the repair command and the branch-alignment
+# check (US-PM-35). The sweep in US-PM-37-5 is a one-off edit; these two checks
+# keep it swept, in the same shape as checks 1 and 5 above.
+
+#: The one place a retired hub command may still be named: ``setup.md``'s
+#: History section exists precisely to explain commands found in old notes, and
+#: names them *as retired*. Everything before that heading is live documentation
+#: and is swept normally.
+HUB_SETUP_DOC = DOCS / "hub-mode" / "setup.md"
+HISTORY_HEADING_RE = re.compile(r"^##\s+History\b", re.MULTILINE)
+
+#: Symbols and phrases EPIC-PM-5 removed. Matched case-insensitively, one line
+#: at a time, over the same swept files as check 1.
+REDESIGN_FORBIDDEN = [
+    r"\.project/projects",
+    r"push-all",
+    r"validate-branches",
+    r"pm_push_all",
+    r"pm_repair",
+    r"pm_validate_branches",
+    r"coordinated\s+push",
+]
+
+REDESIGN_FORBIDDEN_RES = [
+    re.compile(pattern, re.IGNORECASE) for pattern in REDESIGN_FORBIDDEN
+]
+
+#: ``pm_get("US-API-3", project="api")`` / ``pm_status(project?)`` — a
+#: ``project`` argument in the same line as a ``pm_`` tool. Deliberately *not* a
+#: bare ``project=``: ``src/projectman/web/routes/api.py`` still takes a
+#: ``?project=`` HTTP query parameter, which is a route parameter and not a tool
+#: argument, and a doc describing it accurately is not an offender.
+TOOL_PROJECT_ARG_RE = re.compile(r"pm_[a-z_]+\([^)]*\bproject\s*[=?]")
+
+
+def _history_line_span(path: Path) -> range:
+    """1-based line numbers of ``setup.md``'s History section, else empty."""
+    if path != HUB_SETUP_DOC:
+        return range(0)
+    text = path.read_text(encoding="utf-8")
+    match = HISTORY_HEADING_RE.search(text)
+    if not match:
+        return range(0)
+    first = text[: match.start()].count("\n") + 1
+    return range(first, text.count("\n") + 2)
+
+
+def test_no_doc_describes_the_removed_hub_surface():
+    """No swept line names a symbol EPIC-PM-5 removed.
+
+    Excludes ``docs/telemetry/`` (recorded measurements) and the History section
+    of ``docs/hub-mode/setup.md``, which may name retired commands as retired.
+    """
+    history = {
+        path: _history_line_span(path)
+        for path in _swept_files()
+        if path == HUB_SETUP_DOC
+    }
+    history_span = history.get(HUB_SETUP_DOC, range(0))
+
+    offenders = []
+    for relative, number, line in _swept_lines():
+        if relative == HUB_SETUP_DOC.relative_to(REPO_ROOT) and number in history_span:
+            continue
+        for pattern in REDESIGN_FORBIDDEN_RES:
+            if pattern.search(line):
+                offenders.append(f"{relative}:{number}: {line.strip()}")
+                break
+
+    assert not offenders, (
+        "EPIC-PM-5 removed the coordinated push, the repair command, the "
+        "branch-alignment check and the hub's `.project/projects` layout, but "
+        f"{len(offenders)} doc line(s) still name them:\n" + "\n".join(offenders)
+    )
+
+
+def test_no_doc_gives_a_pm_tool_a_project_argument():
+    """US-PM-34 dropped ``project`` from every tool; the prefix names the store."""
+    offenders = [
+        f"{relative}:{number}: {line.strip()}"
+        for relative, number, line in _swept_lines()
+        if TOOL_PROJECT_ARG_RE.search(line)
+    ]
+
+    assert not offenders, (
+        "no MCP tool takes a `project` argument since US-PM-34 — the ID prefix "
+        "names the store, and ID-less verbs take an optional `prefix` — but "
+        f"{len(offenders)} doc line(s) still show one:\n" + "\n".join(offenders)
+    )
+
+
+# ─── 7. US-PM-37-5 — ADR-003 records the redesign ─────
+
+DECISIONS = REPO_ROOT / ".project" / "DECISIONS.md"
+
+ADR3_HEADING = (
+    "## ADR-003: PM data lives with its code — the hub is a read-only rollup "
+    "(2026-09-06)"
+)
+
+
+def test_decisions_records_adr_003_with_its_alternatives():
+    """``.project/DECISIONS.md`` carries ADR-003, with an Alternatives section.
+
+    The heading text is pinned because ``docs/hub-mode/setup.md`` links into it,
+    and the Alternatives section is pinned because an ADR that records only the
+    decision loses the half that is worth keeping — why the other four designs
+    lost.
+    """
+    assert DECISIONS.exists(), f"{DECISIONS} is missing"
+    text = DECISIONS.read_text(encoding="utf-8")
+
+    assert ADR3_HEADING in text, (
+        "`.project/DECISIONS.md` has no ADR-003 heading reading exactly:\n"
+        f"  {ADR3_HEADING}\n"
+        "docs/hub-mode/setup.md links at that anchor."
+    )
+
+    start = text.index(ADR3_HEADING) + len(ADR3_HEADING)
+    following = re.search(r"^##\s+ADR-", text[start:], re.MULTILINE)
+    section = text[start : start + following.start()] if following else text[start:]
+
+    assert re.search(r"\*\*Alternatives\b", section), (
+        "ADR-003 has no **Alternatives** section — the designs that lost "
+        "(hub-store per-project data, the sibling repo per project, an optional "
+        "`project` argument beside the prefix, per-store epics with a hub "
+        "index, an opt-in coordinated push) are the record's point."
+    )
+
+    for heading in ("**Status:**", "**Context.**", "**Decision.**", "**Consequences"):
+        assert heading in section, f"ADR-003 is missing its {heading} section"
+
+
+def test_adr_003_is_newest_first():
+    """ADR-003 sits above ADR-002, keeping the file's stated newest-first order."""
+    text = DECISIONS.read_text(encoding="utf-8")
+    third = text.find("## ADR-003:")
+    second = text.find("## ADR-002:")
+    assert third != -1 and second != -1, "DECISIONS.md is missing ADR-002 or ADR-003"
+    assert third < second, (
+        "DECISIONS.md says 'Newest first' but ADR-003 was appended below ADR-002"
     )

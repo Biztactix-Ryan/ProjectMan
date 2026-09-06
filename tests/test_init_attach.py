@@ -359,7 +359,7 @@ class TestInitAttachEdgeCases:
         assert worktree_branch_for(clone, clone / ".project") == "refs/heads/projectman"
         assert store_files(clone) == expected
         # None of the hub scaffolding happened.
-        assert not (clone / ".project/projects").exists()
+        assert not (clone / "projects").exists()
         assert not (clone / ".project/VISION.md").exists()
 
     def test_hub_alone_attaches_and_builds_no_hub_scaffold(self, runner, clone):

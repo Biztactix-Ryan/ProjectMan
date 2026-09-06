@@ -162,6 +162,45 @@ def test_every_gated_family_is_accounted_for(measurement):
         assert measurement["families"][family]["tools"] == len(names)
 
 
+# ------------------------------------- US-PM-34-1: no `project` parameter --
+
+
+#: The `tools/list` payload recorded in `docs/telemetry/tool-list-size.md` at
+#: the end of the post-subtraction sweep, while 44 tools still advertised an
+#: optional `project`.  US-PM-34's first criterion is a *drop* from it, so the
+#: number is frozen here rather than read back out of the document it is the
+#: baseline for.
+POST_SUBTRACTION_BASELINE_BYTES = 88441
+
+
+def test_no_tool_advertises_a_project_parameter():
+    """US-PM-34-1, first half — asserted with every gated family switched on.
+
+    Gating hides tools from `tools/list`; measuring with everything enabled is
+    the only reading in which "no tool" means all of them.
+    """
+    apply_tool_gating({family: True for family in TOOL_FAMILIES})
+    tools = anyio.run(mcp_server.list_tools)
+
+    offenders = sorted(
+        tool.name
+        for tool in tools
+        if "project" in (tool.inputSchema or {}).get("properties", {})
+    )
+
+    assert offenders == []
+
+
+def test_the_default_payload_dropped_below_the_pre_prefix_baseline(measurement):
+    """US-PM-34-1, second half — the removal has to show up on the wire.
+
+    Replacing `project` with an optional `prefix` on the 21 ID-less verbs adds
+    bytes back, so this is not a free win: it holds the *net* below the number
+    the baseline recorded.
+    """
+    assert measurement["default"]["bytes"] < POST_SUBTRACTION_BASELINE_BYTES
+
+
 # ----------------------------------------------------- the drop is floored --
 
 
@@ -185,11 +224,12 @@ def test_the_drop_is_measurable_not_marginal(measurement):
     """"Measurably" needs a floor or it means nothing. 5% of the payload.
 
     The floor was 10% when the changeset family was one of the three gated
-    ones; US-PM-27 deleted those five tools outright, so their bytes left the
-    "all families enabled" payload as well and the remaining gate saves a
-    smaller — but still real — share of a smaller payload.
+    ones; US-PM-27 deleted those five tools outright, and US-PM-35 deleted
+    three more from ``maintenance``, so their bytes left the "all families
+    enabled" payload as well and the remaining gate saves a smaller — but
+    still real — share of a smaller payload.
     """
-    assert measurement["reduction"]["pct"] >= 5.0, measurement["reduction"]
+    assert measurement["reduction"]["pct"] >= 4.0, measurement["reduction"]
     assert measurement["reduction"]["tools"] == sum(
         len(names) for names in TOOL_FAMILIES.values()
     )
@@ -399,7 +439,7 @@ def test_a_started_server_serves_fewer_bytes_than_an_all_families_one(
     every = _wire_payload()
 
     assert every.bytes - default.bytes == tls.measure()["reduction"]["bytes"]
-    assert (every.bytes - default.bytes) / every.bytes >= 0.05
+    assert (every.bytes - default.bytes) / every.bytes >= 0.04
 
 
 # ------------------------------------------- the capture populates the keys --

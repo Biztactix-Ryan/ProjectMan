@@ -285,12 +285,11 @@ class ToolFlags(BaseModel):
     request (US-PM-15).  The functions are untouched and stay importable —
     only their MCP registration is conditional.
 
-    ``maintenance`` is the break-glass cluster — ``pm_repair``,
-    ``pm_restore``, ``pm_validate_branches``, ``pm_fix_malformed`` and
-    ``pm_push_all``.  These are human recovery tools, not agent work, and
-    every one has a ``projectman`` CLI equivalent, so hiding them from the
+    ``maintenance`` is the break-glass cluster — ``pm_restore`` and
+    ``pm_fix_malformed``.  These are human recovery tools, not agent work,
+    and both have a ``projectman`` CLI equivalent, so hiding them from the
     tool list costs nobody reach.  Plain ``bool``: no hub inference,
-    because a hub needs repairing no more routinely than a leaf repo does.
+    because a hub needs recovering no more routinely than a leaf repo does.
     """
 
     maintenance: bool = False

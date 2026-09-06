@@ -47,27 +47,30 @@ ProjectMan includes built-in git integration for committing and pushing `.projec
 /pm push                # push committed changes to remote
 ```
 
-In hub mode, you can scope commits and pushes:
+In hub mode, each command acts on exactly **one** store, named by its prefix.
+Omit the prefix and it is the hub's own store:
 
 ```
-/pm commit hub          # hub-level changes only
-/pm commit project:api  # specific subproject
-/pm commit all          # everything (default)
-/pm push hub            # push hub repo
-/pm push project:api    # push specific subproject
-/pm push all            # coordinated push: subprojects first, then hub
+/pm commit              # the hub's own store
+/pm commit API          # the API subproject's store, in API's own repo
+/pm push                # push the hub's own store branch
+/pm push API            # push API's store branch, on API's origin
 ```
 
-### Coordinated Push (Hub Mode)
+There is no `project` argument and no "all" — the prefix names the store.
 
-For multi-repo hubs, use coordinated push to safely push all dirty subprojects and the hub in the correct order:
+### Pulling a Hub Up to Date
+
+`projectman sync` is the one hub-wide git verb: it pulls every submodule and
+re-attaches any store whose worktree is missing.
 
 ```
-/pm push all            # auto-discovers dirty projects, pushes in order
-/pm push all --dry-run  # preview what would be pushed without executing
+/pm sync                # pull all submodules, re-mount missing stores
 ```
 
-This runs preflight validation, pushes subprojects first, then pushes the hub with auto-rebase on conflict.
+It never commits or pushes on a subproject's behalf. Advancing the hub's
+submodule refs stays a plain `git add` / `git commit` / `git push` you make
+yourself — see [hub-mode/git-workflow.md](../hub-mode/git-workflow.md).
 
 ### Auto-Commit
 
@@ -107,7 +110,7 @@ Write one before you clear context, and clear it once the work it describes is f
 - Update in-progress tasks with notes
 - `/pm-next <what we decided>` if you are stopping mid-thread — see [A Note to the Next Session](#a-note-to-the-next-session)
 - `/pm commit` to commit any uncommitted `.project/` changes
-- `/pm push` to sync with remote (or `/pm push all` in hub mode)
+- `/pm push` to send that store to its remote (add the prefix in a hub: `/pm push API`)
 - `/pm-status` for a final check — confirm nothing is left in-progress unexpectedly
 
 ## Quick Reference: Manual vs Automated Workflow
@@ -120,8 +123,8 @@ Write one before you clear context, and clear it once the work it describes is f
 | Commit PM data | `git add .project/ && git commit` | `/pm commit` (auto-generated message) |
 | Commit on every change | N/A | `auto_commit: true` in config |
 | Push single repo | `git push origin branch` | `/pm push` |
-| Push multi-repo hub | Push each repo manually in order | `/pm push all` (coordinated) |
-| Preview push | N/A | `/pm push all --dry-run` |
+| Push one store in a hub | `cd` to the repo, then `git push` | `/pm push API` (by prefix) |
+| Pull a hub up to date | `git submodule update --remote` per repo | `/pm sync` |
 | End-of-day sync | `git add . && git commit && git push` | `/pm commit` then `/pm push` |
 
 ## Web Dashboard

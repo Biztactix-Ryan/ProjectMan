@@ -27,6 +27,7 @@ be just as wrong and must fail these tests too.
 import yaml
 
 from projectman.indexer import build_index
+from conftest import make_hub_subproject
 
 
 # ─── Helpers ─────────────────────────────────────────────────────
@@ -67,39 +68,11 @@ def _mixed_project():
     pm_archive("US-TST-1-4")
 
 
-def _register_subproject(hub_root, name, prefix="SUB"):
-    """Set up a hub subproject with a source dir, PM data dir, and config entry."""
-    import yaml as _yaml
 
-    from projectman.config import load_config, save_config
-
-    (hub_root / "projects" / name).mkdir(parents=True, exist_ok=True)
-
-    pm_dir = hub_root / ".project" / "projects" / name
-    pm_dir.mkdir(parents=True, exist_ok=True)
-    for sub in ("stories", "tasks", "epics"):
-        (pm_dir / sub).mkdir(exist_ok=True)
-
-    with open(pm_dir / "config.yaml", "w") as f:
-        _yaml.dump(
-            {
-                "name": name,
-                "prefix": prefix,
-                "description": "",
-                "hub": False,
-                "next_story_id": 1,
-                "next_epic_id": 1,
-                "projects": [],
-            },
-            f,
-        )
-
-    hub_config = load_config(hub_root)
-    if name not in hub_config.projects:
-        hub_config.projects.append(name)
-        save_config(hub_config, hub_root)
-
-    return pm_dir
+#: Every hub subproject in the suite is built by the one conftest factory
+#: (US-PM-31-9), so ``projects/{name}/.project`` is spelled in exactly one
+#: place and a later layout change is a single edit.
+_register_subproject = make_hub_subproject
 
 
 # ─── Burndown arithmetic holds together ──────────────────────────

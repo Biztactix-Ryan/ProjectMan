@@ -354,7 +354,7 @@ class TestHubSubprojectOverride:
             yaml.dump(hub_config, f)
 
         # Create subproject directory structure
-        sub_dir = hub_root / ".project" / "projects" / "myapp"
+        sub_dir = hub_root / "projects" / "myapp" / ".project"
         sub_dir.mkdir(parents=True)
         (sub_dir / "stories").mkdir()
         (sub_dir / "tasks").mkdir()
@@ -388,7 +388,7 @@ class TestHubSubprojectOverride:
     def test_subproject_auto_commits_when_hub_does_not(self, hub_with_subproject):
         """Subproject with auto_commit=True creates commits even if hub is False."""
         hub_root = hub_with_subproject
-        sub_dir = hub_root / ".project" / "projects" / "myapp"
+        sub_dir = hub_root / "projects" / "myapp" / ".project"
 
         sub_store = Store(hub_root, project_dir=sub_dir)
 
@@ -415,7 +415,7 @@ class TestHubSubprojectOverride:
     def test_subproject_commit_contains_subproject_files(self, hub_with_subproject):
         """Auto-commit from subproject should include subproject files."""
         hub_root = hub_with_subproject
-        sub_dir = hub_root / ".project" / "projects" / "myapp"
+        sub_dir = hub_root / "projects" / "myapp" / ".project"
 
         sub_store = Store(hub_root, project_dir=sub_dir)
         sub_store.create_story("Feature", "Description")

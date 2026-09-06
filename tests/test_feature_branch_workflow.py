@@ -3,10 +3,12 @@
 Verifies acceptance criterion for story US-PRJ-7:
     > Subproject changes create feature branches not direct commits to deploy
 
-Uses real git repos with bare remotes to verify that:
-1. Changes are committed on a feature branch, not deploy (main)
-2. Pushing the feature branch does NOT update main on the remote
-3. Hub refs are only updated after all PRs merge (not on feature push)
+Uses real git repos with bare remotes to verify that changes are committed on
+a feature branch, not deploy (main).
+
+The cross-project push assertions that used to live here went with
+``push_subprojects`` and ``coordinated_push`` (US-PM-35-6): the hub no longer
+pushes on a subproject's behalf, so there is nothing hub-side left to assert.
 """
 
 import os
@@ -15,8 +17,6 @@ from pathlib import Path
 
 import pytest
 import yaml
-
-from projectman.hub.registry import push_subprojects, coordinated_push
 
 
 # ─── Helpers ──────────────────────────────────────────────────────
@@ -194,157 +194,3 @@ class TestFeatureBranchNotDirectDeploy:
             "main branch must not move when changes are on a feature branch"
         )
 
-    def test_push_feature_branch_does_not_update_remote_deploy(self, hub_with_deploy_branches):
-        """Pushing a feature branch to the remote leaves the remote's deploy branch untouched.
-
-        push_subprojects() pushes the current branch. When a subproject is on a
-        feature branch, only that feature branch is pushed — main on the remote
-        stays at its previous SHA.
-        """
-        hub = hub_with_deploy_branches["hub"]
-        api_bare = hub_with_deploy_branches["api_bare"]
-        api_sub = hub / "projects" / "api"
-
-        # Record remote deploy branch SHA
-        remote_main_before = _remote_sha(api_bare, "main")
-
-        # Create feature branch and commit
-        _git(["checkout", "-b", "feature/new-endpoint"], api_sub)
-        (api_sub / "endpoint.py").write_text("# new endpoint\n")
-        _git(["add", "."], api_sub)
-        _git(["commit", "-m", "api: new endpoint"], api_sub)
-        feature_sha = _sha(api_sub)
-
-        # Push using push_subprojects (pushes whatever branch subproject is on)
-        result = push_subprojects(["api"], root=hub)
-
-        assert result["all_ok"] is True
-        assert len(result["pushed"]) == 1
-        assert result["pushed"][0]["branch"] == "feature/new-endpoint"
-
-        # Feature branch exists on remote with the correct SHA
-        assert _remote_sha(api_bare, "feature/new-endpoint") == feature_sha
-
-        # Deploy branch on remote is UNCHANGED
-        assert _remote_sha(api_bare, "main") == remote_main_before, (
-            "remote main must not be updated by a feature branch push"
-        )
-
-    def test_multiple_subprojects_on_feature_branches(self, hub_with_deploy_branches):
-        """Multiple subprojects can each have feature branches without touching deploy.
-
-        When api and web both create feature branches, pushing them only creates
-        feature branches on their remotes — neither remote's main is affected.
-        """
-        hub = hub_with_deploy_branches["hub"]
-        api_bare = hub_with_deploy_branches["api_bare"]
-        web_bare = hub_with_deploy_branches["web_bare"]
-
-        api_main_before = _remote_sha(api_bare, "main")
-        web_main_before = _remote_sha(web_bare, "main")
-
-        # Create feature branches in both subprojects
-        for name, feature in [("api", "feature/auth"), ("web", "feature/auth-ui")]:
-            sub = hub / "projects" / name
-            _git(["checkout", "-b", feature], sub)
-            (sub / "feature.txt").write_text(f"{name} feature work\n")
-            _git(["add", "."], sub)
-            _git(["commit", "-m", f"{name}: feature work"], sub)
-
-        # Push both
-        result = push_subprojects(["api", "web"], root=hub)
-
-        assert result["all_ok"] is True
-        assert len(result["pushed"]) == 2
-
-        # Feature branches exist on remotes
-        assert _remote_branch_exists(api_bare, "feature/auth")
-        assert _remote_branch_exists(web_bare, "feature/auth-ui")
-
-        # Deploy branches on both remotes are UNCHANGED
-        assert _remote_sha(api_bare, "main") == api_main_before
-        assert _remote_sha(web_bare, "main") == web_main_before
-
-    def test_coordinated_push_rejects_direct_to_deploy_when_misaligned(
-        self, hub_with_deploy_branches
-    ):
-        """coordinated_push rejects when submodule is on wrong branch.
-
-        When tracking branches are configured (e.g., main), and a subproject
-        is on a feature branch, coordinated_push (scope=all) rejects the push.
-        This prevents accidentally pushing feature work directly into the deploy
-        workflow — the correct path is push_subprojects for the feature branch,
-        then PR, then merge.
-        """
-        hub = hub_with_deploy_branches["hub"]
-        api_bare = hub_with_deploy_branches["api_bare"]
-        hub_bare = hub_with_deploy_branches["hub_bare"]
-
-        api_remote_before = _remote_sha(api_bare, "main")
-        hub_remote_before = _remote_sha(hub_bare, "main")
-
-        # Put api on a feature branch (misaligned with tracked branch 'main')
-        api_sub = hub / "projects" / "api"
-        _git(["checkout", "-b", "feature/experiment"], api_sub)
-        (api_sub / "experiment.py").write_text("# experiment\n")
-        _git(["add", "."], api_sub)
-        _git(["commit", "-m", "api: experiment"], api_sub)
-
-        # coordinated_push should reject this (branch misalignment)
-        result = coordinated_push(root=hub)
-
-        assert result["pushed"] is False
-        # The preflight report indicates the branch mismatch
-        report = result.get("report", "") + result.get("error", "")
-        assert "branch mismatch" in report.lower() or "preflight failed" in report.lower(), (
-            f"expected branch mismatch rejection, got: {report}"
-        )
-
-        # Neither remote should have been updated
-        assert _remote_sha(api_bare, "main") == api_remote_before
-        assert _remote_sha(hub_bare, "main") == hub_remote_before
-
-    def test_feature_branch_push_then_deploy_stays_clean(self, hub_with_deploy_branches):
-        """Full workflow: feature branch push leaves deploy clean for PR-based merge.
-
-        Simulates the intended workflow:
-        1. Create feature branch in subproject
-        2. Commit changes
-        3. Push feature branch to remote
-        4. Verify: deploy branch on remote is completely untouched
-        5. Verify: feature branch on remote has the changes
-        """
-        hub = hub_with_deploy_branches["hub"]
-        api_bare = hub_with_deploy_branches["api_bare"]
-        api_sub = hub / "projects" / "api"
-
-        # Snapshot the deploy branch
-        deploy_sha = _remote_sha(api_bare, "main")
-
-        # 1. Create feature branch
-        _git(["checkout", "-b", "feature/user-profiles"], api_sub)
-        assert _branch(api_sub) == "feature/user-profiles"
-
-        # 2. Make multiple commits on the feature branch
-        (api_sub / "profiles.py").write_text("class UserProfile: pass\n")
-        _git(["add", "."], api_sub)
-        _git(["commit", "-m", "api: add user profile model"], api_sub)
-
-        (api_sub / "profiles_api.py").write_text("def get_profile(): ...\n")
-        _git(["add", "."], api_sub)
-        _git(["commit", "-m", "api: add profile endpoint"], api_sub)
-
-        feature_tip = _sha(api_sub)
-
-        # 3. Push feature branch
-        result = push_subprojects(["api"], root=hub)
-        assert result["all_ok"] is True
-        assert result["pushed"][0]["branch"] == "feature/user-profiles"
-
-        # 4. Deploy branch is untouched
-        assert _remote_sha(api_bare, "main") == deploy_sha, (
-            "deploy branch must remain clean — changes only arrive via PR merge"
-        )
-
-        # 5. Feature branch has all commits
-        assert _remote_sha(api_bare, "feature/user-profiles") == feature_tip

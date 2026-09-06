@@ -10,6 +10,8 @@ This directory holds **measurements**, not code. The code is
 | `baseline-pre-fix.md` | human summary of the same capture: provenance, headline numbers, busiest tools. |
 | `baseline-post-subtraction.json` | the machine-readable **post-subtraction baseline** (US-PM-30), captured after Sprints 1-8. Same extractor, same schema, same `capture` command as the pre-fix file. Do not overwrite it either. |
 | `baseline-post-subtraction.md` | human summary of that capture **plus the comparison against pre-fix**: calls per task, context per worker, and the `BULK_RUN_TOOLS` longest-run metrics. Also records why the two corpora turned out to be disjoint rather than nested, and the `git.dirty: true` provenance caveat. |
+| `baseline-windowed-post-fix.json` | the machine-readable **windowed post-fix baseline** (US-PM-32), captured with `--since` so that only sessions started after the last observed pre-US-PM-1 note rejection are counted. Same extractor, same schema, same `capture` command as the other two. Do not overwrite it either. |
+| [`baseline-windowed-post-fix.md`](baseline-windowed-post-fix.md) | human summary of that capture **plus the three-way comparison** against `baseline-pre-fix` and `baseline-post-subtraction`, and a **holds / does not hold / inconclusive** verdict on each Sprint 1-9 claim once pre-fix sessions are excluded. Also records why `--since auto` could not resolve on this corpus, and the `git.dirty: true` provenance caveat. |
 | `tool-list-size.md` | the US-PM-15-7 **tool-list payload measurement**: `tools/list` bytes with and without the gated tool families, per family, plus the command that regenerates it. Not a corpus measurement -- it describes the schema surface the server offers, so it is regenerated on demand rather than pinned. |
 
 ## What a baseline is
@@ -31,6 +33,8 @@ a `provenance` block:
     "matched_calls": 3416,
     "unmatched_calls": 0,
     "match_rate": 1.0,         // the call→result join rate; distrust anything below ~1.0
+    "window_since": null,      // --since cutoff, or null for a whole-corpus capture
+    "sessions_excluded": null, // sessions the window left out; null when there is no window
     "git": { "repo": ".", "commit": "…", "branch": "…", "dirty": true },
     "corpus_is_live": true
   },
@@ -68,7 +72,7 @@ proceeds. Consequences:
    pre-fix history plus everything since, so post-fix improvements are *diluted*.
    The true post-fix rate is better than a whole-corpus re-capture will show. To
    see the undiluted number, scope the capture to a fresh corpus subtree with
-   `--root`.
+   `--root`, or window it in time with `--since` (below).
 3. The baseline is a snapshot at a stated instant, not a fixed dataset.
 4. **The corpus also shrinks at the far end.** Transcripts age out of
    `~/.claude/projects`, so point 2 stops holding once enough time passes: the
@@ -97,10 +101,77 @@ Writes `<name>.json` and `<name>.md`. Useful flags:
 | `--prefix P` | analyse a different tool prefix (`''` for all tools) |
 | `--min-match-rate R` | **refuse to capture** below this call→result join rate — a partial join silently invalidates every downstream number |
 | `--repo DIR` | which repo's commit is recorded (default: cwd) |
+| `--since WHEN` | count only sessions that started at or after `WHEN` — see below |
 | `--stdout` | print the JSON, write nothing |
 
-Exit codes: `0` ok, `1` join rate below `--min-match-rate`, `2` no matching calls
-found (empty corpus). A failed capture writes no artifact.
+Exit codes: `0` ok, `1` the capture was **refused** (join rate below
+`--min-match-rate`, or `--since` could not be resolved), `2` no matching calls
+found (empty corpus, or a window that excluded everything). A failed capture
+writes no artifact.
+
+## Windowing a capture — `--since`
+
+`--root` narrows the corpus by *directory*. `--since` narrows it by *time*:
+
+```sh
+# an explicit cutoff — a date, or a full ISO-8601 timestamp
+python -m tools.usage_telemetry.baseline capture --since 2026-08-21
+python -m tools.usage_telemetry.baseline capture --since 2026-08-21T14:03:00Z
+
+# derive the cutoff from the corpus instead of guessing it
+python -m tools.usage_telemetry.baseline capture \
+    --since auto \
+    --name baseline-windowed-post-fix --label windowed-post-fix
+```
+
+Why it exists (US-PM-32): the corpus mixes months of sessions run against
+different server code. `baseline-post-subtraction` found **906 of its 941 soft
+errors** were one defect — `pm_update` rejecting a run-log note over 1024
+characters — that US-PM-1 fixed in Sprint 3. Reading a whole-corpus failure rate
+as "how ProjectMan behaves now" therefore measures code that no longer exists.
+
+How it filters:
+
+- The unit is a **session** (one transcript file), and a session is included only
+  when its **first** timestamp is at or after the cutoff. Filtering is never
+  per call: calls-per-session, run lengths and bigrams are statements about a
+  whole transcript, and half a transcript is not a sample of anything. A late
+  call inside an early session is excluded with the rest of that session.
+- The boundary is **inclusive** — a session starting exactly at the cutoff is in.
+- A session with no parseable timestamp is **excluded**. It cannot be shown to be
+  inside the window, and the window exists to be able to say that everything
+  counted is.
+- A naive timestamp (`2026-08-21`, `2026-08-21T14:03:00`) is read as UTC.
+- `transcript_files` counts only the windowed transcripts, so the corpus block
+  describes the window rather than the tree it was carved from.
+- `--min-match-rate` is checked against the **whole** scan, before the window is
+  applied: a broken call→result join is a property of the extractor and the
+  corpus, and a window must not be able to hide one.
+
+`--since auto` derives the cutoff from evidence rather than from a date someone
+remembers. It finds the earliest session whose response carries the post-US-PM-1
+`note_truncated: true` field, and uses **that session's start**, so the session
+supplying the evidence is itself inside its own window. Two false positives are
+deliberately excluded: the field is read only from the tools that can emit it
+(`baseline.NOTE_TRUNCATION_TOOLS` — `pm_update`, `pm_update_many`,
+`pm_done_next`, `pm_release`, `pm_accept`, `pm_retry`), and it must appear as a
+field (`note_truncated: true`), not as prose. Task bodies in this repo name the
+flag, and they come back through `pm_get` and `pm_update` responses; a substring
+match would date the window to whenever one of them was last read.
+
+If **no** session carries the signature, `--since auto` exits `1` with an error
+and writes nothing. It never falls back to a full capture — a whole-corpus
+capture published under a windowed name is the exact mistake this flag exists to
+prevent.
+
+The window is recorded in provenance as `window_since` and `sessions_excluded`,
+and the generated markdown gains a *This capture is windowed* section. Both are
+`null` for an unwindowed capture — `0` would claim a window was applied and
+happened to match everything.
+
+**A windowed capture is not comparable to an unwindowed one on absolute counts.**
+It is a smaller corpus by construction. `compare` will happily diff the two;
+read the `*_rate_pct` rows and the two `window_since` values together.
 
 ## Compare
 

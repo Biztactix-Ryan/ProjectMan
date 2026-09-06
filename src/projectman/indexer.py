@@ -9,6 +9,26 @@ import yaml
 from .models import IndexEntry, ProjectIndex, is_archived
 from .store import Store
 
+#: The five files ``write_index`` derives from the item files.  Nothing in a
+#: store is the source of truth for them — every byte is recomputed from the
+#: epics, stories and tasks — so new stores do not track them; see
+#: :func:`write_store_gitignore` and ``docs/reference/file-formats.md``.
+DERIVED_INDEX_FILES = (
+    "index.yaml",
+    "INDEX.md",
+    "INDEX-EPICS.md",
+    "INDEX-STORIES.md",
+    "INDEX-TASKS.md",
+)
+
+_GITIGNORE_HEADER = (
+    "# Derived index files — regenerated from the epic, story and task files\n"
+    "# by pm_reindex, pm_commit, `projectman reindex` and indexer.ensure_fresh\n"
+    "# on the read path, so git never needs to carry them (US-PM-29).\n"
+    "# The patterns are unanchored: a hub's subproject stores under projects/\n"
+    "# are covered by this one file.\n"
+)
+
 _STATUS_EMOJI = {
     "backlog": "\U0001f4cb",  # clipboard
     "draft": "\U0001f4dd",  # memo
@@ -279,7 +299,9 @@ def _discover_badges(root: Path, name: str, repo: str) -> list[str]:
     """Scan projects/{name}/.github/workflows/ for workflow files and return badge markdown."""
     if not repo:
         return []
-    workflows_dir = root / "projects" / name / ".github" / "workflows"
+    from .hub.stores import subproject_path
+
+    workflows_dir = subproject_path(root, name) / ".github" / "workflows"
     if not workflows_dir.is_dir():
         return []
     badges = []
@@ -387,3 +409,95 @@ def write_index(store: Store) -> None:
     with open(index_path, "w") as f:
         yaml.dump(data, f, default_flow_style=False, sort_keys=False)
     write_markdown_indexes(store, epics=epics, stories=stories, tasks=tasks)
+
+
+def write_store_gitignore(project_dir: Path) -> Path:
+    """Ensure ``{project_dir}/.gitignore`` excludes the derived index files.
+
+    Called when a store is scaffolded (``projectman init`` and the hub's
+    subproject initialiser).  The five files in
+    :data:`DERIVED_INDEX_FILES` are a rendering of the item files beside
+    them, so tracking them buys nothing and costs on every write: the item
+    change and its index echo land in the same commit, a one-task edit
+    reads as four changed files instead of two, ``index.yaml`` is a
+    guaranteed conflict for any two branches that touched different tasks,
+    and a plain *read* through ``ensure_fresh`` can dirty the tree.  The
+    numbers behind that decision are in ``docs/reference/file-formats.md``.
+
+    Idempotent, and additive rather than destructive: an existing
+    ``.gitignore`` keeps every line it has and gains only the derived names
+    it is missing, so a store that ignores other things too is safe to
+    re-scaffold.  Returns the path written.
+    """
+    path = project_dir / ".gitignore"
+    existing = path.read_text() if path.exists() else ""
+    present = {line.strip() for line in existing.splitlines()}
+    missing = [name for name in DERIVED_INDEX_FILES if name not in present]
+    if not missing:
+        return path
+
+    if not existing:
+        path.write_text(_GITIGNORE_HEADER + "\n".join(missing) + "\n")
+        return path
+
+    prefix = existing if existing.endswith("\n") else existing + "\n"
+    path.write_text(prefix + "\n" + _GITIGNORE_HEADER + "\n".join(missing) + "\n")
+    return path
+
+
+def _newest_item_mtime_ns(store: Store) -> Optional[int]:
+    """Modification time of the most recently written epic, story or task file.
+
+    ``None`` when the project holds no item files at all: nothing can have
+    outrun the index, so there is nothing to be stale against.
+    """
+    newest: Optional[int] = None
+    for directory in (store.epics_dir, store.stories_dir, store.tasks_dir):
+        if not directory.is_dir():
+            continue
+        for path in directory.glob("*.md"):
+            try:
+                mtime = path.stat().st_mtime_ns
+            except OSError:  # vanished mid-scan; the next read will catch it
+                continue
+            if newest is None or mtime > newest:
+                newest = mtime
+    return newest
+
+
+def index_is_stale(store: Store) -> bool:
+    """True when ``index.yaml`` is missing, or older than the newest item file.
+
+    The comparison is strict: ``write_index`` writes ``index.yaml`` *after*
+    reading the item files, so a fresh index always carries the later
+    timestamp, and equality means "written together", not "behind".
+    """
+    try:
+        index_mtime = (store.project_dir / "index.yaml").stat().st_mtime_ns
+    except OSError:
+        # No index at all (or unreadable) — a reader has nothing to serve.
+        return True
+    newest = _newest_item_mtime_ns(store)
+    return newest is not None and newest > index_mtime
+
+
+def ensure_fresh(store: Store) -> bool:
+    """Rebuild the derived index files when they have fallen behind the items.
+
+    Mutating tools no longer rewrite the indexes (story US-PM-29): the five
+    derived files are only as current as the last ``pm_reindex``,
+    ``pm_commit`` or ``projectman reindex``.  Any reader that serves numbers
+    out of ``index.yaml`` rather than out of the ``Store`` must therefore
+    check before it reads, and this is that check — a stat of the item files
+    against ``index.yaml``, and a full rebuild only when the items have moved
+    on.
+
+    Returns True if a rebuild happened.  Cheap and side-effect free when the
+    index is already current, so it is safe on a read path.
+    """
+    if not store.project_dir.is_dir():
+        return False
+    if not index_is_stale(store):
+        return False
+    write_index(store)
+    return True

@@ -9,8 +9,11 @@ Closes three of US-PM-2's acceptance criteria:
 ``docs/reference/error-paths-inventory.md`` classifies 141 error-return sites,
 of which 86 are GENUINE FAILURE and MCP-reachable: 45 generic
 ``except Exception as e: return f"error: {e}"`` handlers, 14 explicit
-``server.py`` sites, and 27 in ``hub/registry.py`` reached through three call
-sites.  All of them now raise.
+``server.py`` sites, and 27 in ``hub/registry.py``.  All of them now raise.
+(The hub-guard unit tests that used to sit here went with US-PM-35-7: no MCP
+tool reaches ``registry.py``'s in-band error shapes any more — ``pm_commit``
+and ``pm_push`` raise coded errors like every other store operation, so
+``_raise_on_hub_error`` was deleted rather than left as dead code.)
 
 The mechanism is ``mcp.server.fastmcp.exceptions.ToolError``.  FastMCP wraps
 anything raised out of a tool body (``Tool.run``) and the low-level server
@@ -42,7 +45,7 @@ SERVER_PY = Path(__file__).resolve().parents[1] / "src" / "projectman" / "server
 
 #: The maintenance and web families are hidden from ``tools/list`` by default
 #: (US-PM-15-5).  What this file proves is a property of every tool's failure paths,
-#: ``pm_repair``'s among them, so it sweeps the full surface.  ``tests/test_tool_gating.py`` asserts the gate itself.
+#: the hidden ones among them, so it sweeps the full surface.  ``tests/test_tool_gating.py`` asserts the gate itself.
 pytestmark = pytest.mark.usefixtures("all_tool_families")
 
 
@@ -75,7 +78,7 @@ def test_config_not_found_raises(tmp_path_factory, monkeypatch):
     """Config-not-found — the highest-volume live genuine failure (observed x8).
 
     Reaches the caller through the generic handlers on pm_status / pm_docs /
-    pm_repair / pm_list_sprints (inventory 2, 5.5).  Asserted on the real
+    pm_list_sprints (inventory 2, 5.5).  Asserted on the real
     ``find_project_root`` failure, not a mock, so the whole path is exercised.
     """
     from projectman.server import pm_status
@@ -171,72 +174,6 @@ def test_mutation_on_absent_malformed_file_raises(tmp_project, monkeypatch):
 
 
 # --------------------------------------------------------------------------
-# The hub call-site guards — 27 registry.py sites, 3 call sites.
-# --------------------------------------------------------------------------
-
-
-def test_hub_guard_converts_registrys_three_error_shapes():
-    """Inventory 4: the guard covers exactly the shapes registry.py produces.
-
-    ``registry.py`` keeps its in-band error contract because the CLI depends on
-    it; the conversion happens at the MCP boundary.  This asserts the guard
-    recognises all three shapes and passes everything else through untouched.
-    """
-    from projectman.server import _raise_on_hub_error
-
-    # 1. repair() returns a bare string.
-    with pytest.raises(ToolError) as excinfo:
-        _raise_on_hub_error("error: not a hub project — run 'projectman init --hub'")
-    assert str(excinfo.value).startswith("not a hub project")
-
-    # 2. registry.pm_push folds push_hub / hub_push_with_rebase /
-    #    _push_subproject errors into a top-level "error" key.
-    with pytest.raises(ToolError) as excinfo:
-        _raise_on_hub_error({"pushed": False, "error": "push failed: remote hung up"})
-    assert str(excinfo.value) == "push failed: remote hung up"
-
-    # 3. coordinated_push carries them in "report" and "hub_result".
-    with pytest.raises(ToolError):
-        _raise_on_hub_error({"pushed": False, "report": "error: not a hub project"})
-    with pytest.raises(ToolError) as excinfo:
-        _raise_on_hub_error(
-            {"pushed": False, "hub_result": {"error": "push rejected after max retries"}}
-        )
-    assert str(excinfo.value) == "push rejected after max retries"
-
-
-def test_hub_guard_passes_successes_and_partials_through():
-    """The guard must not manufacture failures.
-
-    A subproject failing while the hub push succeeds is a genuine *partial
-    success*; raising would throw away the projects that did push.  Same
-    reasoning the inventory applies to multi-id results in 7.2.
-    """
-    from projectman.server import _raise_on_hub_error
-
-    ok = {"pushed": True, "scope": "hub", "error": None}
-    assert _raise_on_hub_error(ok) is ok
-    assert _raise_on_hub_error("repaired 3 projects") == "repaired 3 projects"
-
-    partial = {
-        "pushed": True,
-        "hub_result": {"pushed": True, "error": None},
-        "sub_result": [{"pushed": False, "error": "push failed"}],
-    }
-    assert _raise_on_hub_error(partial) is partial
-
-
-def test_pm_repair_outside_a_hub_raises(tmp_project, monkeypatch):
-    """A hub-only tool called in a non-hub repo (inventory 3.3)."""
-    _in_project(tmp_project, monkeypatch)
-    from projectman.server import pm_repair
-
-    with pytest.raises(ToolError) as excinfo:
-        pm_repair()
-    assert "not a hub project" in str(excinfo.value)
-
-
-# --------------------------------------------------------------------------
 # Whole-surface checks — the acceptance criteria, asserted directly.
 # --------------------------------------------------------------------------
 
@@ -292,7 +229,6 @@ def _failing_calls(tmp_project):
         pm_get,
         pm_get_sprint,
         pm_grab,
-        pm_repair,
         pm_restore,
         pm_scope,
         pm_update,
@@ -311,7 +247,6 @@ def _failing_calls(tmp_project):
         ("pm_docs unknown name", pm_docs, ("nonsense",)),
         ("pm_update_doc unknown name", pm_update_doc, ("nonsense", "x")),
         ("pm_restore absent file", pm_restore, ("GHOST-1.md",)),
-        ("pm_repair not a hub", pm_repair, ()),
     ]
 
 

@@ -1,6 +1,7 @@
 """Project audit — drift detection and consistency checks."""
 
 import hashlib
+import os
 import re
 from datetime import date, timedelta
 from pathlib import Path
@@ -160,7 +161,9 @@ def unchanged_report(root: Path, project_dir: Optional[Path], digest: str) -> st
     return "\n".join(lines) + "\n"
 
 
-def check_completions_without_evidence(store: Store) -> list[dict]:
+def check_completions_without_evidence(
+    store: Store, done_tasks: Optional[list] = None
+) -> list[dict]:
     """Find ``done`` tasks whose run log proves nothing (US-PM-9-8).
 
     A completion without evidence is a task with ``status == done`` whose run
@@ -192,10 +195,18 @@ def check_completions_without_evidence(store: Store) -> list[dict]:
     orchestrator on every existing project (this repo alone has ~330 such
     tasks).  Firing broadly on legacy completions is expected, and is exactly
     why it is a warning.
+
+    *done_tasks* is the already-filtered list of live done tasks — what
+    ``list_tasks(status="done", archived=False)`` would return — so
+    ``run_audit`` can hand over the snapshot it loaded once (US-PRJ-42)
+    instead of making this the sixteenth list call.  ``None`` loads it here,
+    which is what a standalone caller wants.
     """
+    if done_tasks is None:
+        done_tasks = store.list_tasks(status="done", archived=False)
     offenders = [
         task.id
-        for task in store.list_tasks(status="done", archived=False)
+        for task in done_tasks
         # limit=1: existence probe, not a fetch — see docstring.
         if not store.get_run_log(task.id, limit=1, has_evidence=True)
     ]
@@ -212,16 +223,110 @@ def check_completions_without_evidence(store: Store) -> list[dict]:
     }]
 
 
+# ── Documentation checks (US-PRJ-42-6) ───────────────────────────────────
+#
+# The project docs (PROJECT/INFRASTRUCTURE/SECURITY.md) and the hub docs
+# (VISION/ARCHITECTURE/DECISIONS.md) were each testing "is this still the
+# template?" with their own copy of the same line filter, and each doing its
+# own mtime arithmetic.  Both now go through ``_content_lines``; the project
+# docs' whole check lives in ``_check_documentation``.
+#
+# The two filters are NOT identical and must not be merged: the templates for
+# the project docs end in a ``*Last reviewed: …*`` / ``*Update this …*``
+# footer that the hub templates do not have, so only the project filter drops
+# those lines.  Folding them together would change which files read as
+# unfilled, which is a behaviour change, not a cleanup.
+_DOC_SKIP_PREFIXES = ("#", "<!--", "-->", "---", "|")
+_PROJECT_DOC_SKIP_PREFIXES = _DOC_SKIP_PREFIXES + ("*Last reviewed", "*Update this")
+
+# A doc with fewer real content lines than this is treated as an unfilled
+# template (a heading-and-boilerplate skeleton).
+_UNFILLED_DOC_MAX_LINES = 3
+
+# Days since last modification before a doc is reported as stale.
+_STALE_DOC_DAYS = 30
+
+
+def _content_lines(
+    text: str,
+    skip_prefixes: tuple[str, ...] = _PROJECT_DOC_SKIP_PREFIXES,
+) -> list[str]:
+    """Real content lines of a doc — headings, comments and boilerplate dropped.
+
+    Used to tell a filled-in doc from an untouched template: what is left after
+    stripping headings, HTML comment delimiters, rules, table rows and the
+    template footer is the prose someone actually wrote.
+    """
+    stripped = (line.strip() for line in text.splitlines())
+    return [
+        line for line in stripped
+        if line and not line.startswith(skip_prefixes)
+    ]
+
+
+def _check_documentation(
+    project_dir: Path,
+    doc_files: dict[str, list[str]],
+    today: date,
+) -> list[dict]:
+    """Missing / unfilled / stale checks over the project's six-doc context.
+
+    *doc_files* maps a doc filename to its required sections (kept for the
+    caller's own documentation of what each doc should contain; section
+    presence is not asserted here).  *today* anchors the staleness arithmetic
+    so callers and tests share one clock.
+    """
+    findings: list[dict] = []
+    for doc_name in doc_files:
+        doc_path = project_dir / doc_name
+        if not doc_path.exists():
+            findings.append({
+                "severity": "error",
+                "check": "missing-documentation",
+                "message": f"{doc_name} is missing from .project/",
+                "items": [doc_name],
+            })
+            continue
+
+        if len(_content_lines(doc_path.read_text())) < _UNFILLED_DOC_MAX_LINES:
+            findings.append({
+                "severity": "warning",
+                "check": "unfilled-documentation",
+                "message": f"{doc_name} appears to be an unfilled template — needs real content",
+                "items": [doc_name],
+            })
+
+        mtime = date.fromtimestamp(os.path.getmtime(doc_path))
+        age_days = (today - mtime).days
+        if age_days > _STALE_DOC_DAYS:
+            findings.append({
+                "severity": "info",
+                "check": "stale-documentation",
+                "message": f"{doc_name} hasn't been updated in {age_days} days",
+                "items": [doc_name],
+            })
+    return findings
+
+
 def run_audit(
     root: Path,
     project_dir: Optional[Path] = None,
     include_info: bool = True,
     since: Optional[str] = None,
+    known_epic_ids: Optional[set[str]] = None,
 ) -> str:
     """Run all audit checks and generate a report. Also writes DRIFT.md.
 
     When *project_dir* is given (hub subproject), the Store is rooted at
     *root* but reads PM data from *project_dir* instead of ``root/.project/``.
+
+    *known_epic_ids* names epics that exist somewhere this store cannot see —
+    in practice the hub's own epics when auditing a subproject, since epics are
+    hub-level (US-PM-36).  It is unioned with the store's own epic IDs for the
+    orphaned-epic-reference check and used nowhere else, so a story that
+    legitimately links up to a hub epic is not reported as dangling.  It is
+    deliberately *not* part of the state digest: it can only ever suppress a
+    warning, never produce one, so a stale digest cannot hide a new finding.
 
     When *include_info* is False, info-level findings are omitted from the
     returned report (summarized as a count); DRIFT.md always gets the full report.
@@ -255,9 +360,58 @@ def run_audit(
     store = Store(root, project_dir=project_dir) if project_dir else Store(root)
     findings = []
 
+    # ── The snapshot every check below reads (US-PRJ-42) ──────────────────
+    #
+    # One read per collection, up front, and every check works off these
+    # lists.  The checks used to each go back to the Store — three separate
+    # ``list_stories()`` calls, a ``list_tasks(story_id=...)`` per story, a
+    # ``get_story``/``get_task`` per item — which is an N+1 whose cost grows
+    # with the backlog even though every one of those calls returns the same
+    # data within a single audit.
+    #
+    # The filtered views below are built to be *exactly* what the Store's own
+    # filters return, so the findings and their order are unchanged:
+    #   * ``list_stories()`` / ``list_epics()`` exclude archived items (they
+    #     are not in the cache at all), so the snapshots do too;
+    #   * ``list_tasks()`` includes archived tasks — the checks that must not
+    #     see them filter explicitly, as they always did;
+    #   * every view preserves the source list's order, which is the
+    #     filename sort the Store hands back, so DRIFT.md does not churn.
+    #
+    # Bodies come from the ``*_with_bodies`` reads rather than a ``get_*``
+    # per item: ``get_story``/``get_task`` are linear scans of the cache, so
+    # the old per-item loop was quadratic on top of being repetitive.
+    story_entries = store.list_stories_with_bodies()
+    task_entries = store.list_tasks_with_bodies()
+    all_stories = [meta for meta, _ in story_entries]
+    all_tasks = [meta for meta, _ in task_entries]
+    all_epics = store.list_epics()
+    story_bodies = {meta.id: body for meta, body in story_entries}
+    task_bodies = {meta.id: body for meta, body in task_entries}
+
+    tasks_by_story: dict[str, list] = {}
+    for task in all_tasks:
+        # ``list_tasks(story_id=...)`` matches on a truthy story_id, so a task
+        # with none belonged to no story there either.
+        if task.story_id:
+            tasks_by_story.setdefault(task.story_id, []).append(task)
+    stories_by_epic: dict[str, list] = {}
+    for story in all_stories:
+        if story.epic_id:
+            stories_by_epic.setdefault(story.epic_id, []).append(story)
+
+    stories_done = [s for s in all_stories if s.status.value == "done"]
+    tasks_in_progress = [t for t in all_tasks if t.status.value == "in-progress"]
+    tasks_done_live = [
+        t for t in all_tasks if t.status.value == "done" and t.archived is False
+    ]
+    epics_active = [e for e in all_epics if e.status.value == "active"]
+    epics_done = [e for e in all_epics if e.status.value == "done"]
+    epics_draft = [e for e in all_epics if e.status.value == "draft"]
+
     # Check 1: Done stories with incomplete tasks
-    for story in store.list_stories(status="done"):
-        tasks = store.list_tasks(story_id=story.id)
+    for story in stories_done:
+        tasks = tasks_by_story.get(story.id, [])
         # An archived task is abandoned, not outstanding — it must not be
         # reported as work the done story still owes.  Archival used to write
         # "done", which excluded it here as a side effect (US-PM-16).
@@ -271,9 +425,9 @@ def run_audit(
             })
 
     # Check 2: Undecomposed stories (active/ready stories with no tasks)
-    for story in store.list_stories():
+    for story in all_stories:
         if story.status.value in ("active", "ready"):
-            tasks = store.list_tasks(story_id=story.id)
+            tasks = tasks_by_story.get(story.id, [])
             if not tasks:
                 findings.append({
                     "severity": "warning",
@@ -284,7 +438,7 @@ def run_audit(
 
     # Check 3: Stale in-progress items (>14 days)
     stale_threshold = date.today() - timedelta(days=14)
-    for task in store.list_tasks(status="in-progress"):
+    for task in tasks_in_progress:
         if task.updated < stale_threshold:
             days = (date.today() - task.updated).days
             findings.append({
@@ -295,9 +449,9 @@ def run_audit(
             })
 
     # Check 4: Point mismatches (story points != sum of task points)
-    for story in store.list_stories():
+    for story in all_stories:
         if story.points:
-            tasks = store.list_tasks(story_id=story.id)
+            tasks = tasks_by_story.get(story.id, [])
             task_points = sum(t.points or 0 for t in tasks)
             if tasks and task_points > 0 and task_points != story.points:
                 findings.append({
@@ -308,8 +462,8 @@ def run_audit(
                 })
 
     # Check 5: Thin descriptions (body < 20 chars)
-    for story in store.list_stories():
-        _, body = store.get_story(story.id)
+    for story in all_stories:
+        body = story_bodies[story.id]
         if len(body.strip()) < 20:
             findings.append({
                 "severity": "info",
@@ -318,8 +472,8 @@ def run_audit(
                 "items": [story.id],
             })
 
-    for task in store.list_tasks():
-        _, body = store.get_task(task.id)
+    for task in all_tasks:
+        body = task_bodies[task.id]
         if len(body.strip()) < 20:
             findings.append({
                 "severity": "info",
@@ -329,7 +483,7 @@ def run_audit(
             })
 
     # Check 6: Active/ready stories missing acceptance criteria
-    for story in store.list_stories():
+    for story in all_stories:
         if story.status.value in ("active", "ready"):
             if not story.acceptance_criteria:
                 findings.append({
@@ -345,52 +499,11 @@ def run_audit(
         "INFRASTRUCTURE.md": ["## Environments", "## CI/CD"],
         "SECURITY.md": ["## Authentication", "## Authorization", "## Known Risks"],
     }
-    for doc_name, required_sections in doc_files.items():
-        doc_path = store.project_dir / doc_name
-        if not doc_path.exists():
-            findings.append({
-                "severity": "error",
-                "check": "missing-documentation",
-                "message": f"{doc_name} is missing from .project/",
-                "items": [doc_name],
-            })
-            continue
-
-        content = doc_path.read_text()
-
-        # Check for unfilled template (only HTML comments, no real content)
-        lines = [l.strip() for l in content.splitlines()
-                 if l.strip() and not l.strip().startswith("#")
-                 and not l.strip().startswith("<!--")
-                 and not l.strip().startswith("-->")
-                 and not l.strip().startswith("*Last reviewed")
-                 and not l.strip().startswith("*Update this")
-                 and not l.strip().startswith("---")
-                 and not l.strip().startswith("|")
-                 and l.strip() != "|"]
-        if len(lines) < 3:
-            findings.append({
-                "severity": "warning",
-                "check": "unfilled-documentation",
-                "message": f"{doc_name} appears to be an unfilled template — needs real content",
-                "items": [doc_name],
-            })
-
-        # Check file age (>30 days since last modification)
-        import os
-        mtime = date.fromtimestamp(os.path.getmtime(doc_path))
-        age_days = (date.today() - mtime).days
-        if age_days > 30:
-            findings.append({
-                "severity": "info",
-                "check": "stale-documentation",
-                "message": f"{doc_name} hasn't been updated in {age_days} days",
-                "items": [doc_name],
-            })
+    findings.extend(_check_documentation(store.project_dir, doc_files, date.today()))
 
     # Check 7: Empty active epic (active epic with no linked stories)
-    for epic in store.list_epics(status="active"):
-        linked = [s for s in store.list_stories() if s.epic_id == epic.id]
+    for epic in epics_active:
+        linked = stories_by_epic.get(epic.id, [])
         if not linked:
             findings.append({
                 "severity": "warning",
@@ -400,8 +513,8 @@ def run_audit(
             })
 
     # Check 8: Done epic with open stories
-    for epic in store.list_epics(status="done"):
-        linked = [s for s in store.list_stories() if s.epic_id == epic.id]
+    for epic in epics_done:
+        linked = stories_by_epic.get(epic.id, [])
         open_stories = [s for s in linked if s.status.value not in ("done", "archived")]
         if open_stories:
             findings.append({
@@ -412,8 +525,8 @@ def run_audit(
             })
 
     # Check 9: Orphaned epic reference (story references non-existent epic_id)
-    epic_ids = {e.id for e in store.list_epics()}
-    for story in store.list_stories():
+    epic_ids = {e.id for e in all_epics} | set(known_epic_ids or ())
+    for story in all_stories:
         if story.epic_id and story.epic_id not in epic_ids:
             findings.append({
                 "severity": "warning",
@@ -424,9 +537,9 @@ def run_audit(
 
     # Check 10: Stale draft epic (draft >30 days with no stories)
     draft_threshold = date.today() - timedelta(days=30)
-    for epic in store.list_epics(status="draft"):
+    for epic in epics_draft:
         if epic.updated < draft_threshold:
-            linked = [s for s in store.list_stories() if s.epic_id == epic.id]
+            linked = stories_by_epic.get(epic.id, [])
             if not linked:
                 days = (date.today() - epic.updated).days
                 findings.append({
@@ -455,15 +568,10 @@ def run_audit(
                 })
                 continue
 
-            content = doc_path.read_text()
-            lines = [l.strip() for l in content.splitlines()
-                     if l.strip() and not l.strip().startswith("#")
-                     and not l.strip().startswith("<!--")
-                     and not l.strip().startswith("-->")
-                     and not l.strip().startswith("---")
-                     and not l.strip().startswith("|")
-                     and l.strip() != "|"]
-            if len(lines) < 3:
+            # Hub templates carry no "*Last reviewed*" footer, so this uses the
+            # narrower prefix set — see the note on _DOC_SKIP_PREFIXES.
+            lines = _content_lines(doc_path.read_text(), _DOC_SKIP_PREFIXES)
+            if len(lines) < _UNFILLED_DOC_MAX_LINES:
                 findings.append({
                     "severity": "info",
                     "check": "unfilled-hub-documentation",
@@ -471,10 +579,9 @@ def run_audit(
                     "items": [doc_name],
                 })
 
-            import os
             mtime = date.fromtimestamp(os.path.getmtime(doc_path))
             age_days = (date.today() - mtime).days
-            if age_days > 30:
+            if age_days > _STALE_DOC_DAYS:
                 findings.append({
                     "severity": "info",
                     "check": "stale-hub-documentation",
@@ -483,7 +590,7 @@ def run_audit(
                 })
 
     # Check 12: Stale task assignment (in-progress with assignee, no updates in 14+ days)
-    for task in store.list_tasks(status="in-progress"):
+    for task in tasks_in_progress:
         if task.assignee and task.updated < stale_threshold:
             days = (date.today() - task.updated).days
             findings.append({
@@ -506,8 +613,8 @@ def run_audit(
             })
 
     # Check 14: Dependency cycles (project-wide, across tasks and stories)
-    all_tasks = store.list_tasks()
-    all_stories = store.list_stories()
+    # Both lists are the snapshot loaded at the top — this check used to
+    # re-read them from the Store.
     if all_tasks or all_stories:
         graph = build_combined_dep_graph(all_tasks, all_stories)
         cycle = detect_cycle(graph)
@@ -548,9 +655,9 @@ def run_audit(
             })
 
     # Check 16: Missing implementation tasks (only test tasks, no impl tasks)
-    for story in store.list_stories():
+    for story in all_stories:
         if story.status.value in ("active", "ready"):
-            tasks = store.list_tasks(story_id=story.id)
+            tasks = tasks_by_story.get(story.id, [])
             if tasks and all(t.title.startswith("Test: ") for t in tasks):
                 findings.append({
                     "severity": "warning",
@@ -587,10 +694,20 @@ def run_audit(
     # the pm_update response that raised it.  detect_criteria_drift reports no
     # "missing" for a story with no criteria, so a criteria-less story that
     # has no stale test tasks still costs nothing here.
-    for story in store.list_stories():
+    #
+    # The story's own criteria and the pre-loaded task bodies are handed in,
+    # so the detector reuses this audit's snapshot instead of doing its own
+    # get_story plus two list_tasks per story (US-PRJ-42).  It is still the
+    # same detector — the audit and the reconciler cannot disagree — it just
+    # no longer re-reads what is already in hand.
+    for story in all_stories:
         if story.status.value == "archived":
             continue
-        drift = store.detect_criteria_drift(story.id)
+        drift = store.detect_criteria_drift(
+            story.id,
+            criteria=list(story.acceptance_criteria or []),
+            task_entries=task_entries,
+        )
         if drift["missing"]:
             findings.append({
                 "severity": "warning",
@@ -616,7 +733,7 @@ def run_audit(
     # Check 18: Completions carrying no evidence (US-PM-9-8).  Warning, not
     # error, for the same reason as Check 17 — see the docstring on
     # check_completions_without_evidence.
-    findings.extend(check_completions_without_evidence(store))
+    findings.extend(check_completions_without_evidence(store, tasks_done_live))
 
     # Generate report
     error_count = sum(1 for f in findings if f["severity"] == "error")

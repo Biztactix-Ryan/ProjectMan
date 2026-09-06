@@ -1570,10 +1570,10 @@ def test_cache_persists_across_mcp_tool_invocations(tmp_project):
     assert store_after_search is store_after_status
 
 
-def test_store_cache_same_project_returns_same_instance(tmp_project):
-    """_store() returns the same cached Store for repeated calls with the same project name."""
+def test_store_cache_same_prefix_returns_same_instance(tmp_project):
+    """The same prefix hands back the same cached Store, a different one a different Store."""
     from projectman.config import load_config, save_config
-    from projectman.server import _store, _store_cache
+    from projectman.server import _store_cache, _store_for_prefix
 
     # Convert tmp_project into a hub layout
     hub_config = load_config(tmp_project)
@@ -1583,7 +1583,7 @@ def test_store_cache_same_project_returns_same_instance(tmp_project):
 
     # Register two subprojects
     for name, prefix in [("alpha", "ALP"), ("beta", "BET")]:
-        pm_dir = tmp_project / ".project" / "projects" / name
+        pm_dir = tmp_project / "projects" / name / ".project"
         pm_dir.mkdir(parents=True, exist_ok=True)
         (pm_dir / "stories").mkdir(exist_ok=True)
         (pm_dir / "tasks").mkdir(exist_ok=True)
@@ -1598,13 +1598,13 @@ def test_store_cache_same_project_returns_same_instance(tmp_project):
 
     _store_cache.clear()
 
-    # Same project twice → same instance (identity check)
-    store_a1 = _store(project="alpha")
-    store_a2 = _store(project="alpha")
+    # Same prefix twice → same instance (identity check)
+    store_a1 = _store_for_prefix("ALP")
+    store_a2 = _store_for_prefix("ALP")
     assert store_a1 is store_a2
 
-    # Different project → different instance
-    store_b = _store(project="beta")
+    # Different prefix → different instance
+    store_b = _store_for_prefix("BET")
     assert store_b is not store_a1
 
     # Cache should have exactly two entries
@@ -1774,7 +1774,7 @@ class TestCreateCollisionIsAnErrorNotACrash:
 
         from projectman.server import _store, pm_create_story
 
-        store = _store(None)
+        store = _store()
         target = tmp_project / ".project" / "stories" / "US-TST-9.md"
         target.write_text("---\nid: US-TST-9\n---\nMine.\n")
         monkeypatch.setattr(store, "_next_story_id", lambda: "US-TST-9")

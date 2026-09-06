@@ -126,7 +126,7 @@ In hub mode, context flows downward:
 
 Each project then specializes with its own PROJECT.md, INFRASTRUCTURE.md, SECURITY.md.
 
-- `pm_context(project, max_doc_chars=2000, limit=5)` → a bounded brief over those layers, for when you want the wider picture. `pm_grab` and `pm_get` already carry the item context you usually need, so this is a pointer rather than an opening call.
+- `pm_context(max_doc_chars=2000, limit=5)` → a bounded brief over those layers, for when you want the wider picture. `pm_grab` and `pm_get` already carry the item context you usually need, so this is a pointer rather than an opening call.
 
 ## Sprints
 
@@ -162,10 +162,17 @@ Sprints are the unit of orchestrated execution — `/pm-orchestrate` drives the 
 
 ## Hub Mode
 
-- Most tools accept optional `project` parameter for subprojects
+- **The prefix in an ID names the store** — `pm_get("US-API-3")` finds the API
+  project on its own, and a multi-ID call may mix projects. No tool takes a
+  project name.
+- The ID-less verbs take an optional `prefix`: omitted on a read means the
+  hub's own store, omitted on a create (`pm_create_story`,
+  `pm_create_sprint`, `pm_auto_scope`) is an `invalid` error — pass
+  `prefix="API"`. Outside a hub it is ignored.
+- `pm_create_epic` takes no `prefix` — epics are hub-level, written to the hub
+  store; a subproject story links up to one with `epic_id`.
 - `pm_malformed` scans all subprojects automatically
-- Run `projectman repair` to discover and initialize projects (break-glass: CLI, not a tool)
-- Use `pm_context(project)` to get combined hub + project context
+- Use `pm_context(prefix="API")` for one subproject's combined hub + project context
 
 ## Audit Checks
 

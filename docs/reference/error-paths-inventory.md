@@ -15,6 +15,15 @@ adjusted downward for the code US-PM-27 deleted — the sites in that removed
 machinery are simply gone, and none of them had ever been reached in the
 observed corpus.
 
+**US-PM-35 (2026-09-06)** then deleted the whole cross-repo git family: the
+hub-wide push, the hub-recovery tool and the branch-alignment check, together
+with the `hub/registry.py` helpers behind them. Their rows are kept below as
+*history* — the counts and the observed corpus are a 2026 measurement and are
+not restated — but every one of them is now dead code that no tool can reach,
+and each is marked **removed in US-PM-35**. Nothing in section 4 describes live
+code any more. The surviving git surface is `pm_commit` / `pm_push` on one
+store named by prefix, plus `projectman sync`.
+
 ---
 
 ## 1. How the inventory was built
@@ -60,7 +69,7 @@ not by design.
 | `server.py` — `return "error: ..."` (plain string) | 3 | yes |
 | `server.py` — structured error payloads (no `error:` prefix token) | 6 | yes |
 | **`server.py` subtotal** | **56** | |
-| `hub/registry.py` — reachable from a tool (`repair`, `pm_push`, `push_hub`, `hub_push_with_rebase`, `_push_subproject`, `coordinated_push`) | 27 | yes, as a nested `error` key |
+| `hub/registry.py` — reachable from a tool (the cross-repo push, hub-recovery and branch-alignment helpers; all **removed in US-PM-35**) | 27 | yes, as a nested `error` key, at the time of measurement |
 | `hub/registry.py` — CLI/hub-internal only (`set_branch`, `add_project`, `sync`) | 11 | no |
 | `cli.py:26`, `orchestrator_api.py:95`, `web/app.py:31` | 3 | no (CLI / HTTP) |
 | **Total error-return sites found** | **97** | **83** |
@@ -90,7 +99,7 @@ Every distinct soft-error message in the corpus, joined to its source site:
 | 12 | `pm_grab` | `task is not ready to grab` | `server.py:1164` | EXPECTED NEGATIVE |
 | 4 | `pm_status` | `No .project/config.yaml found in any parent directory` | `server.py:203` (generic) ← `config.py:19` | GENUINE FAILURE |
 | 2 | `pm_docs` | `No .project/config.yaml found in any parent directory` | `server.py:312` (generic) ← `config.py:19` | GENUINE FAILURE |
-| 1 | `pm_repair` | `No .project/config.yaml found in any parent directory` | `server.py:1350` (generic) ← `config.py:19` | GENUINE FAILURE |
+| 1 | the hub-recovery tool (**removed in US-PM-35**) | `No .project/config.yaml found in any parent directory` | `server.py:1350` (generic) ← `config.py:19` | GENUINE FAILURE, now unreachable |
 | 1 | `pm_list_sprints` | `No .project/config.yaml found in any parent directory` | `server.py:2202` (generic) ← `config.py:19` | GENUINE FAILURE |
 | 1 | `pm_docs` | `VISION.md not found` | `server.py:280` | EXPECTED NEGATIVE (ambiguous — see §5.1) |
 | 1 | `pm_done_next` | `Run-log note must be 1024 characters or fewer` | **upstream only** — not in this checkout | already fixed upstream-equivalent |
@@ -158,8 +167,8 @@ set.
 | 1282 | `pm_estimate` | `Item not found`; estimator failures |
 | 1302 | `pm_scope` | `Item not found`; scoper failures |
 | 1328 | `pm_audit` | config missing; audit failures |
-| 1350 | `pm_repair` | `find_project_root` FileNotFoundError (**observed ×1**) |
-| 1370 | `pm_validate_branches` | config missing; git failures in `validate_branches` |
+| 1350 | hub-recovery tool (**removed in US-PM-35**) | `find_project_root` FileNotFoundError (**observed ×1**) |
+| 1370 | branch-alignment check (**removed in US-PM-35**) | config missing; git failures in the branch validator |
 | 1437 | `pm_malformed` | config missing; directory read errors |
 | 1537 | `pm_fix_malformed` | `ValidationError`; write errors |
 | 1589 | `pm_restore` | parse/write errors |
@@ -170,7 +179,7 @@ set.
 | 1735 | `pm_commit` | catch-all `Exception` |
 | 1770 | `pm_push` | `RuntimeError` — `store.py:1546 Push failed: <stderr>` |
 | 1772 | `pm_push` | catch-all `Exception` |
-| 1811 | `pm_push_all` | config missing; `coordinated_push` failures |
+| 1811 | hub-wide push (**removed in US-PM-35**) | config missing; cross-repo push failures |
 | 2082 | `pm_create_sprint` | `ValidationError`; write errors |
 | 2175 | `pm_get_sprint` | `Sprint not found: <id>` (`store.py:1313`) |
 | 2202 | `pm_list_sprints` | `find_project_root` FileNotFoundError (**observed ×1**) |
@@ -198,7 +207,7 @@ expected negative currently flows through. US-PM-2-4 must intercept
 
 | Line | Tool | Message | Trigger | Class |
 |---:|---|---|---|---|
-| 1345 | `pm_repair` | `not a hub project` | hub-only tool called in a non-hub repo | **GENUINE FAILURE** — same class as "wrong directory" |
+| 1345 | hub-recovery tool (**removed in US-PM-35**) | `not a hub project` | hub-only tool called in a non-hub repo | **GENUINE FAILURE** — same class as "wrong directory" |
 | 1498 | `pm_fix_malformed` | `story_id is required for tasks` | required conditional argument omitted | **GENUINE FAILURE** — argument validation |
 | 1730 | `pm_commit` | `No .project/ changes to commit` | working tree clean | **EXPECTED NEGATIVE** — see §5.2 |
 
@@ -231,32 +240,34 @@ US-PM-2-6 should assert none of these acquire `is_error`.
 
 ---
 
-## 4. Site inventory — `hub/registry.py` (reachable from a tool)
+## 4. Site inventory — `hub/registry.py` (all removed in US-PM-35)
 
-These 27 sites return a `dict` with an `error` key (or an `error:`-prefixed
-string) that a tool then `_yaml_dump`s into a **successful** response body.
-They therefore satisfy US-PM-2's fourth AC only if the tool inspects the result
-before returning it. None currently do — `pm_push` and `pm_push_all` return
-`_yaml_dump({"pushed": result})` regardless of `result["error"]`.
+**This entire section is history.** At the time of measurement these 27 sites
+returned a `dict` with an `error` key (or an `error:`-prefixed string) that a
+tool then `_yaml_dump`ed into a **successful** response body, satisfying
+US-PM-2's fourth AC only if the tool inspected the result first — and none did.
 
-| Lines | Function | Reached via | Class |
-|---|---|---|---|
-| 265 | `repair` — `error: not a hub project` | `pm_repair` (`server.py:1348`) | **GENUINE FAILURE** |
-| 2987, 2998, 3005, 3011, 3030, 3040, 3050, 3062 | `pm_push` — not-a-hub, project not registered / dir missing, invalid scope, branch-validation failures | `pm_push` (`server.py:1762`) | **GENUINE FAILURE** (8) |
-| 2293, 2317, 2355, 2388 | `push_hub` — not-a-hub, staging failed, commit failed, push failed | `pm_push` / `coordinated_push` | **GENUINE FAILURE** (4) |
-| 2090, 2109, 2123, 2209, 2213, 2225, 2238, 2242 | `hub_push_with_rebase` — not-a-hub, push/fetch failed, submodule-ref conflict, rebase conflict, diverged | `push_hub` | **GENUINE FAILURE** (8) |
-| 2247 | `hub_push_with_rebase` — `push rejected after max retries` | `push_hub` | **GENUINE FAILURE** |
-| 2921, 2938, 2941, 2943 | `_push_subproject` — detached HEAD, push failed, git missing, generic | `coordinated_push` | **GENUINE FAILURE** (4) |
-| 2547 | `coordinated_push` — `report: "error: not a hub project"` | `pm_push_all` (`server.py:1809`) | **GENUINE FAILURE** |
+US-PM-35 deleted the cross-repo git family outright: the hub-wide push, the
+hub-recovery tool, the branch-alignment check and every `hub/registry.py`
+helper they reached. All 27 sites below are gone, none had ever been reached in
+the observed corpus, and no recommendation here is still actionable. The rows
+are kept only so the 97-site total above stays reconcilable.
 
-`hub_push_with_rebase` returns `"error": None` on success and is not a
-failure site.
+| Lines | Family | Sites | Class (as measured) |
+|---|---|---:|---|
+| 265 | hub-recovery — `error: not a hub project` | 1 | **GENUINE FAILURE** |
+| 2987, 2998, 3005, 3011, 3030, 3040, 3050, 3062 | per-project push — not-a-hub, project not registered / dir missing, invalid scope, branch-validation failures | 8 | **GENUINE FAILURE** |
+| 2293, 2317, 2355, 2388 | hub push — not-a-hub, staging failed, commit failed, push failed | 4 | **GENUINE FAILURE** |
+| 2090, 2109, 2123, 2209, 2213, 2225, 2238, 2242 | hub push with rebase — not-a-hub, push/fetch failed, submodule-ref conflict, rebase conflict, diverged | 8 | **GENUINE FAILURE** |
+| 2247 | hub push with rebase — `push rejected after max retries` | 1 | **GENUINE FAILURE** |
+| 2921, 2938, 2941, 2943 | subproject push — detached HEAD, push failed, git missing, generic | 4 | **GENUINE FAILURE** |
+| 2547 | hub-wide push — `report: "error: not a hub project"` | 1 | **GENUINE FAILURE** |
 
-**Recommendation for US-PM-2-3:** do not rewrite `registry.py`'s return
-contract — the CLI depends on it. Instead have `pm_push`, `pm_push_all` and
-`pm_repair` inspect the returned value and raise when `error` is truthy (or the
-string starts with `error:`). That converts 27 sites with three call-site
-changes and leaves the CLI untouched.
+What replaced it: `pm_commit` and `pm_push` act on exactly one store, named by
+its prefix, running git inside that store's own repo; `projectman sync` is the
+one hub-wide git verb and only pulls and re-attaches. Both raise through
+`_failed` like every other tool, so the nested-`error`-key problem this section
+described no longer has a code path.
 
 ### Not reachable from MCP — no action, listed for completeness
 
@@ -346,7 +357,8 @@ where the server *is* up and the caller's goal is met.
   `{grabbed: false, reason: not_ready, blockers: [...]}`.
 - **`No .project/config.yaml found in any parent directory`** — GENUINE
   FAILURE, per the story guidance. Observed ×8 across `pm_status` (4),
-  `pm_docs` (2), `pm_repair` (1), `pm_list_sprints` (1). It reaches the caller
+  `pm_docs` (2), the hub-recovery tool removed in US-PM-35 (1),
+  `pm_list_sprints` (1). It reaches the caller
   through the generic handlers, so US-PM-2-3's blanket conversion covers it with
   no per-site work.
 - **`Item/Task/Story/Epic/Sprint not found: <id>`** — GENUINE FAILURE
@@ -487,7 +499,7 @@ not error returns, but which US-PM-2-6 must assert stay non-error) gives the
 | 4 | 2 | `server.py:312` (generic) | `pm_docs` | GENUINE FAILURE | yes |
 | 4= | 2 | harness truncation | `pm_batch_get` | out of scope | n/a |
 | 6 | 1 | `server.py:280` | `pm_docs` | **EXPECTED NEGATIVE** | yes |
-| 6= | 1 | `server.py:1350` (generic) | `pm_repair` | GENUINE FAILURE | yes |
+| 6= | 1 | `server.py:1350` (generic) | hub-recovery tool | GENUINE FAILURE | **no** — removed in US-PM-35 |
 | 6= | 1 | `server.py:2202` (generic) | `pm_list_sprints` | GENUINE FAILURE | yes |
 | 6= | 1 | `pm_done_next` generic handler | `pm_done_next` | GENUINE FAILURE | **no** — routes through `_failed` (§7.1) |
 
@@ -500,9 +512,9 @@ not error returns, but which US-PM-2-6 must assert stay non-error) gives the
 2. **US-PM-2-3 on the 45 generic handlers.** One mechanical change, covers all 8
    live genuine failures and the entire `No .project/config.yaml` class.
 3. **US-PM-2-3 on the 12 explicit `server.py` sites** (§3.2–3.4).
-4. **US-PM-2-3 on the hub path** — 3 call-site guards in `pm_push`,
-   `pm_push_all`, `pm_repair` covering 27 registry sites. Zero observed traffic;
-   do last.
+4. ~~**US-PM-2-3 on the hub path** — 3 call-site guards covering 27 registry
+   sites.~~ **Moot.** US-PM-35 deleted the cross-repo git family and its
+   registry helpers; those 27 sites no longer exist (§4).
 
 ## 9. Error codes
 

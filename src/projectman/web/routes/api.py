@@ -6,8 +6,15 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from projectman.config import find_project_root, load_config
-from projectman.indexer import build_index, write_index
+from projectman.hub.stores import (
+    attached_store_path,
+    hub_store_dir,
+    subproject_status,
+)
+from projectman.indexer import build_index, ensure_fresh
+from projectman.models import EPIC_ID, STORY_ID
 from projectman.store import Store
+from projectman.web.errors import coded_errors, require_id_shape
 from projectman.web.schemas import (
     CreateEpicRequest,
     CreateStoryRequest,
@@ -29,28 +36,33 @@ def get_root() -> Path:
 
 
 def get_project_dir(project: Optional[str] = Query(None)) -> Path:
-    """Return the .project/ data directory, routing to hub subprojects when needed."""
+    """Return the .project/ data directory, routing to hub subprojects when needed.
+
+    Subproject stores are located through the store map
+    (:mod:`projectman.hub.stores`) — ``projects/{name}/.project`` (US-PM-31).
+    """
     root = find_project_root()
     if project:
         config = load_config(root)
         if config.hub:
-            proj_dir = root / ".project" / "projects" / project
-            if proj_dir.exists() and (proj_dir / "config.yaml").exists():
-                return proj_dir
-            raise HTTPException(
-                status_code=404, detail=f"Project '{project}' not found in hub"
-            )
-    return root / ".project"
+            try:
+                return attached_store_path(root, project)
+            except FileNotFoundError:
+                raise HTTPException(
+                    status_code=404, detail=f"Project '{project}' not found in hub"
+                )
+    return hub_store_dir(root)
 
 
 _hub_store_cache: dict[str, Store] = {}
 
 
 def get_store(project: Optional[str] = Query(None)) -> Store:
-    """Provide a Store instance, routing hub subprojects to .project/projects/{name}/.
+    """Provide a Store instance, routing hub subprojects through the store map.
 
     For the main project, returns the cached store from app.state.
-    For hub subprojects, uses a module-level cache to avoid creating new instances.
+    For hub subprojects, the store lives at ``projects/{name}/.project``
+    (US-PM-31); a module-level cache avoids creating new instances.
     """
     if project:
         if project in _hub_store_cache:
@@ -58,14 +70,15 @@ def get_store(project: Optional[str] = Query(None)) -> Store:
         root = find_project_root()
         config = load_config(root)
         if config.hub:
-            project_dir = root / ".project" / "projects" / project
-            if project_dir.exists() and (project_dir / "config.yaml").exists():
-                store = Store(root, project_dir=project_dir)
-                _hub_store_cache[project] = store
-                return store
-            raise HTTPException(
-                status_code=404, detail=f"Project '{project}' not found in hub"
-            )
+            try:
+                project_dir = attached_store_path(root, project)
+            except FileNotFoundError:
+                raise HTTPException(
+                    status_code=404, detail=f"Project '{project}' not found in hub"
+                )
+            store = Store(root, project_dir=project_dir)
+            _hub_store_cache[project] = store
+            return store
         raise HTTPException(
             status_code=404, detail=f"Project '{project}' not found (not in hub mode)"
         )
@@ -79,8 +92,22 @@ def get_store(project: Optional[str] = Query(None)) -> Store:
 
 
 @router.get("/status")
-def api_status(store: Store = Depends(get_store)) -> dict:
-    """Project status summary: counts, points, completion."""
+def api_status(
+    store: Store = Depends(get_store),
+    project: Optional[str] = Query(None),
+) -> dict:
+    """Project status summary: counts, points, completion.
+
+    In a hub with no ``?project=``, the hub's own totals carry a
+    ``subprojects`` list — the same rows ``pm_status`` returns, each with its
+    ``attached`` state and, when it is not mounted, the hint that says how to
+    attach it (US-PM-31-9).  Reading the store map cannot fail on an
+    unattached subproject, so neither can this route.
+    """
+    # Writes no longer rebuild the indexes (US-PM-29), so the read side is
+    # what keeps them honest: bring the derived files up to date if any item
+    # has been written since, then report from the Store.
+    ensure_fresh(store)
     index = build_index(store)
     pct = 0
     if index.total_points > 0:
@@ -93,7 +120,7 @@ def api_status(store: Store = Depends(get_store)) -> dict:
         key = "archived" if entry.archived else entry.status
         status_groups[key] = status_groups.get(key, 0) + 1
 
-    return {
+    result = {
         "project": store.config.name,
         "epics": index.epic_count,
         "stories": index.story_count,
@@ -103,6 +130,13 @@ def api_status(store: Store = Depends(get_store)) -> dict:
         "completion": f"{pct}%",
         "by_status": status_groups,
     }
+
+    if project is None:
+        root = find_project_root()
+        if load_config(root).hub:
+            result["subprojects"] = subproject_status(root)
+
+    return result
 
 
 @router.get("/config")
@@ -127,15 +161,19 @@ def list_epics(
 
 @router.post("/epics", status_code=201)
 def create_epic(body: CreateEpicRequest, store: Store = Depends(get_store)) -> dict:
-    """Create a new epic."""
-    meta = store.create_epic(
-        title=body.title,
-        description=body.description,
-        priority=body.priority,
-        target_date=body.target_date,
-        tags=body.tags,
-    )
-    write_index(store)
+    """Create a new epic.
+
+    A refusal from the store (a taken ID, a malformed field) becomes a coded
+    HTTP error rather than a 500 — see :mod:`projectman.web.errors`.
+    """
+    with coded_errors():
+        meta = store.create_epic(
+            title=body.title,
+            description=body.description,
+            priority=body.priority,
+            target_date=body.target_date,
+            tags=body.tags,
+        )
     return meta.model_dump(mode="json")
 
 
@@ -196,7 +234,6 @@ def update_epic(
     try:
         kwargs = body.model_dump(exclude_none=True)
         meta = store.update(epic_id, **kwargs)
-        write_index(store)
         return meta.model_dump(mode="json")
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail=f"Epic not found: {epic_id}")
@@ -207,7 +244,6 @@ def archive_epic(epic_id: str, store: Store = Depends(get_store)) -> dict:
     """Archive an epic."""
     try:
         store.archive(epic_id)
-        write_index(store)
         return {"archived": epic_id}
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail=f"Epic not found: {epic_id}")
@@ -228,19 +264,26 @@ def list_stories(
 
 @router.post("/stories", status_code=201)
 def create_story(body: CreateStoryRequest, store: Store = Depends(get_store)) -> dict:
-    """Create a new story."""
-    meta, test_tasks = store.create_story(
-        title=body.title,
-        description=body.description,
-        priority=body.priority,
-        points=body.points,
-        acceptance_criteria=body.acceptance_criteria,
-        tags=body.tags,
-    )
-    if body.epic_id:
-        store.update(meta.id, epic_id=body.epic_id)
-        meta, _ = store.get_story(meta.id)
-    write_index(store)
+    """Create a new story, optionally linking it to an epic.
+
+    ``epic_id`` is shape-checked before anything is written: linking is a
+    second step, so a malformed one would otherwise leave a story on disk and
+    report a failure.
+    """
+    with coded_errors():
+        if body.epic_id:
+            require_id_shape(body.epic_id, EPIC_ID, "epic")
+        meta, test_tasks = store.create_story(
+            title=body.title,
+            description=body.description,
+            priority=body.priority,
+            points=body.points,
+            acceptance_criteria=body.acceptance_criteria,
+            tags=body.tags,
+        )
+        if body.epic_id:
+            store.update(meta.id, epic_id=body.epic_id)
+            meta, _ = store.get_story(meta.id)
     result = meta.model_dump(mode="json")
     if test_tasks:
         result["test_tasks"] = [t.model_dump(mode="json") for t in test_tasks]
@@ -272,7 +315,6 @@ def update_story(
     try:
         kwargs = body.model_dump(exclude_none=True)
         meta = store.update(story_id, **kwargs)
-        write_index(store)
         return meta.model_dump(mode="json")
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail=f"Story not found: {story_id}")
@@ -283,7 +325,6 @@ def archive_story(story_id: str, store: Store = Depends(get_store)) -> dict:
     """Archive a story."""
     try:
         store.archive(story_id)
-        write_index(store)
         return {"archived": story_id}
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail=f"Story not found: {story_id}")
@@ -305,20 +346,27 @@ def list_tasks(
 
 @router.post("/tasks", status_code=201)
 def create_task(body: CreateTaskRequest, store: Store = Depends(get_store)) -> dict:
-    """Create a new task under a story."""
-    try:
-        meta = store.create_task(
-            story_id=body.story_id,
-            title=body.title,
-            description=body.description,
-            points=body.points,
-            tags=body.tags,
-            depends_on=body.depends_on,
-        )
-        write_index(store)
-        return meta.model_dump(mode="json")
-    except FileNotFoundError:
-        raise HTTPException(status_code=404, detail=f"Story not found: {body.story_id}")
+    """Create a new task under a story.
+
+    A well-formed ``story_id`` that names no story is still the existing 404;
+    a malformed one is a 422, and a taken task ID a 409.
+    """
+    with coded_errors():
+        require_id_shape(body.story_id, STORY_ID, "story")
+        try:
+            meta = store.create_task(
+                story_id=body.story_id,
+                title=body.title,
+                description=body.description,
+                points=body.points,
+                tags=body.tags,
+                depends_on=body.depends_on,
+            )
+        except FileNotFoundError:
+            raise HTTPException(
+                status_code=404, detail=f"Story not found: {body.story_id}"
+            )
+    return meta.model_dump(mode="json")
 
 
 @router.get("/tasks/{task_id}")
@@ -341,7 +389,6 @@ def update_task(
     try:
         kwargs = body.model_dump(exclude_none=True)
         meta = store.update(task_id, **kwargs)
-        write_index(store)
         return meta.model_dump(mode="json")
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail=f"Task not found: {task_id}")
@@ -376,7 +423,6 @@ def grab_task(
             status_code=409,
             detail={"error": "task is already claimed", "holder": current.assignee},
         )
-    write_index(store)
     task_meta, task_body = store.get_task(task_id)
 
     story_context = {}
@@ -402,7 +448,6 @@ def archive_task(task_id: str, store: Store = Depends(get_store)) -> dict:
     """Archive a task."""
     try:
         store.archive(task_id)
-        write_index(store)
         return {"archived": task_id}
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail=f"Task not found: {task_id}")
@@ -488,6 +533,7 @@ def api_board(
 @router.get("/burndown")
 def api_burndown(store: Store = Depends(get_store)) -> dict:
     """Burndown data: total vs completed points."""
+    ensure_fresh(store)
     index = build_index(store)
     remaining = index.total_points - index.completed_points
     return {

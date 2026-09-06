@@ -61,7 +61,7 @@ Running from a checkout? Reinstall from your local path after every pull — [Up
 - **Activity Log** — append-only JSONL audit trail of every create, update, delete, and archive
 - **Run Log** — per-item history of work attempts, outcomes, and notes, recorded via `pm_update` and read with `pm_run_log`
 - **Sprint Tracking** — create sprints with goals, dates, and planned stories; live progress rollup via `pm_get_sprint`
-- **Auto-Commit & Push** — `pm_commit`, `pm_push`, and coordinated `pm_push_all` for hub workflows
+- **Auto-Commit & Push** — `pm_commit` and `pm_push` act on one store, named by its prefix; `projectman sync` pulls a hub and re-attaches missing stores
 - **Git Status Dashboard** — `pm_git_status` shows branch, alignment, dirty state, and ahead/behind across all submodules
 - **Burndown Tracking** — points completed vs remaining
 
@@ -71,7 +71,7 @@ Running from a checkout? Reinstall from your local path after every pull — [Up
 User → Claude Code Skills (/pm, /pm-status, /pm-plan, /pm-do, /pm-orchestrate, /pm-autoscope, /pm-cleanup)
          → PM Agent (.claude/agents/pm.md)
            → MCP Server (projectman serve, stdio)
-             → Store (.project/ markdown files, hub-managed per project)
+             → Store (.project/ markdown files; in a hub, projects/{name}/.project per subproject)
              → Embeddings (SQLite + fastembed)
              → Activity Log (JSONL append-only audit trail)
              → Web Dashboard (FastAPI + HTMX, launched via pm_web_start)

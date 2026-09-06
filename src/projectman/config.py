@@ -78,6 +78,12 @@ def clear_config_cache(root: Optional[Path] = None) -> None:
         _CONFIG_CACHE.clear()
     else:
         _CONFIG_CACHE.pop(str(Path(root).resolve()), None)
+    # The hub store map is derived from ``config.projects`` (US-PM-31), so it
+    # is stale exactly when the config is.  Imported lazily: hub.stores reads
+    # this module.
+    from .hub.stores import invalidate as _invalidate_store_map
+
+    _invalidate_store_map(root)
 
 
 def load_config(root: Optional[Path] = None) -> ProjectConfig:

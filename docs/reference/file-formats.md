@@ -9,7 +9,12 @@
 ├── INFRASTRUCTURE.md    # Current infrastructure reality
 ├── SECURITY.md          # Security posture and review notes
 ├── DRIFT.md             # Auto-generated drift report
-├── index.yaml           # Compact project dashboard
+├── .gitignore           # Excludes the five derived index files below
+├── index.yaml           # Compact project dashboard — derived, not tracked
+├── INDEX.md             # Human-readable board — derived, not tracked
+├── INDEX-EPICS.md       # Derived, not tracked
+├── INDEX-STORIES.md     # Derived, not tracked
+├── INDEX-TASKS.md       # Derived, not tracked
 ├── activity.jsonl       # Append-only activity log
 ├── epics/
 │   └── EPIC-PRJ-1.md   # Epic files
@@ -29,17 +34,23 @@ With `--hub`, also creates:
 ├── VISION.md            # Hub vision and mission
 ├── ARCHITECTURE.md      # System-wide architecture
 ├── DECISIONS.md         # Cross-project decision log
-├── projects/            # Per-project PM data (stories, tasks, epics, config)
-│   └── {name}/          # e.g. .project/projects/my-api/
-│       ├── config.yaml
-│       ├── stories/
-│       ├── tasks/
-│       └── epics/
 ├── roadmap/
 └── dashboards/
 ```
 
-In hub mode, per-project PM data lives in `.project/projects/{name}/` inside the hub repo. Git submodules under `projects/` remain source-code-only.
+Per-project PM data lives outside the hub's store, inside each subproject:
+
+```
+projects/
+└── {name}/              # git submodule checkout
+    └── .project/        # worktree of that submodule's `projectman` branch
+        ├── config.yaml
+        ├── stories/
+        ├── tasks/
+        └── epics/
+```
+
+So a task edit in one project is a commit on that project's repo, not on the hub. `projectman add-project` mounts the store; hubs built on the older layout — per-project data inside the hub's own `.project/` — are moved across once with `projectman migrate-hub` (see [Hub Mode Setup](../hub-mode/setup.md#migrating-an-older-hub)).
 
 ## config.yaml
 
@@ -75,7 +86,7 @@ tools:                   # Optional — which gated tool families agents see
 | `next_sprint_id` | int | Next sprint number to assign (auto-incremented) |
 | `projects` | list[str] | Hub mode: names of registered subprojects |
 | `stale_claim_hours` | float | How long an in-progress claim may sit before `pm_active` / `pm_board` flag it `stale: true` — a claim must *pass* this age, so exactly at the threshold is not yet stale. Default `2.0`. A task with no `claimed_at` is never stale regardless. Turn it *up* rather than to `0` to disable — `0` flags every live claim. A value that is not a non-negative finite number falls back to `2.0` rather than failing the config load |
-| `tools.maintenance` | bool | Register the five break-glass tools (`pm_repair`, `pm_restore`, `pm_validate_branches`, `pm_fix_malformed`, `pm_push_all`). Default `false` |
+| `tools.maintenance` | bool | Register the two break-glass tools (`pm_restore`, `pm_fix_malformed`). Default `false` |
 | `tools.web` | bool | Register the three `pm_web_*` tools. Default `false` |
 
 ### tools — gated tool families
@@ -97,8 +108,7 @@ tools:
 
 ```yaml
 tools:
-  maintenance: true      # pm_repair / pm_restore / pm_validate_branches
-                         # pm_fix_malformed / pm_push_all
+  maintenance: true      # pm_restore / pm_fix_malformed
 ```
 
 Neither flag takes any inference from `hub` or anything else: both are a
@@ -107,28 +117,121 @@ repo to want the dashboard driven from an agent's tool list, and it breaks no
 more often.
 
 `tools.maintenance` is the odd one out in *why* it is hidden. The web family
-is hidden because nobody calls it; these five are hidden because they are
-aimed at the wrong audience. Repairing a hub, un-quarantining a malformed
-file or driving a coordinated push is human recovery work, and every one of
-the five has a CLI equivalent, so hiding them from the agent's tool list
-takes away no reach:
+is hidden because nobody calls it; these two are hidden because they are
+aimed at the wrong audience. Un-quarantining a malformed file is human
+recovery work, and both have a CLI equivalent, so hiding them from the
+agent's tool list takes away no reach:
 
 | Tool | CLI command |
 |------|-------------|
-| `pm_repair` | `projectman repair` |
 | `pm_restore` | `projectman restore <filename> [--project NAME]` |
-| `pm_validate_branches` | `projectman validate-branches` |
 | `pm_fix_malformed` | `projectman fix-malformed <filename> --id ID --title T --type story\|task` |
-| `pm_push_all` | `projectman push-all [--dry-run] [--projects a,b]` |
 
 A hidden tool is hidden from `tools/list` **and** from `tools/call`: calling
 one gets the same `Unknown tool: <name>` any misspelled name gets, with
 `is_error` set. The flags are read when the server starts, so a change takes
 effect on the next server restart.
 
+## Derived index files — generated, not tracked
+
+Five files in every store are derived: `index.yaml`, `INDEX.md`,
+`INDEX-EPICS.md`, `INDEX-STORIES.md` and `INDEX-TASKS.md`. Every byte of
+them is recomputed from the epic, story and task files beside them, so
+nothing is lost by deleting them. They are rebuilt by `pm_reindex`, by
+`pm_commit` just before staging, by `projectman reindex`, and on demand by
+any reader that finds `index.yaml` older than the newest file under
+`epics/`, `stories/` or `tasks/` (`indexer.ensure_fresh`).
+
+**Decision (US-PM-29-6, 2026-09-06): generated.** A store scaffolded by
+`projectman init` — or a hub subproject created by `add-project` — writes a
+`.project/.gitignore` naming those five files, so git never carries them.
+The patterns are unanchored, so one file at the store root also covers the
+subproject stores under `projects/{name}/`.
+
+### The churn numbers
+
+Measured on this repository's own store (84 commits, 12 of them touching
+`.project/`) after the per-write rebuilds were removed (US-PM-29-4/5):
+
+| Historical churn (`git log --numstat` over `.project/`) | |
+| --- | --- |
+| Commits touching at least one index file | 9 of 84 (11%); 9 of the 12 `.project/` commits (75%) |
+| Commits touching all five | 6 |
+| Commits changing item files *without* touching an index | 1 |
+| Index lines as a share of all changed lines | 17,351 of 184,937 (9%) |
+| Commits where the index diff outweighed the rest of the diff | 1 of 9 |
+| Item files carried alongside an index change | median 63, range 17–448 |
+
+That history is human batch commits — dozens of items at a time — so it
+understates what per-write `pm_commit` will do. The forward-looking number
+is what one rebuild changes, measured on a copy of the same store:
+
+| Change made | Index files changed | Index lines ± | Item lines ± |
+| --- | --- | --- | --- |
+| Nothing (rebuild on an unchanged store) | 0 of 5 | 0 | 0 |
+| One task status flip | 2 of 5 | 6 | 2 (+1 activity line) |
+| One story retitled | 2 of 5 | 4 | 2 |
+| One task created | 4 of 5 | 18 | ~12 |
+| Ten task status flips at once | 2 of 5 | 42 | 20 |
+
+### Why generated
+
+The rebuild is now idempotent — an unchanged store rebuilds to zero diff,
+which was the whole point of US-PM-29-4 — but an index change still rides
+along with *every* commit that carries an item change, because the indexes
+summarise every item. For the common case, one task edit, that means four
+changed files instead of two and roughly twice as many changed lines in the
+echo as in the change itself. Three costs decided it:
+
+1. **The same change lands in the commit twice**, once as the item file and
+   once as its rendering, so a reviewer reads a diff that is mostly restated.
+2. **`index.yaml` is a guaranteed conflict.** It is ~7,000 lines listing every
+   item, so any two branches — or two parallel agents — that touched
+   *different* tasks conflict in it. Item files never conflict with each other.
+3. **A read can dirty the tree.** `ensure_fresh` repairs a lagging index on the
+   read path, so opening the dashboard after a write modifies tracked files.
+   No amount of care at commit time fixes that while the files are tracked.
+
+Against that, tracking them buys a browsable board on the git remote. Hubs
+keep theirs: `INDEX.md`'s content is also written to the repo root as
+`README.md` in hub mode, and that file stays tracked. A fresh clone needs no
+migration step either — a missing `index.yaml` counts as stale, so the first
+read regenerates all five.
+
+Commit messages ignore the five files, in old stores and new ones alike
+(`Store._generate_commit_message`, `hub.registry._generate_hub_commit_message`):
+one task edit reads `pm: update 1 task`, never `pm: update 1 task, config, 4 files`.
+
+### Migrating an existing store
+
+Stores created before this change still track the five files. To convert one
+(run from the store's git root — for a worktree-mounted store, that is
+`.project/` itself):
+
+```bash
+projectman reindex                      # make sure the files on disk are current
+cat >> .project/.gitignore <<'EOF'
+INDEX.md
+INDEX-EPICS.md
+INDEX-STORIES.md
+INDEX-TASKS.md
+index.yaml
+EOF
+git rm --cached -- .project/INDEX.md .project/INDEX-EPICS.md \
+    .project/INDEX-STORIES.md .project/INDEX-TASKS.md .project/index.yaml
+git add .project/.gitignore
+git commit -m "pm: stop tracking the derived index files"
+```
+
+`git rm --cached` leaves the working copies in place; only the tracking
+stops. Nothing else needs changing — the rebuild points and the read-path
+repair already keep the files current.
+
 ## index.yaml
 
-Compact project dashboard. Auto-generated by write operations and audits.
+Compact project dashboard, and one of the five derived files above — see
+[Derived index files](#derived-index-files--generated-not-tracked) for why it
+is not tracked and when it is rebuilt.
 
 ```yaml
 entries:

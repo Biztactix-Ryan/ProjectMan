@@ -15,6 +15,8 @@ Usage::
 
     python -m tools.usage_telemetry.baseline capture \\
         --out-dir docs/telemetry --name baseline-pre-fix --label pre-fix
+    python -m tools.usage_telemetry.baseline capture \\
+        --since auto --name baseline-windowed-post-fix --label windowed-post-fix
     python -m tools.usage_telemetry.baseline compare docs/telemetry/baseline-pre-fix.json
 
 ``compare`` takes a live capture by default, so the second command answers "what
@@ -26,12 +28,23 @@ growing while work proceeds -- including the calls made by the session that runs
 this command. Two captures therefore never share a denominator. Every comparison
 prints the corpus delta alongside the metric delta for exactly that reason, and
 :func:`format_summary` says so in the artifact itself.
+
+It is also **long**: it mixes sessions run against months of different server
+code. ``--since`` (US-PM-32) windows a capture to sessions that started at or
+after a stated moment, so a defect that was fixed part-way through the corpus
+stops dominating the whole-corpus rates. ``--since auto`` derives that moment
+from the corpus itself -- the start of the earliest session whose response
+carries the post-US-PM-1 ``note_truncated`` field -- rather than from a guessed
+date. The window is recorded in provenance (``window_since``,
+``sessions_excluded``), because a windowed capture is not comparable to an
+unwindowed one and nothing else in the file would say so.
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import re
 import subprocess
 import sys
 from datetime import datetime, timezone
@@ -39,8 +52,11 @@ from pathlib import Path
 from typing import Any, Sequence
 
 from tools.usage_telemetry.extract import (
+    Extraction,
     MatchRateError,
+    ScanStats,
     TOOL_PREFIX,
+    ToolCall,
     scan,
 )
 from tools.usage_telemetry import report as report_mod
@@ -53,6 +69,207 @@ SCHEMA = "projectman.usage-telemetry.baseline/1"
 DEFAULT_LABEL = "pre-fix"
 
 DEFAULT_OUT_DIR = "docs/telemetry"
+
+
+# ------------------------------------------------------------------ window --
+
+#: ``--since`` value asking for the cutoff to be derived from the corpus.
+SINCE_AUTO = "auto"
+
+#: Tools whose response can carry the ``note_truncated`` field. ``server.py``
+#: merges ``_note_truncation_fields`` into every tool that accepts a run-log
+#: note, so the signature is not unique to ``pm_update`` -- but it *is* limited
+#: to this family, and restricting to it keeps a task body that merely mentions
+#: the flag (this repo has several) from being read as evidence.
+NOTE_TRUNCATION_TOOLS: tuple[str, ...] = (
+    "pm_update",
+    "pm_update_many",
+    "pm_done_next",
+    "pm_release",
+    "pm_accept",
+    "pm_retry",
+)
+
+#: The post-US-PM-1 signature, matched as a *field* rather than as prose. A
+#: response says ``note_truncated: true`` (YAML) or ``"note_truncated": true``
+#: (JSON); a story body says "returns a note_truncated flag", and that must not
+#: date the window.
+_NOTE_TRUNCATED_FIELD = re.compile(r'"?note_truncated"?\s*[:=]\s*true', re.IGNORECASE)
+
+
+class WindowError(ValueError):
+    """The requested capture window could not be resolved.
+
+    Raised rather than falling back to a full capture: a ``--since`` that cannot
+    be honoured must not quietly produce the whole-corpus numbers under a name
+    that claims to be windowed.
+    """
+
+
+def parse_timestamp(value: Any) -> datetime | None:
+    """Parse a transcript timestamp to an aware UTC datetime; ``None`` if unusable.
+
+    Transcript records carry RFC-3339 with a ``Z`` suffix, which
+    ``datetime.fromisoformat`` only accepts from 3.11 -- the project supports
+    3.10, so the suffix is normalised here. A naive value is read as UTC, which
+    is what the transcripts mean and what a human typing ``--since 2026-08-21``
+    means too.
+    """
+    if not isinstance(value, str):
+        return None
+    text = value.strip()
+    if not text:
+        return None
+    if text.endswith(("Z", "z")):
+        text = text[:-1] + "+00:00"
+    try:
+        moment = datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    if moment.tzinfo is None:
+        return moment.replace(tzinfo=timezone.utc)
+    return moment.astimezone(timezone.utc)
+
+
+def parse_since(value: str) -> datetime:
+    """``--since`` as an explicit moment. Raises :class:`WindowError` on junk."""
+    moment = parse_timestamp(value)
+    if moment is None:
+        raise WindowError(
+            f"--since {value!r} is not an ISO-8601 moment. Give a date "
+            "(2026-08-21), a full timestamp (2026-08-21T14:03:00Z), or 'auto' "
+            "to derive the cutoff from the corpus."
+        )
+    return moment
+
+
+def session_start_times(extraction: Extraction) -> dict[str, datetime | None]:
+    """Earliest usable timestamp per session, keyed by transcript stem.
+
+    The session unit is ``ToolCall.session`` -- one transcript file -- for the
+    same reason run analysis uses it: a ``session_id`` can span several files,
+    and merging those would give a resumed session the start time of its first
+    incarnation.
+
+    The value is the *minimum* over the session's calls rather than the first in
+    sequence order, so a transcript with one out-of-order record cannot report a
+    start later than a call it actually contains. ``None`` means the session has
+    no parseable timestamp at all -- unknown, which is not the same as old.
+    """
+    starts: dict[str, datetime | None] = {}
+    for call in extraction.calls:
+        known = starts.setdefault(call.session, None)
+        moment = parse_timestamp(call.timestamp)
+        if moment is None:
+            continue
+        if known is None or moment < known:
+            starts[call.session] = moment
+    return starts
+
+
+def _carries_note_truncated(call: ToolCall) -> bool:
+    """Whether ``call``'s result is a post-US-PM-1 truncation response."""
+    if call.tool not in NOTE_TRUNCATION_TOOLS:
+        return False
+    if call.result is None:
+        return False
+    return bool(_NOTE_TRUNCATED_FIELD.search(call.result.text))
+
+
+def note_truncated_cutoff(extraction: Extraction) -> datetime:
+    """Start of the earliest session whose response carries ``note_truncated``.
+
+    US-PM-1 replaced "run-log note must be 1024 characters or fewer" (a soft
+    error, and 906 of the 941 soft errors in the post-subtraction baseline) with
+    server-side truncation plus a ``note_truncated`` flag. The first session that
+    saw the flag is therefore the first session provably run against fixed code,
+    which is a cutoff *read off the corpus* instead of guessed from a commit date
+    that says nothing about when the installed server was refreshed.
+
+    The cutoff is that session's **start**, so the session that supplies the
+    evidence is itself inside the window.
+
+    Raises:
+        WindowError: when no session carries the signature. The corpus then
+            cannot date the fix, and a silent full capture would be a lie.
+    """
+    starts = session_start_times(extraction)
+    candidates = [
+        start
+        for call in extraction.calls
+        if _carries_note_truncated(call)
+        for start in (starts.get(call.session),)
+        if start is not None
+    ]
+    if not candidates:
+        raise WindowError(
+            "--since auto could not derive a cutoff: no session in "
+            f"{extraction.root} carries a `note_truncated: true` response from "
+            f"{', '.join(NOTE_TRUNCATION_TOOLS)}, so the corpus cannot say when "
+            "the US-PM-1 note-truncation fix reached the running server. Pass an "
+            "explicit --since <ISO-8601> instead of capturing the whole corpus."
+        )
+    return min(candidates)
+
+
+def resolve_since(value: str | datetime, extraction: Extraction) -> datetime:
+    """Turn a ``--since`` argument into a concrete cutoff."""
+    if isinstance(value, datetime):
+        if value.tzinfo is None:
+            return value.replace(tzinfo=timezone.utc)
+        return value.astimezone(timezone.utc)
+    if str(value).strip().lower() == SINCE_AUTO:
+        return note_truncated_cutoff(extraction)
+    return parse_since(str(value))
+
+
+def filter_extraction_since(
+    extraction: Extraction, cutoff: datetime
+) -> tuple[Extraction, dict[str, Any]]:
+    """Drop whole sessions that started before ``cutoff``.
+
+    Filtering is per *session*, not per call: half a session is not a sample of
+    anything, and calls-per-session, run lengths and bigrams all become nonsense
+    if a transcript is cut in the middle.
+
+    A session with no parseable timestamp is excluded. It cannot be shown to be
+    inside the window, and the window exists precisely to be able to say that
+    everything counted is.
+
+    ``files_scanned`` is reduced by the number of excluded sessions so the
+    corpus block describes the window rather than the tree it was carved from --
+    one session is one transcript file, so the two counts move together.
+
+    Returns:
+        The filtered extraction and a window record for provenance.
+    """
+    starts = session_start_times(extraction)
+    kept = {
+        session
+        for session, start in starts.items()
+        if start is not None and start >= cutoff
+    }
+    excluded = [session for session in starts if session not in kept]
+    calls = [call for call in extraction.calls if call.session in kept]
+
+    stats = ScanStats(**extraction.stats.as_dict())
+    stats.files_scanned = max(0, stats.files_scanned - len(excluded))
+
+    filtered = Extraction(
+        calls=calls,
+        results={
+            call.tool_use_id: call.result for call in calls if call.result is not None
+        },
+        stats=stats,
+        tool_prefix=extraction.tool_prefix,
+        root=extraction.root,
+    )
+    window = {
+        "since": cutoff.isoformat(),
+        "sessions_excluded": len(excluded),
+        "sessions_kept": len(kept),
+    }
+    return filtered, window
 
 
 # ------------------------------------------------------------- provenance --
@@ -136,10 +353,19 @@ def build_provenance(
     label: str = DEFAULT_LABEL,
     note: str | None = None,
     captured_at: datetime | None = None,
+    window: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """The self-describing header stored alongside the raw report."""
+    """The self-describing header stored alongside the raw report.
+
+    ``window`` is :func:`filter_extraction_since`'s record, or ``None`` for a
+    whole-corpus capture. Both keys are always emitted -- ``None`` meaning "no
+    window", a number meaning "this many sessions were deliberately left out" --
+    so a comparison against an older file lines up and a reader can never mistake
+    a windowed capture for an unwindowed one.
+    """
     moment = captured_at or datetime.now(timezone.utc)
     corpus = report.extraction_summary or {}
+    win = window or {}
     return {
         "label": label,
         "note": note,
@@ -152,6 +378,9 @@ def build_provenance(
         "unmatched_calls": report.unmatched_calls,
         "match_rate": corpus.get("match_rate"),
         "sessions": report.sessions,
+        # US-PM-32: the capture window. ``None`` when the whole corpus was taken.
+        "window_since": win.get("since"),
+        "sessions_excluded": win.get("sessions_excluded"),
         "git": git_provenance(repo),
         "generator": "python -m tools.usage_telemetry.baseline capture",
         "corpus_is_live": True,
@@ -187,6 +416,7 @@ def build_baseline(
     note: str | None = None,
     captured_at: datetime | None = None,
     tool_list: dict[str, Any] | None = None,
+    window: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Wrap ``report.as_dict()`` with provenance. The committed artifact.
 
@@ -199,7 +429,12 @@ def build_baseline(
     artifact: dict[str, Any] = {
         "schema": SCHEMA,
         "provenance": build_provenance(
-            report, repo=repo, label=label, note=note, captured_at=captured_at
+            report,
+            repo=repo,
+            label=label,
+            note=note,
+            captured_at=captured_at,
+            window=window,
         ),
         "report": report.as_dict(),
     }
@@ -562,10 +797,37 @@ def format_summary(baseline: dict[str, Any]) -> str:
         f"| call->result match rate | {_fmt(m['match_rate_pct'])}% "
         f"({_fmt(prov.get('unmatched_calls'))} unmatched) |",
         f"| schema | `{baseline.get('schema')}` |",
-        "",
     ]
+    # Rendered only for a windowed capture (US-PM-32): an unwindowed baseline
+    # must re-render byte-for-byte as it always did.
+    if prov.get("window_since"):
+        lines.append(
+            f"| capture window | sessions starting at or after "
+            f"`{prov['window_since']}` "
+            f"({_fmt(prov.get('sessions_excluded'))} earlier sessions excluded) |"
+        )
+    lines.append("")
     if prov.get("note"):
         lines += [f"> {prov['note']}", ""]
+
+    if prov.get("window_since"):
+        lines += [
+            "## This capture is windowed",
+            "",
+            f"Only sessions whose first transcript timestamp is at or after "
+            f"`{prov['window_since']}` are counted; "
+            f"{_fmt(prov.get('sessions_excluded'))} earlier sessions were excluded, "
+            "whole. Filtering is per session rather than per call, because "
+            "calls-per-session, run lengths and bigrams mean nothing across a "
+            "transcript cut in half.",
+            "",
+            "**A windowed capture is not comparable to an unwindowed one on "
+            "absolute counts.** It is a different, smaller corpus by "
+            "construction. Compare the rates, and read the window as part of the "
+            "claim: these numbers describe the sessions in it, not the whole "
+            "transcript tree.",
+            "",
+        ]
 
     lines += [
         "## The corpus is live, not a fixed dataset",
@@ -710,9 +972,24 @@ def capture(
     repo: Path | None = None,
     label: str = DEFAULT_LABEL,
     note: str | None = None,
+    since: str | datetime | None = None,
 ) -> dict[str, Any]:
-    """Scan the corpus and return a complete baseline artifact."""
+    """Scan the corpus and return a complete baseline artifact.
+
+    ``since`` windows the capture to sessions that started at or after the given
+    moment -- an ISO-8601 string, a ``datetime``, or ``"auto"`` to derive it from
+    the corpus (:func:`note_truncated_cutoff`). ``None`` captures everything, as
+    it always has.
+
+    The match-rate guard runs against the **whole** scan, before the window is
+    applied: a broken call->result join is a property of the corpus and the
+    extractor, and letting a window hide it would defeat the guard.
+    """
     extraction = scan(root=root, tool_prefix=prefix, min_match_rate=min_match_rate)
+    window: dict[str, Any] | None = None
+    if since is not None:
+        cutoff = resolve_since(since, extraction)
+        extraction, window = filter_extraction_since(extraction, cutoff)
     report = report_from_extraction(extraction)
     return build_baseline(
         report,
@@ -720,6 +997,7 @@ def capture(
         label=label,
         note=note,
         tool_list=measure_tool_list(),
+        window=window,
     )
 
 
@@ -748,6 +1026,19 @@ def build_parser() -> argparse.ArgumentParser:
     cap.add_argument("--name", default=None, help="Artifact basename (default: baseline-<label>)")
     cap.add_argument("--label", default=DEFAULT_LABEL, help=f"Baseline label (default: {DEFAULT_LABEL})")
     cap.add_argument("--note", default=None, help="Free-text note stored in provenance")
+    cap.add_argument(
+        "--since",
+        default=None,
+        metavar="WHEN",
+        help=(
+            "Only count sessions whose first transcript timestamp is at or after "
+            "WHEN (ISO-8601, e.g. 2026-08-21 or 2026-08-21T14:03:00Z). Pass "
+            f"'{SINCE_AUTO}' to derive the cutoff from the corpus: the start of "
+            "the earliest session carrying a `note_truncated: true` response, "
+            "i.e. the first session provably run against the US-PM-1 fix. The "
+            "window is recorded in provenance as window_since/sessions_excluded."
+        ),
+    )
     cap.add_argument("--stdout", action="store_true", help="Print the JSON instead of writing files")
 
     cmp_ = sub.add_parser("compare", help="Diff a stored baseline against a fresh or stored capture")
@@ -772,12 +1063,27 @@ def main(argv: Sequence[str] | None = None) -> int:
                 repo=repo,
                 label=args.label,
                 note=args.note,
+                since=args.since,
             )
         except MatchRateError as exc:
             print(f"error: {exc}", file=sys.stderr)
             return 1
+        except WindowError as exc:
+            # Same exit code as the match-rate guard, for the same reason: the
+            # capture was refused, and no artifact is written.
+            print(f"error: {exc}", file=sys.stderr)
+            return 1
+        prov = baseline["provenance"]
         if baseline["report"]["totals"]["calls"] == 0:
-            print(f"error: no {args.prefix}* calls found", file=sys.stderr)
+            if prov.get("window_since"):
+                print(
+                    f"error: no {args.prefix}* calls remain after --since "
+                    f"{prov['window_since']} excluded "
+                    f"{prov.get('sessions_excluded')} sessions",
+                    file=sys.stderr,
+                )
+            else:
+                print(f"error: no {args.prefix}* calls found", file=sys.stderr)
             return 2
         if args.stdout:
             print(json.dumps(baseline, indent=2))
@@ -791,6 +1097,11 @@ def main(argv: Sequence[str] | None = None) -> int:
             f"{_fmt(m['calls'])} calls / {_fmt(m['transcript_files'])} transcripts / "
             f"{_fmt(m['failure_rate_pct'])}% failures / {_fmt(m['response_bytes'])} bytes"
         )
+        if prov.get("window_since"):
+            print(
+                f"window: sessions at or after {prov['window_since']} "
+                f"({prov.get('sessions_excluded')} earlier sessions excluded)"
+            )
         return 0
 
     stored = load_baseline(Path(args.baseline).expanduser())

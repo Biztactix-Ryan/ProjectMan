@@ -8,9 +8,9 @@ functions are untouched and still importable, and one line in
 
 ``web`` (US-PM-15-5) is hidden because nobody calls
 it. ``maintenance`` (US-PM-15-6) is hidden because it is aimed at the
-wrong audience — ``pm_repair``, ``pm_restore``, ``pm_validate_branches``,
-``pm_fix_malformed`` and ``pm_push_all`` are human break-glass tools — so
-this module also asserts that each of the five is still reachable through
+wrong audience — ``pm_restore`` and ``pm_fix_malformed`` are human
+break-glass tools — so
+this module also asserts that each of the two is still reachable through
 the ``projectman`` CLI, which is where the story says they belong, and that
 the shipped guidance sends readers there instead of at the hidden tool.
 
@@ -165,7 +165,7 @@ def test_config_round_trips_through_save(tmp_project):
 # ------------------------------------------------------------- tools/list --
 
 
-def test_the_default_hides_exactly_the_eight_gated_tools():
+def test_the_default_hides_exactly_the_five_gated_tools():
     """AC 1, over a real ``tools/list``: those and nothing else disappear.
 
     Asserted as a set difference rather than a count, so a change that hid a
@@ -178,7 +178,7 @@ def test_the_default_hides_exactly_the_eight_gated_tools():
 
     assert everything - default == GATED_TOOLS
     assert not GATED_TOOLS & default
-    assert len(everything) - len(default) == 8
+    assert len(everything) - len(default) == 5
     # 42 since US-PM-28 added ``pm_next`` to the ungated core.
     assert len(default) == 42
 
@@ -222,7 +222,7 @@ def test_gating_is_idempotent():
     assert listed() == once
     apply_tool_gating(ALL_ON)
     apply_tool_gating(ALL_ON)
-    assert len(listed()) == len(once) + 8
+    assert len(listed()) == len(once) + 5
 
 
 def test_a_family_survives_a_round_trip_intact():
@@ -383,7 +383,7 @@ def test_one_flag_in_the_file_restores_exactly_that_family(
     apply_tool_gating()
 
     assert listed() == (everything - GATED_TOOLS) | set(hidden)
-    assert len(hidden) == {"web": 3, "maintenance": 5}[family]
+    assert len(hidden) == {"web": 3, "maintenance": 2}[family]
 
 
 def test_a_hub_on_disk_gets_no_family_by_inference(tmp_hub, monkeypatch):
@@ -462,21 +462,10 @@ from click.testing import CliRunner  # noqa: E402
 
 from projectman.cli import cli  # noqa: E402
 
-# The hub-with-bare-remotes rig, reused so ``push-all --dry-run`` is
-# exercised against real git rather than a stub.
-from tests.test_coordinated_push import (  # noqa: E402,F401
-    _git,
-    _remote_sha,
-    hub_with_remotes,
-)
-
 #: Every hidden break-glass tool and the command that reaches it.
 CLI_FOR_TOOL = {
-    "pm_repair": "repair",
     "pm_restore": "restore",
-    "pm_validate_branches": "validate-branches",
     "pm_fix_malformed": "fix-malformed",
-    "pm_push_all": "push-all",
 }
 
 
@@ -562,109 +551,6 @@ def test_the_cli_fixes_a_malformed_file_while_the_tool_is_hidden(
     assert fixed.exists()
     assert "Recovered story" in fixed.read_text()
     assert not (malformed / "broken.md").exists()
-
-
-def test_the_cli_repairs_a_hub_while_the_tool_is_hidden(tmp_hub, monkeypatch):
-    """``projectman repair`` really rebuilds the hub, not just prints help.
-
-    The end-to-end proof for ``pm_repair``: with the tool off the list, an
-    unregistered project on disk still gets discovered, registered and
-    initialised, and the ``REPAIR.md`` report still lands.
-    """
-    apply_tool_gating(ALL_OFF)
-    assert "pm_repair" not in listed()
-
-    (tmp_hub / "projects" / "api").mkdir(parents=True)
-
-    monkeypatch.delenv("PROJECTMAN_ROOT", raising=False)
-    monkeypatch.chdir(tmp_hub)
-    result = CliRunner().invoke(cli, ["repair"])
-
-    assert result.exit_code == 0, result.output
-    assert "Hub Repair Report" in result.output
-    assert "api" in result.output
-
-    config = yaml.safe_load((tmp_hub / ".project" / "config.yaml").read_text())
-    assert config["projects"] == ["api"], config
-    assert (tmp_hub / ".project" / "projects" / "api" / "config.yaml").exists()
-    report = tmp_hub / ".project" / "REPAIR.md"
-    assert report.exists()
-    assert "Hub Repair Report" in report.read_text()
-    assert "pm_repair" not in listed()
-
-
-def test_the_cli_validates_branches_while_the_tool_is_hidden(tmp_hub, monkeypatch):
-    """``projectman validate-branches`` reports, and exits on the verdict.
-
-    Two real runs, not a ``--help`` smoke: a hub with nothing to check gets
-    the clean message and exit 0; a hub whose registered project is not on
-    disk gets it named in the report and exit 1. Both with ``pm_validate_branches``
-    off the tool list.
-    """
-    apply_tool_gating(ALL_OFF)
-    assert "pm_validate_branches" not in listed()
-
-    monkeypatch.delenv("PROJECTMAN_ROOT", raising=False)
-    monkeypatch.chdir(tmp_hub)
-
-    clean = CliRunner().invoke(cli, ["validate-branches"])
-    assert clean.exit_code == 0, clean.output
-    assert "No submodules with tracking branches to validate." in clean.output
-
-    write_config(tmp_hub, projects=["ghost"])
-    broken = CliRunner().invoke(cli, ["validate-branches"])
-
-    assert broken.exit_code == 1, broken.output
-    assert "Missing directories:" in broken.output
-    assert "ghost" in broken.output
-    assert "pm_validate_branches" not in listed()
-
-
-def test_the_cli_dry_runs_a_coordinated_push_while_the_tool_is_hidden(
-    hub_with_remotes, monkeypatch
-):
-    """``projectman push-all --dry-run`` plans a real push and pushes nothing.
-
-    A real hub with two submodules and bare remotes, both carrying unpushed
-    commits. The command must name them in its plan while ``pm_push_all`` is
-    off the tool list — and every remote must be byte-identical afterwards.
-    """
-    apply_tool_gating(ALL_OFF)
-    assert "pm_push_all" not in listed()
-
-    hub = hub_with_remotes["hub"]
-    for name in ("api", "web"):
-        sub = hub / "projects" / name
-        (sub / "dryrun.txt").write_text(f"{name} dry run")
-        _git(["add", "."], sub)
-        _git(["commit", "-m", f"{name}: dry run"], sub)
-    _git(["add", "projects/api", "projects/web"], hub)
-    _git(["commit", "-m", "update refs for dry run"], hub)
-
-    before = {
-        name: _remote_sha(hub_with_remotes[f"{name}_bare"])
-        for name in ("api", "web", "hub")
-    }
-
-    monkeypatch.delenv("PROJECTMAN_ROOT", raising=False)
-    monkeypatch.chdir(hub)
-    result = CliRunner().invoke(cli, ["push-all", "--dry-run"])
-
-    assert result.exit_code == 0, result.output
-    payload = yaml.safe_load(result.output)
-    assert payload["pushed"] is False, payload
-    report = payload["report"]
-    assert "Dry Run" in report, report
-    assert "would push" in report, report
-    for name in ("api", "web"):
-        assert name in report, report
-
-    after = {
-        name: _remote_sha(hub_with_remotes[f"{name}_bare"])
-        for name in ("api", "web", "hub")
-    }
-    assert after == before, "a dry run pushed something"
-    assert "pm_push_all" not in listed()
 
 
 def test_a_failing_break_glass_command_exits_nonzero(tmp_project, monkeypatch):
@@ -878,16 +764,16 @@ def test_the_reference_documents_the_carve_out_as_an_ungated_tool(name):
     """Documented as a tool, and named in no ``Off by default`` note."""
     text = MCP_TOOLS_DOC.read_text()
     notes = _gating_notes(text)
-    assert "pm_repair" in notes, "the gating notes moved — this test reads nothing"
+    assert "pm_restore" in notes, "the gating notes moved — this test reads nothing"
 
     assert f"### {name}(" in text, f"{name} has no section in {MCP_TOOLS_DOC.name}"
     assert name not in notes, f"{name} is listed as gated in {MCP_TOOLS_DOC.name}"
 
 
 def test_no_guidance_redirects_a_carve_out_to_the_cli():
-    """The break-glass five got a CLI equivalent; these three must not.
+    """The break-glass tools got a CLI equivalent; these three must not.
 
-    ``projectman repair`` is the right answer for a hidden tool. For a tool
+    ``projectman restore`` is the right answer for a hidden tool. For a tool
     that is on the list, the same sentence would send agents away from the
     MCP call the wiring stories exist to make them use.
     """
@@ -904,7 +790,7 @@ def test_no_guidance_redirects_a_carve_out_to_the_cli():
 # ------------------------------- break-glass, redirected in the guidance --
 #
 # AC 2's third part, and the mirror of ``test_no_guidance_redirects_a_carve_out
-# _to_the_cli``. Hiding the five from ``tools/list`` is only safe if the
+# _to_the_cli``. Hiding them from ``tools/list`` is only safe if the
 # guidance an agent actually reads was moved with them: the shipped skill and
 # agent templates, the rendered copies under ``.claude/`` that a checkout
 # loads, and the tool reference must send a human at ``projectman <verb>``
@@ -914,7 +800,7 @@ from projectman.cli import CLAUDE_SKILLS  # noqa: E402
 
 RENDERED_CLAUDE = REPO_ROOT / ".claude"
 
-#: ``→ `pm_repair```, ``call pm_repair``, ``pm_repair(...)`` — the forms this
+#: ``→ `pm_restore```, ``call pm_restore``, ``pm_restore(...)`` — the forms this
 #: guidance uses to dispatch an agent at a tool. A bare mention in prose (the
 #: agent template explains *why* fix-malformed is a CLI command) is not one.
 _BREAK_GLASS_NAMES = "|".join(sorted(CLI_FOR_TOOL))
@@ -938,7 +824,7 @@ def _guidance_pairs() -> list[tuple[Path, Path]]:
 
 
 def _cli_mentions(text: str) -> set[str]:
-    """Which of the five ``projectman <verb>`` redirects a file carries."""
+    """Which ``projectman <verb>`` redirects a file carries."""
     return {
         command
         for command in CLI_FOR_TOOL.values()
@@ -961,7 +847,7 @@ def test_no_guidance_tells_an_agent_to_call_a_break_glass_tool():
 
 
 def test_the_guidance_names_the_cli_for_every_break_glass_tool():
-    """Each of the five has a ``projectman <verb>`` in what ships."""
+    """Each break-glass tool has a ``projectman <verb>`` in what ships."""
     shipped = "\n".join(
         path.read_text()
         for path in [

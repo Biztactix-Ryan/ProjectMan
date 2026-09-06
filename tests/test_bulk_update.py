@@ -535,12 +535,20 @@ class TestParityWithPmUpdate:
         pm_update_many(ids=",".join(tasks), unassign=True)
         assert all(_meta(tmp_project, t).assignee is None for t in tasks)
 
-    def test_the_index_is_written_for_the_whole_sweep(self, tmp_project, tasks):
-        """One index write at the end, but the index must still be current."""
-        from projectman.server import pm_update_many
+    def test_a_reindex_after_the_sweep_shows_every_item(self, tmp_project, tasks):
+        """US-PM-29: the sweep writes no index; an explicit rebuild makes it current.
+
+        This used to assert that the sweep itself wrote the index once at the
+        end.  The indexes are now derived and rebuilt only at the three
+        declared rebuild points, so the assertion that still matters is that
+        a rebuild after the sweep sees every item the sweep wrote.
+        """
+        from projectman.server import pm_reindex, pm_update_many
 
         pm_update_many(ids=",".join(tasks), status="done")
+        assert not (tmp_project / ".project" / "index.yaml").exists()
 
+        pm_reindex()
         index = yaml.safe_load((tmp_project / ".project" / "index.yaml").read_text())
         indexed = {e["id"]: e["status"] for e in index["entries"]}
         assert [indexed[t] for t in tasks] == ["done"] * 4

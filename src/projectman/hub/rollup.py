@@ -5,10 +5,10 @@ from typing import Optional
 
 import yaml
 
-from ..config import load_config
 from ..indexer import build_index
 from ..models import ProjectConfig
 from ..store import Store
+from .stores import hub_stores, not_attached_row
 
 
 def load_config_from(pm_dir: Path) -> ProjectConfig:
@@ -19,13 +19,24 @@ def load_config_from(pm_dir: Path) -> ProjectConfig:
 
 
 def rollup(root: Optional[Path] = None) -> dict:
-    """Iterate hub PM data dirs (.project/projects/{name}/), aggregate index stats."""
+    """Aggregate index stats across every subproject store in the map.
+
+    Store locations come from :func:`projectman.hub.stores.hub_stores`, which
+    puts each subproject's PM data inside its own checkout at
+    ``projects/{name}/.project`` (US-PM-31).
+
+    A subproject whose store is not mounted there is *reported*, not raised
+    on: its row is ``{name, prefix, status: "not attached", hint}`` and no
+    ``Store`` is constructed for it (US-PM-31-9).  A hub read has no business
+    failing because one of ten submodules has not been migrated yet, so the
+    other nine still contribute their numbers to the totals.
+    """
     from ..config import find_project_root
     root = root or find_project_root()
-    config = load_config(root)
 
     totals = {
         "projects": [],
+        "hub_epics": 0,
         "total_epics": 0,
         "total_stories": 0,
         "total_tasks": 0,
@@ -33,13 +44,26 @@ def rollup(root: Optional[Path] = None) -> dict:
         "completed_points": 0,
     }
 
-    for name in config.projects:
-        pm_dir = root / ".project" / "projects" / name
-        if not (pm_dir / "config.yaml").exists():
-            totals["projects"].append({
-                "name": name,
-                "status": "not initialized",
-            })
+    # Epics live in the hub's own store now (US-PM-36), and a hub epic belongs
+    # to no single project — so it is counted once here, outside the project
+    # rows, and never lands in a per-project "Epics" column.  Subproject epics
+    # are still summed below, so a hub whose epics have not been migrated up
+    # yet still adds up to the same total.
+    try:
+        totals["hub_epics"] = build_index(Store(root)).epic_count
+        totals["total_epics"] += totals["hub_epics"]
+    except Exception:
+        # A hub read never fails on its own store being mid-write; the rows
+        # below are the part callers came for.
+        pass
+
+    for entry in hub_stores(root):
+        name = entry["name"]
+        pm_dir = entry["path"]
+        if not entry["attached"]:
+            # Missing, unmounted, or unreadable — all one answer, and never a
+            # Store() call.  See stores.not_attached_row.
+            totals["projects"].append(not_attached_row(entry))
             continue
 
         try:

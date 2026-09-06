@@ -4,26 +4,28 @@ US-PM-27's second acceptance criterion: "hub/registry.py no longer contains
 feature-branch or PR or hub-ref-update or rebase-conflict code".
 
 Pass 2 of the removal (US-PM-27-7) deleted sixteen functions from
-``src/projectman/hub/registry.py``. Three things had to stay, because live
-callers use them: :func:`hub_push_with_rebase` (reached by ``push_hub``),
-:func:`log_ref_update` (reached by ``sync``), and the deploy-branch *check*
-:func:`validate_not_on_deploy_branch` with its helper ``_get_deploy_branch``
-(reached by ``push_preflight`` and ``git status``). So "the code is gone" is
-not a whole-file grep — it is a claim about which names survived and, for the
-one function that survived in stripped form, about what it now *does*.
+``src/projectman/hub/registry.py``. One thing had to stay, because live
+callers use it: :func:`log_ref_update`, reached by ``sync``. So "the code is
+gone" is not a whole-file grep — it is a claim about which names survived.
 
-This module pins four things:
+:func:`_get_deploy_branch` was kept back then too, for the git-status
+dashboard. US-PM-35-8 took it: the dashboard now reports each subproject's
+*store* through ``worktree.store_git_state`` and has no opinion about how a
+subproject deploys, so its last hub-side reader went with the alignment
+scoring (``REMOVED_LATER`` below).
+
+US-PM-35-6 later took the rest of the cross-project push with it, including
+``hub_push_with_rebase`` and ``validate_not_on_deploy_branch``, so the
+rebase-abort scenario this module used to drive has no function to drive.
+
+This module pins three things:
 
 1. none of the sixteen removed names is an attribute of the module — asserted
    against the imported module rather than its text, so a name that came back
    via a re-export would still be caught;
 2. the module source carries no ``gh`` CLI pull-request invocation, no
    "pull request" wording, and no submodule-ref auto-resolution wording;
-3. ``hub_push_with_rebase`` really is stripped: driven over a scripted
-   ``subprocess.run``, a rebase conflict makes it run ``git rebase --abort``
-   and report "manual resolution required" — it does not reach for submodule
-   refs to fix the conflict itself;
-4. no tool the MCP server registers and no click command is named for the
+3. no tool the MCP server registers and no click command is named for the
    feature-branch, create-pr, pr-status or deploy-branch workflow — the tool
    check runs with every gated family switched on, so a tool merely hidden
    behind a config flag would still be caught.
@@ -33,7 +35,6 @@ over-eager deletion fails here instead of at a caller.
 """
 
 import re
-import subprocess
 from pathlib import Path
 
 import anyio
@@ -70,10 +71,17 @@ REMOVED_NAMES = [
 
 #: Deliberately kept, because these have live callers.
 KEPT_NAMES = [
-    "hub_push_with_rebase",
     "log_ref_update",
-    "validate_not_on_deploy_branch",
+]
+
+#: Removed later, by US-PM-35-8, when the git-status dashboard stopped scoring
+#: deploy-branch alignment and started reading each subproject's *store*
+#: through ``worktree.store_git_state``.  Listed apart from the sixteen so the
+#: history stays readable: these two were the last readers of the
+#: ``deploy_branch`` config key from the hub side.
+REMOVED_LATER = [
     "_get_deploy_branch",
+    "_get_tracking_branch",
 ]
 
 #: Fragments a PR workflow leaves in source even after the functions go.
@@ -144,6 +152,15 @@ def test_the_removed_function_is_not_an_attribute_of_the_registry(name):
     )
 
 
+@pytest.mark.parametrize("name", REMOVED_LATER)
+def test_the_deploy_branch_readers_went_with_the_alignment_scoring(name):
+    """US-PM-35-8: nothing hub-side reads a subproject's deploy branch now."""
+    assert not hasattr(registry, name), (
+        f"projectman.hub.registry still exposes {name!r} — the git-status "
+        f"dashboard reads each subproject's store, not its deploy branch"
+    )
+
+
 @pytest.mark.parametrize("name", KEPT_NAMES)
 def test_the_kept_function_survived_the_removal(name):
     """A control, and a guard: over-deleting must fail here, not at a caller."""
@@ -175,80 +192,11 @@ def test_the_registry_source_has_no_pr_or_auto_resolution_wording(pattern):
 def test_the_source_scan_reads_the_real_module():
     """A control: the scanned text must be the registry, not an empty read."""
     source = _registry_source()
-    assert "def hub_push_with_rebase(" in source
+    assert "def log_ref_update(" in source
     assert len(source) > 10_000
 
 
-# ------------------------------- (3) a rebase conflict aborts, not resolves --
-
-
-class _ScriptedGit:
-    """Stand-in for ``subprocess.run`` that answers by git subcommand.
-
-    Records every argv it is handed, so a test can assert *which* git commands
-    ran — the point of this criterion is that ``rebase --abort`` runs and no
-    submodule-ref surgery does.
-    """
-
-    def __init__(self, replies):
-        #: {git subcommand: (returncode, stderr)}
-        self.replies = replies
-        self.calls: list[list[str]] = []
-
-    def __call__(self, args, **kwargs):
-        argv = list(args)
-        self.calls.append(argv)
-        for key, (code, stderr) in self.replies.items():
-            if argv[1 : 1 + len(key.split())] == key.split():
-                return subprocess.CompletedProcess(argv, code, stdout="", stderr=stderr)
-        return subprocess.CompletedProcess(argv, 0, stdout="", stderr="")
-
-    def ran(self, key) -> bool:
-        parts = key.split()
-        return any(call[1 : 1 + len(parts)] == parts for call in self.calls)
-
-
-_REJECTED = "! [rejected] main -> main (non-fast-forward)\nfailed to push some refs"
-
-
-def test_a_rebase_conflict_aborts_and_asks_for_manual_resolution(
-    tmp_hub, monkeypatch
-):
-    git = _ScriptedGit(
-        {
-            "push": (1, _REJECTED),
-            "fetch": (0, ""),
-            "rebase origin/main": (1, "CONFLICT (content): Merge conflict in a.txt"),
-            "rebase --abort": (0, ""),
-        }
-    )
-    monkeypatch.setattr(registry.subprocess, "run", git)
-
-    result = registry.hub_push_with_rebase(root=tmp_hub)
-
-    assert result["pushed"] is False
-    assert "manual resolution" in (result["error"] or "").lower(), result
-    assert git.ran("rebase --abort"), "the conflicted rebase was left in progress"
-    # It must not try to fix the conflict by rewriting submodule refs.
-    for call in git.calls:
-        assert "submodule" not in call, f"unexpected submodule surgery: {call}"
-        assert "checkout" not in call, f"unexpected checkout during conflict: {call}"
-
-
-def test_the_scripted_git_can_also_produce_a_clean_push(tmp_hub, monkeypatch):
-    """A control: the harness is capable of a passing push, so the failure
-    above comes from the conflict script and not from a broken stand-in."""
-    git = _ScriptedGit({"push": (0, "")})
-    monkeypatch.setattr(registry.subprocess, "run", git)
-
-    result = registry.hub_push_with_rebase(root=tmp_hub)
-
-    assert result["pushed"] is True
-    assert result["error"] is None
-    assert not git.ran("rebase"), "a successful push must not rebase"
-
-
-# ------------------------------------ (4) no tool and no command is named for it --
+# ------------------------------------ (3) no tool and no command is named for it --
 
 
 def test_no_registered_mcp_tool_is_named_for_the_pr_workflow(every_family_registered):

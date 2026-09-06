@@ -345,7 +345,8 @@ def tmp_hub(tmp_path_factory):
     """
     root = tmp_path_factory.mktemp("hub")
     proj = root / ".project"
-    (proj / "projects").mkdir(parents=True)
+    proj.mkdir(parents=True)
+    (root / "projects").mkdir()
     (proj / "stories").mkdir()
     (proj / "tasks").mkdir()
     (proj / "config.yaml").write_text(
@@ -366,7 +367,7 @@ def tmp_hub(tmp_path_factory):
 @pytest.fixture
 def hub_subproject(tmp_hub):
     """A hub with one registered subproject holding its own PM data."""
-    pm_dir = tmp_hub / ".project" / "projects" / "alpha"
+    pm_dir = tmp_hub / "projects" / "alpha" / ".project"
     (pm_dir / "stories").mkdir(parents=True)
     (pm_dir / "tasks").mkdir()
     (pm_dir / "config.yaml").write_text(

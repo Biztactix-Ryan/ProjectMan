@@ -43,15 +43,16 @@ a worker that self-reported `done` and failed validation. Only `pm_accept` guard
 ### Signatures
 
 Style matches `pm_release` / `pm_done_next` in `src/projectman/server.py`: `task_id` with
-an `id` alias resolved by `_resolve_id`, `project` last, `@mcp.tool(...)` with
+an `id` alias resolved by `_resolve_id`, the store resolved from the ID's prefix
+by `_store_for_id` (US-PM-34 — there is no `project` argument), `@mcp.tool(...)` with
 `ToolAnnotations(readOnlyHint=False, destructiveHint=False)`.
 
 ```python
 def pm_accept(task_id=None, note=..., next_task=True, same_story_only=True,
-              assignee="claude", project=None, id=None) -> str
-def pm_retry (task_id=None, note=..., project=None, id=None) -> str
-def pm_park  (task_id=None, note=..., project=None, id=None) -> str
-def pm_review(task_id=None, note=..., project=None, id=None) -> str
+              assignee="claude", id=None) -> str
+def pm_retry (task_id=None, note=..., id=None) -> str
+def pm_park  (task_id=None, note=..., id=None) -> str
+def pm_review(task_id=None, note=..., id=None) -> str
 ```
 
 `note: str` has **no default** — FastMCP rejects the call before any write, so an omitted

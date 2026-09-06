@@ -1,10 +1,22 @@
 # Hub Mode Git Workflow
 
-This document covers the git workflow for hub mode — how changes in subprojects reach the hub's submodule refs.
+Two different things move through git in a hub, and keeping them apart is most
+of what this document is for:
 
-## The Workflow
+- **Code** — a subproject's commits, and the hub's submodule ref that points at
+  one of them.
+- **PM data** — each store, living on the `projectman` branch of the repo it
+  describes. The hub's own store is one of these; so is every
+  `projects/{name}/.project`.
 
-The hub repo tracks a specific commit per subproject via git submodule refs. Getting work into the hub is therefore two moves: land the commit in the subproject, then advance the hub's ref to it.
+ProjectMan moves PM data, one store at a time. It never moves code between
+repos, and it never commits or pushes inside a subproject on your behalf.
+
+## Code: Getting a Subproject Commit Into the Hub
+
+The hub repo tracks a specific commit per subproject via git submodule refs, so
+getting work into the hub is two moves: land the commit in the subproject, then
+advance the hub's ref to it.
 
 ```
 Developer         Subproject Repo         Hub Repo
@@ -18,93 +30,15 @@ Developer         Subproject Repo         Hub Repo
                                          git push
 ```
 
-ProjectMan does not manage how a subproject's commits get onto its tracked branch — direct pushes, pull requests and review are entirely your team's choice, and ProjectMan neither creates nor inspects them. What it automates is step 2, and the ordering that makes it safe: `projectman push` never advances a hub ref to a commit that has not been pushed to the subproject's remote.
+ProjectMan does not manage how a subproject's commits get onto its tracked
+branch — direct pushes, pull requests and review are entirely your team's
+choice, and ProjectMan neither creates nor inspects them. Step 2 is yours too:
+stage and commit the submodule ref in the hub, then `git push` it. ProjectMan
+*reports* what each subproject's ref says (`projectman sync`,
+`projectman git-status`); it does not advance refs across repos for you.
 
-## Coordinated Push
-
-The coordinated push command orchestrates pushing multiple repos in the correct order with safety gates at every step.
-
-### How It Works
-
-```
-projectman push --scope all
-```
-
-1. **Discover** — finds all subprojects with unpushed commits
-2. **Preflight** — validates every project before anything is pushed:
-   - Branch alignment (each submodule on its tracked branch)
-   - Convention validation (branch naming, deploy protection)
-   - Remote reachability (can reach origin)
-   - Staged changes check (warns if dirty but nothing staged)
-3. **Push subprojects** — pushes each subproject sequentially, stops on first failure
-4. **Push hub** — stages submodule ref updates, commits, and pushes, rebasing onto the remote if it has moved (see [Handling Conflicts](#handling-conflicts))
-
-If any preflight check fails, nothing is pushed. If a subproject push fails, remaining subprojects and the hub are skipped.
-
-### Commands
-
-```bash
-# Push all dirty subprojects + hub
-projectman push --scope all
-
-# Push specific projects only
-projectman push --projects api,web
-
-# Dry run — show what would happen
-projectman push --dry-run
-
-# Push just the hub (no subprojects)
-projectman push --scope hub
-
-# Push a single subproject
-projectman push --scope project:api
-```
-
-### Push Report
-
-A successful coordinated push produces a report like:
-
-```
-Subprojects:
-  api  main → origin  a1b2c3d  ✓
-  web  main → origin  d4e5f6g  ✓
-Hub:
-  main → origin  f8a9b0c  ✓
-```
-
-If the hub needed a rebase:
-
-```
-Hub:
-  main → origin  f8a9b0c  ✓  (rebased, 1 retry)
-```
-
-## Handling Conflicts
-
-When the hub push is rejected because the remote has moved on, ProjectMan fetches and rebases, then pushes again. That handles the ordinary race — someone else's push landed between your fetch and yours — and nothing more.
-
-### Rebase Flow
-
-```
-Push attempt       Result              Action
-────────────       ──────              ──────
-1st push           rejected            fetch + rebase
-                   ↓
-                   rebase succeeds?
-                   ├─ yes → push again (up to 3 attempts)
-                   └─ no  → abort the rebase, stop, report
-```
-
-### When the Rebase Conflicts
-
-**ProjectMan never resolves a conflict for you.** Any conflicting rebase — a submodule ref both you and someone else advanced, or a `.project/` file you both edited — is aborted with `git rebase --abort`, and the push stops:
-
-```
-Hub:
-  main → origin  ✗  rebase conflict — manual resolution required
-```
-
-The abort leaves the hub exactly as it was before the attempt: your commits are intact, nothing is half-rebased, and no ref has been picked for you. Resolve it yourself, then run `projectman push --scope hub` again:
+When a hub push is rejected because the remote has moved on, fetch and rebase
+yourself, then push again:
 
 ```bash
 cd hub-root
@@ -113,13 +47,89 @@ git rebase origin/main
 # edit the conflicting files (for a submodule ref, `git checkout` the commit
 # you actually want, then `git add projects/<name>`)
 git rebase --continue
+git push
 ```
 
-For a submodule ref conflict, decide deliberately which commit the hub should point at. The two sides are opaque SHAs and git has no way to merge them — if the two commits are genuinely different work, merge the *subproject* branches first and point the hub at the merge result, rather than picking one side and silently dropping the other.
+For a submodule ref conflict, decide deliberately which commit the hub should
+point at. The two sides are opaque SHAs and git has no way to merge them — if
+they are genuinely different work, merge the *subproject* branches first and
+point the hub at the merge result, rather than picking one side and silently
+dropping the other.
 
-### Retry Logic
+## PM Data: Commit and Push One Store
 
-The hub push retries up to 3 times (configurable). Each retry fetches the latest remote state and attempts a fresh rebase. A conflict ends the attempt immediately — the remaining retries are not used, because retrying cannot change the outcome.
+`pm_commit` and `pm_push` — and their CLI twins `projectman commit` and
+`projectman push` — act on exactly **one** store, named by `prefix`. Omit the
+prefix and it is the hub's own store.
+
+```bash
+# The hub's own store
+projectman commit
+projectman push
+
+# One subproject's store, inside that subproject's own repo
+projectman commit --prefix API
+projectman push --prefix API
+```
+
+```
+pm_commit(prefix="API")
+pm_push(prefix="API")
+```
+
+Git runs **inside the store directory**, so the commit lands on the branch that
+owns it: `projectman` for a worktree store, which every subproject store is.
+`pm_push` sends that one branch to that repo's own `origin` and nothing else.
+An unknown prefix is an error listing the prefixes the hub knows; `pm_commit`
+with nothing staged is an expected negative (`nothing_to_commit`), not a
+failure.
+
+There is no hub-wide commit or push. A nightly job that wants every project
+covered loops over the prefixes — see [cron.md](cron.md).
+
+## Sync: The One Hub-Wide Verb
+
+```bash
+projectman sync
+```
+
+Two passes, in this order:
+
+1. a fast-forward `git pull` in every checked-out submodule, skipping a dirty or
+   diverged one with a note rather than touching it;
+2. a re-attach of every registered project whose `projects/{name}/.project`
+   worktree has gone — a fresh submodule clone, a removed worktree — by mounting
+   that submodule's `projectman` branch, or creating and mounting it when the
+   branch does not exist yet.
+
+That second pass is the only write ProjectMan makes inside a subproject. Every
+line of the report names the project it concerns, and one unfixable subproject
+never aborts the rest.
+
+## Reading the State: `pm_git_status`
+
+`pm_git_status` (CLI: `projectman git-status`) is a read-only rollup, one row
+per registered project, in registration order. Each row describes that
+project's **store** — `projects/{name}/.project` read through the same worktree
+helper `pm_commit` and `pm_push` consult to decide which branch to act on:
+
+| Column | What it is |
+|---|---|
+| `Project` | The registered project name |
+| `Store branch` | The branch owning the store (`projectman`), or `not attached` |
+| `Checkout` | The submodule's own checked-out code branch — a separate fact |
+| `Dirty` | Uncommitted files **under the store**, never the code checkout's |
+| `Ahead/Behind` | The store branch against its upstream |
+| `Issues` | Detached store HEAD, uncommitted store changes, behind upstream, missing directory, or an unmounted store |
+
+The JSON form adds `attached`, `prefix`, `worktree`, `upstream` and
+`last_commit` (the store's last commit — the last PM change) per project, plus a
+`pm_store` entry for the hub's own store. A subproject with no store mounted is
+a row carrying `attached: false` and a `hint` naming the commands that fix it,
+never an error. Pass a `prefix` to get the single matching row.
+
+There is no deploy-branch alignment score: the hub reports what each
+subproject's `projectman` branch says, and nothing about how that repo deploys.
 
 ## Commit Messages
 
@@ -138,7 +148,7 @@ When committing `.project/` changes:
 
 ### Hub Ref Commits
 
-When submodule refs are updated:
+When you update submodule refs by hand, the conventional message shape is:
 
 ```
 hub: update api, web to a1b2c3d, d4e5f6g
@@ -146,37 +156,55 @@ hub: update api, web to a1b2c3d, d4e5f6g
 
 ### Ref Log
 
-Every submodule ref change is recorded in `.project/ref-log.yaml`:
+Every submodule ref change ProjectMan observes is recorded in the hub's
+`.project/ref-log.yaml`:
 
 ```yaml
 - timestamp: '2026-02-24T02:30:00+00:00'
   project: api
   old_ref: abc1234
   new_ref: def5678
-  source: coordinated_push
+  source: manual
 ```
 
-`source` is free-form. ProjectMan itself writes `sync` (a ref advanced by `projectman sync`) and `auto_rebase` (a ref that moved when a hub push rebased onto the remote); `coordinated_push` and `manual` are the conventional values for entries written by hand or by your own tooling.
+`source` is free-form. ProjectMan itself writes `sync` (a ref advanced by
+`projectman sync`); `manual` is the conventional value for entries written by
+hand or by your own tooling.
 
-The log is capped at 500 entries. Older entries rotate to `ref-log.archive.yaml`.
+The log is capped at 500 entries. Older entries rotate to
+`ref-log.archive.yaml`.
 
 ## PM Store on Its Own Branch
 
-A hub whose `.project/` has been moved onto the `projectman` branch by [`projectman migrate-worktree`](../reference/cli.md#projectman-migrate-worktree) keeps the workflow above unchanged for code: submodule refs still live on `main` and still flow through the coordinated push. What moves is the PM data:
+A hub whose `.project/` has been moved onto the `projectman` branch by
+[`projectman migrate-worktree`](../reference/cli.md#projectman-migrate-worktree)
+keeps everything above unchanged for code: submodule refs still live on `main`.
+What moves is the PM data:
 
-- `pm_commit` (any scope) commits on `projectman`; the hub's `main` is never touched, its working tree stays clean, and `.project/` is never a gitlink — there is no second submodule pointer to dirty the parent on every task update.
-- `pm_push --scope hub` pushes `main` first (submodule ref updates) and then `projectman`. The result carries a `pm_store` entry naming the branch. A failed store push fails the call.
-- `pm_git_status` reports the store separately (`pm_store`: branch, worktree flag, dirty count, ahead/behind) so a dirty store is not read as a dirty hub.
+- `pm_commit` (with or without a prefix) commits on the `projectman` branch of
+  the store it names; the hub's `main` is never touched, its working tree stays
+  clean, and `.project/` is never a gitlink — there is no second submodule
+  pointer to dirty the parent on every task update.
+- `pm_push` pushes that one store's branch and nothing else. The submodule-ref
+  commits on the hub's `main` are yours to push.
+- `pm_git_status` reports the hub's store separately (`pm_store`: branch,
+  worktree flag, dirty count, ahead/behind) so a dirty store is not read as a
+  dirty hub.
 
-The full list of edges — `git clean -ffdx`, fresh clones, public visibility — is in [Living with the projectman worktree](../reference/cli.md#living-with-the-projectman-worktree).
+Every subproject store is already in this shape, mounted by
+`projectman add-project`, `projectman sync` or `projectman migrate-hub`.
+
+The full list of edges — `git clean -ffdx`, fresh clones, public visibility — is
+in [Living with the projectman worktree](../reference/cli.md#living-with-the-projectman-worktree).
 
 ## MCP Tools
 
-These tools are available via the MCP server for agent-driven workflows:
-
 | Tool | Description |
 |---|---|
-| `pm_commit` | Commit `.project/` changes (scope: hub, project:name, all) |
-| `pm_push` | Push `.project/` changes and, in hub mode, coordinate the submodule push |
-| `pm_git_status` | Per-project branch, alignment, dirty state, ahead/behind, and the PM store |
-| `pm_push_all` | Coordinated push with optional dry run and project filter (break-glass — needs `tools.maintenance: true`) |
+| `pm_commit` | Commit one store's `.project/` changes (`prefix`: the project, or the hub's own store) |
+| `pm_push` | Push the branch that owns one store (`prefix`: the project, or the hub's own store) |
+| `pm_git_status` | Per-project store branch, checkout branch, dirty state, ahead/behind, plus the hub's own store |
+
+The hub-wide git orchestration this document used to describe was removed in
+September 2026; [setup.md's History section](setup.md#history-the-design-this-replaced)
+says what it was and why.

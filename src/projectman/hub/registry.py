@@ -9,14 +9,23 @@ from typing import Optional
 
 import yaml
 
+from .. import worktree
 from ..config import load_config, save_config
+from ..errors import NotFoundError, StoreError
+from .stores import (
+    NOT_ATTACHED,
+    PROJECTS_DIRNAME,
+    STORE_DIRNAME,
+    hub_store,
+    invalidate as invalidate_store_map,
+    not_attached_row,
+    projects_dir as _projects_dir,
+    store_path,
+    subproject_path,
+)
 
 
 REF_LOG_MAX_ENTRIES = 500
-
-#: How many fetch-rebase-push cycles ``hub_push_with_rebase`` will attempt
-#: before giving up on a remote that keeps moving under it.
-MAX_PUSH_RETRIES = 3
 
 
 def log_ref_update(
@@ -38,8 +47,7 @@ def log_ref_update(
         project: Name of the subproject whose ref changed.
         old_ref: Previous submodule commit SHA.
         new_ref: New submodule commit SHA.
-        source: How the update happened (e.g. ``coordinated_push``,
-            ``manual``, ``sync``).
+        source: How the update happened (e.g. ``sync``, ``manual``).
         root: Hub root directory.
         author: Who triggered the update (optional).
         commit: Hub commit SHA that recorded the change (optional).
@@ -91,22 +99,7 @@ def _get_submodule_ref(project_name: str, root: Path) -> str:
     try:
         result = subprocess.run(
             ["git", "rev-parse", "HEAD"],
-            cwd=str(root / "projects" / project_name),
-            capture_output=True,
-            text=True,
-            check=True,
-        )
-        return str(result.stdout.strip())
-    except (subprocess.CalledProcessError, FileNotFoundError, OSError):
-        return ""
-
-
-def _get_hub_head(root: Path) -> str:
-    """Return the current hub repo HEAD SHA, or '' on failure."""
-    try:
-        result = subprocess.run(
-            ["git", "rev-parse", "HEAD"],
-            cwd=str(root),
+            cwd=str(subproject_path(root, project_name)),
             capture_output=True,
             text=True,
             check=True,
@@ -144,7 +137,7 @@ def add_project(name: str, git_url: str, branch: Optional[str] = None, root: Opt
     if not config.hub:
         return "error: not a hub project — run 'projectman init --hub' first"
 
-    projects_dir = root / "projects"
+    projects_dir = _projects_dir(root)
     projects_dir.mkdir(exist_ok=True)
 
     target = projects_dir / name
@@ -156,7 +149,7 @@ def add_project(name: str, git_url: str, branch: Optional[str] = None, root: Opt
         cmd = ["git", "submodule", "add"]
         if branch:
             cmd += ["--branch", branch]
-        cmd += [git_url, f"projects/{name}"]
+        cmd += [git_url, f"{PROJECTS_DIRNAME}/{name}"]
         subprocess.run(
             cmd,
             cwd=str(root),
@@ -169,21 +162,65 @@ def add_project(name: str, git_url: str, branch: Optional[str] = None, root: Opt
     except FileNotFoundError:
         return "error: git is not installed or not on PATH"
 
-    # Initialize PM data in hub's .project/projects/{name}/
+    # Mount the subproject's PM store at projects/{name}/.project as a worktree
+    # of the submodule's own `projectman` branch (US-PM-31).  The store belongs
+    # to the subproject repo, not to the hub: when the clone brought
+    # origin/projectman down with it that branch *is* the store and is simply
+    # attached; otherwise the branch is created, mounted, scaffolded and
+    # committed.  Nothing is ever written into the hub's own store — the
+    # retired subproject subdirectory of it is gone for good (US-PM-31-6).
     repo = _parse_github_repo(git_url)
     deploy_branch = branch or "main"
-    pm_dir = root / ".project" / "projects" / name
-    if not (pm_dir / "config.yaml").exists():
-        _init_subproject(pm_dir, name, repo=repo, deploy_branch=deploy_branch)
 
-    # Register in config
+    def _scaffold(path: Path) -> None:
+        _init_subproject(path, name, repo=repo, deploy_branch=deploy_branch)
+
+    try:
+        mount = worktree.ensure_store_branch(
+            target,
+            branch=worktree.DEFAULT_BRANCH,
+            project_dir=STORE_DIRNAME,
+            populate=_scaffold,
+        )
+    except (worktree.MigrationError, OSError) as exc:
+        # The store never mounted, so there is no store to register.  Leaving
+        # the name out of config.projects is the honest outcome: a registered
+        # project whose store does not exist would break every reader that
+        # walks config.projects.  The submodule checkout is left in place —
+        # removing it is a destructive guess — so the message says what to do
+        # with it.
+        invalidate_store_map(root)
+        return (
+            f"error: added the submodule at {PROJECTS_DIRNAME}/{name}, but could "
+            f"not mount its PM store on the '{worktree.DEFAULT_BRANCH}' branch: "
+            f"{exc}\n\n'{name}' was NOT registered in the hub. Fix the "
+            f"subproject repo and re-run add-project after removing "
+            f"{PROJECTS_DIRNAME}/{name} (git submodule deinit -f "
+            f"{PROJECTS_DIRNAME}/{name} && git rm -f {PROJECTS_DIRNAME}/{name})."
+        )
+
+    # Register in config — only now that the store is actually there.
     if name not in config.projects:
         config.projects.append(name)
         save_config(config, root)
+    invalidate_store_map(root)
 
     msg = f"added project '{name}' from {git_url}"
     if branch:
         msg += f" (branch: {branch})"
+    rel = f"{PROJECTS_DIRNAME}/{name}/{STORE_DIRNAME}"
+    if mount.get("source") == "attached":
+        msg += (
+            f"\n\nAttached the subproject's existing '{worktree.DEFAULT_BRANCH}' "
+            f"branch as {rel} — its PM data came with the clone."
+        )
+    else:
+        msg += (
+            f"\n\nCreated the '{worktree.DEFAULT_BRANCH}' branch in "
+            f"{PROJECTS_DIRNAME}/{name} and scaffolded a fresh store at {rel}. "
+            f"Push it with: git -C {rel} push -u origin "
+            f"{worktree.DEFAULT_BRANCH}"
+        )
     msg += f"\n\nRun /pm-init {name} to set up project documentation."
     return msg
 
@@ -191,7 +228,7 @@ def add_project(name: str, git_url: str, branch: Optional[str] = None, root: Opt
 def _init_subproject(target: Path, name: str, repo: str = "", deploy_branch: Optional[str] = None) -> None:
     """Initialize PM data directory for a subproject.
 
-    ``target`` is the project dir itself (e.g. hub_root/.project/projects/{name}/).
+    ``target`` is the store dir itself (e.g. hub_root/projects/{name}/.project/).
     Stories, tasks, epics, config.yaml, and docs are created directly inside it.
     """
     import yaml
@@ -247,240 +284,18 @@ def _init_subproject(target: Path, name: str, repo: str = "", deploy_branch: Opt
     }
     (target / "index.yaml").write_text(yaml.dump(empty_index, default_flow_style=False))
 
+    # The five derived index files are rebuilt on demand, not tracked
+    # (US-PM-29).  The hub's own .project/.gitignore already covers this
+    # store through unanchored patterns, but a subproject added to a hub
+    # scaffolded before that change has no such file above it, so give the
+    # subproject its own.
+    from ..indexer import write_store_gitignore
 
-def repair(root: Optional[Path] = None) -> str:
-    """Scan the hub, fix missing pieces, import existing data, rebuild indexes.
+    write_store_gitignore(target)
 
-    1. Discover unregistered projects in projects/ directory
-    2. Initialize PM data in .project/projects/{name}/ where missing
-    3. Rebuild each subproject's index.yaml
-    4. Rebuild hub embeddings from all subprojects
-    5. Regenerate hub dashboards
-    """
-    from ..config import find_project_root
-    from ..indexer import build_index, write_index
-    from ..store import Store
-
-    root = root or find_project_root()
-    config = load_config(root)
-
-    if not config.hub:
-        return "error: not a hub project — run 'projectman init --hub' first"
-
-    projects_dir = root / "projects"
-    if not projects_dir.exists():
-        projects_dir.mkdir()
-        return "created projects/ directory — no projects found yet"
-
-    report_lines = ["# Hub Repair Report\n"]
-    registered_before = set(config.projects)
-    changed = False
-
-    # 1. Discover unregistered projects (directories in projects/ not in config)
-    discovered = []
-    for entry in sorted(projects_dir.iterdir()):
-        if entry.is_dir() and entry.name not in config.projects:
-            config.projects.append(entry.name)
-            discovered.append(entry.name)
-            changed = True
-
-    if discovered:
-        report_lines.append(f"## Discovered {len(discovered)} unregistered project(s)\n")
-        for name in discovered:
-            report_lines.append(f"- **{name}** — registered in hub config")
-        report_lines.append("")
-
-    # 2. Initialize PM data where missing, rebuild indexes where present
-    initialized = []
-    rebuilt = []
-    story_counts = {}
-
-    for name in config.projects:
-        project_path = projects_dir / name
-        pm_dir = root / ".project" / "projects" / name
-
-        if not project_path.exists():
-            report_lines.append(f"- **{name}** — directory missing, skipped")
-            continue
-
-        # Migration: if old-style projects/{name}/.project/ exists but new-style doesn't, move data
-        old_style = project_path / ".project"
-        if old_style.exists() and not (pm_dir / "config.yaml").exists():
-            import shutil
-            pm_dir.mkdir(parents=True, exist_ok=True)
-            for item in old_style.iterdir():
-                dest = pm_dir / item.name
-                if not dest.exists():
-                    shutil.move(str(item), str(dest))
-            report_lines.append(f"- **{name}** — migrated PM data from submodule to hub")
-
-        if not (pm_dir / "config.yaml").exists():
-            _init_subproject(pm_dir, name)
-            initialized.append(name)
-        else:
-            # Project PM data exists — quarantine bad files, rebuild index
-            try:
-                import frontmatter as fm
-                from ..models import StoryFrontmatter, TaskFrontmatter
-                import shutil
-
-                store = Store(root, project_dir=pm_dir)
-                malformed_dir = store.project_dir / "malformed"
-                quarantined = []
-
-                # Check stories for bad frontmatter
-                for path in sorted(store.stories_dir.glob("*.md")):
-                    try:
-                        post = fm.load(str(path))
-                        StoryFrontmatter(**post.metadata)
-                    except Exception as e:
-                        malformed_dir.mkdir(exist_ok=True)
-                        dest = malformed_dir / path.name
-                        shutil.move(str(path), str(dest))
-                        quarantined.append((path.name, str(e).split("\n")[0]))
-
-                # Check tasks for bad frontmatter
-                for path in sorted(store.tasks_dir.glob("*.md")):
-                    try:
-                        post = fm.load(str(path))
-                        TaskFrontmatter(**post.metadata)
-                    except Exception as e:
-                        malformed_dir.mkdir(exist_ok=True)
-                        dest = malformed_dir / path.name
-                        shutil.move(str(path), str(dest))
-                        quarantined.append((path.name, str(e).split("\n")[0]))
-
-                if quarantined:
-                    report_lines.append(f"### {name} — {len(quarantined)} malformed file(s) quarantined\n")
-                    for fname, err in quarantined:
-                        report_lines.append(f"- `{fname}` → `.project/projects/{name}/malformed/{fname}`: {err}")
-                    report_lines.append("")
-
-                stories = store.list_stories()
-                tasks = store.list_tasks()
-                write_index(store)
-                rebuilt.append(name)
-                story_counts[name] = {
-                    "stories": len(stories),
-                    "tasks": len(tasks),
-                }
-            except Exception as e:
-                report_lines.append(f"- **{name}** — error rebuilding index: {e}")
-
-    if initialized:
-        report_lines.append(f"## Initialized {len(initialized)} project(s)\n")
-        for name in initialized:
-            report_lines.append(f"- **{name}** — created .project/ structure")
-        report_lines.append("")
-        report_lines.append("**Next step:** Run `/pm-init <project-name>` for each to set up documentation.\n")
-
-    if rebuilt:
-        report_lines.append(f"## Rebuilt indexes for {len(rebuilt)} project(s)\n")
-        for name in rebuilt:
-            counts = story_counts.get(name, {})
-            s = counts.get("stories", 0)
-            t = counts.get("tasks", 0)
-            report_lines.append(f"- **{name}** — {s} stories, {t} tasks")
-        report_lines.append("")
-
-    # 3. Create missing hub docs (VISION.md, ARCHITECTURE.md, DECISIONS.md)
-    hub_proj_dir = root / ".project"
-    (hub_proj_dir / "epics").mkdir(exist_ok=True)
-    hub_docs_created = []
-    try:
-        import importlib.resources
-        from jinja2 import Environment, FileSystemLoader
-        tdir = str(importlib.resources.files("projectman") / "templates")
-        env = Environment(loader=FileSystemLoader(tdir), keep_trailing_newline=True)
-        ctx = dict(name=config.name, prefix=config.prefix, description=config.description, hub=True)
-
-        for doc_name, template_name in [
-            ("VISION.md", "vision.md.j2"),
-            ("ARCHITECTURE.md", "architecture_hub.md.j2"),
-            ("DECISIONS.md", "decisions.md.j2"),
-        ]:
-            doc_path = hub_proj_dir / doc_name
-            if not doc_path.exists():
-                doc_path.write_text(env.get_template(template_name).render(**ctx))
-                hub_docs_created.append(doc_name)
-    except Exception:
-        pass
-
-    if hub_docs_created:
-        report_lines.append(f"## Created {len(hub_docs_created)} missing hub doc(s)\n")
-        for doc_name in hub_docs_created:
-            report_lines.append(f"- **{doc_name}**")
-        report_lines.append("")
-
-    # 4. Rebuild hub embeddings from all subprojects
-    embedded_count = 0
-    try:
-        from ..embeddings import EmbeddingStore
-
-        emb_store = EmbeddingStore(hub_proj_dir)
-
-        for name in config.projects:
-            pm_dir = root / ".project" / "projects" / name
-            if not (pm_dir / "config.yaml").exists():
-                continue
-
-            try:
-                store = Store(root, project_dir=pm_dir)
-
-                for story in store.list_stories():
-                    _, body = store.get_story(story.id)
-                    # Namespace IDs so they're unique across projects
-                    hub_id = f"{name}/{story.id}"
-                    emb_store.index_item(hub_id, f"[{name}] {story.title}", "story", body)
-                    embedded_count += 1
-
-                for task in store.list_tasks():
-                    _, body = store.get_task(task.id)
-                    hub_id = f"{name}/{task.id}"
-                    emb_store.index_item(hub_id, f"[{name}] {task.title}", "task", body)
-                    embedded_count += 1
-            except Exception as e:
-                report_lines.append(f"- **{name}** — embedding error: {e}")
-
-        if embedded_count > 0:
-            report_lines.append(f"## Rebuilt hub embeddings\n")
-            report_lines.append(f"- Indexed {embedded_count} items across all projects")
-            report_lines.append("")
-    except ImportError:
-        report_lines.append("## Embeddings skipped (sentence-transformers not installed)\n")
-
-    # 5. Regenerate hub dashboards
-    try:
-        from .dashboards import generate_dashboards
-        generate_dashboards(root)
-        report_lines.append("## Regenerated hub dashboards\n")
-        report_lines.append("- Updated status.md and burndown.md")
-        report_lines.append("")
-    except Exception as e:
-        report_lines.append(f"## Dashboard generation failed: {e}\n")
-
-    # 6. Save config if changed
-    if changed:
-        save_config(config, root)
-
-    # Summary
-    total_stories = sum(c.get("stories", 0) for c in story_counts.values())
-    total_tasks = sum(c.get("tasks", 0) for c in story_counts.values())
-    report_lines.append("## Summary\n")
-    report_lines.append(f"- **Projects registered:** {len(config.projects)}")
-    report_lines.append(f"- **Newly discovered:** {len(discovered)}")
-    report_lines.append(f"- **Newly initialized:** {len(initialized)}")
-    report_lines.append(f"- **Indexes rebuilt:** {len(rebuilt)}")
-    report_lines.append(f"- **Total stories found:** {total_stories}")
-    report_lines.append(f"- **Total tasks found:** {total_tasks}")
-    report_lines.append(f"- **Items embedded:** {embedded_count}")
-
-    report = "\n".join(report_lines)
-
-    # Write repair report to hub
-    (root / ".project" / "REPAIR.md").write_text(report + "\n")
-
-    return report
+    # A store that did not exist a moment ago now does — any cached map that
+    # said otherwise is wrong.
+    invalidate_store_map()
 
 
 def set_branch(name: str, branch: str, root: Optional[Path] = None) -> str:
@@ -495,7 +310,7 @@ def set_branch(name: str, branch: str, root: Optional[Path] = None) -> str:
     if name not in config.projects:
         return f"error: project '{name}' not registered in hub"
 
-    target = root / "projects" / name
+    target = subproject_path(root, name)
     if not target.exists():
         return f"error: project '{name}' directory not found"
 
@@ -525,82 +340,19 @@ def set_branch(name: str, branch: str, root: Optional[Path] = None) -> str:
     return f"project '{name}' now tracking branch '{branch}'"
 
 
-def _get_deploy_branch(name: str, root: Path) -> str:
-    """Return the deploy branch for a subproject from its PM config.
-
-    Falls back to the .gitmodules tracking branch, then ``"main"``.
-    """
-    pm_config = root / ".project" / "projects" / name / "config.yaml"
-    if pm_config.exists():
-        data = yaml.safe_load(pm_config.read_text()) or {}
-        if data.get("deploy_branch"):
-            return str(data["deploy_branch"])
-    # Fallback to tracking branch from .gitmodules
-    tracking = _get_tracking_branch(name, root)
-    return tracking or "main"
-
-
-def validate_not_on_deploy_branch(
-    project_name: str,
-    root: Optional[Path] = None,
-) -> str:
-    """Check that a subproject is NOT on the deploy branch with uncommitted changes.
-
-    If the subproject's HEAD is on the deploy branch and there are staged
-    changes or modified tracked files, the developer should be on a feature
-    branch instead.  Untracked files alone do not trigger this check.
-
-    Returns an error string describing the problem, or an empty string
-    when everything is fine.
-
-    This check is intentionally skipped by ``sync()`` which legitimately
-    pulls into the deploy branch.
-    """
-    from ..config import find_project_root
-
-    root = root or find_project_root()
-
-    deploy = _get_deploy_branch(project_name, root)
-    current = _get_current_branch(project_name, root)
-
-    if current == deploy and _has_tracked_changes(project_name, root):
-        return (
-            f"project '{project_name}' has uncommitted changes on the deploy "
-            f"branch '{deploy}' — commit on a working branch instead"
-        )
-
-    return ""
-
-
-def _get_tracking_branch(name: str, root: Path) -> str:
-    """Return the branch a submodule is configured to track in .gitmodules.
-
-    Returns the branch string, or ``""`` if not set or on error.
-    """
-    try:
-        result = subprocess.run(
-            ["git", "config", "-f", ".gitmodules",
-             f"submodule.projects/{name}.branch"],
-            cwd=str(root),
-            capture_output=True,
-            text=True,
-        )
-        if result.returncode == 0:
-            return result.stdout.strip()
-    except (FileNotFoundError, OSError):
-        pass
-    return ""
-
-
 def _get_current_branch(name: str, root: Path) -> str:
-    """Return the current branch of a submodule, or ``""`` on error.
+    """Return the checked-out branch of a submodule, or ``""`` on error.
+
+    This is the submodule's *code* checkout, not its PM store: the store lives
+    on the ``projectman`` branch mounted at ``projects/{name}/.project`` and is
+    read through :func:`projectman.worktree.store_git_state` instead.
 
     Returns ``"HEAD"`` when the submodule is in detached HEAD state.
     """
     try:
         result = subprocess.run(
             ["git", "rev-parse", "--abbrev-ref", "HEAD"],
-            cwd=str(root / "projects" / name),
+            cwd=str(subproject_path(root, name)),
             capture_output=True,
             text=True,
             check=True,
@@ -610,399 +362,67 @@ def _get_current_branch(name: str, root: Path) -> str:
         return ""
 
 
-def _is_dirty(name: str, root: Path) -> bool:
-    """Return ``True`` if the submodule has uncommitted changes."""
-    try:
-        result = subprocess.run(
-            ["git", "status", "--porcelain"],
-            cwd=str(root / "projects" / name),
-            capture_output=True,
-            text=True,
-            check=True,
-        )
-        return bool(result.stdout.strip())
-    except (subprocess.CalledProcessError, FileNotFoundError, OSError):
-        return False
+def _attach_missing_store(name: str, root: Path) -> Optional[tuple[bool, str]]:
+    """Re-mount ``projects/{name}/.project`` if its worktree has gone missing.
 
+    The one repair ``sync`` does, and the only write it makes inside a
+    subproject.  A store worktree disappears the ordinary ways — a
+    ``git worktree remove``, a fresh clone of the submodule, a pruned checkout
+    — and until it is back every read of that project reports "not attached".
 
-def _has_staged_changes(name: str, root: Path) -> bool:
-    """Return ``True`` if the submodule has changes staged in its index."""
-    try:
-        result = subprocess.run(
-            ["git", "diff", "--cached", "--quiet"],
-            cwd=str(root / "projects" / name),
-            capture_output=True,
-            text=True,
-        )
-        # exit code 1 means there ARE staged changes
-        return result.returncode != 0
-    except (FileNotFoundError, OSError):
-        return False
-
-
-def _has_tracked_changes(name: str, root: Path) -> bool:
-    """Return ``True`` if the submodule has staged or modified tracked files.
-
-    Unlike :func:`_is_dirty`, this ignores untracked files (``??`` entries)
-    which are not yet part of the commit.  This is the right check for
-    deploy branch protection — only staged or modified tracked content
-    indicates work that could be accidentally committed.
+    Returns ``(succeeded, line)`` — a one-line report of what happened — or
+    None when the store was already mounted and there was nothing to do.
+    Never raises: a refusal (a copied store still sitting in the directory, no
+    git repo, a git error) comes back as a ``(False, line)`` report, because
+    one unfixable subproject must not abort the sync of the others.
     """
+    checkout = subproject_path(root, name)
+    store_dir = store_path(root, name)
+
+    if worktree.is_worktree(store_dir):
+        return None
+    if not (checkout / ".git").exists():
+        # Not a git checkout at all (a plain-directory fixture, or a submodule
+        # that was never initialized) — there is no repo to mount a branch in.
+        return None
+
+    branch = worktree.DEFAULT_BRANCH
     try:
-        result = subprocess.run(
-            ["git", "status", "--porcelain"],
-            cwd=str(root / "projects" / name),
-            capture_output=True,
-            text=True,
-            check=True,
-        )
-        for line in result.stdout.splitlines():
-            if line and not line.startswith("??"):
-                return True
-        return False
-    except (subprocess.CalledProcessError, FileNotFoundError, OSError):
-        return False
-
-
-def _remote_reachable(name: str, root: Path) -> bool:
-    """Return ``True`` if ``origin`` is reachable for a submodule."""
-    try:
-        result = subprocess.run(
-            ["git", "ls-remote", "--exit-code", "origin"],
-            cwd=str(root / "projects" / name),
-            capture_output=True,
-            text=True,
-            timeout=30,
-        )
-        return result.returncode == 0
-    except (subprocess.CalledProcessError, FileNotFoundError, OSError,
-            subprocess.TimeoutExpired):
-        return False
-
-
-def push_preflight(
-    projects: Optional[list[str]] = None,
-    root: Optional[Path] = None,
-) -> dict:
-    """Run all pre-push validations and return a combined readiness report.
-
-    This is the gate — nothing gets pushed until preflight passes.
-
-    Checks:
-        1. ``validate_branches(strict=True)`` — every submodule on expected branch.
-        2. ``validate_conventions()`` — branch naming, deploy protection (when available).
-        3. ``validate_not_on_deploy_branch()`` — block dirty changes on deploy branch.
-        4. For each dirty subproject: confirm it has staged changes (not just untracked).
-        5. For each subproject to push: confirm remote is reachable.
-
-    Args:
-        projects: Optional list of project names to check.  When ``None``,
-            checks all registered projects.
-        root: Hub root directory.
-
-    Returns:
-        A dict with keys:
-
-        - ``ready``: list of project names that can be pushed.
-        - ``blocked``: list of dicts ``{"name": str, "reason": str}``
-          for projects that cannot be pushed.
-        - ``warnings``: list of human-readable non-blocking concerns.
-        - ``can_proceed``: ``True`` only if no blockers exist.
-    """
-    from ..config import find_project_root
-
-    root = root or find_project_root()
-    config = load_config(root)
-
-    if not config.hub:
-        return {
-            "ready": [],
-            "blocked": [{"name": "(hub)", "reason": "not a hub project"}],
-            "warnings": [],
-            "can_proceed": False,
-        }
-
-    # Determine which projects to check
-    target_projects = projects if projects is not None else list(config.projects)
-
-    ready: list[str] = []
-    blocked: list[dict] = []
-    warnings: list[str] = []
-
-    # ── 1. Branch validation (strict mode for push gate) ──────
-    branch_result = validate_branches(root=root, strict=True)
-
-    # Build lookup sets for quick access
-    misaligned_names = {r["name"] for r in branch_result["misaligned"]}
-    detached_names = {r["name"] for r in branch_result["detached"]}
-    missing_names = {r["name"] for r in branch_result["missing"]}
-
-    # ── 2. Convention validation (when available) ─────────────
-    try:
-        from . import conventions
-        if hasattr(conventions, "validate_conventions"):
-            conv_result = conventions.validate_conventions(root=root)
-            if conv_result.get("violations"):
-                for v in conv_result["violations"]:
-                    name = v.get("name", "unknown")
-                    reason = v.get("reason", "convention violation")
-                    if name in target_projects:
-                        blocked.append({"name": name, "reason": reason})
-    except (ImportError, AttributeError):
-        pass  # US-PRJ-9 not implemented yet
-
-    # Track which projects are already blocked by conventions
-    convention_blocked = {b["name"] for b in blocked}
-
-    # ── Per-project checks ────────────────────────────────────
-    for name in target_projects:
-        # Skip if already blocked by convention check
-        if name in convention_blocked:
-            continue
-
-        project_path = root / "projects" / name
-
-        # Missing directory — fatal
-        if name in missing_names or not project_path.exists():
-            blocked.append({"name": name, "reason": "project directory not found"})
-            continue
-
-        # Branch misalignment — fatal
-        if name in misaligned_names:
-            for r in branch_result["misaligned"]:
-                if r["name"] == name:
-                    blocked.append({
-                        "name": name,
-                        "reason": (
-                            f"branch mismatch: on '{r['actual']}', "
-                            f"expected '{r['expected']}'"
-                        ),
-                    })
-                    break
-            continue
-
-        # Detached HEAD — fatal in strict mode
-        if name in detached_names:
-            for r in branch_result["detached"]:
-                if r["name"] == name:
-                    blocked.append({
-                        "name": name,
-                        "reason": (
-                            f"detached HEAD (expected '{r['expected']}')"
-                        ),
-                    })
-                    break
-            continue
-
-        # ── 3. Deploy branch protection ───────────────────────
-        deploy_err = validate_not_on_deploy_branch(name, root)
-        if deploy_err:
-            blocked.append({"name": name, "reason": deploy_err})
-            continue
-
-        # ── 4. Dirty but no staged changes ────────────────────
-        if _is_dirty(name, root) and not _has_staged_changes(name, root):
-            warnings.append(
-                f"{name}: dirty working tree but no staged changes — "
-                f"nothing to commit"
+        if worktree.branch_exists(checkout, branch) or worktree.remote_branch_exists(
+            checkout, branch
+        ):
+            worktree.attach_worktree(
+                checkout, branch=branch, project_dir=STORE_DIRNAME
             )
-
-        # ── 5. Remote reachability ────────────────────────────
-        if not _remote_reachable(name, root):
-            blocked.append({
-                "name": name,
-                "reason": "remote 'origin' is not reachable",
-            })
-            continue
-
-        ready.append(name)
-
-    return {
-        "ready": ready,
-        "blocked": blocked,
-        "warnings": warnings,
-        "can_proceed": len(blocked) == 0,
-    }
-
-
-def validate_branches(root: Optional[Path] = None, *, strict: bool = False) -> dict:
-    """Validate that each submodule's current branch matches .gitmodules tracking.
-
-    Checks every registered project for:
-
-    1. Configured branch from ``.gitmodules``
-    2. Current HEAD branch
-    3. Detached HEAD state
-    4. Dirty working tree
-
-    In **default mode** (``strict=False``), only ``misaligned`` and ``missing``
-    entries cause ``ok=False``.  Detached HEAD and dirty working trees are
-    reported as *informational* — common during development and not dangerous.
-
-    In **strict mode** (``strict=True``), ``detached`` projects also cause
-    ``ok=False``.  Use this before push operations where branch misalignment
-    must block the push.
-
-    Args:
-        root: Hub root directory.
-        strict: If ``True``, treat detached HEAD as a blocking error
-            (for push gates).  Default ``False`` (informational only).
-
-    Returns:
-        A dict with keys:
-
-        - ``aligned``: list of projects on the correct branch.
-          Each entry: ``{"name", "branch", "dirty"}``.
-        - ``misaligned``: list of projects on the wrong branch.
-          Each entry: ``{"name", "expected", "actual", "dirty"}``.
-        - ``detached``: list of projects in detached HEAD state.
-          Each entry: ``{"name", "expected", "dirty"}``.
-        - ``missing``: list of registered projects whose directory
-          doesn't exist.  Each entry: ``{"name"}``.
-        - ``ok``: ``True`` if no blocking issues found.  In default
-          mode: no misaligned or missing.  In strict mode: also no
-          detached.
-        - ``strict``: Whether strict mode was used.
-        - ``summary``: human-readable summary string.
-    """
-    from ..config import find_project_root
-    root = root or find_project_root()
-    config = load_config(root)
-
-    if not config.hub:
-        return {
-            "aligned": [],
-            "misaligned": [],
-            "detached": [],
-            "missing": [],
-            "ok": False,
-            "strict": strict,
-            "summary": "Not a hub project.",
-        }
-
-    aligned: list[dict] = []
-    misaligned: list[dict] = []
-    detached: list[dict] = []
-    missing: list[dict] = []
-
-    for name in config.projects:
-        target = root / "projects" / name
-        if not target.exists():
-            missing.append({"name": name})
-            continue
-
-        expected = _get_tracking_branch(name, root)
-        if not expected:
-            # No tracking branch configured — skip (defaults to remote HEAD)
-            continue
-
-        actual = _get_current_branch(name, root)
-        if not actual:
-            # Can't determine branch — treat as missing/broken
-            missing.append({"name": name})
-            continue
-
-        dirty = _is_dirty(name, root)
-
-        if actual == "HEAD":
-            # Detached HEAD state
-            detached.append({"name": name, "expected": expected, "dirty": dirty})
-        elif actual == expected:
-            aligned.append({"name": name, "branch": expected, "dirty": dirty})
+            what = "attached"
         else:
-            misaligned.append({
-                "name": name,
-                "expected": expected,
-                "actual": actual,
-                "dirty": dirty,
-            })
+            result = worktree.ensure_store_branch(
+                checkout, branch=branch, project_dir=STORE_DIRNAME
+            )
+            what = result.get("source") or "created"
+    except (worktree.MigrationError, OSError) as exc:
+        return (False, f"  {name}: store not attached — {exc}")
 
-    # In default mode, detached HEAD is informational (common during dev).
-    # In strict mode (push gates), detached HEAD is blocking.
-    if strict:
-        ok = not misaligned and not detached and not missing
-    else:
-        ok = not misaligned and not missing
-
-    # Build summary
-    parts: list[str] = []
-    total = len(aligned) + len(misaligned) + len(detached) + len(missing)
-    if ok and not detached:
-        if aligned:
-            parts.append(f"All {len(aligned)} submodule(s) on correct branch.")
-        else:
-            parts.append("No submodules with tracking branches to validate.")
-    else:
-        if misaligned:
-            parts.append(f"{len(misaligned)} misaligned")
-        if detached:
-            label = "detached (blocking)" if strict else "detached (info)"
-            parts.append(f"{len(detached)} {label}")
-        if missing:
-            parts.append(f"{len(missing)} missing")
-        if aligned:
-            parts.append(f"{len(aligned)} ok")
-
-    summary = ", ".join(parts) if parts else "No submodules to validate."
-
-    return {
-        "aligned": aligned,
-        "misaligned": misaligned,
-        "detached": detached,
-        "missing": missing,
-        "ok": ok,
-        "strict": strict,
-        "summary": summary,
-    }
-
-
-def format_branch_validation(result: dict) -> str:
-    """Format a validate_branches result dict into a human-readable message.
-
-    Args:
-        result: Dict returned by :func:`validate_branches`.
-
-    Returns:
-        A formatted string summarising the validation outcome.
-    """
-    if result["ok"] and not result["detached"]:
-        if not result["aligned"]:
-            return "No submodules with tracking branches to validate."
-        return f"All {len(result['aligned'])} submodule(s) on correct branch."
-
-    lines: list[str] = []
-
-    if result["ok"] and result["aligned"]:
-        lines.append(f"{len(result['aligned'])} submodule(s) on correct branch.")
-
-    if result["misaligned"]:
-        lines.append("Branch mismatch detected:")
-        for r in result["misaligned"]:
-            line = f"  {r['name']}: expected '{r['expected']}', actual '{r['actual']}'"
-            if r.get("dirty"):
-                line += " (dirty)"
-            lines.append(line)
-
-    if result["detached"]:
-        is_strict = result.get("strict", False)
-        header = "Detached HEAD (blocking):" if is_strict else "Detached HEAD (informational):"
-        lines.append(header)
-        for r in result["detached"]:
-            line = f"  {r['name']}: expected '{r['expected']}', HEAD is detached"
-            if r.get("dirty"):
-                line += " (dirty)"
-            lines.append(line)
-
-    if result["missing"]:
-        lines.append("Missing directories:")
-        for r in result["missing"]:
-            lines.append(f"  {r['name']}: directory not found")
-
-    return "\n".join(lines)
+    invalidate_store_map(root)
+    rel = f"{PROJECTS_DIRNAME}/{name}/{STORE_DIRNAME}"
+    if what == "attached":
+        return (True, f"  {name}: re-attached store at {rel} ({branch})")
+    return (True, f"  {name}: created and mounted the '{branch}' store at {rel}")
 
 
 def sync(root: Optional[Path] = None) -> str:
-    """Pull latest from all submodule remotes. Aborts cleanly on conflicts."""
+    """Pull every submodule, then re-attach any store whose worktree is gone.
+
+    The one hub-wide git verb left (US-PM-35).  Two passes, in this order:
+
+    1. a fast-forward ``git pull`` in every checked-out submodule, skipping a
+       dirty or diverged one with a note rather than touching it;
+    2. a re-attach of every registered project whose ``.project`` worktree is
+       missing, so a fresh clone or a removed worktree comes back mounted.
+
+    The hub never commits or pushes on a subproject's behalf; what this
+    returns is a report, and every line of it names the project it concerns.
+    """
     from ..config import find_project_root
     root = root or find_project_root()
     config = load_config(root)
@@ -1010,27 +430,9 @@ def sync(root: Optional[Path] = None) -> str:
     if not config.hub:
         return "error: not a hub project"
 
-    projects_dir = root / "projects"
+    projects_dir = _projects_dir(root)
     if not projects_dir.exists():
         return "error: no projects/ directory"
-
-    # Pre-sync branch validation (warn but continue — sync pulls from
-    # the tracked branch regardless of local checkout)
-    validation = validate_branches(root=root)
-    branch_warnings: list[str] = []
-    if validation["misaligned"]:
-        for r in validation["misaligned"]:
-            branch_warnings.append(
-                f"  warning: {r['name']} on '{r['actual']}' "
-                f"(expected '{r['expected']}') — sync will pull "
-                f"from tracked branch anyway"
-            )
-    if validation["detached"]:
-        for r in validation["detached"]:
-            branch_warnings.append(
-                f"  info: {r['name']} has detached HEAD "
-                f"(expected '{r['expected']}')"
-            )
 
     results = []
     ok = 0
@@ -1085,13 +487,27 @@ def sync(root: Optional[Path] = None) -> str:
                 results.append(f"  {name}: error — {stderr}")
             failed += 1
 
-    summary = f"sync complete: {ok} updated, {skipped} skipped, {failed} failed"
-    parts = [summary]
-    if branch_warnings:
-        parts.append("\nbranch validation:")
-        parts.extend(branch_warnings)
-    parts.append("")
+    # Second pass: any store whose worktree is missing gets mounted again.
+    store_lines: list[str] = []
+    attached = 0
+    for name in config.projects:
+        report = _attach_missing_store(name, root)
+        if report is None:
+            continue
+        succeeded, line = report
+        attached += 1 if succeeded else 0
+        store_lines.append(line)
+
+    summary = (
+        f"sync complete: {ok} updated, {skipped} skipped, {failed} failed, "
+        f"{attached} stores attached"
+    )
+    parts = [summary, ""]
     parts.extend(results)
+    if store_lines:
+        parts.append("")
+        parts.append("stores:")
+        parts.extend(store_lines)
     return "\n".join(parts)
 
 
@@ -1103,8 +519,8 @@ def list_projects(root: Optional[Path] = None) -> list[dict]:
 
     results = []
     for name in config.projects:
-        project_path = root / "projects" / name
-        pm_dir = root / ".project" / "projects" / name
+        project_path = subproject_path(root, name)
+        pm_dir = store_path(root, name)
         has_pm_data = (pm_dir / "config.yaml").exists()
         results.append({
             "name": name,
@@ -1116,594 +532,22 @@ def list_projects(root: Optional[Path] = None) -> list[dict]:
     return results
 
 
-def hub_push_with_rebase(
-    root: Optional[Path] = None, max_retries: int = MAX_PUSH_RETRIES
-) -> dict:
-    """Push hub commits to remote, rebasing when the remote has moved on.
-
-    When ``git push origin main`` fails because the remote is ahead:
-
-    1. ``git fetch origin main``
-    2. ``git rebase origin/main``
-    3. If rebase succeeds → retry push
-    4. If rebase conflicts → abort the rebase and report that manual
-       resolution is required
-    5. Retry up to *max_retries* times
-
-    Args:
-        root: Hub root directory.
-        max_retries: Maximum number of fetch-rebase-push cycles.
-
-    Returns:
-        ``{"pushed": bool, "retries": int, "rebased": bool, "error": str | None}``
-    """
-    from ..config import find_project_root
-
-    root = root or find_project_root()
-    config = load_config(root)
-
-    if not config.hub:
-        return {"pushed": False, "retries": 0, "rebased": False, "error": "not a hub project"}
-
-    rebased = False
-
-    for retry in range(max_retries + 1):  # 0..max_retries
-        # Try push
-        push = subprocess.run(
-            ["git", "push", "origin", "main"],
-            cwd=str(root),
-            capture_output=True,
-            text=True,
-        )
-        if push.returncode == 0:
-            return {"pushed": True, "retries": retry, "rebased": rebased, "error": None}
-
-        stderr = (push.stderr or "").strip()
-
-        # Only handle push rejection (non-fast-forward)
-        if not any(m in stderr for m in ("rejected", "failed to push", "non-fast-forward")):
-            return {"pushed": False, "retries": retry, "rebased": False, "error": f"push failed: {stderr}"}
-
-        # Don't rebase on the last attempt
-        if retry == max_retries:
-            break
-
-        # Step 1: fetch
-        fetch = subprocess.run(
-            ["git", "fetch", "origin", "main"],
-            cwd=str(root),
-            capture_output=True,
-            text=True,
-        )
-        if fetch.returncode != 0:
-            return {
-                "pushed": False, "retries": retry, "rebased": False,
-                "error": f"fetch failed: {(fetch.stderr or '').strip()}",
-            }
-
-        # Snapshot submodule refs before rebase
-        pre_refs = {
-            name: _get_submodule_ref(name, root)
-            for name in config.projects
-            if (root / "projects" / name).exists()
-        }
-
-        # Step 3: rebase
-        rebase = subprocess.run(
-            ["git", "rebase", "origin/main"],
-            cwd=str(root),
-            capture_output=True,
-            text=True,
-        )
-
-        if rebase.returncode == 0:
-            # Step 4: rebase succeeded — log ref changes, loop back to push
-            rebased = True
-            for name, old_ref in pre_refs.items():
-                new_ref = _get_submodule_ref(name, root)
-                if new_ref and old_ref != new_ref:
-                    log_ref_update(name, old_ref, new_ref, "auto_rebase", root)
-            continue
-
-        # Step 5: rebase conflicted — abort and report
-        subprocess.run(
-            ["git", "rebase", "--abort"],
-            cwd=str(root),
-            capture_output=True,
-            text=True,
-        )
-        return {
-            "pushed": False, "retries": retry + 1, "rebased": False,
-            "error": "rebase conflict \u2014 manual resolution required",
-        }
-
-    return {
-        "pushed": False, "retries": max_retries, "rebased": rebased,
-        "error": "push rejected after max retries",
-    }
-
-
-def push_hub(
-    pushed_projects: Optional[list[dict]] = None,
-    root: Optional[Path] = None,
-    max_retries: int = MAX_PUSH_RETRIES,
-) -> dict:
-    """Push hub commits to remote, optionally staging submodule ref updates first.
-
-    When *pushed_projects* is provided, stages each project's updated
-    submodule ref (``git add projects/{name}``), generates a commit
-    message, and commits before pushing.  When omitted, just pushes
-    existing commits.
-
-    Delegates to :func:`hub_push_with_rebase` for push-with-rebase
-    conflict handling.
-
-    Args:
-        pushed_projects: Optional list of dicts with ``"name"`` and
-            ``"sha"`` keys — one per subproject whose ref should be
-            staged and committed before pushing.
-        root: Hub root directory.
-        max_retries: Maximum number of push attempts (including the first).
-
-    Returns:
-        A dict with keys:
-
-        - ``committed``: Whether a new hub commit was created.
-        - ``pushed``: Whether the push succeeded.
-        - ``commit_sha``: Hub commit SHA after staging + commit,
-          or ``None`` if no commit was made.
-        - ``error``: Error message if something failed, else ``None``.
-        - ``status``: ``"pushed"``, ``"rebased_and_pushed"``, or
-          ``"failed"``.
-        - ``attempts``: Number of push attempts made.
-    """
-    from ..config import find_project_root
-
-    root = root or find_project_root()
-    config = load_config(root)
-
-    if not config.hub:
-        return {
-            "committed": False,
-            "pushed": False,
-            "commit_sha": None,
-            "error": "not a hub project",
-            "status": "failed",
-            "attempts": 0,
-        }
-
-    committed = False
-    commit_sha: Optional[str] = None
-
-    # ── Stage and commit submodule ref updates ──────────────
-    if pushed_projects:
-        try:
-            for entry in pushed_projects:
-                subprocess.run(
-                    ["git", "add", f"projects/{entry['name']}"],
-                    cwd=str(root),
-                    check=True,
-                    capture_output=True,
-                    text=True,
-                )
-        except subprocess.CalledProcessError as e:
-            return {
-                "committed": False,
-                "pushed": False,
-                "commit_sha": None,
-                "error": f"staging failed: {(e.stderr or '').strip()}",
-                "status": "failed",
-                "attempts": 0,
-            }
-
-        # Generate commit message:
-        # hub: update api, web to a1b2c3d, d4e5f6g
-        names = [e["name"] for e in pushed_projects]
-        shas = [
-            e["sha"][:7] if e.get("sha") else "unknown"
-            for e in pushed_projects
-        ]
-        commit_msg = f"hub: update {', '.join(names)} to {', '.join(shas)}"
-
-        result = subprocess.run(
-            ["git", "commit", "-m", commit_msg],
-            cwd=str(root),
-            capture_output=True,
-            text=True,
-        )
-        if result.returncode == 0:
-            committed = True
-            sha_result = subprocess.run(
-                ["git", "rev-parse", "HEAD"],
-                cwd=str(root),
-                capture_output=True,
-                text=True,
-                check=True,
-            )
-            commit_sha = sha_result.stdout.strip()
-        else:
-            output = ((result.stdout or "") + (result.stderr or "")).strip()
-            # "nothing to commit" is OK — refs may not have changed
-            if "nothing to commit" not in output:
-                return {
-                    "committed": False,
-                    "pushed": False,
-                    "commit_sha": None,
-                    "error": f"commit failed: {stderr}",
-                    "status": "failed",
-                    "attempts": 0,
-                }
-
-    # ── Push with auto-rebase ─────────────────────────────
-    # hub_push_with_rebase treats max_retries as *additional* retries after
-    # the first attempt, while push_hub treats it as total attempts.
-    rebase_result = hub_push_with_rebase(
-        root=root, max_retries=max(0, max_retries - 1),
-    )
-
-    attempts = rebase_result["retries"] + 1
-
-    if rebase_result["pushed"]:
-        status = "pushed" if not rebase_result["rebased"] else "rebased_and_pushed"
-        # If rebased, update commit_sha to final HEAD
-        if rebase_result["rebased"] or commit_sha is None:
-            final_sha = _get_hub_head(root)
-            if final_sha:
-                commit_sha = final_sha
-        out = {
-            "committed": committed,
-            "pushed": True,
-            "commit_sha": commit_sha,
-            "status": status,
-            "attempts": attempts,
-        }
-        # A worktree-mounted store keeps the PM commits on its own branch,
-        # which the hub push above never touches (US-PM-21).
-        store_push = _push_store_branch(root)
-        if store_push is not None:
-            out["pm_store"] = store_push
-            if not store_push["pushed"]:
-                out["pushed"] = False
-                out["status"] = "failed"
-                out["error"] = store_push["error"]
-        return out
-
-    return {
-        "committed": committed,
-        "pushed": False,
-        "commit_sha": commit_sha,
-        "error": rebase_result["error"] or "push failed",
-        "status": "failed",
-        "attempts": attempts,
-    }
-
-
-def _push_store_branch(root: Path, remote: str = "origin") -> Optional[dict]:
-    """Push the branch that owns a worktree-mounted ``.project/``.
-
-    Returns ``None`` when the store is a plain directory (its commits ride on
-    the hub branch and were pushed with it), otherwise a dict with
-    ``branch``, ``pushed`` and ``error``.  Only that one named branch is
-    pushed, from the hub root (see :func:`projectman.worktree.push_branch`).
-    """
-    from ..worktree import push_branch, store_git_state
-
-    state = store_git_state(root)
-    if not state["worktree"]:
-        return None
-    if not state["branch"]:
-        return {
-            "branch": None,
-            "pushed": False,
-            "error": ".project/ worktree is on a detached HEAD — check out its branch first",
-        }
-    proc = push_branch(root, state["branch"], remote)
-    if proc.returncode != 0:
-        return {
-            "branch": state["branch"],
-            "pushed": False,
-            "error": f"push of '{state['branch']}' failed: {(proc.stderr or proc.stdout or '').strip()}",
-        }
-    return {"branch": state["branch"], "pushed": True, "error": None}
-
-
-def _has_unpushed_commits(name: str, root: Path) -> bool:
-    """Check if a subproject has commits not yet pushed to origin."""
-    sub_path = root / "projects" / name
-    branch = _get_current_branch(name, root)
-    if not branch or branch == "HEAD":
-        return False
-    try:
-        result = subprocess.run(
-            ["git", "rev-list", "--count", f"origin/{branch}..{branch}"],
-            cwd=str(sub_path),
-            capture_output=True,
-            text=True,
-        )
-        if result.returncode != 0:
-            return True
-        return int(result.stdout.strip()) > 0
-    except (FileNotFoundError, OSError, ValueError):
-        return False
-
-
-def push_subprojects(
-    projects: list[str],
-    root: Path,
-) -> dict:
-    """Push the current branch of each specified subproject in order.
-
-    For each project (order matters — push in the order given):
-    1. Check if the project has unpushed commits (skip if up to date).
-    2. ``git push -u origin {branch}`` in the subproject dir.
-    3. Record result: success (branch + SHA) or failure (error).
-    4. On failure: **stop** — remaining projects are skipped.
-
-    Args:
-        projects: Ordered list of project names to push.
-        root: Hub root directory.
-
-    Returns:
-        A dict with keys:
-        - ``pushed``: list of dicts ``{"name", "branch", "sha"}``
-        - ``failed``: ``{"name", "error"}`` or ``None``
-        - ``skipped``: list of project names after the failure
-        - ``all_ok``: ``True`` if all pushes succeeded
-    """
-    pushed: list[dict] = []
-    failed: Optional[dict] = None
-    skipped: list[str] = []
-
-    for i, name in enumerate(projects):
-        sub_path = root / "projects" / name
-
-        if not _has_unpushed_commits(name, root):
-            continue
-
-        branch = _get_current_branch(name, root)
-        if not branch or branch == "HEAD":
-            failed = {
-                "name": name,
-                "error": "detached HEAD \u2014 checkout a branch first",
-            }
-            skipped = list(projects[i + 1:])
-            break
-
-        try:
-            result = subprocess.run(
-                ["git", "push", "-u", "origin", branch],
-                cwd=str(sub_path),
-                capture_output=True,
-                text=True,
-            )
-            if result.returncode != 0:
-                stderr = (result.stderr or "").strip()
-                failed = {
-                    "name": name,
-                    "error": f"push failed: {stderr}",
-                }
-                skipped = list(projects[i + 1:])
-                break
-
-            sha = _get_submodule_ref(name, root)
-            pushed.append({"name": name, "branch": branch, "sha": sha})
-
-        except FileNotFoundError:
-            failed = {
-                "name": name,
-                "error": "git is not installed or not on PATH",
-            }
-            skipped = list(projects[i + 1:])
-            break
-        except OSError as e:
-            failed = {"name": name, "error": str(e)}
-            skipped = list(projects[i + 1:])
-            break
-
-    return {
-        "pushed": pushed,
-        "failed": failed,
-        "skipped": skipped,
-        "all_ok": failed is None,
-    }
-
-
-def _discover_dirty_projects(root: Path, config) -> list[str]:
-    """Return names of registered projects that have unpushed commits."""
-    dirty: list[str] = []
-    for name in config.projects:
-        project_path = root / "projects" / name
-        if not project_path.exists():
-            continue
-        if _has_unpushed_commits(name, root):
-            dirty.append(name)
-    return dirty
-
-
-def coordinated_push(
-    projects: Optional[list[str]] = None,
-    dry_run: bool = False,
-    root: Optional[Path] = None,
-    max_retries: int = MAX_PUSH_RETRIES,
-) -> dict:
-    """Orchestrate a coordinated push of subprojects followed by the hub.
-
-    Full workflow:
-
-    1. Discover dirty projects (or use explicit list if provided).
-    2. Run :func:`push_preflight` — abort if ``can_proceed=False``.
-    3. If *dry_run*: print what WOULD happen and exit.
-    4. Run :func:`push_subprojects` — stop on first failure.
-    5. If all subprojects pushed: run :func:`push_hub`.
-    6. Print final report.
-
-    Args:
-        projects: Optional list of project names to push.  When ``None``,
-            discovers all dirty (unpushed) projects automatically.
-        dry_run: If ``True``, report what would happen without pushing.
-        root: Hub root directory.
-        max_retries: Maximum number of push attempts (including the first).
-
-    Returns:
-        A dict with keys:
-            - ``pushed``: Whether the hub was pushed successfully.
-            - ``hub_result``: Raw result from :func:`hub_push_with_rebase`.
-            - ``report``: Human-readable push report string.
-    """
-    from ..config import find_project_root
-
-    root = root or find_project_root()
-    config = load_config(root)
-
-    if not config.hub:
-        return {
-            "pushed": False,
-            "hub_result": None,
-            "report": "error: not a hub project",
-        }
-
-    # ── Step 1: Discover dirty projects ─────────────────────────
-    if projects is not None:
-        target_projects = list(projects)
-    else:
-        target_projects = _discover_dirty_projects(root, config)
-
-    # ── Step 2: Preflight ───────────────────────────────────────
-    preflight = push_preflight(
-        projects=target_projects if target_projects else None,
-        root=root,
-    )
-
-    if not preflight["can_proceed"]:
-        blocker_lines = []
-        for b in preflight["blocked"]:
-            blocker_lines.append(
-                f"  {b['name']}  \u2717  ({b['reason']})"
-            )
-        return {
-            "pushed": False,
-            "hub_result": None,
-            "report": (
-                "Coordinated Push \u2014 Preflight FAILED\n\n"
-                f"  Preflight: {len(preflight['ready'])} ready, "
-                f"{len(preflight['blocked'])} blocked\n"
-                "  Blockers:\n" + "\n".join(blocker_lines)
-            ),
-        }
-
-    # ── Step 3: Dry run ─────────────────────────────────────────
-    if dry_run:
-        report_lines: list[str] = ["Coordinated Push — Dry Run\n"]
-        report_lines.append(
-            f"  Preflight: {len(preflight['ready'])} ready, "
-            f"{len(preflight['blocked'])} blocked"
-        )
-        if preflight["warnings"]:
-            for w in preflight["warnings"]:
-                report_lines.append(f"  Warning: {w}")
-        report_lines.append("  Subprojects:")
-        for name in target_projects:
-            branch = _get_current_branch(name, root)
-            if _has_unpushed_commits(name, root):
-                report_lines.append(
-                    f"    {name}  {branch} \u2192 origin  (would push)"
-                )
-            else:
-                report_lines.append(f"    {name}  (clean, would skip)")
-        report_lines.append("  Hub:")
-        report_lines.append("    main \u2192 origin  (would push)")
-        return {
-            "pushed": False,
-            "hub_result": None,
-            "report": "\n".join(report_lines),
-        }
-
-    report_lines: list[str] = []
-
-    # ── Step 4: Push subprojects first ──────────────────────────
-    sub_result = push_subprojects(target_projects, root)
-
-    has_sub_content = (
-        sub_result["pushed"]
-        or sub_result["failed"]
-        or sub_result["skipped"]
-    )
-    if has_sub_content:
-        report_lines.append("Subprojects:")
-        for entry in sub_result["pushed"]:
-            sha_short = entry["sha"][:7] if entry["sha"] else "unknown"
-            report_lines.append(
-                f"  {entry['name']}  {entry['branch']} \u2192 origin  "
-                f"{sha_short}  \u2713"
-            )
-        if sub_result["failed"]:
-            fail = sub_result["failed"]
-            report_lines.append(
-                f"  {fail['name']}  \u2717  ({fail['error']})"
-            )
-        for name in sub_result["skipped"]:
-            report_lines.append(f"  {name}  skipped")
-
-    # ── Step 2: If subprojects failed, skip hub push ────────────
-    if not sub_result["all_ok"]:
-        report_lines.append("Hub:")
-        report_lines.append("  skipped (subproject push failed)")
-        return {
-            "pushed": False,
-            "hub_result": None,
-            "sub_result": sub_result,
-            "report": "\n".join(report_lines),
-        }
-
-    # ── Step 3: Push hub with auto-rebase ───────────────────────
-    hub_result = hub_push_with_rebase(
-        root=root, max_retries=max(0, max_retries - 1),
-    )
-
-    report_lines.append("Hub:")
-    hub_sha = _get_hub_head(root) if hub_result["pushed"] else ""
-
-    if hub_result["pushed"]:
-        sha_short = hub_sha[:7] if hub_sha else "unknown"
-        if hub_result["rebased"]:
-            retries = hub_result["retries"]
-            retry_label = "1 retry" if retries == 1 else f"{retries} retries"
-            report_lines.append(
-                f"  main \u2192 origin  {sha_short}  \u2713  "
-                f"(rebased, {retry_label})"
-            )
-        else:
-            report_lines.append(
-                f"  main \u2192 origin  {sha_short}  \u2713"
-            )
-    else:
-        error = hub_result.get("error") or "unknown error"
-        retries = hub_result["retries"]
-
-        if "max retries" in error:
-            report_lines.append(
-                f"  main \u2192 origin  \u2717  "
-                f"(failed after {retries} retries, "
-                f"manual resolution needed)"
-            )
-        else:
-            report_lines.append(f"  main \u2192 origin  \u2717  ({error})")
-
-    return {
-        "pushed": hub_result["pushed"],
-        "hub_result": hub_result,
-        "sub_result": sub_result,
-        "report": "\n".join(report_lines),
-    }
-
-
 def _generate_hub_commit_message(changed_files: list[str]) -> str:
     """Generate a commit message from changed .project/ file paths.
 
     Parses story/task/epic IDs from filenames and produces messages like
     ``pm: update US-PRJ-5, US-PRJ-3-1`` or ``pm: update 3 stories, 2 tasks``.
     Falls back to count-based summaries when there are many changed items.
+
+    The five derived index files are dropped before anything is counted:
+    they render the items in the same commit, so naming them would turn a
+    one-task edit into "1 task, config, 4 files" (US-PM-29).  New stores
+    gitignore them; stores predating that migration still stage them.
     """
+    from ..indexer import DERIVED_INDEX_FILES
+
+    changed_files = [f for f in changed_files if Path(f).name not in DERIVED_INDEX_FILES]
+
     ids: list[str] = []
     config_changed = False
     other = 0
@@ -1720,7 +564,7 @@ def _generate_hub_commit_message(changed_files: list[str]) -> str:
             ids.append(name)
         elif "/epics/" in probe:
             ids.append(name)
-        elif Path(f).name in ("config.yaml", "index.yaml"):
+        elif Path(f).name == "config.yaml":
             config_changed = True
         else:
             other += 1
@@ -1752,446 +596,201 @@ def _generate_hub_commit_message(changed_files: list[str]) -> str:
 
 
 def pm_commit(
-    scope: str = "all",
+    store_dir: Path,
     message: Optional[str] = None,
-    root: Optional[Path] = None,
 ) -> dict:
-    """Commit .project/ changes filtered by scope.
+    """Commit the PM changes of the one store at *store_dir*.
 
-    Scope options:
+    US-PM-35 makes the hub a read-only rollup: there is no cross-project
+    commit any more.  The caller (``server.pm_commit``, ``projectman
+    commit``) resolves its optional ``prefix`` to exactly one store —
+    the hub's own ``.project`` when no prefix is given, or
+    ``projects/{name}/.project`` for the project that prefix names — and
+    this commits that store and nothing else.
 
-    - ``"hub"`` — commits only hub-level ``.project/`` files (stories,
-      tasks, epics, config, dashboards) but **not** files under
-      ``.project/projects/``.
-    - ``"project:{name}"`` — commits only ``.project/projects/{name}/``
-      files.
-    - ``"all"`` — commits all ``.project/`` changes (hub + all
-      subprojects).
+    Every git command runs *inside* ``store_dir``, so the commit lands on the
+    branch that owns the store: the checkout's current branch for a plain
+    directory, or the store's own ``projectman`` branch when it is a worktree
+    (``projectman migrate-worktree``, and every subproject store under
+    US-PM-31).  Run from the repo root a worktree path is ignored and ``git
+    status`` reports nothing — which used to make every commit a silent
+    ``nothing_to_commit``.
 
     Args:
-        scope: One of ``"hub"``, ``"project:{name}"``, or ``"all"``.
-        message: Commit message.  Auto-generated from changed filenames
+        store_dir: The store to commit — ``{checkout}/.project``.
+        message: Commit message.  Auto-generated from the staged filenames
             when ``None``.
-        root: Hub root directory.  Auto-detected when ``None``.
-
-    Every git command runs *inside* ``.project/`` so the commit lands on the
-    branch that owns the store: the hub's checked-out branch for a plain
-    directory, or the ``projectman`` branch when the store is a worktree
-    mounted by ``projectman migrate-worktree`` (US-PM-21).  From the hub root
-    the worktree path is ignored, and ``git status .project/`` reports nothing
-    — which used to make every commit a silent ``nothing_to_commit``.
 
     Returns:
-        A dict with ``commit_hash``, ``message``, ``files_committed`` and
-        ``on_branch`` (the branch the commit landed on), or
-        ``{"nothing_to_commit": True}`` when there are no matching changes.
+        ``{"commit_hash", "message", "files_committed", "on_branch"}``, or
+        ``{"nothing_to_commit": True}`` when the store is clean.  Committed
+        paths are relative to the repository that owns the store:
+        ``".project/..."`` for a plain directory, store-relative for a
+        worktree.
 
     Raises:
-        FileNotFoundError: If ``.project/`` doesn't exist.
-        ValueError: If *scope* is invalid.
-        RuntimeError: If the git commit fails.
+        errors.NotFoundError: *store_dir* does not exist.
+        errors.StoreError: the git add or commit failed.
     """
-    from ..config import find_project_root
+    store_dir = Path(store_dir)
+    if not store_dir.is_dir():
+        raise NotFoundError(f"{store_dir} does not exist")
 
-    root = root or find_project_root()
-    project_dir = root / ".project"
+    # Rebuild the derived indexes immediately before staging.  Mutating tools
+    # no longer rewrite index.yaml and the four markdown indexes on every
+    # write (US-PM-29), so this is one of the three declared rebuild points —
+    # and it sits before the staging below, so a stale index is committed
+    # matching the item files beside it.  A store that cannot be rebuilt (a
+    # half-initialised one, say) is committed as it stands rather than
+    # failing: a commit's job is to record what is on disk.
+    from ..indexer import write_index
+    from ..store import Store
 
-    if not project_dir.exists():
-        raise FileNotFoundError(".project/ directory does not exist")
-    store_cwd = str(project_dir)
-
-    # Validate scope
-    if scope == "hub":
+    try:
+        write_index(Store(store_dir.parent, project_dir=store_dir))
+    except Exception:
         pass
-    elif scope == "all":
-        pass
-    elif scope.startswith("project:"):
-        project_name = scope.split(":", 1)[1]
-        sub_dir = project_dir / "projects" / project_name
-        if not sub_dir.exists():
-            raise ValueError(
-                f"Project '{project_name}' not found in "
-                f".project/projects/"
-            )
-    else:
-        raise ValueError(
-            f"Invalid scope '{scope}' — use 'hub', 'project:{{name}}', "
-            f"or 'all'"
-        )
 
-    # 1. Find changed PM files (--untracked-files=all lists individual
-    #    files instead of collapsing untracked directories; scoped to
-    #    .project/ so the performance cost is negligible)
-    result = subprocess.run(
-        ["git", "status", "--porcelain", "--untracked-files=all", "--", "."],
-        cwd=store_cwd,
+    cwd = str(store_dir)
+
+    # Stage everything under the store.  The pathspec is cwd-relative, so
+    # nothing outside the store can be swept in.
+    add = subprocess.run(
+        ["git", "add", "-A", "--", "."], cwd=cwd, capture_output=True, text=True
+    )
+    if add.returncode != 0:
+        raise StoreError(f"git add failed: {add.stderr.strip()}")
+
+    diff = subprocess.run(
+        ["git", "diff", "--cached", "--name-only", "--", "."],
+        cwd=cwd,
         capture_output=True,
         text=True,
     )
-    if result.returncode != 0:
-        raise RuntimeError(f"git status failed: {result.stderr.strip()}")
+    if diff.returncode != 0:
+        raise StoreError(f"git diff failed: {diff.stderr.strip()}")
 
-    # Porcelain paths are relative to the owning repo's root: ".project/x"
-    # for a plain store, "x" for a worktree.  ``show-prefix`` is that
-    # difference (".project/" or ""), so stripping it gives store-relative
-    # paths the scope filters can share.
-    prefix_result = subprocess.run(
-        ["git", "rev-parse", "--show-prefix"],
-        cwd=store_cwd,
-        capture_output=True,
-        text=True,
-    )
-    store_prefix = prefix_result.stdout.strip() if prefix_result.returncode == 0 else ""
-
-    # Parse porcelain output — each line is "XY path" or "XY path -> path"
-    all_changed: list[str] = []
-    for line in result.stdout.splitlines():
-        if not line or len(line) < 4:
-            continue
-        # Status is first 2 chars, then a space, then the path
-        path = line[3:].strip()
-        # Handle renames: "R  old -> new"
-        if " -> " in path:
-            path = path.split(" -> ", 1)[1]
-        if store_prefix and path.startswith(store_prefix):
-            path = path[len(store_prefix):]
-        if path:
-            all_changed.append(path)
-
-    if not all_changed:
-        return {"nothing_to_commit": True}
-
-    # 2. Filter to scope (store-relative paths)
-    if scope == "all":
-        scoped_files = all_changed
-    elif scope == "hub":
-        # Hub-level = everything in .project/ EXCEPT .project/projects/
-        scoped_files = [
-            f for f in all_changed
-            if not f.startswith("projects/")
-        ]
-    else:
-        # scope == "project:{name}"
-        project_name = scope.split(":", 1)[1]
-        prefix = f"projects/{project_name}/"
-        scoped_files = [f for f in all_changed if f.startswith(prefix)]
-
-    if not scoped_files:
-        return {"nothing_to_commit": True}
-
-    # 3. Stage only the scoped files (paths are cwd-relative inside the store)
-    subprocess.run(
-        ["git", "add", "--"] + scoped_files,
-        cwd=store_cwd,
-        capture_output=True,
-        text=True,
-        check=True,
-    )
-
-    # Verify something was staged (handles edge cases).  Reported paths are
-    # root-relative again: ".project/..." plain, store-relative for a worktree.
-    diff_result = subprocess.run(
-        ["git", "diff", "--cached", "--name-only"],
-        cwd=store_cwd,
-        capture_output=True,
-        text=True,
-        check=True,
-    )
-    staged = [f for f in diff_result.stdout.strip().splitlines() if f]
+    staged = [f for f in diff.stdout.strip().splitlines() if f]
     if not staged:
         return {"nothing_to_commit": True}
 
-    # 4. Auto-generate message if not provided
-    if message is None:
-        message = _generate_hub_commit_message(staged)
+    commit_message = message or _generate_hub_commit_message(staged)
 
-    # 5. Commit
-    commit_result = subprocess.run(
-        ["git", "commit", "-m", message],
-        cwd=store_cwd,
+    commit = subprocess.run(
+        ["git", "commit", "-m", commit_message],
+        cwd=cwd,
         capture_output=True,
         text=True,
     )
-    if commit_result.returncode != 0:
-        raise RuntimeError(
-            f"git commit failed: {commit_result.stderr.strip()}"
-        )
+    if commit.returncode != 0:
+        raise StoreError(f"git commit failed: {commit.stderr.strip()}")
 
-    # 6. Get commit SHA and the branch it landed on
-    sha_result = subprocess.run(
-        ["git", "rev-parse", "HEAD"],
-        cwd=store_cwd,
-        capture_output=True,
-        text=True,
-        check=True,
+    sha = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=cwd, capture_output=True, text=True, check=True
     )
-    branch_result = subprocess.run(
+    branch = subprocess.run(
         ["git", "symbolic-ref", "--short", "HEAD"],
-        cwd=store_cwd,
+        cwd=cwd,
         capture_output=True,
         text=True,
     )
-    branch = branch_result.stdout.strip() if branch_result.returncode == 0 else None
-
     return {
-        "commit_hash": sha_result.stdout.strip(),
-        "message": message,
+        "commit_hash": sha.stdout.strip(),
+        "message": commit_message,
         "files_committed": staged,
-        "on_branch": branch,
+        "on_branch": branch.stdout.strip() if branch.returncode == 0 else None,
     }
 
 
-def _push_subproject(name: str, root: Path) -> dict:
-    """Push a single subproject on its current branch.
+def pm_push(store_dir: Path, remote: str = "origin") -> dict:
+    """Push the branch that owns the one store at *store_dir*.
 
-    Runs ``git push origin <branch>`` inside ``projects/{name}/``.
+    The other half of US-PM-35's subtraction: no coordinated push, no rebase
+    loop, no fan-out over subprojects.  The branch is read *inside* the store
+    (:func:`projectman.worktree.store_git_state`), so a worktree store pushes
+    its own ``projectman`` branch and a plain directory pushes the branch its
+    checkout has out; the push itself runs from the checkout root, because a
+    named-branch push does not depend on the worktree it is issued from and a
+    relative remote URL must resolve from the same place every other push
+    resolves it.
 
     Args:
-        name: Subproject directory name.
-        root: Hub root directory.
+        store_dir: The store to push — ``{checkout}/.project``.
+        remote: Remote name, ``origin`` by default.
 
     Returns:
-        A dict with ``pushed``, ``branch``, and optionally ``error``.
+        ``{"pushed": True, "branch", "remote", "worktree", "store"}``.
+
+    Raises:
+        errors.NotFoundError (``not_found``): nothing is mounted at
+            *store_dir*, so there is no branch to push.
+        errors.StoreError (``store``): the store is on a detached HEAD, the
+            remote is not configured, or git refused the push.
     """
-    sub_path = root / "projects" / name
-
-    # Get current branch
-    branch = _get_current_branch(name, root)
-    if not branch or branch == "HEAD":
-        return {
-            "pushed": False,
-            "error": (
-                f"project '{name}' is in detached HEAD state "
-                f"— checkout a branch first"
-            ),
-        }
-
-    try:
-        result = subprocess.run(
-            ["git", "push", "origin", branch],
-            cwd=str(sub_path),
-            capture_output=True,
-            text=True,
+    store_dir = Path(store_dir)
+    if not store_dir.is_dir():
+        raise NotFoundError(
+            f"no store mounted at {store_dir} — nothing to push"
         )
-        if result.returncode != 0:
-            stderr = (result.stderr or "").strip()
-            return {"pushed": False, "branch": branch, "error": f"push failed: {stderr}"}
-        return {"pushed": True, "branch": branch}
-    except FileNotFoundError:
-        return {"pushed": False, "error": "git is not installed or not on PATH"}
-    except OSError as e:
-        return {"pushed": False, "error": str(e)}
+    repo_root = store_dir.parent
 
+    state = worktree.store_git_state(repo_root, store_dir.name)
+    branch = state["branch"]
+    if not branch:
+        raise StoreError(
+            f"Cannot push {store_dir} from a detached HEAD state — "
+            f"checkout a branch first"
+        )
 
-def pm_push(
-    scope: str = "hub",
-    root: Optional[Path] = None,
-) -> dict:
-    """Push changes with scope-aware validation.
+    remotes_result = subprocess.run(
+        ["git", "remote"],
+        cwd=str(repo_root),
+        capture_output=True,
+        text=True,
+    )
+    remotes = [
+        r.strip() for r in remotes_result.stdout.strip().splitlines() if r.strip()
+    ]
+    if remote not in remotes:
+        raise StoreError(
+            f"Remote '{remote}' not configured (available: "
+            f"{', '.join(remotes) or 'none'})"
+        )
 
-    Validates branches before pushing and routes to the appropriate
-    push strategy based on scope.
+    proc = worktree.push_branch(repo_root, branch, remote)
+    if proc.returncode != 0:
+        raise StoreError(
+            f"Push failed: {(proc.stderr or proc.stdout or '').strip()}"
+        )
 
-    Scope options:
-
-    - ``"hub"`` — pushes the hub repo on main via :func:`push_hub`.
-    - ``"project:{name}"`` — pushes a specific subproject on its
-      current branch.
-    - ``"all"`` — delegates to :func:`coordinated_push`.
-
-    Before pushing:
-
-    1. Validate scope and project existence.
-    2. Run :func:`validate_branches` in strict mode for the scoped
-       projects.
-    3. Abort with a clear message if validation fails.
-
-    Args:
-        scope: One of ``"hub"``, ``"project:{name}"``, or ``"all"``.
-        root: Hub root directory.  Auto-detected when ``None``.
-
-    Returns:
-        A dict with keys:
-
-        - ``pushed``: Whether the push succeeded.
-        - ``scope``: The scope that was used.
-        - ``error``: Error message (only present on failure).
-        - Additional scope-specific keys (``branch``, ``report``, etc.).
-    """
-    from ..config import find_project_root
-
-    root = root or find_project_root()
-    config = load_config(root)
-
-    if not config.hub:
-        return {"pushed": False, "scope": scope, "error": "not a hub project"}
-
-    # ── Validate scope ──────────────────────────────────────────
-    project_name: Optional[str] = None
-    if scope == "hub":
-        pass
-    elif scope == "all":
-        pass
-    elif scope.startswith("project:"):
-        project_name = scope.split(":", 1)[1]
-        if project_name not in config.projects:
-            return {
-                "pushed": False,
-                "scope": scope,
-                "error": f"project '{project_name}' not registered in hub",
-            }
-        target = root / "projects" / project_name
-        if not target.exists():
-            return {
-                "pushed": False,
-                "scope": scope,
-                "error": f"project '{project_name}' directory not found",
-            }
-    else:
-        return {
-            "pushed": False,
-            "scope": scope,
-            "error": (
-                f"invalid scope '{scope}' — "
-                f"use 'hub', 'project:{{name}}', or 'all'"
-            ),
-        }
-
-    # ── Pre-push validation: validate_branches (strict) ─────────
-    if scope == "hub":
-        # Hub itself is always on main; no submodule branch check needed.
-        pass
-    elif scope.startswith("project:"):
-        assert project_name is not None
-        validation = validate_branches(root=root, strict=True)
-        # Check this specific project
-        for entry in validation["misaligned"]:
-            if entry["name"] == project_name:
-                return {
-                    "pushed": False,
-                    "scope": scope,
-                    "error": (
-                        f"branch validation failed: {project_name} on "
-                        f"'{entry['actual']}' (expected '{entry['expected']}')"
-                    ),
-                }
-        for entry in validation["detached"]:
-            if entry["name"] == project_name:
-                return {
-                    "pushed": False,
-                    "scope": scope,
-                    "error": (
-                        f"branch validation failed: {project_name} has "
-                        f"detached HEAD (expected '{entry['expected']}')"
-                    ),
-                }
-        for entry in validation["missing"]:
-            if entry["name"] == project_name:
-                return {
-                    "pushed": False,
-                    "scope": scope,
-                    "error": (
-                        f"branch validation failed: {project_name} "
-                        f"directory missing"
-                    ),
-                }
-    else:
-        # scope == "all"
-        validation = validate_branches(root=root, strict=True)
-        if not validation["ok"]:
-            return {
-                "pushed": False,
-                "scope": scope,
-                "error": (
-                    f"branch validation failed: {validation['summary']}"
-                ),
-                "validation": validation,
-            }
-
-    # ── Execute push ────────────────────────────────────────────
-    if scope == "all":
-        result = coordinated_push(root=root)
-        result["scope"] = scope
-        return result
-
-    if scope == "hub":
-        hub_result = push_hub(root=root)
-        pushed = hub_result["status"] != "failed"
-        out: dict = {
-            "pushed": pushed,
-            "scope": scope,
-            "status": hub_result["status"],
-            "attempts": hub_result["attempts"],
-        }
-        if not pushed:
-            out["error"] = hub_result.get("error", "push failed")
-        if "pm_store" in hub_result:
-            out["pm_store"] = hub_result["pm_store"]
-        return out
-
-    # scope == "project:{name}"
-    assert project_name is not None
-    result = _push_subproject(project_name, root)
-    result["scope"] = scope
-    return result
+    return {
+        "pushed": True,
+        "branch": branch,
+        "remote": remote,
+        "worktree": state["worktree"],
+        "store": str(store_dir),
+    }
 
 
 # ─── git status dashboard ──────────────────────────────────────────
 
 
-def _get_ahead_behind(name: str, root: Path) -> tuple[int, int]:
-    """Return (ahead, behind) counts for a submodule vs its remote tracking branch.
+#: The empty ``last_commit`` — an unreadable log is not an error here.
+_NO_COMMIT = {"sha": "", "date": "", "author": "", "message": ""}
 
-    Returns ``(0, 0)`` on any error (no remote, detached HEAD, etc.).
+
+def _last_commit(path: Path) -> dict:
+    """Last commit of whatever git repository or worktree ``path`` is in.
+
+    Called with a *store* directory, so what comes back is the last commit on
+    that subproject's ``projectman`` branch — the last PM change, not the last
+    code change.  Returns ``sha``, ``date``, ``author``, ``message``; all
+    empty strings when the log cannot be read (no repo, unborn branch, no git).
     """
-    branch = _get_current_branch(name, root)
-    if not branch or branch == "HEAD":
-        return (0, 0)
-    try:
-        result = subprocess.run(
-            ["git", "rev-list", "--left-right", "--count",
-             f"origin/{branch}...{branch}"],
-            cwd=str(root / "projects" / name),
-            capture_output=True,
-            text=True,
-        )
-        if result.returncode != 0:
-            return (0, 0)
-        parts = result.stdout.strip().split()
-        if len(parts) == 2:
-            return (int(parts[1]), int(parts[0]))
-        return (0, 0)
-    except (FileNotFoundError, OSError, ValueError):
-        return (0, 0)
-
-
-def _get_dirty_count(name: str, root: Path) -> int:
-    """Return the number of modified/untracked files in a submodule."""
-    try:
-        result = subprocess.run(
-            ["git", "status", "--porcelain"],
-            cwd=str(root / "projects" / name),
-            capture_output=True,
-            text=True,
-            check=True,
-        )
-        lines = [l for l in result.stdout.strip().splitlines() if l.strip()]
-        return len(lines)
-    except (subprocess.CalledProcessError, FileNotFoundError, OSError):
-        return 0
-
-
-def _get_last_commit(name: str, root: Path) -> dict:
-    """Return last commit info for a submodule.
-
-    Returns a dict with ``sha``, ``date``, ``author``, ``message`` keys.
-    All values are empty strings on error.
-    """
-    empty = {"sha": "", "date": "", "author": "", "message": ""}
     try:
         result = subprocess.run(
             ["git", "log", "-1", "--format=%H|%ai|%an|%s"],
-            cwd=str(root / "projects" / name),
+            cwd=str(path),
             capture_output=True,
             text=True,
             check=True,
@@ -2204,77 +803,105 @@ def _get_last_commit(name: str, root: Path) -> dict:
                 "author": parts[2],
                 "message": parts[3],
             }
-        return empty
+        return dict(_NO_COMMIT)
     except (subprocess.CalledProcessError, FileNotFoundError, OSError):
-        return empty
+        return dict(_NO_COMMIT)
 
 
-def _collect_project_status(name: str, root: Path) -> dict:
-    """Collect all git status fields for a single subproject.
+def _unattached_status(name: str, root: Path, *, exists: bool) -> dict:
+    """The status row for a subproject with no store mounted.
 
-    Runs all git commands for one project and returns its full status dict.
-    Designed to be called in parallel via ThreadPoolExecutor.
+    Not an error and not an empty row: the hub knows the project, it just has
+    nothing to read yet.  The wording comes from
+    :func:`projectman.hub.stores.not_attached_row`, so the dashboard says the
+    same thing about an unattached store as ``pm_status``, the rollup and
+    ``GET /api/status`` (US-PM-31-9).
     """
-    target = root / "projects" / name
-    if not target.exists():
-        return {
-            "name": name,
+    entry = hub_store(root, name) or {"name": name, "prefix": None}
+    row = not_attached_row(entry)
+    row.update(
+        {
+            "attached": False,
+            "exists": exists,
             "branch": "",
-            "tracking_branch": "",
-            "deploy_branch": "main",
-            "aligned": False,
+            "checkout_branch": _get_current_branch(name, root) if exists else "",
+            "worktree": False,
+            "detached": False,
+            "upstream": None,
             "dirty": False,
             "dirty_count": 0,
             "ahead": 0,
             "behind": 0,
-            "detached": False,
-            "last_commit": {"sha": "", "date": "", "author": "", "message": ""},
-            "branch_ok": False,
-            "exists": False,
-            "issues": ["Project directory missing"],
+            "last_commit": dict(_NO_COMMIT),
+            "issues": ["Project directory missing"] if not exists else [row["hint"]],
         }
+    )
+    return row
 
-    branch = _get_current_branch(name, root)
-    tracking = _get_tracking_branch(name, root)
-    deploy = _get_deploy_branch(name, root)
-    dirty = _is_dirty(name, root)
-    dirty_count = _get_dirty_count(name, root)
-    ahead, behind = _get_ahead_behind(name, root)
-    last_commit = _get_last_commit(name, root)
-    detached = branch == "HEAD"
 
-    # Branch alignment: ok if no tracking configured, or matches
-    branch_ok = (not tracking) or (branch == tracking)
-    # Aligned: current branch matches deploy branch
-    aligned = (branch == deploy) and not detached
+def _collect_project_status(name: str, root: Path) -> dict:
+    """The git status row for one subproject, read from its *store*.
 
-    # Build human-readable issues list
+    A hub is a read-only rollup of what each subproject's ``projectman``
+    branch says (US-PM-35), so the branch this reports is the store's —
+    ``projects/{name}/.project``, read through
+    :func:`projectman.worktree.store_git_state`, which is the same helper
+    ``pm_commit`` and ``pm_push`` consult to decide which branch they act on.
+    The submodule's own checked-out branch rides along as
+    ``checkout_branch``, because the code checkout is a separate fact from
+    the PM data and conflating the two is what the old deploy-branch
+    alignment scoring did.
+
+    A subproject whose store is not mounted comes back as
+    :func:`_unattached_status` — a row, with the attach hint, never a raise.
+
+    Designed to be called in parallel via ThreadPoolExecutor.
+    """
+    checkout = subproject_path(root, name)
+    if not checkout.exists():
+        return _unattached_status(name, root, exists=False)
+
+    entry = hub_store(root, name)
+    if entry is None or not entry.get("attached"):
+        return _unattached_status(name, root, exists=True)
+
+    try:
+        state = worktree.store_git_state(checkout, STORE_DIRNAME)
+    except Exception:  # noqa: BLE001 — status must never fail the dashboard
+        # Same degradation as the ``pm_store`` entry: an unreadable state is
+        # the all-clean shape with no branch, never a raised dashboard.
+        state = {
+            "worktree": False, "branch": None, "detached": False,
+            "upstream": None, "ahead": 0, "behind": 0,
+            "dirty": False, "dirty_count": 0,
+        }
+    checkout_branch = _get_current_branch(name, root)
+    last_commit = _last_commit(store_path(root, name))
+
     issues: list[str] = []
-    if detached:
-        issues.append("Detached HEAD")
-    if dirty:
-        issues.append(f"Dirty working tree ({dirty_count} files)")
-    if not branch_ok:
-        issues.append(f"Branch mismatch: {branch} (expected {tracking})")
-    if not aligned and not detached:
-        issues.append(f"Not on deploy branch {deploy} (on {branch})")
-    if behind > 0:
-        issues.append(f"Behind remote by {behind} commits")
+    if state["detached"]:
+        issues.append("Store HEAD is detached")
+    if state["dirty"]:
+        n = state["dirty_count"]
+        issues.append(f"Store has {n} uncommitted file{'s' if n != 1 else ''}")
+    if state["behind"]:
+        issues.append(f"Store is behind {state['upstream']} by {state['behind']} commits")
 
     return {
         "name": name,
-        "branch": branch,
-        "tracking_branch": tracking,
-        "deploy_branch": deploy,
-        "aligned": aligned,
-        "dirty": dirty,
-        "dirty_count": dirty_count,
-        "ahead": ahead,
-        "behind": behind,
-        "detached": detached,
-        "last_commit": last_commit,
-        "branch_ok": branch_ok,
+        "prefix": entry.get("prefix"),
+        "attached": True,
         "exists": True,
+        "branch": state["branch"] or "",
+        "checkout_branch": checkout_branch,
+        "worktree": state["worktree"],
+        "detached": state["detached"],
+        "upstream": state["upstream"],
+        "dirty": state["dirty"],
+        "dirty_count": state["dirty_count"],
+        "ahead": state["ahead"],
+        "behind": state["behind"],
+        "last_commit": last_commit,
         "issues": issues,
     }
 
@@ -2284,23 +911,28 @@ def git_status_all(root: Optional[Path] = None) -> dict:
 
     Returns a dict with:
 
-    - ``projects``: list of per-project status dicts, each containing:
-      - ``name``: project name
-      - ``branch``: current branch (or ``"HEAD"`` if detached)
-      - ``tracking_branch``: expected branch from .gitmodules
-      - ``deploy_branch``: deploy branch from config or fallback
-      - ``aligned``: whether current branch matches deploy branch
-      - ``dirty``: whether the working tree has uncommitted changes
-      - ``dirty_count``: number of modified/untracked files
-      - ``ahead``: commits ahead of remote
-      - ``behind``: commits behind remote
-      - ``detached``: whether HEAD is detached
+    - ``projects``: list of per-project status dicts, each describing that
+      subproject's **store** (``projects/{name}/.project``), which is what a
+      read-only rollup has to say about a repo it does not own:
+      - ``name`` / ``prefix``: project name and its ID prefix
+      - ``attached``: whether a store is mounted there at all
+      - ``exists``: whether the subproject checkout exists
+      - ``branch``: the branch owning the store (``projectman``), ``""`` when
+        detached or unattached
+      - ``checkout_branch``: the submodule's own checked-out code branch
+      - ``worktree``: whether the store is a mounted worktree
+      - ``detached``: whether the store's HEAD is off a branch
+      - ``upstream``: the store branch's upstream, or None
+      - ``dirty`` / ``dirty_count``: uncommitted changes under the store
+      - ``ahead`` / ``behind``: store commits relative to ``upstream``
       - ``last_commit``: dict with ``sha``, ``date``, ``author``, ``message``
-      - ``branch_ok``: whether current branch matches tracking branch
-      - ``exists``: whether the project directory exists
+        — the store's last commit, i.e. the last PM change
       - ``issues``: list of human-readable problem strings
+      An unattached subproject carries ``status`` and ``hint`` instead of
+      real git state (see :func:`projectman.hub.stores.not_attached_row`).
     - ``total``: number of registered projects
-    - ``issues``: count of projects with any problem (dirty/misaligned/missing)
+    - ``issues``: count of projects with any problem (missing, unattached,
+      detached, dirty or behind)
     - ``ok``: ``True`` if no projects have issues
     - ``summary``: human-readable summary string
 
@@ -2340,10 +972,7 @@ def git_status_all(root: Optional[Path] = None) -> dict:
 
     # Preserve registration order
     projects = results
-    issue_count = sum(
-        1 for p in projects
-        if p["dirty"] or not p["branch_ok"] or p["behind"] > 0 or not p["exists"]
-    )
+    issue_count = sum(1 for p in projects if p["issues"])
 
     total = len(projects)
     if issue_count == 0:
@@ -2388,30 +1017,14 @@ def _pm_store_status(root: Path) -> dict:
     return state
 
 
-def _severity_score(project: dict) -> int:
-    """Return a sort key for attention-priority ordering.
-
-    Lower score = needs more attention (sorts first).
-    """
-    if not project.get("exists", True):
-        return 0  # missing dir — highest severity
-    if project.get("detached"):
-        return 1
-    if not project.get("branch_ok"):
-        return 2
-    if project.get("dirty"):
-        return 3
-    if project.get("behind", 0) > 0:
-        return 4
-    if not project.get("aligned"):
-        return 5
-    if project.get("ahead", 0) > 0:
-        return 6
-    return 10  # clean — sorts last
-
-
 def format_git_status(data: dict, *, verbose: bool = False) -> str:
     """Render ``git_status_all()`` output as a compact, scannable table.
+
+    One row per subproject, in hub registration order — the order the hub
+    lists its projects everywhere else.  The severity re-sort went with the
+    deploy-branch alignment scoring it was built on (US-PM-35-8): the Issues
+    column already says which rows need attention, and a stable order makes a
+    20-project hub readable twice running.
 
     Args:
         data: dict returned by ``git_status_all()``.
@@ -2428,18 +1041,23 @@ def format_git_status(data: dict, *, verbose: bool = False) -> str:
     if total == 0:
         return data.get("summary", "No projects.")
 
-    # Sort by severity (most attention-needing first)
-    sorted_projects = sorted(projects, key=_severity_score)
+    # Registration order — see the docstring.
+    listed = list(projects)
 
     # Column headers
-    header = ["Project", "Branch", "Deploy", "Dirty", "Ahead/Behind", "Issues"]
+    header = ["Project", "Store branch", "Checkout", "Dirty", "Ahead/Behind", "Issues"]
 
     # Build rows
     rows: list[list[str]] = []
-    for p in sorted_projects:
+    for p in listed:
         name = p["name"]
-        branch = f"({p['branch']})" if p.get("detached") else p.get("branch", "")
-        deploy = p.get("deploy_branch", "main")
+        if p.get("attached", True) is False:
+            branch = NOT_ATTACHED
+        elif p.get("detached"):
+            branch = f"({p.get('branch') or 'detached'})"
+        else:
+            branch = p.get("branch", "")
+        checkout = p.get("checkout_branch", "")
         dirty = f"{p['dirty_count']} mod" if p.get("dirty") else ""
         ahead = p.get("ahead", 0)
         behind = p.get("behind", 0)
@@ -2453,7 +1071,7 @@ def format_git_status(data: dict, *, verbose: bool = False) -> str:
         else:
             issue_str = ""
 
-        rows.append([name, branch, deploy, dirty, ab, issue_str])
+        rows.append([name, branch, checkout, dirty, ab, issue_str])
 
     # Calculate column widths
     widths = [len(h) for h in header]
@@ -2480,7 +1098,7 @@ def format_git_status(data: dict, *, verbose: bool = False) -> str:
     # Verbose details
     if verbose:
         lines.append("")
-        for p in sorted_projects:
+        for p in listed:
             if not p.get("exists"):
                 lines.append(f"  {p['name']}: MISSING — project directory not found")
                 continue

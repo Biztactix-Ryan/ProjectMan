@@ -20,8 +20,8 @@ other side of the transport sees.  Both are run for every case.
 Beyond the per-class sweep there are three whole-surface checks:
 
 * :func:`test_no_registered_tool_can_return_an_error_prefixed_body` — a static
-  scan of every ``return`` in every one of the 50 registered tools;
-* two dynamic sweeps that *drive* all 50 tools (in a broken environment and
+  scan of every ``return`` in every one of the 47 registered tools;
+* two dynamic sweeps that *drive* all 47 tools (in a broken environment and
   against hostile arguments) and assert no response body begins with ``error:``;
 * :func:`test_the_instrument_scores_every_converted_failure_as_a_hard_error` —
   the epic's own instrument, ``tools/usage_telemetry/classify.py``, run over the
@@ -60,7 +60,7 @@ SERVER_PY = Path(__file__).resolve().parents[1] / "src" / "projectman" / "server
 #: The maintenance and web families are hidden from ``tools/list`` by default
 #: (US-PM-15-5), but their failure paths are catalogued in the error-paths
 #: inventory and driven by :data:`CASES` below, and the whole-surface checks
-#: count all 50 tools.  Gating them out here would shrink the sweep rather
+#: count all 47 tools.  Gating them out here would shrink the sweep rather
 #: than test the gate, so this module sweeps the full surface;
 #: ``tests/test_tool_gating.py`` asserts the gate.
 pytestmark = pytest.mark.usefixtures("all_tool_families")
@@ -116,7 +116,6 @@ CASES: list[Case] = [
     #    highest-volume live genuine failure in the corpus.
     Case("config_not_found", "3.1", "pm_status", {}, "No .project/config.yaml", world="empty"),
     Case("config_not_found", "3.1", "pm_docs", {"doc": "project"}, "No .project/config.yaml", world="empty"),
-    Case("config_not_found", "3.1", "pm_repair", {}, "No .project/config.yaml", world="empty"),
     Case("config_not_found", "3.1", "pm_list_sprints", {}, "No .project/config.yaml", world="empty"),
     # -- nonexistent id, one case per item type (inventory 5.5).
     Case("nonexistent_epic", "3.1", "pm_epic", {"id": "EPIC-TST-99"}, "Epic not found: EPIC-TST-99"),
@@ -170,14 +169,17 @@ CASES: list[Case] = [
     # writes nothing and consumes nothing, so the seeded world survives them.
     Case("create_target_exists", "3.1", "pm_fix_malformed", {"filename": "REAL-1.md", "id": "US-TST-1", "title": "T", "item_type": "story"}, "US-TST-1 already exists"),
     Case("create_target_exists", "3.1", "pm_restore", {"filename": "US-TST-1.md"}, "US-TST-1 already exists"),
-    # -- an asserted hub project that is not registered (inventory 3.2).
-    Case("unregistered_hub_project", "3.2", "pm_audit", {"project": "nope"}, "project 'nope' not found in hub", world="hub"),
-    Case("unregistered_hub_project", "3.2", "pm_git_status", {"project": "nope"}, "project 'nope' not found in hub status", world="hub"),
-    # -- the three hub guards (inventory 4): one per shape registry.py produces.
-    Case("hub_error_string", "4", "pm_repair", {}, "not a hub project"),
-    Case("hub_error_dict", "4", "pm_push", {"scope": "bogus"}, "invalid scope 'bogus'", world="hub"),
-    Case("hub_error_dict", "4", "pm_push", {"scope": "project:nope"}, "project 'nope' not registered in hub", world="hub"),
-    Case("hub_error_report", "4", "pm_push_all", {"dry_run": True}, "not a hub project"),
+    # -- a store prefix nobody in the hub claims (inventory 3.2).  Since
+    #    US-PM-34 a store is addressed by prefix, never by project name, so
+    #    this is the shape an ID-less verb fails with.
+    Case("unknown_store_prefix", "3.2", "pm_audit", {"prefix": "NOPE"}, "no project in this hub uses the prefix 'NOPE'", world="hub"),
+    Case("unknown_store_prefix", "3.2", "pm_git_status", {"prefix": "NOPE"}, "no project in this hub uses the prefix 'NOPE'", world="hub"),
+    #    US-PM-35-7 puts the two git verbs in this class too: they take the
+    #    same optional prefix, and the hub-guard class they used to represent
+    #    (inventory 4, registry.py's in-band error dict) is gone with the
+    #    cross-project push — nothing reaches those shapes from a tool now.
+    Case("unknown_store_prefix", "3.2", "pm_push", {"prefix": "NOPE"}, "no project in this hub uses the prefix 'NOPE'", world="hub"),
+    Case("unknown_store_prefix", "3.2", "pm_commit", {"prefix": "NOPE"}, "no project in this hub uses the prefix 'NOPE'", world="hub"),
     # -- web / port failures (inventory 3.4).
     Case("port_in_use", "3.4", "pm_web_start", {}, "is already in use", world="port_taken", from_world=("port",)),
     Case("missing_web_dependency", "3.4", "pm_web_start", {}, "Web dependencies not installed", world="no_web_deps", from_world=("port",)),
@@ -212,10 +214,7 @@ EXPECTED_CLASSES = {
     "missing_required_argument",
     "not_found_file",
     "create_target_exists",
-    "unregistered_hub_project",
-    "hub_error_string",
-    "hub_error_dict",
-    "hub_error_report",
+    "unknown_store_prefix",
     "port_in_use",
     "missing_web_dependency",
     "no_project_for_web",
@@ -542,7 +541,7 @@ def test_every_inventory_failure_class_is_covered():
     """
     covered = {case.failure_class for case in CASES}
     assert covered == EXPECTED_CLASSES, covered.symmetric_difference(EXPECTED_CLASSES)
-    assert len(CASES) >= 42, len(CASES)
+    assert len(CASES) >= 39, len(CASES)
     # Every case names the inventory section it came from.
     assert all(case.inventory for case in CASES)
     # The sweep spans the tool surface, not one convenient tool.
@@ -599,7 +598,7 @@ def test_no_registered_tool_can_return_an_error_prefixed_body():
     assert set(tools) == registered_tool_names(), set(tools).symmetric_difference(
         registered_tool_names()
     )
-    assert len(tools) == 50, len(tools)
+    assert len(tools) == 47, len(tools)
 
     # 2. Every return in every tool.
     checked_returns = 0
@@ -671,7 +670,7 @@ def sweep_every_tool() -> tuple[dict[str, tuple[bool, str]], int]:
 
 def assert_sweep_is_clean(responses: dict[str, tuple[bool, str]], total: int):
     assert len(responses) == total, (len(responses), total)
-    assert total == 50, total
+    assert total == 47, total
     for name, (is_error, text) in responses.items():
         assert not text.lstrip().startswith("error:"), (name, text[:200])
         if not is_error:
@@ -686,9 +685,9 @@ def assert_sweep_is_clean(responses: dict[str, tuple[bool, str]], total: int):
 
 
 def test_driving_every_tool_in_a_broken_environment_yields_no_error_body(worlds):
-    """AC 4 driven, not inferred: all 50 tools, in a directory with no project.
+    """AC 4 driven, not inferred: all 47 tools, in a directory with no project.
 
-    Every tool's generic handler is reached here — that is 48 of the 64
+    Every tool's generic handler is reached here — that is 45 of the
     ``server.py`` sites in one sweep — and every response is checked.  The two
     tools that legitimately answer without a project (``pm_web_stop``,
     ``pm_web_status``) return their idempotent no-op bodies, which is why the
@@ -701,7 +700,7 @@ def test_driving_every_tool_in_a_broken_environment_yields_no_error_body(worlds)
     # The sweep really did exercise the failure paths, rather than finding a
     # working project by accident.
     errored = [name for name, (is_error, _) in responses.items() if is_error]
-    assert len(errored) == 48, sorted(set(responses) - set(errored))
+    assert len(errored) == 45, sorted(set(responses) - set(errored))
 
 
 def test_driving_every_tool_with_hostile_arguments_yields_no_error_body(worlds):

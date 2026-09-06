@@ -324,22 +324,25 @@ def test_pm_grab_explicit_fields_none_equals_omitted(project):
 
 # ═══ Signatures: projection stays trailing and optional ═════════
 
-# The full parameter order, pinned.  A positional caller of any of these tools
+# The full parameter order, pinned.  `project` was removed from the ID-taking
+# tools by US-PM-34-7 — the ID's prefix names the store — so it survives here
+# only on `pm_list_sprints`, which takes no ID (US-PM-34-8 replaces it).
+# A positional caller of any of these tools
 # — `pm_get(task_id, True)` — lands on a *different* parameter the moment
 # somebody inserts `fields` earlier in the list, and nothing else in the suite
 # would notice.  The projection parameters are named separately so the test
 # can assert they are the trailing ones.
 EXPECTED_SIGNATURES = {
-    "pm_get": (("id", "include_log", "project", "task_id"), ("fields",)),
-    "pm_batch_get": (("type", "ids", "project"), ("brief", "fields")),
+    "pm_get": (("id", "include_log", "task_id"), ("fields",)),
+    "pm_batch_get": (("type", "ids"), ("brief", "fields")),
     # `run_id` (US-PM-14-5) is a *leading* parameter: it changes what the
     # claim records, not what the response shows, and it sits before `fields`
     # precisely so the projection parameter stays the trailing one.
     "pm_grab": (
-        ("task_id", "assignee", "include_story", "project", "id", "run_id"),
+        ("task_id", "assignee", "include_story", "id", "run_id"),
         ("fields",),
     ),
-    "pm_list_sprints": (("status", "project"), ("brief", "fields")),
+    "pm_list_sprints": (("status", "prefix"), ("brief", "fields")),
 }
 
 PROJECTION_DEFAULTS = {"fields": None, "brief": False}

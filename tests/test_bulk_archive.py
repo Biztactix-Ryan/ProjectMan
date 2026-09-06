@@ -411,8 +411,16 @@ class TestParityWithPmArchive:
 
         assert pm_archive(tasks[0]) == f"archived: {tasks[0]}"
 
-    def test_the_index_is_written_once_for_the_whole_sweep(self, tmp_project, tasks):
-        """Per-sweep, not per-item — and the index really does reflect the writes."""
+    def test_the_sweep_writes_no_index_and_a_reindex_reflects_it(
+        self, tmp_project, tasks
+    ):
+        """US-PM-29: a write touches item files only; the index is rebuilt on demand.
+
+        This used to assert one index write per sweep (per-sweep, not
+        per-item).  Now that the indexes are derived and rebuilt only at the
+        three declared rebuild points, the sweep writes none at all — and an
+        explicit ``pm_reindex`` is what makes the archives show up in it.
+        """
         import projectman.server as server
 
         calls = []
@@ -428,7 +436,14 @@ class TestParityWithPmArchive:
         finally:
             server.write_index = original
 
-        assert len(calls) == 1
+        assert calls == []
+
+        server.pm_reindex()
+        index = yaml.safe_load(
+            (tmp_project / ".project" / "index.yaml").read_text()
+        )
+        indexed = {t["id"] for t in (index.get("tasks") or [])}
+        assert not (set(tasks[:3]) & indexed)
 
     def test_an_all_failed_sweep_writes_no_index(self, tmp_project, tasks):
         import projectman.server as server
@@ -466,17 +481,18 @@ class TestRegistration:
     def test_ids_is_the_only_selector_the_schema_offers(self):
         """A reviewer reading the schema must see one way to choose items.
 
-        `project` scopes *which store* is written in hub mode; it selects no
-        items.  Anything else in `properties` would be a second way to decide
-        what gets archived — a criteria/status/tag/all form arriving by the
-        back door — which is exactly what the docstring promises does not
-        exist, so the promise is pinned against the schema itself.
+        `ids` is now the *whole* input: US-PM-34-7 dropped `project`, because
+        each ID names its own store through its prefix.  Anything else in
+        `properties` would be a second way to decide what gets archived — a
+        criteria/status/tag/all form arriving by the back door — which is
+        exactly what the docstring promises does not exist, so the promise is
+        pinned against the schema itself.
         """
         properties = _tool_schemas()["pm_archive_many"].inputSchema.get(
             "properties", {}
         )
 
-        assert set(properties) == {"ids", "project"}
+        assert set(properties) == {"ids"}
         assert properties["ids"]["title"] == "Ids"
 
     def test_it_is_annotated_as_destructive(self):

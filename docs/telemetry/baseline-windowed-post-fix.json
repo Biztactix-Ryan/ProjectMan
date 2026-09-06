@@ -1,0 +1,2279 @@
+{
+  "schema": "projectman.usage-telemetry.baseline/1",
+  "provenance": {
+    "label": "windowed-post-fix",
+    "note": "Windowed post-fix baseline for US-PM-32. The window starts one second after the LAST pre-fix run-log-note rejection anywhere in the corpus (\"error: Run-log note must be 1024 characters or fewer\", pm_update, 2026-09-05T02:16:14.796Z), so every session counted here began after the last moment the pre-US-PM-1 server was observed running; zero rejections remain inside the window, and both active projects in it show post-fix response fields (note_long, evidence_clamped). --since auto could not be used: US-PM-1 raised the hard cap to 4096 chars, so note_truncated: true only fires above 4096 and no note in this corpus reaches that, leaving the corpus without the auto signature. HEAD is 0930a7b (pm: NEXT.md -- server reinstalled from the tree 2026-09-06); the uncommitted Sprint 10 working tree sits on top of it (US-PM-29 index-derivation changes and the US-PM-32-4 --since flag this capture uses), so git.dirty is true and expected.",
+    "captured_at": "2026-09-06T01:24:20.393499+00:00",
+    "corpus_root": "/home/user/.claude/projects",
+    "tool_prefix": "mcp__projectman__",
+    "transcript_files": 150,
+    "calls": 487,
+    "matched_calls": 487,
+    "unmatched_calls": 0,
+    "match_rate": 1.0,
+    "sessions": 89,
+    "window_since": "2026-09-05T02:16:15+00:00",
+    "sessions_excluded": 744,
+    "git": {
+      "repo": ".",
+      "commit": "0930a7bdc59b9b41daf4e98c0e2d18e4efedaa5f",
+      "branch": "main",
+      "dirty": true
+    },
+    "generator": "python -m tools.usage_telemetry.baseline capture",
+    "corpus_is_live": true
+  },
+  "report": {
+    "corpus": {
+      "root": "/home/user/.claude/projects",
+      "tool_prefix": "mcp__projectman__",
+      "files_scanned": 150,
+      "files_unreadable": 0,
+      "json_parse_failures": 0,
+      "tool_use_blocks_total": 70229,
+      "tool_result_blocks_total": 70228,
+      "calls": 487,
+      "matched": 487,
+      "unmatched": 0,
+      "match_rate": 1.0,
+      "sessions": 89,
+      "session_ids": 8,
+      "projects": [
+        "-mnt-repos-Kura",
+        "-mnt-repos-ProjectMan"
+      ]
+    },
+    "totals": {
+      "calls": 487,
+      "matched": 487,
+      "unmatched": 0,
+      "sessions": 89,
+      "tools": 29,
+      "response_bytes": 898699,
+      "response_chars": 895620,
+      "estimated_tokens": 223905,
+      "bytes_per_call": {
+        "count": 487,
+        "total": 898699,
+        "mean": 1845.3778234086242,
+        "min": 15,
+        "median": 712,
+        "p90": 4805,
+        "p95": 6306,
+        "p99": 13904,
+        "max": 24509
+      },
+      "calls_per_session": {
+        "count": 89,
+        "total": 487,
+        "mean": 5.47191011235955,
+        "min": 1,
+        "median": 1,
+        "p90": 4,
+        "p95": 30,
+        "p99": 146,
+        "max": 146
+      }
+    },
+    "by_tool": [
+      {
+        "tool": "pm_grab",
+        "calls": 94,
+        "call_share": 0.19301848049281314,
+        "unmatched": 0,
+        "failures": 0,
+        "result_bytes": 334285,
+        "byte_share": 0.3719654745359681,
+        "result_chars": 333429,
+        "bytes_per_call": {
+          "count": 94,
+          "total": 334285,
+          "mean": 3556.223404255319,
+          "min": 99,
+          "median": 3647,
+          "p90": 6039,
+          "p95": 6541,
+          "p99": 7865,
+          "max": 7865
+        },
+        "runs": {
+          "runs": 94,
+          "longest": 1,
+          "calls_in_runs": 94,
+          "runs_ge2": 0,
+          "calls_in_runs_ge2": 0,
+          "runs_ge3": 0,
+          "calls_in_runs_ge3": 0,
+          "removable_calls": 0,
+          "histogram": {
+            "1": 94
+          }
+        }
+      },
+      {
+        "tool": "pm_get",
+        "calls": 57,
+        "call_share": 0.11704312114989733,
+        "unmatched": 0,
+        "failures": 3,
+        "result_bytes": 129092,
+        "byte_share": 0.14364319978101678,
+        "result_chars": 128708,
+        "bytes_per_call": {
+          "count": 57,
+          "total": 129092,
+          "mean": 2264.7719298245615,
+          "min": 43,
+          "median": 70,
+          "p90": 7327,
+          "p95": 11418,
+          "p99": 24509,
+          "max": 24509
+        },
+        "runs": {
+          "runs": 42,
+          "longest": 5,
+          "calls_in_runs": 57,
+          "runs_ge2": 8,
+          "calls_in_runs_ge2": 23,
+          "runs_ge3": 5,
+          "calls_in_runs_ge3": 17,
+          "removable_calls": 15,
+          "histogram": {
+            "1": 34,
+            "2": 3,
+            "3": 4,
+            "5": 1
+          }
+        }
+      },
+      {
+        "tool": "pm_accept",
+        "calls": 90,
+        "call_share": 0.18480492813141683,
+        "unmatched": 0,
+        "failures": 0,
+        "result_bytes": 106186,
+        "byte_share": 0.11815524441442574,
+        "result_chars": 106002,
+        "bytes_per_call": {
+          "count": 90,
+          "total": 106186,
+          "mean": 1179.8444444444444,
+          "min": 80,
+          "median": 361,
+          "p90": 2876,
+          "p95": 3377,
+          "p99": 3768,
+          "max": 3768
+        },
+        "runs": {
+          "runs": 49,
+          "longest": 5,
+          "calls_in_runs": 90,
+          "runs_ge2": 23,
+          "calls_in_runs_ge2": 64,
+          "runs_ge3": 11,
+          "calls_in_runs_ge3": 40,
+          "removable_calls": 41,
+          "histogram": {
+            "1": 26,
+            "2": 12,
+            "3": 7,
+            "4": 1,
+            "5": 3
+          }
+        }
+      },
+      {
+        "tool": "pm_audit",
+        "calls": 32,
+        "call_share": 0.06570841889117043,
+        "unmatched": 0,
+        "failures": 0,
+        "result_bytes": 54176,
+        "byte_share": 0.06028269754389401,
+        "result_chars": 53984,
+        "bytes_per_call": {
+          "count": 32,
+          "total": 54176,
+          "mean": 1693.0,
+          "min": 578,
+          "median": 578,
+          "p90": 2808,
+          "p95": 2808,
+          "p99": 2808,
+          "max": 2808
+        },
+        "runs": {
+          "runs": 32,
+          "longest": 1,
+          "calls_in_runs": 32,
+          "runs_ge2": 0,
+          "calls_in_runs_ge2": 0,
+          "runs_ge3": 0,
+          "calls_in_runs_ge3": 0,
+          "removable_calls": 0,
+          "histogram": {
+            "1": 32
+          }
+        }
+      },
+      {
+        "tool": "pm_board",
+        "calls": 11,
+        "call_share": 0.022587268993839837,
+        "unmatched": 0,
+        "failures": 0,
+        "result_bytes": 53629,
+        "byte_share": 0.05967403991770326,
+        "result_chars": 52999,
+        "bytes_per_call": {
+          "count": 11,
+          "total": 53629,
+          "mean": 4875.363636363636,
+          "min": 1048,
+          "median": 4448,
+          "p90": 9665,
+          "p95": 13904,
+          "p99": 13904,
+          "max": 13904
+        },
+        "runs": {
+          "runs": 11,
+          "longest": 1,
+          "calls_in_runs": 11,
+          "runs_ge2": 0,
+          "calls_in_runs_ge2": 0,
+          "runs_ge3": 0,
+          "calls_in_runs_ge3": 0,
+          "removable_calls": 0,
+          "histogram": {
+            "1": 11
+          }
+        }
+      },
+      {
+        "tool": "pm_run_log",
+        "calls": 12,
+        "call_share": 0.024640657084188913,
+        "unmatched": 0,
+        "failures": 0,
+        "result_bytes": 31303,
+        "byte_share": 0.034831461924404054,
+        "result_chars": 31303,
+        "bytes_per_call": {
+          "count": 12,
+          "total": 31303,
+          "mean": 2608.5833333333335,
+          "min": 15,
+          "median": 2035,
+          "p90": 3441,
+          "p95": 9201,
+          "p99": 9201,
+          "max": 9201
+        },
+        "runs": {
+          "runs": 9,
+          "longest": 2,
+          "calls_in_runs": 12,
+          "runs_ge2": 3,
+          "calls_in_runs_ge2": 6,
+          "runs_ge3": 0,
+          "calls_in_runs_ge3": 0,
+          "removable_calls": 3,
+          "histogram": {
+            "1": 6,
+            "2": 3
+          }
+        }
+      },
+      {
+        "tool": "pm_batch_get",
+        "calls": 2,
+        "call_share": 0.004106776180698152,
+        "unmatched": 0,
+        "failures": 0,
+        "result_bytes": 30892,
+        "byte_share": 0.03437413416505415,
+        "result_chars": 30884,
+        "bytes_per_call": {
+          "count": 2,
+          "total": 30892,
+          "mean": 15446.0,
+          "min": 13040,
+          "median": 13040,
+          "p90": 17852,
+          "p95": 17852,
+          "p99": 17852,
+          "max": 17852
+        },
+        "runs": {
+          "runs": 1,
+          "longest": 2,
+          "calls_in_runs": 2,
+          "runs_ge2": 1,
+          "calls_in_runs_ge2": 2,
+          "runs_ge3": 0,
+          "calls_in_runs_ge3": 0,
+          "removable_calls": 1,
+          "histogram": {
+            "2": 1
+          }
+        }
+      },
+      {
+        "tool": "pm_context",
+        "calls": 5,
+        "call_share": 0.01026694045174538,
+        "unmatched": 0,
+        "failures": 0,
+        "result_bytes": 30553,
+        "byte_share": 0.03399692221756116,
+        "result_chars": 30321,
+        "bytes_per_call": {
+          "count": 5,
+          "total": 30553,
+          "mean": 6110.6,
+          "min": 4951,
+          "median": 6467,
+          "p90": 7092,
+          "p95": 7092,
+          "p99": 7092,
+          "max": 7092
+        },
+        "runs": {
+          "runs": 5,
+          "longest": 1,
+          "calls_in_runs": 5,
+          "runs_ge2": 0,
+          "calls_in_runs_ge2": 0,
+          "runs_ge3": 0,
+          "calls_in_runs_ge3": 0,
+          "removable_calls": 0,
+          "histogram": {
+            "1": 5
+          }
+        }
+      },
+      {
+        "tool": "pm_epic",
+        "calls": 2,
+        "call_share": 0.004106776180698152,
+        "unmatched": 0,
+        "failures": 0,
+        "result_bytes": 17899,
+        "byte_share": 0.019916568283707893,
+        "result_chars": 17881,
+        "bytes_per_call": {
+          "count": 2,
+          "total": 17899,
+          "mean": 8949.5,
+          "min": 7788,
+          "median": 7788,
+          "p90": 10111,
+          "p95": 10111,
+          "p99": 10111,
+          "max": 10111
+        },
+        "runs": {
+          "runs": 1,
+          "longest": 2,
+          "calls_in_runs": 2,
+          "runs_ge2": 1,
+          "calls_in_runs_ge2": 2,
+          "runs_ge3": 0,
+          "calls_in_runs_ge3": 0,
+          "removable_calls": 1,
+          "histogram": {
+            "2": 1
+          }
+        }
+      },
+      {
+        "tool": "pm_list_sprints",
+        "calls": 11,
+        "call_share": 0.022587268993839837,
+        "unmatched": 0,
+        "failures": 0,
+        "result_bytes": 17157,
+        "byte_share": 0.01909093033373799,
+        "result_chars": 17063,
+        "bytes_per_call": {
+          "count": 11,
+          "total": 17157,
+          "mean": 1559.7272727272727,
+          "min": 36,
+          "median": 1127,
+          "p90": 2560,
+          "p95": 5996,
+          "p99": 5996,
+          "max": 5996
+        },
+        "runs": {
+          "runs": 9,
+          "longest": 2,
+          "calls_in_runs": 11,
+          "runs_ge2": 2,
+          "calls_in_runs_ge2": 4,
+          "runs_ge3": 0,
+          "calls_in_runs_ge3": 0,
+          "removable_calls": 2,
+          "histogram": {
+            "1": 7,
+            "2": 2
+          }
+        }
+      },
+      {
+        "tool": "pm_activity",
+        "calls": 4,
+        "call_share": 0.008213552361396304,
+        "unmatched": 0,
+        "failures": 0,
+        "result_bytes": 16721,
+        "byte_share": 0.01860578458415999,
+        "result_chars": 16349,
+        "bytes_per_call": {
+          "count": 4,
+          "total": 16721,
+          "mean": 4180.25,
+          "min": 70,
+          "median": 866,
+          "p90": 14760,
+          "p95": 14760,
+          "p99": 14760,
+          "max": 14760
+        },
+        "runs": {
+          "runs": 3,
+          "longest": 2,
+          "calls_in_runs": 4,
+          "runs_ge2": 1,
+          "calls_in_runs_ge2": 2,
+          "runs_ge3": 0,
+          "calls_in_runs_ge3": 0,
+          "removable_calls": 1,
+          "histogram": {
+            "1": 2,
+            "2": 1
+          }
+        }
+      },
+      {
+        "tool": "pm_create_story",
+        "calls": 15,
+        "call_share": 0.030800821355236138,
+        "unmatched": 0,
+        "failures": 0,
+        "result_bytes": 13184,
+        "byte_share": 0.014670095326688913,
+        "result_chars": 13166,
+        "bytes_per_call": {
+          "count": 15,
+          "total": 13184,
+          "mean": 878.9333333333333,
+          "min": 585,
+          "median": 978,
+          "p90": 1024,
+          "p95": 1027,
+          "p99": 1027,
+          "max": 1027
+        },
+        "runs": {
+          "runs": 6,
+          "longest": 7,
+          "calls_in_runs": 15,
+          "runs_ge2": 3,
+          "calls_in_runs_ge2": 12,
+          "runs_ge3": 2,
+          "calls_in_runs_ge3": 10,
+          "removable_calls": 9,
+          "histogram": {
+            "1": 3,
+            "2": 1,
+            "3": 1,
+            "7": 1
+          }
+        }
+      },
+      {
+        "tool": "pm_get_sprint",
+        "calls": 4,
+        "call_share": 0.008213552361396304,
+        "unmatched": 0,
+        "failures": 0,
+        "result_bytes": 11025,
+        "byte_share": 0.01226773369059051,
+        "result_chars": 11007,
+        "bytes_per_call": {
+          "count": 4,
+          "total": 11025,
+          "mean": 2756.25,
+          "min": 2196,
+          "median": 2815,
+          "p90": 3034,
+          "p95": 3034,
+          "p99": 3034,
+          "max": 3034
+        },
+        "runs": {
+          "runs": 4,
+          "longest": 1,
+          "calls_in_runs": 4,
+          "runs_ge2": 0,
+          "calls_in_runs_ge2": 0,
+          "runs_ge3": 0,
+          "calls_in_runs_ge3": 0,
+          "removable_calls": 0,
+          "histogram": {
+            "1": 4
+          }
+        }
+      },
+      {
+        "tool": "pm_update",
+        "calls": 84,
+        "call_share": 0.17248459958932238,
+        "unmatched": 0,
+        "failures": 1,
+        "result_bytes": 9293,
+        "byte_share": 0.01034050332758799,
+        "result_chars": 9291,
+        "bytes_per_call": {
+          "count": 84,
+          "total": 9293,
+          "mean": 110.63095238095238,
+          "min": 58,
+          "median": 92,
+          "p90": 197,
+          "p95": 199,
+          "p99": 261,
+          "max": 261
+        },
+        "runs": {
+          "runs": 43,
+          "longest": 12,
+          "calls_in_runs": 84,
+          "runs_ge2": 10,
+          "calls_in_runs_ge2": 51,
+          "runs_ge3": 6,
+          "calls_in_runs_ge3": 43,
+          "removable_calls": 41,
+          "histogram": {
+            "1": 33,
+            "2": 4,
+            "4": 1,
+            "5": 1,
+            "6": 1,
+            "7": 1,
+            "9": 1,
+            "12": 1
+          }
+        }
+      },
+      {
+        "tool": "pm_update_sprint",
+        "calls": 8,
+        "call_share": 0.01642710472279261,
+        "unmatched": 0,
+        "failures": 0,
+        "result_bytes": 8202,
+        "byte_share": 0.009126526234033865,
+        "result_chars": 8178,
+        "bytes_per_call": {
+          "count": 8,
+          "total": 8202,
+          "mean": 1025.25,
+          "min": 901,
+          "median": 949,
+          "p90": 1145,
+          "p95": 1145,
+          "p99": 1145,
+          "max": 1145
+        },
+        "runs": {
+          "runs": 8,
+          "longest": 1,
+          "calls_in_runs": 8,
+          "runs_ge2": 0,
+          "calls_in_runs_ge2": 0,
+          "runs_ge3": 0,
+          "calls_in_runs_ge3": 0,
+          "removable_calls": 0,
+          "histogram": {
+            "1": 8
+          }
+        }
+      },
+      {
+        "tool": "pm_create_tasks",
+        "calls": 15,
+        "call_share": 0.030800821355236138,
+        "unmatched": 0,
+        "failures": 0,
+        "result_bytes": 7816,
+        "byte_share": 0.008697016464912057,
+        "result_chars": 7809,
+        "bytes_per_call": {
+          "count": 15,
+          "total": 7816,
+          "mean": 521.0666666666667,
+          "min": 256,
+          "median": 416,
+          "p90": 919,
+          "p95": 1032,
+          "p99": 1032,
+          "max": 1032
+        },
+        "runs": {
+          "runs": 10,
+          "longest": 4,
+          "calls_in_runs": 15,
+          "runs_ge2": 2,
+          "calls_in_runs_ge2": 7,
+          "runs_ge3": 2,
+          "calls_in_runs_ge3": 7,
+          "removable_calls": 5,
+          "histogram": {
+            "1": 8,
+            "3": 1,
+            "4": 1
+          }
+        }
+      },
+      {
+        "tool": "pm_scope",
+        "calls": 2,
+        "call_share": 0.004106776180698152,
+        "unmatched": 0,
+        "failures": 0,
+        "result_bytes": 7248,
+        "byte_share": 0.008064991726929706,
+        "result_chars": 7240,
+        "bytes_per_call": {
+          "count": 2,
+          "total": 7248,
+          "mean": 3624.0,
+          "min": 3504,
+          "median": 3504,
+          "p90": 3744,
+          "p95": 3744,
+          "p99": 3744,
+          "max": 3744
+        },
+        "runs": {
+          "runs": 2,
+          "longest": 1,
+          "calls_in_runs": 2,
+          "runs_ge2": 0,
+          "calls_in_runs_ge2": 0,
+          "runs_ge3": 0,
+          "calls_in_runs_ge3": 0,
+          "removable_calls": 0,
+          "histogram": {
+            "1": 2
+          }
+        }
+      },
+      {
+        "tool": "pm_update_many",
+        "calls": 4,
+        "call_share": 0.008213552361396304,
+        "unmatched": 0,
+        "failures": 0,
+        "result_bytes": 4118,
+        "byte_share": 0.004582179350372037,
+        "result_chars": 4118,
+        "bytes_per_call": {
+          "count": 4,
+          "total": 4118,
+          "mean": 1029.5,
+          "min": 200,
+          "median": 350,
+          "p90": 1867,
+          "p95": 1867,
+          "p99": 1867,
+          "max": 1867
+        },
+        "runs": {
+          "runs": 4,
+          "longest": 1,
+          "calls_in_runs": 4,
+          "runs_ge2": 0,
+          "calls_in_runs_ge2": 0,
+          "runs_ge3": 0,
+          "calls_in_runs_ge3": 0,
+          "removable_calls": 0,
+          "histogram": {
+            "1": 4
+          }
+        }
+      },
+      {
+        "tool": "pm_estimate",
+        "calls": 2,
+        "call_share": 0.004106776180698152,
+        "unmatched": 0,
+        "failures": 0,
+        "result_bytes": 4089,
+        "byte_share": 0.004549910481707446,
+        "result_chars": 4065,
+        "bytes_per_call": {
+          "count": 2,
+          "total": 4089,
+          "mean": 2044.5,
+          "min": 1893,
+          "median": 1893,
+          "p90": 2196,
+          "p95": 2196,
+          "p99": 2196,
+          "max": 2196
+        },
+        "runs": {
+          "runs": 2,
+          "longest": 1,
+          "calls_in_runs": 2,
+          "runs_ge2": 0,
+          "calls_in_runs_ge2": 0,
+          "runs_ge3": 0,
+          "calls_in_runs_ge3": 0,
+          "removable_calls": 0,
+          "histogram": {
+            "1": 2
+          }
+        }
+      },
+      {
+        "tool": "pm_status",
+        "calls": 8,
+        "call_share": 0.01642710472279261,
+        "unmatched": 0,
+        "failures": 0,
+        "result_bytes": 2180,
+        "byte_share": 0.0024257287478900054,
+        "result_chars": 2180,
+        "bytes_per_call": {
+          "count": 8,
+          "total": 2180,
+          "mean": 272.5,
+          "min": 236,
+          "median": 276,
+          "p90": 289,
+          "p95": 289,
+          "p99": 289,
+          "max": 289
+        },
+        "runs": {
+          "runs": 8,
+          "longest": 1,
+          "calls_in_runs": 8,
+          "runs_ge2": 0,
+          "calls_in_runs_ge2": 0,
+          "runs_ge3": 0,
+          "calls_in_runs_ge3": 0,
+          "removable_calls": 0,
+          "histogram": {
+            "1": 8
+          }
+        }
+      },
+      {
+        "tool": "pm_create_sprint",
+        "calls": 2,
+        "call_share": 0.004106776180698152,
+        "unmatched": 0,
+        "failures": 0,
+        "result_bytes": 2050,
+        "byte_share": 0.002281075198703904,
+        "result_chars": 2044,
+        "bytes_per_call": {
+          "count": 2,
+          "total": 2050,
+          "mean": 1025.0,
+          "min": 903,
+          "median": 903,
+          "p90": 1147,
+          "p95": 1147,
+          "p99": 1147,
+          "max": 1147
+        },
+        "runs": {
+          "runs": 2,
+          "longest": 1,
+          "calls_in_runs": 2,
+          "runs_ge2": 0,
+          "calls_in_runs_ge2": 0,
+          "runs_ge3": 0,
+          "calls_in_runs_ge3": 0,
+          "removable_calls": 0,
+          "histogram": {
+            "1": 2
+          }
+        }
+      },
+      {
+        "tool": "pm_active",
+        "calls": 8,
+        "call_share": 0.01642710472279261,
+        "unmatched": 0,
+        "failures": 0,
+        "result_bytes": 1965,
+        "byte_share": 0.0021864940319283764,
+        "result_chars": 1965,
+        "bytes_per_call": {
+          "count": 8,
+          "total": 1965,
+          "mean": 245.625,
+          "min": 179,
+          "median": 179,
+          "p90": 712,
+          "p95": 712,
+          "p99": 712,
+          "max": 712
+        },
+        "runs": {
+          "runs": 8,
+          "longest": 1,
+          "calls_in_runs": 8,
+          "runs_ge2": 0,
+          "calls_in_runs_ge2": 0,
+          "runs_ge3": 0,
+          "calls_in_runs_ge3": 0,
+          "removable_calls": 0,
+          "histogram": {
+            "1": 8
+          }
+        }
+      },
+      {
+        "tool": "pm_review",
+        "calls": 3,
+        "call_share": 0.006160164271047228,
+        "unmatched": 0,
+        "failures": 0,
+        "result_bytes": 1565,
+        "byte_share": 0.0017414061882788342,
+        "result_chars": 1565,
+        "bytes_per_call": {
+          "count": 3,
+          "total": 1565,
+          "mean": 521.6666666666666,
+          "min": 453,
+          "median": 499,
+          "p90": 613,
+          "p95": 613,
+          "p99": 613,
+          "max": 613
+        },
+        "runs": {
+          "runs": 3,
+          "longest": 1,
+          "calls_in_runs": 3,
+          "runs_ge2": 0,
+          "calls_in_runs_ge2": 0,
+          "runs_ge3": 0,
+          "calls_in_runs_ge3": 0,
+          "removable_calls": 0,
+          "histogram": {
+            "1": 3
+          }
+        }
+      },
+      {
+        "tool": "pm_retry",
+        "calls": 3,
+        "call_share": 0.006160164271047228,
+        "unmatched": 0,
+        "failures": 0,
+        "result_bytes": 1476,
+        "byte_share": 0.001642374143066811,
+        "result_chars": 1476,
+        "bytes_per_call": {
+          "count": 3,
+          "total": 1476,
+          "mean": 492.0,
+          "min": 439,
+          "median": 481,
+          "p90": 556,
+          "p95": 556,
+          "p99": 556,
+          "max": 556
+        },
+        "runs": {
+          "runs": 3,
+          "longest": 1,
+          "calls_in_runs": 3,
+          "runs_ge2": 0,
+          "calls_in_runs_ge2": 0,
+          "runs_ge3": 0,
+          "calls_in_runs_ge3": 0,
+          "removable_calls": 0,
+          "histogram": {
+            "1": 3
+          }
+        }
+      },
+      {
+        "tool": "pm_search",
+        "calls": 1,
+        "call_share": 0.002053388090349076,
+        "unmatched": 0,
+        "failures": 0,
+        "result_bytes": 1200,
+        "byte_share": 0.0013352635309486268,
+        "result_chars": 1200,
+        "bytes_per_call": {
+          "count": 1,
+          "total": 1200,
+          "mean": 1200.0,
+          "min": 1200,
+          "median": 1200,
+          "p90": 1200,
+          "p95": 1200,
+          "p99": 1200,
+          "max": 1200
+        },
+        "runs": {
+          "runs": 1,
+          "longest": 1,
+          "calls_in_runs": 1,
+          "runs_ge2": 0,
+          "calls_in_runs_ge2": 0,
+          "runs_ge3": 0,
+          "calls_in_runs_ge3": 0,
+          "removable_calls": 0,
+          "histogram": {
+            "1": 1
+          }
+        }
+      },
+      {
+        "tool": "pm_archive_many",
+        "calls": 1,
+        "call_share": 0.002053388090349076,
+        "unmatched": 0,
+        "failures": 0,
+        "result_bytes": 407,
+        "byte_share": 0.0004528768809134093,
+        "result_chars": 407,
+        "bytes_per_call": {
+          "count": 1,
+          "total": 407,
+          "mean": 407.0,
+          "min": 407,
+          "median": 407,
+          "p90": 407,
+          "p95": 407,
+          "p99": 407,
+          "max": 407
+        },
+        "runs": {
+          "runs": 1,
+          "longest": 1,
+          "calls_in_runs": 1,
+          "runs_ge2": 0,
+          "calls_in_runs_ge2": 0,
+          "runs_ge3": 0,
+          "calls_in_runs_ge3": 0,
+          "removable_calls": 0,
+          "histogram": {
+            "1": 1
+          }
+        }
+      },
+      {
+        "tool": "pm_commit",
+        "calls": 3,
+        "call_share": 0.006160164271047228,
+        "unmatched": 0,
+        "failures": 0,
+        "result_bytes": 372,
+        "byte_share": 0.00041393169459407435,
+        "result_chars": 372,
+        "bytes_per_call": {
+          "count": 3,
+          "total": 372,
+          "mean": 124.0,
+          "min": 123,
+          "median": 124,
+          "p90": 125,
+          "p95": 125,
+          "p99": 125,
+          "max": 125
+        },
+        "runs": {
+          "runs": 2,
+          "longest": 2,
+          "calls_in_runs": 3,
+          "runs_ge2": 1,
+          "calls_in_runs_ge2": 2,
+          "runs_ge3": 0,
+          "calls_in_runs_ge3": 0,
+          "removable_calls": 1,
+          "histogram": {
+            "1": 1,
+            "2": 1
+          }
+        }
+      },
+      {
+        "tool": "pm_burndown",
+        "calls": 3,
+        "call_share": 0.006160164271047228,
+        "unmatched": 0,
+        "failures": 0,
+        "result_bytes": 344,
+        "byte_share": 0.0003827755455386064,
+        "result_chars": 344,
+        "bytes_per_call": {
+          "count": 3,
+          "total": 344,
+          "mean": 114.66666666666667,
+          "min": 110,
+          "median": 117,
+          "p90": 117,
+          "p95": 117,
+          "p99": 117,
+          "max": 117
+        },
+        "runs": {
+          "runs": 3,
+          "longest": 1,
+          "calls_in_runs": 3,
+          "runs_ge2": 0,
+          "calls_in_runs_ge2": 0,
+          "runs_ge3": 0,
+          "calls_in_runs_ge3": 0,
+          "removable_calls": 0,
+          "histogram": {
+            "1": 3
+          }
+        }
+      },
+      {
+        "tool": "pm_create_epic",
+        "calls": 1,
+        "call_share": 0.002053388090349076,
+        "unmatched": 0,
+        "failures": 0,
+        "result_bytes": 272,
+        "byte_share": 0.00030265973368168874,
+        "result_chars": 270,
+        "bytes_per_call": {
+          "count": 1,
+          "total": 272,
+          "mean": 272.0,
+          "min": 272,
+          "median": 272,
+          "p90": 272,
+          "p95": 272,
+          "p99": 272,
+          "max": 272
+        },
+        "runs": {
+          "runs": 1,
+          "longest": 1,
+          "calls_in_runs": 1,
+          "runs_ge2": 0,
+          "calls_in_runs_ge2": 0,
+          "runs_ge3": 0,
+          "calls_in_runs_ge3": 0,
+          "removable_calls": 0,
+          "histogram": {
+            "1": 1
+          }
+        }
+      }
+    ],
+    "runs": {
+      "total": 367,
+      "histogram": {
+        "1": 312,
+        "2": 29,
+        "3": 13,
+        "4": 3,
+        "5": 5,
+        "6": 1,
+        "7": 2,
+        "9": 1,
+        "12": 1
+      },
+      "longest": [
+        {
+          "tool": "pm_update",
+          "length": 12,
+          "session": "53a110c5-e5f5-44f3-84a3-7468fcce60b9",
+          "start_seq": 38,
+          "end_seq": 49
+        },
+        {
+          "tool": "pm_update",
+          "length": 9,
+          "session": "53a110c5-e5f5-44f3-84a3-7468fcce60b9",
+          "start_seq": 18,
+          "end_seq": 26
+        },
+        {
+          "tool": "pm_create_story",
+          "length": 7,
+          "session": "561a9dc5-6917-433a-8858-bc4e7e24101a",
+          "start_seq": 16,
+          "end_seq": 22
+        },
+        {
+          "tool": "pm_update",
+          "length": 7,
+          "session": "53a110c5-e5f5-44f3-84a3-7468fcce60b9",
+          "start_seq": 98,
+          "end_seq": 104
+        },
+        {
+          "tool": "pm_update",
+          "length": 6,
+          "session": "53a110c5-e5f5-44f3-84a3-7468fcce60b9",
+          "start_seq": 74,
+          "end_seq": 79
+        },
+        {
+          "tool": "pm_accept",
+          "length": 5,
+          "session": "d6038439-7569-4592-aefd-93686927648f",
+          "start_seq": 21,
+          "end_seq": 25
+        },
+        {
+          "tool": "pm_accept",
+          "length": 5,
+          "session": "d6038439-7569-4592-aefd-93686927648f",
+          "start_seq": 39,
+          "end_seq": 43
+        },
+        {
+          "tool": "pm_accept",
+          "length": 5,
+          "session": "d6038439-7569-4592-aefd-93686927648f",
+          "start_seq": 64,
+          "end_seq": 68
+        },
+        {
+          "tool": "pm_get",
+          "length": 5,
+          "session": "53a110c5-e5f5-44f3-84a3-7468fcce60b9",
+          "start_seq": 7,
+          "end_seq": 11
+        },
+        {
+          "tool": "pm_update",
+          "length": 5,
+          "session": "53a110c5-e5f5-44f3-84a3-7468fcce60b9",
+          "start_seq": 124,
+          "end_seq": 128
+        },
+        {
+          "tool": "pm_accept",
+          "length": 4,
+          "session": "d6038439-7569-4592-aefd-93686927648f",
+          "start_seq": 76,
+          "end_seq": 79
+        },
+        {
+          "tool": "pm_create_tasks",
+          "length": 4,
+          "session": "561a9dc5-6917-433a-8858-bc4e7e24101a",
+          "start_seq": 23,
+          "end_seq": 26
+        },
+        {
+          "tool": "pm_update",
+          "length": 4,
+          "session": "53a110c5-e5f5-44f3-84a3-7468fcce60b9",
+          "start_seq": 136,
+          "end_seq": 139
+        },
+        {
+          "tool": "pm_accept",
+          "length": 3,
+          "session": "53a110c5-e5f5-44f3-84a3-7468fcce60b9",
+          "start_seq": 83,
+          "end_seq": 85
+        },
+        {
+          "tool": "pm_accept",
+          "length": 3,
+          "session": "53a110c5-e5f5-44f3-84a3-7468fcce60b9",
+          "start_seq": 88,
+          "end_seq": 90
+        },
+        {
+          "tool": "pm_accept",
+          "length": 3,
+          "session": "53a110c5-e5f5-44f3-84a3-7468fcce60b9",
+          "start_seq": 110,
+          "end_seq": 112
+        },
+        {
+          "tool": "pm_accept",
+          "length": 3,
+          "session": "53a110c5-e5f5-44f3-84a3-7468fcce60b9",
+          "start_seq": 114,
+          "end_seq": 116
+        },
+        {
+          "tool": "pm_accept",
+          "length": 3,
+          "session": "d6038439-7569-4592-aefd-93686927648f",
+          "start_seq": 32,
+          "end_seq": 34
+        },
+        {
+          "tool": "pm_accept",
+          "length": 3,
+          "session": "d6038439-7569-4592-aefd-93686927648f",
+          "start_seq": 51,
+          "end_seq": 53
+        },
+        {
+          "tool": "pm_accept",
+          "length": 3,
+          "session": "d6038439-7569-4592-aefd-93686927648f",
+          "start_seq": 55,
+          "end_seq": 57
+        },
+        {
+          "tool": "pm_create_story",
+          "length": 3,
+          "session": "53a110c5-e5f5-44f3-84a3-7468fcce60b9",
+          "start_seq": 12,
+          "end_seq": 14
+        },
+        {
+          "tool": "pm_create_tasks",
+          "length": 3,
+          "session": "53a110c5-e5f5-44f3-84a3-7468fcce60b9",
+          "start_seq": 15,
+          "end_seq": 17
+        },
+        {
+          "tool": "pm_get",
+          "length": 3,
+          "session": "561a9dc5-6917-433a-8858-bc4e7e24101a",
+          "start_seq": 3,
+          "end_seq": 5
+        },
+        {
+          "tool": "pm_get",
+          "length": 3,
+          "session": "ccc00151-ef48-4d43-af68-53dd6c9b2c79",
+          "start_seq": 15,
+          "end_seq": 17
+        },
+        {
+          "tool": "pm_get",
+          "length": 3,
+          "session": "d6038439-7569-4592-aefd-93686927648f",
+          "start_seq": 6,
+          "end_seq": 8
+        }
+      ]
+    },
+    "bigrams": [
+      {
+        "from": "pm_accept",
+        "to": "pm_accept",
+        "count": 41
+      },
+      {
+        "from": "pm_update",
+        "to": "pm_update",
+        "count": 41
+      },
+      {
+        "from": "pm_get",
+        "to": "pm_accept",
+        "count": 26
+      },
+      {
+        "from": "pm_grab",
+        "to": "pm_update",
+        "count": 24
+      },
+      {
+        "from": "pm_accept",
+        "to": "pm_audit",
+        "count": 17
+      },
+      {
+        "from": "pm_get",
+        "to": "pm_get",
+        "count": 15
+      },
+      {
+        "from": "pm_accept",
+        "to": "pm_get",
+        "count": 12
+      },
+      {
+        "from": "pm_audit",
+        "to": "pm_get",
+        "count": 10
+      },
+      {
+        "from": "pm_create_story",
+        "to": "pm_create_story",
+        "count": 9
+      },
+      {
+        "from": "pm_audit",
+        "to": "pm_accept",
+        "count": 8
+      },
+      {
+        "from": "pm_update",
+        "to": "pm_accept",
+        "count": 8
+      },
+      {
+        "from": "pm_create_tasks",
+        "to": "pm_update",
+        "count": 7
+      },
+      {
+        "from": "pm_grab",
+        "to": "pm_get",
+        "count": 7
+      },
+      {
+        "from": "pm_list_sprints",
+        "to": "pm_status",
+        "count": 7
+      },
+      {
+        "from": "pm_status",
+        "to": "pm_audit",
+        "count": 7
+      },
+      {
+        "from": "pm_active",
+        "to": "pm_context",
+        "count": 5
+      },
+      {
+        "from": "pm_audit",
+        "to": "pm_board",
+        "count": 5
+      },
+      {
+        "from": "pm_board",
+        "to": "pm_active",
+        "count": 5
+      },
+      {
+        "from": "pm_create_story",
+        "to": "pm_create_tasks",
+        "count": 5
+      },
+      {
+        "from": "pm_create_tasks",
+        "to": "pm_create_tasks",
+        "count": 5
+      },
+      {
+        "from": "pm_grab",
+        "to": "pm_run_log",
+        "count": 4
+      },
+      {
+        "from": "pm_accept",
+        "to": "pm_board",
+        "count": 3
+      },
+      {
+        "from": "pm_accept",
+        "to": "pm_create_tasks",
+        "count": 3
+      },
+      {
+        "from": "pm_accept",
+        "to": "pm_grab",
+        "count": 3
+      },
+      {
+        "from": "pm_run_log",
+        "to": "pm_run_log",
+        "count": 3
+      },
+      {
+        "from": "pm_run_log",
+        "to": "pm_update",
+        "count": 3
+      },
+      {
+        "from": "pm_update",
+        "to": "pm_update_sprint",
+        "count": 3
+      },
+      {
+        "from": "pm_accept",
+        "to": "pm_create_story",
+        "count": 2
+      },
+      {
+        "from": "pm_accept",
+        "to": "pm_review",
+        "count": 2
+      },
+      {
+        "from": "pm_accept",
+        "to": "pm_update",
+        "count": 2
+      },
+      {
+        "from": "pm_active",
+        "to": "pm_burndown",
+        "count": 2
+      },
+      {
+        "from": "pm_activity",
+        "to": "pm_get",
+        "count": 2
+      },
+      {
+        "from": "pm_audit",
+        "to": "pm_active",
+        "count": 2
+      },
+      {
+        "from": "pm_context",
+        "to": "pm_get",
+        "count": 2
+      },
+      {
+        "from": "pm_context",
+        "to": "pm_get_sprint",
+        "count": 2
+      },
+      {
+        "from": "pm_create_sprint",
+        "to": "pm_update_sprint",
+        "count": 2
+      },
+      {
+        "from": "pm_create_tasks",
+        "to": "pm_update_many",
+        "count": 2
+      },
+      {
+        "from": "pm_get",
+        "to": "pm_grab",
+        "count": 2
+      },
+      {
+        "from": "pm_get",
+        "to": "pm_retry",
+        "count": 2
+      },
+      {
+        "from": "pm_get",
+        "to": "pm_run_log",
+        "count": 2
+      },
+      {
+        "from": "pm_get",
+        "to": "pm_update",
+        "count": 2
+      },
+      {
+        "from": "pm_get_sprint",
+        "to": "pm_get",
+        "count": 2
+      },
+      {
+        "from": "pm_grab",
+        "to": "pm_audit",
+        "count": 2
+      },
+      {
+        "from": "pm_list_sprints",
+        "to": "pm_list_sprints",
+        "count": 2
+      },
+      {
+        "from": "pm_retry",
+        "to": "pm_grab",
+        "count": 2
+      },
+      {
+        "from": "pm_run_log",
+        "to": "pm_get",
+        "count": 2
+      },
+      {
+        "from": "pm_scope",
+        "to": "pm_estimate",
+        "count": 2
+      },
+      {
+        "from": "pm_update",
+        "to": "pm_create_story",
+        "count": 2
+      },
+      {
+        "from": "pm_update",
+        "to": "pm_get",
+        "count": 2
+      },
+      {
+        "from": "pm_update",
+        "to": "pm_grab",
+        "count": 2
+      },
+      {
+        "from": "pm_update_many",
+        "to": "pm_update_sprint",
+        "count": 2
+      },
+      {
+        "from": "pm_update_sprint",
+        "to": "pm_audit",
+        "count": 2
+      },
+      {
+        "from": "pm_update_sprint",
+        "to": "pm_update",
+        "count": 2
+      },
+      {
+        "from": "pm_accept",
+        "to": "pm_activity",
+        "count": 1
+      },
+      {
+        "from": "pm_accept",
+        "to": "pm_retry",
+        "count": 1
+      },
+      {
+        "from": "pm_accept",
+        "to": "pm_update_sprint",
+        "count": 1
+      },
+      {
+        "from": "pm_active",
+        "to": "pm_list_sprints",
+        "count": 1
+      },
+      {
+        "from": "pm_activity",
+        "to": "pm_activity",
+        "count": 1
+      },
+      {
+        "from": "pm_archive_many",
+        "to": "pm_update_many",
+        "count": 1
+      },
+      {
+        "from": "pm_audit",
+        "to": "pm_burndown",
+        "count": 1
+      },
+      {
+        "from": "pm_audit",
+        "to": "pm_commit",
+        "count": 1
+      },
+      {
+        "from": "pm_audit",
+        "to": "pm_create_tasks",
+        "count": 1
+      },
+      {
+        "from": "pm_audit",
+        "to": "pm_get_sprint",
+        "count": 1
+      },
+      {
+        "from": "pm_audit",
+        "to": "pm_grab",
+        "count": 1
+      },
+      {
+        "from": "pm_audit",
+        "to": "pm_update",
+        "count": 1
+      },
+      {
+        "from": "pm_batch_get",
+        "to": "pm_batch_get",
+        "count": 1
+      },
+      {
+        "from": "pm_batch_get",
+        "to": "pm_board",
+        "count": 1
+      },
+      {
+        "from": "pm_board",
+        "to": "pm_accept",
+        "count": 1
+      },
+      {
+        "from": "pm_board",
+        "to": "pm_audit",
+        "count": 1
+      },
+      {
+        "from": "pm_board",
+        "to": "pm_get",
+        "count": 1
+      },
+      {
+        "from": "pm_board",
+        "to": "pm_list_sprints",
+        "count": 1
+      },
+      {
+        "from": "pm_board",
+        "to": "pm_run_log",
+        "count": 1
+      },
+      {
+        "from": "pm_board",
+        "to": "pm_update",
+        "count": 1
+      },
+      {
+        "from": "pm_burndown",
+        "to": "pm_batch_get",
+        "count": 1
+      },
+      {
+        "from": "pm_burndown",
+        "to": "pm_board",
+        "count": 1
+      },
+      {
+        "from": "pm_burndown",
+        "to": "pm_epic",
+        "count": 1
+      },
+      {
+        "from": "pm_commit",
+        "to": "pm_commit",
+        "count": 1
+      },
+      {
+        "from": "pm_context",
+        "to": "pm_activity",
+        "count": 1
+      },
+      {
+        "from": "pm_create_epic",
+        "to": "pm_create_story",
+        "count": 1
+      },
+      {
+        "from": "pm_create_story",
+        "to": "pm_update",
+        "count": 1
+      },
+      {
+        "from": "pm_create_tasks",
+        "to": "pm_accept",
+        "count": 1
+      },
+      {
+        "from": "pm_epic",
+        "to": "pm_epic",
+        "count": 1
+      },
+      {
+        "from": "pm_epic",
+        "to": "pm_scope",
+        "count": 1
+      },
+      {
+        "from": "pm_estimate",
+        "to": "pm_create_epic",
+        "count": 1
+      },
+      {
+        "from": "pm_estimate",
+        "to": "pm_create_tasks",
+        "count": 1
+      },
+      {
+        "from": "pm_get",
+        "to": "pm_activity",
+        "count": 1
+      },
+      {
+        "from": "pm_get",
+        "to": "pm_archive_many",
+        "count": 1
+      },
+      {
+        "from": "pm_get",
+        "to": "pm_commit",
+        "count": 1
+      },
+      {
+        "from": "pm_get",
+        "to": "pm_create_story",
+        "count": 1
+      },
+      {
+        "from": "pm_get",
+        "to": "pm_review",
+        "count": 1
+      },
+      {
+        "from": "pm_get",
+        "to": "pm_search",
+        "count": 1
+      },
+      {
+        "from": "pm_get_sprint",
+        "to": "pm_audit",
+        "count": 1
+      },
+      {
+        "from": "pm_get_sprint",
+        "to": "pm_list_sprints",
+        "count": 1
+      },
+      {
+        "from": "pm_grab",
+        "to": "pm_accept",
+        "count": 1
+      },
+      {
+        "from": "pm_grab",
+        "to": "pm_board",
+        "count": 1
+      },
+      {
+        "from": "pm_list_sprints",
+        "to": "pm_get",
+        "count": 1
+      },
+      {
+        "from": "pm_list_sprints",
+        "to": "pm_scope",
+        "count": 1
+      },
+      {
+        "from": "pm_retry",
+        "to": "pm_run_log",
+        "count": 1
+      },
+      {
+        "from": "pm_review",
+        "to": "pm_accept",
+        "count": 1
+      },
+      {
+        "from": "pm_review",
+        "to": "pm_audit",
+        "count": 1
+      },
+      {
+        "from": "pm_review",
+        "to": "pm_grab",
+        "count": 1
+      },
+      {
+        "from": "pm_run_log",
+        "to": "pm_accept",
+        "count": 1
+      },
+      {
+        "from": "pm_run_log",
+        "to": "pm_grab",
+        "count": 1
+      },
+      {
+        "from": "pm_search",
+        "to": "pm_accept",
+        "count": 1
+      },
+      {
+        "from": "pm_status",
+        "to": "pm_active",
+        "count": 1
+      },
+      {
+        "from": "pm_update",
+        "to": "pm_create_sprint",
+        "count": 1
+      },
+      {
+        "from": "pm_update",
+        "to": "pm_run_log",
+        "count": 1
+      },
+      {
+        "from": "pm_update_many",
+        "to": "pm_audit",
+        "count": 1
+      },
+      {
+        "from": "pm_update_many",
+        "to": "pm_create_sprint",
+        "count": 1
+      },
+      {
+        "from": "pm_update_sprint",
+        "to": "pm_accept",
+        "count": 1
+      },
+      {
+        "from": "pm_update_sprint",
+        "to": "pm_get",
+        "count": 1
+      },
+      {
+        "from": "pm_update_sprint",
+        "to": "pm_get_sprint",
+        "count": 1
+      },
+      {
+        "from": "pm_update_sprint",
+        "to": "pm_update_many",
+        "count": 1
+      }
+    ],
+    "completions": {
+      "completions": 92,
+      "with_run_log": 92,
+      "without_run_log": 0,
+      "completions_without_run_log_rate": 0.0,
+      "by_tool": {
+        "pm_accept": {
+          "completions": 90,
+          "without_run_log": 0
+        },
+        "pm_update": {
+          "completions": 2,
+          "without_run_log": 0
+        }
+      }
+    },
+    "note_lengths": {
+      "count": 129,
+      "total": 39873,
+      "mean": 309.09302325581393,
+      "min": 116,
+      "median": 218,
+      "p90": 713,
+      "p95": 854,
+      "p99": 955,
+      "max": 1143
+    },
+    "guidance_tools": {
+      "sessions": 89,
+      "by_tool": {
+        "pm_context": {
+          "calls": 5,
+          "sessions": 5,
+          "session_rate": 0.056179775280898875,
+          "calls_per_100_sessions": 5.618
+        },
+        "pm_estimate": {
+          "calls": 2,
+          "sessions": 2,
+          "session_rate": 0.02247191011235955,
+          "calls_per_100_sessions": 2.2472
+        },
+        "pm_scope": {
+          "calls": 2,
+          "sessions": 2,
+          "session_rate": 0.02247191011235955,
+          "calls_per_100_sessions": 2.2472
+        }
+      }
+    },
+    "failures": {
+      "total_calls": 487,
+      "unmatched": 0,
+      "inclusive": {
+        "hard_error": 4,
+        "soft_error": 0,
+        "malformed_input": 0
+      },
+      "rates": {
+        "hard_error": 0.008213552361396304,
+        "soft_error": 0.0,
+        "malformed_input": 0.0,
+        "combined_failure_rate": 0.008213552361396304
+      },
+      "exclusive": {
+        "malformed_input": 0,
+        "hard_error": 4,
+        "soft_error": 0,
+        "success": 483,
+        "unmatched": 0
+      },
+      "overlaps": {},
+      "soft_patterns": {
+        "envelope": 0,
+        "bare": 0
+      },
+      "failures": 4,
+      "successes": 483,
+      "by_tool": [
+        {
+          "tool": "pm_get",
+          "calls": 57,
+          "hard": 3,
+          "soft": 0,
+          "malformed": 0,
+          "failures": 3,
+          "unmatched": 0,
+          "successes": 54,
+          "failure_rate": 0.05263157894736842
+        },
+        {
+          "tool": "pm_update",
+          "calls": 84,
+          "hard": 1,
+          "soft": 0,
+          "malformed": 0,
+          "failures": 1,
+          "unmatched": 0,
+          "successes": 83,
+          "failure_rate": 0.011904761904761904
+        },
+        {
+          "tool": "pm_grab",
+          "calls": 94,
+          "hard": 0,
+          "soft": 0,
+          "malformed": 0,
+          "failures": 0,
+          "unmatched": 0,
+          "successes": 94,
+          "failure_rate": 0.0
+        },
+        {
+          "tool": "pm_accept",
+          "calls": 90,
+          "hard": 0,
+          "soft": 0,
+          "malformed": 0,
+          "failures": 0,
+          "unmatched": 0,
+          "successes": 90,
+          "failure_rate": 0.0
+        },
+        {
+          "tool": "pm_audit",
+          "calls": 32,
+          "hard": 0,
+          "soft": 0,
+          "malformed": 0,
+          "failures": 0,
+          "unmatched": 0,
+          "successes": 32,
+          "failure_rate": 0.0
+        },
+        {
+          "tool": "pm_create_story",
+          "calls": 15,
+          "hard": 0,
+          "soft": 0,
+          "malformed": 0,
+          "failures": 0,
+          "unmatched": 0,
+          "successes": 15,
+          "failure_rate": 0.0
+        },
+        {
+          "tool": "pm_create_tasks",
+          "calls": 15,
+          "hard": 0,
+          "soft": 0,
+          "malformed": 0,
+          "failures": 0,
+          "unmatched": 0,
+          "successes": 15,
+          "failure_rate": 0.0
+        },
+        {
+          "tool": "pm_run_log",
+          "calls": 12,
+          "hard": 0,
+          "soft": 0,
+          "malformed": 0,
+          "failures": 0,
+          "unmatched": 0,
+          "successes": 12,
+          "failure_rate": 0.0
+        },
+        {
+          "tool": "pm_board",
+          "calls": 11,
+          "hard": 0,
+          "soft": 0,
+          "malformed": 0,
+          "failures": 0,
+          "unmatched": 0,
+          "successes": 11,
+          "failure_rate": 0.0
+        },
+        {
+          "tool": "pm_list_sprints",
+          "calls": 11,
+          "hard": 0,
+          "soft": 0,
+          "malformed": 0,
+          "failures": 0,
+          "unmatched": 0,
+          "successes": 11,
+          "failure_rate": 0.0
+        },
+        {
+          "tool": "pm_active",
+          "calls": 8,
+          "hard": 0,
+          "soft": 0,
+          "malformed": 0,
+          "failures": 0,
+          "unmatched": 0,
+          "successes": 8,
+          "failure_rate": 0.0
+        },
+        {
+          "tool": "pm_status",
+          "calls": 8,
+          "hard": 0,
+          "soft": 0,
+          "malformed": 0,
+          "failures": 0,
+          "unmatched": 0,
+          "successes": 8,
+          "failure_rate": 0.0
+        },
+        {
+          "tool": "pm_update_sprint",
+          "calls": 8,
+          "hard": 0,
+          "soft": 0,
+          "malformed": 0,
+          "failures": 0,
+          "unmatched": 0,
+          "successes": 8,
+          "failure_rate": 0.0
+        },
+        {
+          "tool": "pm_context",
+          "calls": 5,
+          "hard": 0,
+          "soft": 0,
+          "malformed": 0,
+          "failures": 0,
+          "unmatched": 0,
+          "successes": 5,
+          "failure_rate": 0.0
+        },
+        {
+          "tool": "pm_activity",
+          "calls": 4,
+          "hard": 0,
+          "soft": 0,
+          "malformed": 0,
+          "failures": 0,
+          "unmatched": 0,
+          "successes": 4,
+          "failure_rate": 0.0
+        },
+        {
+          "tool": "pm_get_sprint",
+          "calls": 4,
+          "hard": 0,
+          "soft": 0,
+          "malformed": 0,
+          "failures": 0,
+          "unmatched": 0,
+          "successes": 4,
+          "failure_rate": 0.0
+        },
+        {
+          "tool": "pm_update_many",
+          "calls": 4,
+          "hard": 0,
+          "soft": 0,
+          "malformed": 0,
+          "failures": 0,
+          "unmatched": 0,
+          "successes": 4,
+          "failure_rate": 0.0
+        },
+        {
+          "tool": "pm_burndown",
+          "calls": 3,
+          "hard": 0,
+          "soft": 0,
+          "malformed": 0,
+          "failures": 0,
+          "unmatched": 0,
+          "successes": 3,
+          "failure_rate": 0.0
+        },
+        {
+          "tool": "pm_commit",
+          "calls": 3,
+          "hard": 0,
+          "soft": 0,
+          "malformed": 0,
+          "failures": 0,
+          "unmatched": 0,
+          "successes": 3,
+          "failure_rate": 0.0
+        },
+        {
+          "tool": "pm_retry",
+          "calls": 3,
+          "hard": 0,
+          "soft": 0,
+          "malformed": 0,
+          "failures": 0,
+          "unmatched": 0,
+          "successes": 3,
+          "failure_rate": 0.0
+        },
+        {
+          "tool": "pm_review",
+          "calls": 3,
+          "hard": 0,
+          "soft": 0,
+          "malformed": 0,
+          "failures": 0,
+          "unmatched": 0,
+          "successes": 3,
+          "failure_rate": 0.0
+        },
+        {
+          "tool": "pm_batch_get",
+          "calls": 2,
+          "hard": 0,
+          "soft": 0,
+          "malformed": 0,
+          "failures": 0,
+          "unmatched": 0,
+          "successes": 2,
+          "failure_rate": 0.0
+        },
+        {
+          "tool": "pm_create_sprint",
+          "calls": 2,
+          "hard": 0,
+          "soft": 0,
+          "malformed": 0,
+          "failures": 0,
+          "unmatched": 0,
+          "successes": 2,
+          "failure_rate": 0.0
+        },
+        {
+          "tool": "pm_epic",
+          "calls": 2,
+          "hard": 0,
+          "soft": 0,
+          "malformed": 0,
+          "failures": 0,
+          "unmatched": 0,
+          "successes": 2,
+          "failure_rate": 0.0
+        },
+        {
+          "tool": "pm_estimate",
+          "calls": 2,
+          "hard": 0,
+          "soft": 0,
+          "malformed": 0,
+          "failures": 0,
+          "unmatched": 0,
+          "successes": 2,
+          "failure_rate": 0.0
+        },
+        {
+          "tool": "pm_scope",
+          "calls": 2,
+          "hard": 0,
+          "soft": 0,
+          "malformed": 0,
+          "failures": 0,
+          "unmatched": 0,
+          "successes": 2,
+          "failure_rate": 0.0
+        },
+        {
+          "tool": "pm_archive_many",
+          "calls": 1,
+          "hard": 0,
+          "soft": 0,
+          "malformed": 0,
+          "failures": 0,
+          "unmatched": 0,
+          "successes": 1,
+          "failure_rate": 0.0
+        },
+        {
+          "tool": "pm_create_epic",
+          "calls": 1,
+          "hard": 0,
+          "soft": 0,
+          "malformed": 0,
+          "failures": 0,
+          "unmatched": 0,
+          "successes": 1,
+          "failure_rate": 0.0
+        },
+        {
+          "tool": "pm_search",
+          "calls": 1,
+          "hard": 0,
+          "soft": 0,
+          "malformed": 0,
+          "failures": 0,
+          "unmatched": 0,
+          "successes": 1,
+          "failure_rate": 0.0
+        }
+      ],
+      "top_soft_messages": []
+    }
+  },
+  "tool_list": {
+    "schema": "projectman.tool-list-size/1",
+    "serialisation": "mcp.types.ListToolsResult.model_dump_json(by_alias=True, exclude_none=True)",
+    "command": "python -m tools.usage_telemetry.tool_list_size --markdown",
+    "all_families": {
+      "tools": 50,
+      "bytes": 97449
+    },
+    "default": {
+      "tools": 42,
+      "bytes": 91084
+    },
+    "reduction": {
+      "tools": 8,
+      "bytes": 6365,
+      "pct": 6.53
+    },
+    "families": {
+      "maintenance": {
+        "tools": 5,
+        "schema_bytes": 4714,
+        "payload_delta_bytes": 4719
+      },
+      "web": {
+        "tools": 3,
+        "schema_bytes": 1643,
+        "payload_delta_bytes": 1646
+      }
+    }
+  }
+}

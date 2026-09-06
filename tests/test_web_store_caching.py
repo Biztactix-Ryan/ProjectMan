@@ -36,7 +36,7 @@ class TestWebStoreCaching:
         hub_proj.mkdir(parents=True)
         (hub_proj / "stories").mkdir()
         (hub_proj / "tasks").mkdir()
-        (hub_proj / "projects").mkdir()
+        (hub_root / "projects").mkdir()
 
         hub_config = {
             "name": "hub",
@@ -44,13 +44,14 @@ class TestWebStoreCaching:
             "hub": True,
             "next_story_id": 1,
             "next_epic_id": 1,
-            "projects": ["api"],
+            # The store map only lists registered projects (US-PM-31).
+            "projects": ["api", "web"],
         }
         with open(hub_proj / "config.yaml", "w") as f:
             yaml.dump(hub_config, f)
 
-        pm_dir = hub_proj / "projects" / "api"
-        pm_dir.mkdir()
+        pm_dir = hub_root / "projects" / "api" / ".project"
+        pm_dir.mkdir(parents=True)
         (pm_dir / "stories").mkdir()
         (pm_dir / "tasks").mkdir()
         api_config = {
@@ -76,8 +77,8 @@ class TestWebStoreCaching:
             assert "api" in _hub_store_cache
 
             # Different project would get different instance
-            pm_dir2 = hub_proj / "projects" / "web"
-            pm_dir2.mkdir()
+            pm_dir2 = hub_root / "projects" / "web" / ".project"
+            pm_dir2.mkdir(parents=True)
             (pm_dir2 / "stories").mkdir()
             (pm_dir2 / "tasks").mkdir()
             web_config = {

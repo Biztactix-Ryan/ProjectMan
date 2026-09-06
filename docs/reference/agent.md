@@ -10,11 +10,11 @@ The agent is invoked when Claude Code detects project management context in your
 
 The agent follows strict rules to minimize context window usage:
 
-1. **Fetch context** via `pm_context` — get combined hub + project context (hub vision/architecture + project docs + active epics/stories)
-2. **Always start with `pm_status`** — never bulk-read project data
-3. **One story/task at a time** via `pm_get` — never load everything
-4. **Use `pm_search` for discovery** — don't scan files directly
-5. **Read PROJECT.md for architecture context** — only when scoping or estimating
+1. **Always start with `pm_status`** — never bulk-read project data
+2. **One story/task at a time** via `pm_get` — never load everything
+3. **Use `pm_search` for discovery** — don't scan files directly
+4. **Read PROJECT.md for architecture context** — only when scoping or estimating
+5. **`pm_context` is optional** — `pm_context(max_doc_chars=2000, limit=5)` returns a bounded brief over the hub and project layers (hub vision/architecture + project docs + active epics/stories), and `prefix="API"` narrows it to one subproject. `pm_grab` and `pm_get` already carry the item context you usually need, so reach for it only when you want the wider picture.
 
 ## Story Point Calibration
 

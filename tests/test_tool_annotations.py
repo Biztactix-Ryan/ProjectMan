@@ -61,7 +61,6 @@ EXPECTED_HINTS: dict[str, tuple[bool, bool | None]] = {
     "pm_scope": (True, None),
     "pm_search": (True, None),
     "pm_status": (True, None),
-    "pm_validate_branches": (True, None),
     "pm_web_status": (True, None),
     # ─── writes, but additive or reversible ───────────────────────
     "pm_accept": (False, False),
@@ -77,7 +76,6 @@ EXPECTED_HINTS: dict[str, tuple[bool, bool | None]] = {
     "pm_park": (False, False),
     "pm_reindex": (False, False),
     "pm_release": (False, False),
-    "pm_repair": (False, False),
     "pm_retry": (False, False),
     "pm_review": (False, False),
     "pm_update": (False, False),
@@ -91,22 +89,20 @@ EXPECTED_HINTS: dict[str, tuple[bool, bool | None]] = {
     "pm_archive_many": (False, True),
     "pm_fix_malformed": (False, True),
     "pm_push": (False, True),
-    "pm_push_all": (False, True),
     "pm_restore": (False, True),
 }
 
-#: 42 default tools plus the 8 in the gated families.
-EXPECTED_TOOL_COUNT = 50
+#: 42 default tools plus the 5 in the gated families.
+EXPECTED_TOOL_COUNT = 47
 
 #: The review outcome of US-PRJ-49, spelled out rather than derived: these
-#: six move item files out from under the caller or write to a git remote.
+#: five move item files out from under the caller or write to a git remote.
 DESTRUCTIVE_TOOLS = frozenset(
     {
         "pm_archive",
         "pm_archive_many",
         "pm_fix_malformed",
         "pm_push",
-        "pm_push_all",
         "pm_restore",
     }
 )

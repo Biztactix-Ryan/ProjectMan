@@ -432,7 +432,7 @@ class TestEveryCreateToolReturnsAnErrorNotACrash:
 
         from projectman import server as srv
 
-        store = srv._store(None)
+        store = srv._store()
         proj = _proj(server_project)
         target, item_id, kwargs = TOOL_CASES[tool_name](store, proj, monkeypatch)
 
@@ -458,7 +458,7 @@ class TestEveryCreateToolReturnsAnErrorNotACrash:
 
         from projectman import server as srv
 
-        store = srv._store(None)
+        store = srv._store()
         proj = _proj(server_project)
         target, item_id, kwargs = TOOL_CASES[tool_name](store, proj, monkeypatch)
 
@@ -491,7 +491,7 @@ class TestPathsThatCreateNothing:
         """Auto-scope returns instructions; the agent then calls the create tools."""
         from projectman import server as srv
 
-        store = srv._store(None)
+        store = srv._store()
         proj = server_project / ".project"
         before = _tree_digest(proj)
         try:
@@ -556,7 +556,7 @@ class TestTheQuarantinePathsRefuseAnExistingTarget:
 
         from projectman import server as srv
 
-        store = srv._store(None)
+        store = srv._store()
         proj = _proj(server_project)
         story_id, path, original = self._existing_story(store, proj)
 
@@ -586,7 +586,7 @@ class TestTheQuarantinePathsRefuseAnExistingTarget:
 
         from projectman import server as srv
 
-        store = srv._store(None)
+        store = srv._store()
         proj = _proj(server_project)
         story_id, path, original = self._existing_story(store, proj)
 
@@ -636,7 +636,7 @@ class TestTheQuarantinePathsRefuseAnExistingTarget:
 
         from projectman import server as srv
 
-        store = srv._store(None)
+        store = srv._store()
         proj = _proj(server_project)
         story_id, path, original = self._existing_story(store, proj)
 
@@ -674,7 +674,7 @@ class TestTheQuarantinePathsRefuseAnExistingTarget:
         """
         from projectman import server as srv
 
-        store = srv._store(None)
+        store = srv._store()
         proj = _proj(server_project)
         _prime_caches(store)
 

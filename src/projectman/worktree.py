@@ -48,7 +48,7 @@ import shutil
 import subprocess
 import tempfile
 from pathlib import Path
-from typing import Optional
+from typing import Callable, Optional
 
 from projectman.errors import StoreError
 
@@ -56,6 +56,7 @@ DEFAULT_BRANCH = "projectman"
 ROOT_COMMIT_MESSAGE = "ProjectMan root"
 MAIN_COMMIT_MESSAGE = "Move .project onto the projectman worktree branch"
 IMPORT_COMMIT_MESSAGE = "Import ProjectMan state"
+STORE_INIT_COMMIT_MESSAGE = "Initialize ProjectMan store"
 
 
 class MigrationError(StoreError):
@@ -645,6 +646,198 @@ def format_attach_result(result: dict) -> str:
     lines += [f"  {label.ljust(width)} : {value}" for label, value in rows]
     lines += ["", f"{project_dir}/ is now a worktree of the '{branch}' branch."]
     return "\n".join(lines)
+
+
+# ─── Creating a store branch from nothing (US-PM-31) ────────────────────────
+#
+# ``migrate_to_worktree`` above turns an *existing* ``.project/`` into a
+# worktree branch, and ``attach_worktree`` mounts a branch that already exists.
+# A hub adding a brand-new subproject has neither: the submodule was just
+# cloned, so either ``origin/projectman`` came down with it (attach) or the
+# branch has to be conjured out of nothing (create, mount, scaffold, commit).
+# The two functions below are that third case, factored so that
+# ``hub.registry.add_project`` (US-PM-31-7) and ``migrate-hub`` (US-PM-31-8)
+# share one piece of git plumbing: ``create_store_branch`` takes a ``populate``
+# callback that fills the freshly mounted directory — a scaffolder for
+# add-project, a copy of the hub-side store for migrate-hub.
+
+
+def create_store_branch(
+    root: Path,
+    branch: str = DEFAULT_BRANCH,
+    project_dir: str = ".project",
+    populate: Optional[Callable[[Path], None]] = None,
+    message: str = STORE_INIT_COMMIT_MESSAGE,
+) -> dict:
+    """Create orphan ``branch``, mount it at ``project_dir``, fill it, commit.
+
+    The four steps ``migrate_to_worktree`` performs on an existing store,
+    without the parts that only make sense when there is something to move:
+    no untracking on the current branch, no temp stash, no push.
+
+    ``populate`` is called with the mounted directory once the worktree
+    exists; whatever it writes there is committed as ``message``.  Omit it and
+    the branch is mounted empty (the commit is skipped, since there is nothing
+    to commit) — ``commit`` comes back None.
+
+    Refuses, before mutating anything, when ``branch`` already exists locally
+    or as ``origin/<branch>`` (that is :func:`attach_worktree`'s job) or when
+    ``project_dir`` already holds content.
+
+    Any failure after the branch is created is rolled back: the half-built
+    worktree is removed, the branch is deleted while it still points at the
+    root commit this call made, and an empty ``project_dir`` that was cleared
+    to make room for ``git worktree add`` is put back.  So a caller that
+    catches :class:`MigrationError` can retry, or leave the repo alone,
+    without cleaning up after us.
+
+    Returns a summary dict shaped like :func:`attach_worktree`'s.
+    """
+    root = repo_root(Path(root))
+    target = root / project_dir
+
+    # --- Preconditions.  Nothing below this block may mutate the repo. -------
+    if target.exists() and not target.is_dir():
+        raise MigrationError(
+            f"{project_dir} exists and is not a directory — move it aside first"
+        )
+    if is_worktree(target):
+        raise MigrationError(
+            f"{project_dir}/ is already a git worktree — nothing to create"
+        )
+    if target.is_dir() and any(target.iterdir()):
+        raise MigrationError(
+            f"{project_dir}/ already exists and holds content — refusing to "
+            f"overwrite it. Run `projectman migrate-worktree` to move an "
+            f"existing store onto the '{branch}' branch, or move "
+            f"{project_dir}/ aside yourself."
+        )
+    if branch_exists(root, branch):
+        raise MigrationError(
+            f"branch '{branch}' already exists — attach it instead of creating it"
+        )
+    if remote_branch_exists(root, branch):
+        raise MigrationError(
+            f"branch '{branch}' already exists on origin — attach it instead of "
+            "creating a second, unrelated history"
+        )
+    # --- End of preconditions. -----------------------------------------------
+
+    result: dict = {
+        "root": str(root),
+        "branch": branch,
+        "project_dir": project_dir,
+        "path": str(target),
+        "attached": False,
+        "already": False,
+        "created_branch": True,
+        "tracking": None,
+        "head": None,
+        "root_commit": None,
+        "commit": None,
+    }
+
+    root_commit = _create_orphan_branch(root, branch)
+    result["root_commit"] = root_commit
+
+    empty_dir = target.is_dir()
+    if empty_dir:
+        # `git worktree add` wants a path that does not exist; an empty
+        # directory is ours to clear, and it goes back if anything fails.
+        target.rmdir()
+
+    try:
+        _git("worktree", "add", project_dir, branch, cwd=root)
+        if populate is not None:
+            populate(target)
+            _git("add", "-A", cwd=target)
+            if _git("diff", "--cached", "--quiet", cwd=target, check=False).returncode:
+                _git("commit", "-m", message, cwd=target)
+                result["commit"] = _git_out("rev-parse", "HEAD", cwd=target)
+    except Exception:  # noqa: BLE001 — re-raised once the repo is back as found
+        if target.exists():
+            shutil.rmtree(target, ignore_errors=True)
+        _git("worktree", "prune", cwd=root, check=False)
+        if empty_dir and not target.exists():
+            target.mkdir(parents=True)
+        # Only ever delete the branch we made, and only while nothing else has
+        # landed on it.
+        if _git_out("rev-parse", branch, cwd=root) == root_commit:
+            _git("branch", "-D", branch, cwd=root, check=False)
+        raise
+
+    result["attached"] = True
+    result["tracking"] = upstream_of(root, branch)
+    result["head"] = _git_out("rev-parse", "HEAD", cwd=target)
+    return result
+
+
+def ensure_store_branch(
+    root: Path,
+    branch: str = DEFAULT_BRANCH,
+    project_dir: str = ".project",
+    remote: str = "origin",
+    populate: Optional[Callable[[Path], None]] = None,
+    message: str = STORE_INIT_COMMIT_MESSAGE,
+    gitignore: bool = True,
+) -> dict:
+    """Make ``project_dir`` a mounted worktree of ``branch``, however it must.
+
+    One call for "this repo's PM store should be attached at ``project_dir``
+    when I am done":
+
+    * the branch already exists — locally or as ``<remote>/<branch>``, which is
+      what a fresh clone of a migrated repo has — so it is mounted with
+      :func:`attach_worktree` and whatever is on it is the store.  ``populate``
+      is *not* run: the store already exists and overwriting it would be the
+      opposite of attaching;
+    * neither exists, so :func:`create_store_branch` conjures the branch,
+      mounts it, runs ``populate`` and commits.
+
+    ``source`` in the result says which happened (``"attached"`` /
+    ``"created"``), so callers can word their output honestly.
+
+    Unless ``gitignore`` is false, ``project_dir/`` is added to the repo's
+    ``.gitignore`` once the mount has succeeded — the mounted worktree would
+    otherwise show up as untracked noise on the checked-out branch.  The file
+    is written, not committed: this may be a freshly cloned submodule whose
+    main branch nobody has asked us to write history on.  ``gitignore_updated``
+    reports whether the file changed.
+
+    Never contacts the network — only local refs are read, and nothing is
+    pushed.  Raises :class:`MigrationError` on any refusal or git failure,
+    having left the repo as it was found.
+    """
+    root = repo_root(Path(root))
+    target = root / project_dir
+
+    if (
+        is_worktree(target)
+        or branch_exists(root, branch)
+        or remote_branch_exists(root, branch, remote)
+    ):
+        result = attach_worktree(
+            root, branch=branch, remote=remote, project_dir=project_dir
+        )
+        result.setdefault("root_commit", None)
+        result.setdefault("commit", None)
+        result["source"] = "attached"
+    else:
+        result = create_store_branch(
+            root,
+            branch=branch,
+            project_dir=project_dir,
+            populate=populate,
+            message=message,
+        )
+        result["source"] = "created"
+
+    result["gitignore_updated"] = (
+        ensure_gitignore_entry(root, f"{project_dir.rstrip('/')}/")
+        if gitignore
+        else False
+    )
+    return result
 
 
 # ─── Store git state (US-PM-21) ─────────────────────────────────────────────

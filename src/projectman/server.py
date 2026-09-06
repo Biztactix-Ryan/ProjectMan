@@ -10,10 +10,17 @@ from mcp.server.fastmcp.exceptions import ToolError
 from mcp.types import ToolAnnotations
 
 from .config import enabled_tool_families, find_project_root, load_config
-from .errors import wire_code_for
+from .errors import ConflictError, NotFoundError, ValidationError, wire_code_for
 from .event_bus import EventBus, NoOpEventBus
+from .hub.stores import (
+    attach_hint,
+    hub_store_dir,
+    hub_stores,
+    not_attached_row,
+    subproject_status,
+)
 from .indexer import build_index, write_index
-from .models import Evidence, ProjectIndex
+from .models import EPIC_ID, SPRINT_ID, STORY_ID, TASK_ID, Evidence, ProjectIndex
 from .store import (
     CLAIM_FIELDS,
     NOTE_SUMMARY_RECOMMENDED,
@@ -43,37 +50,342 @@ def _emit(event_type: str, data: dict) -> None:
         pass  # no event loop — stdio mode or tests
 
 
-def _resolve_project_dir(project: Optional[str] = None) -> Path:
-    """Return the .project/ directory for a project, handling hub layout."""
-    root = find_project_root()
-    if project:
-        config = load_config(root)
-        if config.hub:
-            pm_dir = root / ".project" / "projects" / project
-            if pm_dir.exists() and (pm_dir / "config.yaml").exists():
-                return pm_dir
-            raise FileNotFoundError(f"Project '{project}' not found in hub")
-    return root / ".project"
-
-
 _store_cache: dict[Path, Store] = {}
 
 
-def _store(project: Optional[str] = None) -> Store:
+def _store() -> Store:
+    """The store you are standing in: ``{root}/.project``.
+
+    In a hub that is the hub's own store, not a subproject's — a subproject is
+    reached by its prefix (:func:`_store_for_id`, :func:`_store_for_prefix`),
+    never by a project name passed down from a tool argument (US-PM-34).
+    """
     root = find_project_root()
-    if project:
-        config = load_config(root)
-        if config.hub:
-            project_dir = root / ".project" / "projects" / project
-            if project_dir.exists() and (project_dir / "config.yaml").exists():
-                if project_dir not in _store_cache:
-                    _store_cache[project_dir] = Store(root, project_dir=project_dir)
-                return _store_cache[project_dir]
-            raise FileNotFoundError(f"Project '{project}' not found in hub")
-    default_dir = root / ".project"
+    default_dir = hub_store_dir(root)
     if default_dir not in _store_cache:
         _store_cache[default_dir] = Store(root)
     return _store_cache[default_dir]
+
+
+#: The four ID shapes, in the order :func:`_prefix_of` tries them.  All four
+#: are ``<KIND>-<PREFIX>-<n>[-<m>]``, so the prefix is always segment 1 — the
+#: patterns are the *validator* and the split is the extraction, which keeps
+#: the shapes defined once in models.py (US-PM-34-6).
+_ID_PATTERNS = (TASK_ID, STORY_ID, EPIC_ID, SPRINT_ID)
+
+
+def _prefix_of(item_id: object) -> str:
+    """The project prefix embedded in an epic/story/task/sprint ID.
+
+    ``"US-API-3-2"`` -> ``"API"``.  Every accepted shape is
+    ``<KIND>-<PREFIX>-<digits>`` with an optional trailing ``-<digits>`` for a
+    task, so the prefix is the second dash-separated segment once one of the
+    models.py patterns has matched.  ``TASK_ID`` and ``STORY_ID`` differ only
+    in that suffix and agree on the prefix, so the trial order is irrelevant
+    to the answer.
+
+    Raises:
+        errors.ValidationError: the ID matches none of the four patterns —
+            lowercase, a missing segment, an unknown kind, empty, or not a
+            string at all.  Code ``invalid``.
+    """
+    text = item_id if isinstance(item_id, str) else ""
+    if not any(pattern.match(text) for pattern in _ID_PATTERNS):
+        raise ValidationError(
+            f"malformed id {item_id!r} — expected US-<PREFIX>-<n>, "
+            f"US-<PREFIX>-<n>-<m>, EPIC-<PREFIX>-<n> or SPRINT-<PREFIX>-<n> "
+            f"with an uppercase prefix"
+        )
+    return text.split("-")[1]
+
+
+def _prefix_map(root: Path) -> dict[str, dict]:
+    """Prefix -> store entry for every store reachable from a hub *root*.
+
+    Entries are the ``hub_stores`` shape (``name``/``prefix``/``path``/
+    ``attached``) plus the hub's own store, which is ``{root}/.project`` with
+    the prefix from its own config.yaml.  Keys are uppercased so the lookup
+    matches an ID's (always uppercase) prefix even if a config.yaml wrote its
+    prefix in another case.
+
+    Raises:
+        errors.ConflictError: two stores claim the same prefix.  Naming both
+            is the only useful thing to do — silently picking one would route
+            writes into whichever store happened to be registered first.
+    """
+    config = load_config(root)
+    entries: list[dict] = []
+    if config.prefix:
+        entries.append(
+            {
+                "name": config.name,
+                "prefix": config.prefix,
+                "path": hub_store_dir(root),
+                "attached": True,
+                "hub": True,
+            }
+        )
+    for entry in hub_stores(root):
+        if entry.get("prefix"):
+            entries.append(dict(entry, hub=False))
+
+    by_prefix: dict[str, dict] = {}
+    for entry in entries:
+        key = str(entry["prefix"]).upper()
+        clash = by_prefix.get(key)
+        if clash is not None:
+            raise ConflictError(
+                f"prefix '{entry['prefix']}' is claimed by two projects in "
+                f"this hub: '{clash['name']}' and '{entry['name']}' — give one "
+                f"of them a different prefix in its .project/config.yaml"
+            )
+        by_prefix[key] = entry
+    return by_prefix
+
+
+def _store_for_id(item_id: str) -> Store:
+    """The Store that owns *item_id*, chosen by the prefix inside the ID.
+
+    This is the replacement for the old ``_store(project)``'s optional project
+    name (US-PM-34): the ID already says which project it belongs to, so
+    nothing has to be told twice.
+
+    * Outside a hub there is exactly one store, and it is returned whatever
+      the prefix is — a single-project install has never checked the prefix
+      against its config and must not start (US-PM-34-5 pins that).
+    * In a hub the prefix is looked up in the store map from US-PM-31, with
+      the hub's own ``{root}/.project`` included under its own prefix.
+
+    The Store comes from ``_store_cache`` keyed by store directory, so the
+    object returned here is the *same* object ``_store()`` would return for
+    the equivalent project name.
+
+    Raises:
+        errors.ValidationError (``invalid``): the ID is malformed.
+        errors.NotFoundError (``not_found``): no store in this hub claims the
+            prefix (the message lists the known ones, sorted), or the store
+            that claims it is registered but not mounted (the message carries
+            ``stores.attach_hint``).  An unattached store is never opened —
+            constructing a Store on a missing directory is exactly the failure
+            US-PM-31-9 removed from the read paths.
+        errors.ConflictError (``conflict``): two projects claim the prefix.
+    """
+    prefix = _prefix_of(item_id)
+    root = find_project_root()
+    if not load_config(root).hub:
+        return _store()
+
+    by_prefix = _prefix_map(root)
+    entry = by_prefix.get(prefix.upper())
+    if entry is None:
+        known = ", ".join(sorted(str(e["prefix"]) for e in by_prefix.values()))
+        raise NotFoundError(
+            f"no project in this hub uses the prefix '{prefix}' (from "
+            f"'{item_id}') — known prefixes: {known or 'none'}"
+        )
+    if not entry["attached"]:
+        raise NotFoundError(
+            f"prefix '{prefix}' (from '{item_id}') belongs to project "
+            f"'{entry['name']}', but {attach_hint(entry['name'])}"
+        )
+
+    return _store_from_entry(root, entry)
+
+
+def _validate_epic_link(epic_id: str) -> None:
+    """Refuse a story→epic link whose epic does not exist (US-PM-36).
+
+    Epics live at hub level only, so a subproject story's ``epic_id`` may name
+    an epic in the hub's own store *or* one in the story's own store — the
+    prefix inside the ID says which, exactly as it does for every other ID
+    (US-PM-34).  The link is therefore checked by resolving that prefix with
+    :func:`_store_for_id` and reading the epic out of the store it names.
+
+    Outside a hub there is one store and this is simply "does the epic exist",
+    which is the check that was silently missing before.
+
+    Raises:
+        errors.ValidationError (``invalid``): the ID is not epic-shaped, or is
+            malformed.
+        errors.NotFoundError (``not_found``): no epic with that ID exists in
+            the store its prefix names.  The message says where it looked —
+            the hub store and the story's own store are the two legitimate
+            homes for an epic a story may link to.
+        errors.ConflictError (``conflict``): two projects claim the prefix.
+    """
+    if not EPIC_ID.match(epic_id or ""):
+        raise ValidationError(
+            f"malformed epic_id {epic_id!r} — expected EPIC-<PREFIX>-<n> with "
+            f"an uppercase prefix"
+        )
+
+    store = _store_for_id(epic_id)
+    try:
+        store.get_epic(epic_id)
+    except FileNotFoundError as missing:
+        config = load_config(find_project_root())
+        if config.hub:
+            where = (
+                f"looked in the store its prefix names "
+                f"('{store.config.name}'); a story's epic_id must name an "
+                f"epic in the hub store (prefix '{config.prefix}') or in the "
+                f"story's own store"
+            )
+        else:
+            where = f"looked in this project's store ('{store.config.name}')"
+        raise NotFoundError(
+            f"no epic '{epic_id}' exists — {where}. Create it with "
+            f"pm_create_epic, or link the story to an epic that exists"
+        ) from missing
+
+
+def _store_from_entry(root: Path, entry: dict) -> Store:
+    """The cached Store for one :func:`_prefix_map` entry.
+
+    Keyed by store directory, so the hub's own entry hands back the very same
+    object ``_store()`` returns rather than a second Store over the same files.
+    """
+    store_dir = Path(entry["path"])
+    if store_dir not in _store_cache:
+        _store_cache[store_dir] = (
+            Store(root)
+            if entry.get("hub")
+            else Store(root, project_dir=store_dir)
+        )
+    return _store_cache[store_dir]
+
+
+def _stores_for_ids(ids) -> list[tuple[Store, list[str]]]:
+    """Group *ids* by the store each one resolves to, preserving order.
+
+    Returns ``[(store, [id, ...]), ...]`` with the stores in first-seen order
+    and the IDs inside each group in their original order, so a multi-ID tool
+    can do one pass per store and still answer in the caller's sequence.
+
+    Strict on purpose: a single unresolvable ID raises the same coded error
+    :func:`_store_for_id` would raise for it alone, and nothing is returned.
+    Whether a given multi-ID tool prefers a partial result is that tool's
+    decision (US-PM-34-7), made with this helper's all-or-nothing answer as
+    the base case rather than around a half-built one.
+    """
+    groups: list[tuple[Store, list[str]]] = []
+    index: dict[int, int] = {}
+    for item_id in ids:
+        store = _store_for_id(item_id)
+        position = index.get(id(store))
+        if position is None:
+            index[id(store)] = len(groups)
+            groups.append((store, [item_id]))
+        else:
+            groups[position][1].append(item_id)
+    return groups
+
+
+def _hub_entry_for_prefix(
+    prefix: Optional[str],
+    *,
+    for_create: bool = False,
+    verb: str = "this tool",
+) -> Optional[dict]:
+    """The hub store entry a bare ``prefix`` argument names, or ``None``.
+
+    The ID-less half of US-PM-34: verbs with no ID to route by
+    (:func:`pm_status`, :func:`pm_board`, :func:`pm_create_story`, ...) take an
+    optional ``prefix`` instead of the old project *name*, so a hub is
+    addressed the same way everywhere — by the prefix that appears inside its
+    IDs.
+
+    ``None`` means "the store you are standing in", which is either of two
+    things:
+
+    * Not a hub.  The prefix is ignored outright and the single store is used,
+      so single-project behaviour is byte-for-byte what it was — US-PM-34-5
+      pins that, including a prefix passed by a confused caller.
+    * A hub with no prefix given, on a read.  That reads the hub's own
+      ``.project``; it is not a fan-out over the subprojects.
+
+    Args:
+        prefix: The project prefix, any case, or None/"" for the default.
+        for_create: True for verbs that make new items.  A hub has no default
+            project to create in, so an omitted prefix is refused rather than
+            resolved — silently filing a new story under the hub would put it
+            where nobody is looking for it.
+        verb: Tool name, used only in the ``for_create`` error message.
+
+    Raises:
+        errors.ValidationError (``invalid``): *for_create* in a hub with no
+            prefix.
+        errors.NotFoundError (``not_found``): no store claims the prefix (the
+            message lists the known ones, sorted), or the store that claims it
+            is registered but not mounted (the message carries
+            ``stores.attach_hint``).  Same two failures, same wording shape,
+            as :func:`_store_for_id` — one prefix vocabulary, one error.
+        errors.ConflictError (``conflict``): two projects claim the prefix.
+    """
+    root = find_project_root()
+    if not load_config(root).hub:
+        return None
+
+    by_prefix = _prefix_map(root)
+    known = ", ".join(sorted(str(e["prefix"]) for e in by_prefix.values()))
+
+    if not prefix:
+        if for_create:
+            raise ValidationError(
+                f"{verb} needs a prefix in this hub — there is no default "
+                f"project to create in. Pass prefix='<PREFIX>' to say which "
+                f"project the new item belongs to (known prefixes: "
+                f"{known or 'none'})"
+            )
+        return None
+
+    entry = by_prefix.get(str(prefix).upper())
+    if entry is None:
+        raise NotFoundError(
+            f"no project in this hub uses the prefix '{prefix}' — known "
+            f"prefixes: {known or 'none'}"
+        )
+    if not entry["attached"]:
+        raise NotFoundError(
+            f"prefix '{prefix}' belongs to project '{entry['name']}', but "
+            f"{attach_hint(entry['name'])}"
+        )
+    return entry
+
+
+def _store_for_prefix(
+    prefix: Optional[str] = None,
+    *,
+    for_create: bool = False,
+    verb: str = "this tool",
+) -> Store:
+    """The Store an ID-less verb should act on, given its ``prefix``.
+
+    See :func:`_hub_entry_for_prefix` for what an omitted prefix means and
+    which errors are raised.
+    """
+    entry = _hub_entry_for_prefix(prefix, for_create=for_create, verb=verb)
+    if entry is None:
+        return _store()
+    return _store_from_entry(find_project_root(), entry)
+
+
+def _project_dir_for_prefix(
+    prefix: Optional[str] = None,
+    *,
+    for_create: bool = False,
+    verb: str = "this tool",
+) -> Path:
+    """The ``.project`` directory an ID-less verb should read, by ``prefix``.
+
+    The :func:`_store_for_prefix` answer for the handful of verbs that work on
+    files inside the store directory (docs, the activity log, the malformed
+    quarantine) rather than through the Store API.
+    """
+    entry = _hub_entry_for_prefix(prefix, for_create=for_create, verb=verb)
+    if entry is None:
+        return hub_store_dir(find_project_root())
+    return Path(entry["path"])
 
 
 def _note_truncation_fields(store: Store, note: Optional[str]) -> dict:
@@ -412,50 +724,6 @@ def _resolve_id(
     return supplied[0][1]  # type: ignore[return-value]
 
 
-def _raise_on_hub_error(result):
-    """Convert ``hub/registry.py``'s in-band error reporting into a real error.
-
-    ``registry.py`` reports failure *inside* its return value — a ``dict`` with
-    a truthy ``error`` key, or a ``str`` beginning with ``error:`` — and the CLI
-    depends on that contract.  So the conversion happens here, at the MCP
-    boundary, rather than at the 27 return sites themselves: three call-site
-    guards (``pm_push``, ``pm_push_all``, ``pm_repair``) cover all of them and
-    leave the CLI untouched.  See docs/reference/error-paths-inventory.md 4.
-
-    Why the three shapes below are the complete set for those 27 sites:
-
-    * ``repair`` returns a bare string, ``error: not a hub project — ...``.
-    * ``registry.pm_push`` puts ``error`` at the top level, and folds
-      ``push_hub``'s error (which itself folds ``hub_push_with_rebase``'s) and
-      ``_push_subproject``'s error up into that same key.
-    * ``coordinated_push`` has no top-level ``error``; its "not a hub project"
-      case is carried in ``report``, and a failed hub push in ``hub_result``.
-
-    ``sub_result`` is deliberately *not* inspected.  A subproject failing while
-    the hub push succeeds is a genuine partial success, and a caller must not
-    lose the projects that did push — the same reasoning the inventory applies
-    to multi-id results in 7.2.
-
-    Returns *result* unchanged when it reports no failure, so it can be used
-    inline.
-    """
-    if isinstance(result, str):
-        stripped = result.lstrip()
-        if stripped.startswith("error:"):
-            raise ToolError(stripped[len("error:") :].strip())
-        return result
-    if isinstance(result, dict):
-        if result.get("error"):
-            raise ToolError(str(result["error"]))
-        report = result.get("report")
-        if isinstance(report, str) and report.lstrip().startswith("error:"):
-            raise ToolError(report.lstrip()[len("error:") :].strip())
-        hub_result = result.get("hub_result")
-        if isinstance(hub_result, dict) and hub_result.get("error"):
-            raise ToolError(str(hub_result["error"]))
-    return result
-
-
 def _no_such_malformed_file(malformed_dir: Path, filename: str) -> str:
     """Message for a mutation whose target file is not in the quarantine.
 
@@ -750,14 +1018,18 @@ def _as_csv(value: Union[str, list[str], None]) -> Optional[str]:
     title="Project Status",
     annotations=ToolAnnotations(title="Project Status", readOnlyHint=True),
 )
-def pm_status(project: Optional[str] = None) -> str:
+def pm_status(prefix: Optional[str] = None) -> str:
     """Get project status summary: story/task counts, points, completion percentage.
 
+    In a hub with no prefix, the hub's own totals come back with a
+    `subprojects` list — one row per registered project with its `attached`
+    state, and a `hint` on any whose store is not mounted yet.
+
     Args:
-        project: Optional project name (hub mode only)
+        prefix: Project prefix (hub mode only, e.g. "API")
     """
     try:
-        store = _store(project)
+        store = _store_for_prefix(prefix)
         index = build_index(store)
         pct = 0
         if index.total_points > 0:
@@ -781,6 +1053,17 @@ def pm_status(project: Optional[str] = None) -> str:
             "completion": f"{pct}%",
             "by_status": {k: len(v) for k, v in status_groups.items()},
         }
+
+        # Hub view: name the subprojects and say which of them are actually
+        # readable.  Deliberately only when no prefix was given, so the
+        # single-project response shape is byte-for-byte what it was
+        # (US-PM-31-9).  It is a map read, not a Store open, so an unattached
+        # subproject is a row here rather than an exception.
+        if not prefix:
+            root = find_project_root()
+            if load_config(root).hub:
+                result["subprojects"] = subproject_status(root)
+
         return _yaml_dump(result)
     except Exception as e:
         raise _failed(e) from e
@@ -792,7 +1075,6 @@ def pm_status(project: Optional[str] = None) -> str:
 def pm_get(
     id: Optional[Union[str, list[str]]] = None,
     include_log: bool = False,
-    project: Optional[str] = None,
     task_id: Optional[Union[str, list[str]]] = None,
     fields: Optional[str] = None,
 ) -> str:
@@ -805,16 +1087,18 @@ def pm_get(
     Args:
         id: One or more IDs — epic (e.g. EPIC-PRJ-1), story (e.g. US-PRJ-1), or task (e.g. US-PRJ-1-1). Pass a list (["US-PRJ-1-1", "US-PRJ-1-2"]) or a comma-separated string ("US-PRJ-1-1,US-PRJ-1-2"); both mean the same thing. (alias: task_id)
         include_log: Include the 3 most recent run-log entries per item (default false; use pm_run_log for full history)
-        project: Optional project name (hub mode only)
         task_id: Alias for id — either spelling works; passing both with different values is an error
         fields: Comma-separated key names to return, e.g. "status,assignee" — everything else is omitted (`id` is always kept so multi-ID results stay addressable). Names are the item's own keys: status, assignee, points, title, story_id, depends_on, tags, body, acceptance_criteria, recent_run_log, … An unknown name is an error listing the valid ones. Omit for the full item — the default is unchanged.
     """
     try:
         id = _resolve_id("id", _as_csv(id), task_id=_as_csv(task_id))
-        store = _store(project)
         names = _field_names(fields)
 
         def _fetch(item_id: str) -> dict:
+            # Each ID names its own store (US-PM-34-7), so a multi-store
+            # call is one loop and an unknown prefix stays a *per-ID*
+            # not_found in the partial-failure shape below.
+            store = _store_for_id(item_id)
             meta, body = store.get(item_id)
             result = meta.model_dump(mode="json")
             result["body"] = body
@@ -872,7 +1156,6 @@ def pm_get(
 def pm_batch_get(
     type: Optional[str] = None,
     ids: Optional[Union[str, list[str]]] = None,
-    project: Optional[str] = None,
     brief: bool = False,
     fields: Optional[str] = None,
 ) -> str:
@@ -888,12 +1171,10 @@ def pm_batch_get(
     Args:
         type: Fetch all items of a type: "epics", "stories", or "tasks"
         ids: Item IDs to fetch — a list (["US-PRJ-1", "EPIC-PRJ-1"]) or a comma-separated string ("US-PRJ-1,US-PRJ-2-3,EPIC-PRJ-1"); both mean the same thing. Takes precedence over type.
-        project: Optional project name (hub mode only)
         brief: Drop the heavy free-text (default false). Keeps whichever of id, title, status, points, priority, story_id, epic_id, assignee, tags, depends_on the item type has, and omits body, acceptance_criteria and any run log. Use it to scan a backlog: pm_batch_get(type="stories", brief=True).
         fields: Comma-separated key names to return, e.g. "status,points" — everything else is omitted and `id` is always kept, exactly as on pm_get. An unknown name is an error listing the valid ones. If both are given, `fields` wins — explicit beats preset. Omit both for the full items; the default is unchanged.
     """
     try:
-        store = _store(project)
         names = _field_names(fields)
 
         def _shape(item: dict, kind: str) -> dict:
@@ -911,6 +1192,7 @@ def pm_batch_get(
             items = []
             for item_id in _as_list(ids) or []:
                 try:
+                    store = _store_for_id(item_id)
                     meta, body = store.get(item_id)
                     item = meta.model_dump(mode="json")
                     item["body"] = body
@@ -931,7 +1213,9 @@ def pm_batch_get(
             return _yaml_dump(items)
         if not type:
             raise ToolError("provide ids or type")
-        items = store.list_all(type)
+        # No IDs to route by: the type sweep reads the store of the tree
+        # the server is running in (US-PM-34-8 gives it a `prefix`).
+        items = _store().list_all(type)
         kind = {"epics": "epic", "stories": "story", "tasks": "task"}.get(
             type, "item"
         )
@@ -944,15 +1228,15 @@ def pm_batch_get(
     title="Read Documentation",
     annotations=ToolAnnotations(title="Read Documentation", readOnlyHint=True),
 )
-def pm_docs(doc: Optional[str] = None, project: Optional[str] = None) -> str:
+def pm_docs(doc: Optional[str] = None, prefix: Optional[str] = None) -> str:
     """Read project documentation files.
 
     Args:
         doc: Specific doc to read: "project", "infrastructure", "security", "vision", "architecture", or "decisions". Omit for a summary of all.
-        project: Optional project name (hub mode only)
+        prefix: Project prefix (hub mode only, e.g. "API")
     """
     try:
-        proj_dir = _resolve_project_dir(project)
+        proj_dir = _project_dir_for_prefix(prefix)
 
         doc_map = {
             "project": "PROJECT.md",
@@ -1025,17 +1309,17 @@ def pm_docs(doc: Optional[str] = None, project: Optional[str] = None) -> str:
 def pm_update_doc(
     doc: str,
     content: str,
-    project: Optional[str] = None,
+    prefix: Optional[str] = None,
 ) -> str:
     """Update a project documentation file.
 
     Args:
         doc: Which doc to update: "project", "infrastructure", "security", "vision", "architecture", or "decisions"
         content: The full new content for the document
-        project: Optional project name (hub mode only)
+        prefix: Project prefix (hub mode only, e.g. "API")
     """
     try:
-        proj_dir = _resolve_project_dir(project)
+        proj_dir = _project_dir_for_prefix(prefix)
 
         doc_map = {
             "project": "PROJECT.md",
@@ -1069,7 +1353,7 @@ def pm_next(
     text: Optional[str] = None,
     append: bool = False,
     clear: bool = False,
-    project: Optional[str] = None,
+    prefix: Optional[str] = None,
 ) -> str:
     """Read, write or clear the short note the next session should see first.
 
@@ -1093,7 +1377,7 @@ def pm_next(
         text: The note to save. Omit to read the note, which is the common call.
         append: Add `text` below the existing note under a dated heading instead of replacing it. Requires `text`.
         clear: Delete the note. Cannot be combined with `text`.
-        project: Optional project name (hub mode only)
+        prefix: Project prefix (hub mode only, e.g. "API")
     """
     try:
         if text is not None and clear:
@@ -1101,7 +1385,7 @@ def pm_next(
         if append and text is None:
             raise ToolError("append needs text to append — pass text, or omit append")
 
-        store = _store(project)
+        store = _store_for_prefix(prefix)
 
         if clear:
             return _yaml_dump({"cleared": store.clear_next()})
@@ -1153,7 +1437,7 @@ def _annotate_claim(entry: dict, meta, max_age_seconds: float) -> dict:
     annotations=ToolAnnotations(title="Active Work", readOnlyHint=True),
 )
 def pm_active(
-    project: Optional[str] = None,
+    prefix: Optional[str] = None,
     tag: Optional[str] = None,
     limit: int = 20,
     offset: int = 0,
@@ -1168,14 +1452,14 @@ def pm_active(
     before claim metadata existed has no `claim_age` and is never stale.
 
     Args:
-        project: Optional project name (hub mode only)
+        prefix: Project prefix (hub mode only, e.g. "API")
         tag: Filter to show only items (or their parent stories) with this tag
         limit: Max items per list (default 20)
         offset: Starting index for pagination (default 0)
         stale_after: Hours a claim may sit before it is flagged `stale: true`. Omit to use the project's `stale_claim_hours` config key (default 2).
     """
     try:
-        store = _store(project)
+        store = _store_for_prefix(prefix)
         # One listing per call: list_stories() already excludes archived
         # stories and filters on status.value, so deriving the active subset
         # in memory is identical to list_stories(status="active") -- and the
@@ -1233,17 +1517,17 @@ def pm_active(
     annotations=ToolAnnotations(title="Search Items", readOnlyHint=True),
 )
 def pm_search(
-    query: str, project: Optional[str] = None, tag: Optional[str] = None
+    query: str, prefix: Optional[str] = None, tag: Optional[str] = None
 ) -> str:
     """Search stories and tasks by keyword or semantic similarity.
 
     Args:
         query: Search query string
-        project: Optional project name (hub mode only)
+        prefix: Project prefix (hub mode only, e.g. "API")
         tag: Optional tag to filter results (only items with this tag are returned)
     """
     try:
-        proj_dir = _resolve_project_dir(project)
+        proj_dir = _project_dir_for_prefix(prefix)
 
         # Try embeddings first, fall back to keyword
         try:
@@ -1259,7 +1543,7 @@ def pm_search(
                     # so the old construction looked under .project/.project
                     # and every lookup raised -- the tag filter silently
                     # dropped every hit.
-                    store = _store(project)
+                    store = _store_for_prefix(prefix)
                     # The embedding index only ever holds stories and tasks
                     # (see EmbeddingStore.reindex_all), so two batch listings
                     # cover every possible result id -- no store.get per hit.
@@ -1317,7 +1601,7 @@ _BOARD_NOTE = (
     annotations=ToolAnnotations(title="Task Board", readOnlyHint=True),
 )
 def pm_board(
-    project: Optional[str] = None,
+    prefix: Optional[str] = None,
     assignee: Optional[str] = None,
     tag: Optional[str] = None,
     limit: int = 10,
@@ -1335,7 +1619,7 @@ def pm_board(
     readiness — no points, thin description, or incomplete dependencies.
 
     Args:
-        project: Optional project name (hub mode only)
+        prefix: Project prefix (hub mode only, e.g. "API")
         assignee: Filter to show only tasks for this assignee
         tag: Filter to show only tasks (or their parent stories) with this tag
         limit: Max items per board group (default 10). Totals are always shown.
@@ -1345,7 +1629,7 @@ def pm_board(
         from .readiness import check_readiness, compute_hints
         from .deps import topological_sort
 
-        store = _store(project)
+        store = _store_for_prefix(prefix)
         # Archived tasks are abandoned, not workable.  Archival used to write
         # "done", which dropped them off the board as a side effect; now that
         # they keep their real status the exclusion has to be explicit.
@@ -1525,18 +1809,18 @@ def pm_board(
     title="Burndown Data",
     annotations=ToolAnnotations(title="Burndown Data", readOnlyHint=True),
 )
-def pm_burndown(project: Optional[str] = None) -> str:
+def pm_burndown(prefix: Optional[str] = None) -> str:
     """Get burndown data: total vs completed points.
 
     Args:
-        project: Optional project name (hub mode only)
+        prefix: Project prefix (hub mode only, e.g. "API")
     """
     try:
         root = find_project_root()
         config = load_config(root)
 
         # Hub mode: aggregate across projects
-        if config.hub and not project:
+        if config.hub and not prefix:
             try:
                 from .hub.rollup import rollup
 
@@ -1545,7 +1829,7 @@ def pm_burndown(project: Optional[str] = None) -> str:
             except (ImportError, Exception):
                 pass
 
-        store = _store(project)
+        store = _store_for_prefix(prefix)
         index = build_index(store)
 
         remaining = index.total_points - index.completed_points
@@ -1579,7 +1863,7 @@ def pm_create_story(
     acceptance_criteria: Optional[Union[str, list[str]]] = None,
     tags: Optional[Union[str, list[str]]] = None,
     depends_on: Optional[Union[str, list[str]]] = None,
-    project: Optional[str] = None,
+    prefix: Optional[str] = None,
 ) -> str:
     """Create a new user story.
 
@@ -1592,10 +1876,14 @@ def pm_create_story(
         acceptance_criteria: List of acceptance criteria, one entry per criterion (e.g. ["Users can log in", "Error shown on invalid password"]). Pass a JSON list, never a comma-joined string: criteria are natural language and a comma inside one is punctuation, not a separator. A bare string is accepted and taken as exactly one criterion. Each criterion auto-generates a test task.
         tags: Tags — a list (["security", "mvp"]) or a comma-separated string ("security,mvp"); both mean the same thing.
         depends_on: Dependency IDs (stories or tasks this story depends on) — a list (["US-PRJ-1", "US-PRJ-2"]) or a comma-separated string ("US-PRJ-1,US-PRJ-2"); both mean the same thing.
-        project: Optional project name (hub mode only)
+        prefix: Project prefix - required in a hub (e.g. "API")
     """
     try:
-        store = _store(project)
+        store = _store_for_prefix(prefix, for_create=True, verb="pm_create_story")
+        if epic_id:
+            # Before the story is written, not after: a link that cannot
+            # resolve must not leave a half-linked story behind (US-PM-36).
+            _validate_epic_link(epic_id)
         ac_list = _criteria_list(acceptance_criteria)
         tag_list = _as_list(tags) if tags else None
         dep_list = _as_list(depends_on) if depends_on else None
@@ -1611,7 +1899,6 @@ def pm_create_story(
         if epic_id:
             store.update(meta.id, epic_id=epic_id)
             meta, _ = store.get_story(meta.id)
-        write_index(store)
         # Echo identity + non-empty settable fields, not the full object
         dumped = meta.model_dump(mode="json")
         created = {
@@ -1645,9 +1932,10 @@ def pm_create_epic(
     priority: Optional[str] = None,
     target_date: Optional[str] = None,
     tags: Optional[Union[str, list[str]]] = None,
-    project: Optional[str] = None,
 ) -> str:
     """Create a new epic for grouping related stories.
+
+    No prefix: in a hub, epics live in the hub store and carry its prefix.
 
     Args:
         title: Epic title (short strategic name)
@@ -1655,13 +1943,14 @@ def pm_create_epic(
         priority: Priority level: must, should, could, wont
         target_date: Optional target date (YYYY-MM-DD)
         tags: Tags — a list (["security", "mvp"]) or a comma-separated string ("security,mvp"); both mean the same thing.
-        project: Optional project name (hub mode only)
     """
     try:
-        store = _store(project)
+        # No prefix, and no _store_for_prefix: epics are hub-level (US-PM-36).
+        # `_store()` is the hub's own .project in a hub and the only store
+        # outside one, which is exactly the rule in both modes.
+        store = _store()
         tag_list = _as_list(tags) if tags else None
         meta = store.create_epic(title, description, priority, target_date, tag_list)
-        write_index(store)
         _emit("project.updated", {"summary": f"Epic {meta.id} created"})
         return _yaml_dump({"created": meta.model_dump(mode="json")})
     except Exception as e:
@@ -1674,40 +1963,72 @@ def pm_create_epic(
 )
 def pm_epic(
     id: Optional[str] = None,
-    project: Optional[str] = None,
     limit: int = 10,
     offset: int = 0,
     epic_id: Optional[str] = None,
 ) -> str:
     """Get epic details with rollup of linked stories and tasks.
 
+    A hub epic rolls up every store, grouped by project.
+
     Args:
         id: Epic ID (e.g. EPIC-PRJ-1) (alias: epic_id)
-        project: Optional project name (hub mode only)
         limit: Max stories to return (default 10)
         offset: Starting index for story pagination (default 0)
         epic_id: Alias for id — either spelling works; passing both with different values is an error
     """
     try:
         id = _resolve_id("id", id, epic_id=epic_id)
-        store = _store(project)
+        store = _store_for_id(id)
         meta, body = store.get_epic(id)
 
-        # Find linked stories — compute rollup from ALL, paginate the detail list
-        linked_stories = [s for s in store.list_stories() if s.epic_id == id]
-        # One pass over every task, partitioned locally: asking the store once
-        # per story turned an epic view into N+1 scans of the same cached list.
-        # The partition is stable, so each bucket keeps the order the per-story
-        # call returned.
-        tasks_by_story: dict[str, list] = {}
-        for task in store.list_tasks():
-            tasks_by_story.setdefault(task.story_id, []).append(task)
+        # An epic in the hub's own store is a cross-project initiative
+        # (US-PM-36), so its rollup reads every store in the map — hub first,
+        # then each attached subproject in registration order.  A subproject
+        # epic, and any epic outside a hub, rolls up its own store alone and
+        # answers in exactly the shape it always did.
+        root = find_project_root()
+        hub_wide = bool(load_config(root).hub) and (
+            Path(store.project_dir) == hub_store_dir(root)
+        )
+
+        sources: list[tuple[Optional[dict], Store]] = []
+        not_attached: list[dict] = []
+        if hub_wide:
+            for entry in _prefix_map(root).values():
+                if entry["attached"]:
+                    sources.append((entry, _store_from_entry(root, entry)))
+                else:
+                    # Named with its hint rather than silently dropped: a
+                    # rollup missing a whole repo must say so (US-PM-31-9).
+                    not_attached.append(not_attached_row(entry))
+        else:
+            sources.append((None, store))
+
+        # Find linked stories — compute rollup from ALL, paginate the detail
+        # list.  Flattened across stores in source order, so limit/offset page
+        # through one sequence rather than per-project pages.
+        linked_stories: list[tuple[Optional[dict], object, list]] = []
+        for entry, source in sources:
+            # One pass over every task, partitioned locally: asking the store
+            # once per story turned an epic view into N+1 scans of the same
+            # cached list.  The partition is stable, so each bucket keeps the
+            # order the per-story call returned.
+            tasks_by_story: dict[str, list] = {}
+            for task in source.list_tasks():
+                tasks_by_story.setdefault(task.story_id, []).append(task)
+            for story in source.list_stories():
+                if story.epic_id == id:
+                    linked_stories.append(
+                        (entry, story, tasks_by_story.get(story.id, []))
+                    )
+
         story_data = []
         total_points = 0
         completed_points = 0
+        by_project: dict[str, dict] = {}
 
-        for i, story in enumerate(linked_stories):
-            tasks = tasks_by_story.get(story.id, [])
+        for i, (entry, story, tasks) in enumerate(linked_stories):
             # Archived tasks are abandoned work: they leave the numerator and
             # the denominator alike, so the rollup neither claims them as
             # delivered nor keeps demanding them.
@@ -1718,6 +2039,21 @@ def pm_epic(
             )
             total_points += story_points
             completed_points += done_points
+
+            if entry is not None:
+                group = by_project.setdefault(
+                    entry["name"],
+                    {
+                        "name": entry["name"],
+                        "prefix": entry["prefix"],
+                        "stories": 0,
+                        "total_points": 0,
+                        "completed_points": 0,
+                    },
+                )
+                group["stories"] += 1
+                group["total_points"] += story_points
+                group["completed_points"] += done_points
 
             # Only include full detail for the current page
             if offset <= i < offset + limit:
@@ -1730,31 +2066,38 @@ def pm_epic(
                     }
                     for t in tasks
                 ]
-                story_data.append(
-                    {
-                        "id": story.id,
-                        "title": story.title,
-                        "status": story.status.value,
-                        "points": story.points,
-                        "tasks": task_summary,
-                        "task_points": story_points,
-                        "done_points": done_points,
-                    }
-                )
+                row = {
+                    "id": story.id,
+                    "title": story.title,
+                    "status": story.status.value,
+                    "points": story.points,
+                    "tasks": task_summary,
+                    "task_points": story_points,
+                    "done_points": done_points,
+                }
+                if entry is not None:
+                    row["project"] = entry["name"]
+                story_data.append(row)
 
         total_stories = len(linked_stories)
         has_more = (offset + limit) < total_stories
+
+        rollup = {
+            "story_count": total_stories,
+            "total_points": total_points,
+            "completed_points": completed_points,
+            "completion": f"{round(completed_points / max(total_points, 1) * 100)}%",
+        }
+        if hub_wide:
+            rollup["by_project"] = list(by_project.values())
+            if not_attached:
+                rollup["not_attached"] = not_attached
 
         result = {
             "epic": meta.model_dump(mode="json"),
             "body": body,
             "stories": story_data,
-            "rollup": {
-                "story_count": total_stories,
-                "total_points": total_points,
-                "completed_points": completed_points,
-                "completion": f"{round(completed_points / max(total_points, 1) * 100)}%",
-            },
+            "rollup": rollup,
             "limit": limit,
             "offset": offset,
             "has_more": has_more,
@@ -1771,7 +2114,7 @@ def pm_epic(
     annotations=ToolAnnotations(title="Project Context", readOnlyHint=True),
 )
 def pm_context(
-    project: Optional[str] = None,
+    prefix: Optional[str] = None,
     limit: int = 20,
     max_doc_chars: int = 4000,
 ) -> str:
@@ -1786,14 +2129,14 @@ def pm_context(
     is no note.
 
     Args:
-        project: Optional project name (hub mode only)
+        prefix: Project prefix (hub mode only, e.g. "API")
         limit: Max epics/stories to include (default 20)
         max_doc_chars: Max characters per embedded doc (default 4000; 0 = no limit)
     """
     try:
         hub_root = find_project_root()
         hub_config = load_config(hub_root)
-        store = _store(project)
+        store = _store_for_prefix(prefix)
         proj_dir = store.project_dir
 
         def _doc_text(path, doc_key: str) -> str:
@@ -1881,7 +2224,6 @@ def pm_create_task(
     points: Optional[int] = None,
     tags: Optional[Union[str, list[str]]] = None,
     depends_on: Optional[Union[str, list[str]]] = None,
-    project: Optional[str] = None,
 ) -> str:
     """Create a new task under a story.
 
@@ -1892,16 +2234,14 @@ def pm_create_task(
         points: Task points (fibonacci: 1,2,3,5,8,13)
         tags: Tags — a list (["backend", "api"]) or a comma-separated string ("backend,api"); both mean the same thing.
         depends_on: Task IDs this task depends on — a list (["US-PRJ-1-1", "US-PRJ-1-2"]) or a comma-separated string ("US-PRJ-1-1,US-PRJ-1-2"); both mean the same thing.
-        project: Optional project name (hub mode only)
     """
     try:
-        store = _store(project)
+        store = _store_for_id(story_id)
         tag_list = _as_list(tags) if tags else None
         dep_list = _as_list(depends_on) if depends_on else None
         meta = store.create_task(
             story_id, title, description, points, tags=tag_list, depends_on=dep_list
         )
-        write_index(store)
         _emit("task.created", {"taskId": meta.id, "storyId": story_id, "title": title})
         dumped = meta.model_dump(mode="json")
         created = {"id": meta.id, "title": meta.title, "story_id": story_id}
@@ -1923,7 +2263,6 @@ def pm_create_task(
 def pm_create_tasks(
     story_id: str,
     tasks: list[dict],
-    project: Optional[str] = None,
 ) -> str:
     """Create multiple tasks under a story in a single call.
 
@@ -1934,12 +2273,10 @@ def pm_create_tasks(
     Args:
         story_id: Parent story ID (e.g. US-PRJ-1)
         tasks: List of task dicts, each with keys: title (str), description (str), points (int, optional), depends_on (list[str], optional)
-        project: Optional project name (hub mode only)
     """
     try:
-        store = _store(project)
+        store = _store_for_id(story_id)
         created = store.create_tasks(story_id, tasks)
-        write_index(store)
         for t in created:
             _emit(
                 "task.created", {"taskId": t.id, "storyId": story_id, "title": t.title}
@@ -1984,16 +2321,19 @@ def _do_update(
     note: Optional[str] = None,
     evidence: Optional[Evidence] = None,
     run_id: Optional[str] = None,
-    reindex: bool = True,
 ) -> dict:
     """One item's update, exactly as ``pm_update`` performs it, as a dict.
 
     Shared by ``pm_update`` and ``pm_update_many`` so the bulk verb cannot
     drift from the single-item one: parsing, clearing, run-log entries,
     truncation and clamp reporting, criteria reconciliation and status events
-    all happen here, once.  ``reindex=False`` lets a bulk caller write the
-    index once at the end of the sweep instead of once per item; everything
-    else is identical.
+    all happen here, once.
+
+    A write touches the item file and the activity log and nothing else: the
+    five index files are derived, and are rebuilt at the three declared
+    rebuild points (``pm_reindex``, ``pm_commit`` immediately before staging,
+    and the ``projectman reindex`` CLI command) rather than after every
+    mutation — see US-PM-29.
     """
     # Capture old status before update for event emission
     old_status_val = None
@@ -2030,6 +2370,11 @@ def _do_update(
         kwargs["assignee"] = ""
     clear_fields = _as_list(clear) if clear else []
     if epic_id is not None:
+        # Both pm_update and pm_update_many land here, so the link check
+        # (US-PM-36) is written once and neither verb can drift from it.  An
+        # empty string is the legacy "unlink" spelling and names no epic.
+        if epic_id:
+            _validate_epic_link(epic_id)
         kwargs["epic_id"] = epic_id
     if body is not None:
         kwargs["body"] = body
@@ -2058,8 +2403,6 @@ def _do_update(
     # produced it, before any later call can overwrite or inherit it.
     truncation = _note_truncation_fields(store, note)
     clamp = _evidence_clamp_fields(store, evidence_arg)
-    if reindex:
-        write_index(store)
 
     # Emit events for status changes
     if (
@@ -2161,7 +2504,6 @@ def pm_update(
     depends_on: Optional[Union[str, list[str]]] = None,
     outcome: Optional[str] = None,
     note: Optional[str] = None,
-    project: Optional[str] = None,
     task_id: Optional[str] = None,
     run_id: Optional[str] = None,
     evidence: Optional[Evidence] = None,
@@ -2186,7 +2528,6 @@ def pm_update(
         depends_on: Task IDs this task depends on (tasks only) — a list (["US-PRJ-1-1", "US-PRJ-1-2"]) or a comma-separated string ("US-PRJ-1-1,US-PRJ-1-2"); both mean the same thing.
         outcome: Run-log outcome (success/partial/blocked/failed/info). When provided with note, appends a run-log entry for tracking work attempts.
         note: Run-log note describing what was accomplished or what blocked progress. Longer notes are truncated server-side (4096 chars) with a visible marker, never rejected — the status/outcome write always lands. Requires outcome.
-        project: Optional project name (hub mode only)
         task_id: Alias for id — either spelling works; passing both with different values is an error. Note epic_id is NOT an alias: it links a story to an epic.
         run_id: Opaque id of the orchestrator run making this edit, stamped on the activity-log event so `pm_activity(run_id=...)` returns it alongside the run's claims and verdicts. Not a frontmatter field and never a claim — for that use `pm_grab`. Omit on ordinary edits, which belong to no run.
         evidence: Structured proof for the run-log entry — an object with `files` (paths changed), `tests` (objects with `command`, `passed`, optional `summary`), `dod_met` and `dod_unmet` (criteria). Put lists here, never in the note; the note stays a one-line summary (recommended <= 200 chars). Evidence on its own appends an entry (outcome `info`, empty note) — no outcome required. Bounded and clamped, never rejected: files <= 40, tests <= 10, each DoD list <= 20, each string <= 160 chars; when a clamp fires the response carries `evidence_clamped` and `evidence_dropped`.
@@ -2207,7 +2548,7 @@ def pm_update(
         # epic_id is deliberately absent here — on this tool it is the epic a
         # story is being linked to, not another spelling of the item's own id.
         id = _resolve_id("id", id, task_id=task_id)
-        store = _store(project)
+        store = _store_for_id(id)
         return _yaml_dump(
             _do_update(
                 store,
@@ -2246,7 +2587,7 @@ def _bulk_entry_id(entry: dict) -> Optional[str]:
 
 
 #: Fields a per-item patch in ``pm_update_many`` may carry — the same set
-#: ``pm_update`` accepts, minus `project` (a property of the whole call).
+#: ``pm_update`` accepts, minus `run_id` (a property of the whole call).
 BULK_UPDATE_FIELDS = (
     "status",
     "points",
@@ -2346,7 +2687,6 @@ def pm_update_many(
     note: Optional[str] = None,
     run_id: Optional[str] = None,
     evidence: Optional[Evidence] = None,
-    project: Optional[str] = None,
 ) -> str:
     """Update many items in one call — one uniform patch, or one patch per item.
 
@@ -2384,9 +2724,8 @@ def pm_update_many(
         depends_on: Task IDs every listed item depends on (tasks only) — a list (["US-PRJ-1-1", "US-PRJ-1-2"]) or a comma-separated string ("US-PRJ-1-1,US-PRJ-1-2"); both mean the same thing. For different wiring per item, use `updates`.
         outcome: Run-log outcome (success/partial/blocked/failed/info) recorded on every listed item. With `note`, appends a run-log entry to each.
         note: Run-log note recorded on every listed item. Truncated server-side exactly as on pm_update, never rejected. Requires outcome.
-        run_id: Opaque id of the orchestrator run making these edits, stamped on every activity-log event this call emits so `pm_activity(run_id=...)` returns them. A property of the whole call, like `project` — not a per-item field in `updates`.
+        run_id: Opaque id of the orchestrator run making these edits, stamped on every activity-log event this call emits so `pm_activity(run_id=...)` returns them. A property of the whole call — not a per-item field in `updates`.
         evidence: Structured proof for the run-log entry, exactly as on pm_update. Applies to every listed item unless an entry in `updates` carries its own.
-        project: Optional project name (hub mode only)
 
     Response: `updated:` — one entry per item that was written, each shaped
     like `pm_update`'s `updated` block and carrying that item's own extras
@@ -2422,8 +2761,6 @@ def pm_update_many(
       only. The successes are durable — re-sending them just repeats work.
     """
     try:
-        store = _store(project)
-
         uniform = {
             "status": status,
             "points": points,
@@ -2506,7 +2843,7 @@ def pm_update_many(
         for item_id, patch in work:
             try:
                 one = _do_update(
-                    store, item_id, reindex=False, run_id=run_id, **patch
+                    _store_for_id(item_id), item_id, run_id=run_id, **patch
                 )
             except Exception as item_error:
                 # Per item, not per call: one bad ID in a sweep of fifty is
@@ -2521,10 +2858,6 @@ def pm_update_many(
             # item, so it rides along with it.
             entry.update(one)
             written.append(entry)
-
-        # One index write for the whole sweep rather than one per item.
-        if written:
-            write_index(store)
 
         return _yaml_dump(_bulk_result("updated", written, failures))
     except Exception as e:
@@ -2563,7 +2896,6 @@ BULK_ARCHIVE_LIMIT = BULK_UPDATE_LIMIT
 )
 def pm_archive(
     id: Optional[str] = None,
-    project: Optional[str] = None,
     task_id: Optional[str] = None,
 ) -> str:
     """Archive an epic, story, or task.
@@ -2573,14 +2905,12 @@ def pm_archive(
 
     Args:
         id: Epic, story, or task ID to archive (alias: task_id)
-        project: Optional project name (hub mode only)
         task_id: Alias for id — either spelling works; passing both with different values is an error
     """
     try:
         id = _resolve_id("id", id, task_id=task_id)
-        store = _store(project)
+        store = _store_for_id(id)
         _do_archive(store, id)
-        write_index(store)
         return f"archived: {id}"
     except Exception as e:
         raise _failed(e) from e
@@ -2594,7 +2924,6 @@ def pm_archive(
 )
 def pm_archive_many(
     ids: Optional[Union[str, list[str]]] = None,
-    project: Optional[str] = None,
 ) -> str:
     """Archive many items in one call, from an explicit ID list.
 
@@ -2615,7 +2944,6 @@ def pm_archive_many(
 
     Args:
         ids: Item IDs to archive — a list (["US-PRJ-1-1", "US-PRJ-1-2"]) or a comma-separated string ("US-PRJ-1-1,US-PRJ-1-2"); both mean the same thing. Epics, stories and tasks may be mixed. Required — an empty list is an error, never a no-op.
-        project: Optional project name (hub mode only)
 
     Response: `archived:` — one entry per item that was written, each with
     `id`, the `status` it ends up with and `archived: true` — plus `count`
@@ -2652,8 +2980,6 @@ def pm_archive_many(
       archive of an already-archived item.
     """
     try:
-        store = _store(project)
-
         id_list = _as_list(ids) if ids else []
         if not id_list:
             raise ToolError(
@@ -2680,17 +3006,13 @@ def pm_archive_many(
         failures: list[dict] = []
         for item_id in id_list:
             try:
-                written.append(_do_archive(store, item_id))
+                written.append(_do_archive(_store_for_id(item_id), item_id))
             except Exception as item_error:
                 # Per item, not per call: one bad ID in a sweep of fifty is
                 # that item's problem, and the caller is told which.  The
                 # archives that already landed stay landed — see _bulk_result
                 # for the contract both bulk verbs share.
                 failures.append(_bulk_failure(item_id, item_error))
-
-        # One index write for the whole sweep rather than one per item.
-        if written:
-            write_index(store)
 
         return _yaml_dump(_bulk_result("archived", written, failures))
     except Exception as e:
@@ -2744,7 +3066,6 @@ def _do_grab(
             holder=current.assignee,
             task_id=task_id,
         )
-    write_index(store)
     if old_status != "in-progress":
         _emit(
             "task.status_update",
@@ -2847,7 +3168,6 @@ def pm_grab(
     task_id: Optional[str] = None,
     assignee: str = "claude",
     include_story: bool = True,
-    project: Optional[str] = None,
     id: Optional[str] = None,
     run_id: Optional[str] = None,
     fields: Optional[str] = None,
@@ -2870,14 +3190,13 @@ def pm_grab(
         task_id: Task ID to claim (e.g. US-PRJ-1-1) (alias: id)
         assignee: Who is claiming (default "claude" for AI agents, or a human name)
         include_story: Include the parent story body (default true). Pass false when grabbing another task from a story whose context you already have.
-        project: Optional project name (hub mode only)
         id: Alias for task_id — either spelling works; passing both with different values is an error
         run_id: Opaque id of the run making the claim, recorded on the task as `claimed_by_run` and on the activity-log event. Pass a value that is stable for one orchestrator run and different across runs, so a restarted run can query `pm_activity` for the claims its predecessor took. Omit and the server's own per-process id is used, so every claim still has an owner.
         fields: Comma-separated key names to return, e.g. "status,assignee" — a re-claim used only to verify state is `pm_grab(task_id, fields="status,assignee")` and comes back as `grabbed: {task: {id, status, assignee}}`. Names are either keys of the task (status, assignee, points, title, story_id, depends_on, …) or whole top-level sections (body, story_context, sibling_tasks, sibling_tasks_total, sibling_tasks_done, dependency_status, warnings); unnamed sections are omitted and `id` is always kept. Projection is output-only — the claim is identical either way, and expected negatives come back in full. An unknown name is an error listing the valid ones. Omit for the full payload — the default is unchanged.
     """
     try:
         task_id = _resolve_id("task_id", task_id, id=id)
-        store = _store(project)
+        store = _store_for_id(task_id)
         names = _field_names(fields)
         payload = _do_grab(store, task_id, assignee, include_story, run_id=run_id)
         # Expected negatives (`already_claimed`, `not_ready`) are returned
@@ -2902,7 +3221,6 @@ def pm_release(
     note: Optional[str] = None,
     outcome: Optional[str] = None,
     expected_assignee: Optional[str] = None,
-    project: Optional[str] = None,
     id: Optional[str] = None,
     run_id: Optional[str] = None,
 ) -> str:
@@ -2926,7 +3244,6 @@ def pm_release(
         note: Run-log note saying why it was released. Longer notes are truncated server-side, never rejected.
         outcome: Run-log outcome (success/partial/blocked/failed/info); defaults to info when a note is given
         expected_assignee: Release only if this name still holds the task. Omit for an unguarded release. A mismatch is an expected negative (`status: not_holder`) and the task is left untouched.
-        project: Optional project name (hub mode only)
         id: Alias for task_id — either spelling works; passing both with different values is an error
         run_id: Opaque id of the run doing the release, stamped on the activity-log event. Omit and the run recorded in the task's own `claimed_by_run` is used, so a release is attributed to the claim it ends.
 
@@ -2938,7 +3255,7 @@ def pm_release(
     """
     try:
         task_id = _resolve_id("task_id", task_id, id=id)
-        store = _store(project)
+        store = _store_for_id(task_id)
         # A genuine failure, not a negative: assignee is a task-only field, so
         # a story or epic id here means the caller meant something else.
         if store._is_epic_id(task_id) or not store._is_task_id(task_id):
@@ -2976,7 +3293,6 @@ def pm_release(
             **kwargs,
         )
         truncation = _note_truncation_fields(store, note)
-        write_index(store)
         if old_status != status:
             _emit_status_change(store, task_id, old_status, status, meta)
 
@@ -3097,10 +3413,9 @@ def _do_verdict(
         run_id=current.claimed_by_run,
     )
     # Read (and clear) the truncation and clamp records straight after the
-    # write — write_index and the event emit must not get between them.
+    # write — the event emit must not get between them.
     truncation = _note_truncation_fields(store, note)
     clamp = _evidence_clamp_fields(store, evidence)
-    write_index(store)
     if from_status != status:
         _emit_status_change(store, task_id, from_status, status, meta)
 
@@ -3187,7 +3502,6 @@ def _do_accept(
     # both call ``store.update``, and each of those resets them.
     truncation = _note_truncation_fields(store, note)
     clamp = _evidence_clamp_fields(store, evidence)
-    write_index(store)
     if old_status != "done":
         _emit_status_change(store, task_id, old_status, "done", meta)
 
@@ -3215,7 +3529,6 @@ def _do_accept(
                     status="done",
                     run_id=run_id or task_meta.claimed_by_run,
                 )
-                write_index(store)
                 _emit_status_change(
                     store, story_id, old_story_status, "done", story_meta
                 )
@@ -3318,7 +3631,6 @@ def pm_accept(
     next_task: bool = True,
     same_story_only: bool = True,
     assignee: str = "claude",
-    project: Optional[str] = None,
     id: Optional[str] = None,
     run_id: Optional[str] = None,
     evidence: Optional[Evidence] = None,
@@ -3351,7 +3663,6 @@ def pm_accept(
         next_task: Claim the next ready task too (default true). Pass false to complete without claiming anything; the `next` key is then absent.
         same_story_only: Only take a next task from the same story (default true). Pass false to fall through to other stories.
         assignee: Who claims the next task (default "claude")
-        project: Optional project name (hub mode only)
         id: Alias for task_id — either spelling works; passing both with different values is an error
         run_id: Opaque id of this orchestrator run. Recorded as `claimed_by_run` on the next task claimed here, and stamped on the activity-log events. Omit and the server's own per-process id is used.
         evidence: Structured proof for the run-log entry — an object with `files` (paths changed), `tests` (objects with `command`, `passed`, optional `summary`), `dod_met` and `dod_unmet` (criteria). Put lists here, never in the note; the note stays a one-line summary (recommended <= 200 chars). Bounded and clamped, never rejected: files <= 40, tests <= 10, each DoD list <= 20, each string <= 160 chars; when a clamp fires the response carries `evidence_clamped` and `evidence_dropped`.
@@ -3365,7 +3676,7 @@ def pm_accept(
     """
     try:
         task_id = _resolve_id("task_id", task_id, id=id)
-        store = _store(project)
+        store = _store_for_id(task_id)
         _verdict_target("pm_accept", store, task_id)
         note = _require_note("pm_accept", note)
         return _yaml_dump(
@@ -3394,7 +3705,6 @@ def pm_accept(
 def pm_retry(
     task_id: Optional[str] = None,
     note: str = ...,
-    project: Optional[str] = None,
     id: Optional[str] = None,
     evidence: Optional[Evidence] = None,
 ) -> str:
@@ -3414,7 +3724,6 @@ def pm_retry(
     Args:
         task_id: Task ID to retry (e.g. US-PRJ-1-1) (alias: id)
         note: Run-log note saying what failed. Required — a blank note is an error. Longer notes are truncated server-side, never rejected.
-        project: Optional project name (hub mode only)
         id: Alias for task_id — either spelling works; passing both with different values is an error
         evidence: Structured proof for the run-log entry — an object with `files` (paths changed), `tests` (objects with `command`, `passed`, optional `summary`), `dod_met` and `dod_unmet` (criteria). Put lists here, never in the note; the note stays a one-line summary (recommended <= 200 chars). Bounded and clamped, never rejected: files <= 40, tests <= 10, each DoD list <= 20, each string <= 160 chars; when a clamp fires the response carries `evidence_clamped` and `evidence_dropped`.
 
@@ -3426,7 +3735,7 @@ def pm_retry(
     """
     try:
         task_id = _resolve_id("task_id", task_id, id=id)
-        store = _store(project)
+        store = _store_for_id(task_id)
         return _yaml_dump(
             _do_verdict(store, "pm_retry", task_id, note, evidence=evidence)
         )
@@ -3443,7 +3752,6 @@ def pm_retry(
 def pm_park(
     task_id: Optional[str] = None,
     note: str = ...,
-    project: Optional[str] = None,
     id: Optional[str] = None,
     evidence: Optional[Evidence] = None,
 ) -> str:
@@ -3462,7 +3770,6 @@ def pm_park(
     Args:
         task_id: Task ID to park (e.g. US-PRJ-1-1) (alias: id)
         note: Run-log note saying what it is blocked on. Required — a blank note is an error. Longer notes are truncated server-side, never rejected.
-        project: Optional project name (hub mode only)
         id: Alias for task_id — either spelling works; passing both with different values is an error
         evidence: Structured proof for the run-log entry — an object with `files` (paths changed), `tests` (objects with `command`, `passed`, optional `summary`), `dod_met` and `dod_unmet` (criteria). Put lists here, never in the note; the note stays a one-line summary (recommended <= 200 chars). Bounded and clamped, never rejected: files <= 40, tests <= 10, each DoD list <= 20, each string <= 160 chars; when a clamp fires the response carries `evidence_clamped` and `evidence_dropped`.
 
@@ -3474,7 +3781,7 @@ def pm_park(
     """
     try:
         task_id = _resolve_id("task_id", task_id, id=id)
-        store = _store(project)
+        store = _store_for_id(task_id)
         return _yaml_dump(
             _do_verdict(store, "pm_park", task_id, note, evidence=evidence)
         )
@@ -3491,7 +3798,6 @@ def pm_park(
 def pm_review(
     task_id: Optional[str] = None,
     note: str = ...,
-    project: Optional[str] = None,
     id: Optional[str] = None,
     evidence: Optional[Evidence] = None,
 ) -> str:
@@ -3513,7 +3819,6 @@ def pm_review(
     Args:
         task_id: Task ID to send to review (e.g. US-PRJ-1-1) (alias: id)
         note: Run-log note saying what landed and what did not. Required — a blank note is an error. Longer notes are truncated server-side, never rejected.
-        project: Optional project name (hub mode only)
         id: Alias for task_id — either spelling works; passing both with different values is an error
         evidence: Structured proof for the run-log entry — an object with `files` (paths changed), `tests` (objects with `command`, `passed`, optional `summary`), `dod_met` and `dod_unmet` (criteria). Put lists here, never in the note; the note stays a one-line summary (recommended <= 200 chars). Bounded and clamped, never rejected: files <= 40, tests <= 10, each DoD list <= 20, each string <= 160 chars; when a clamp fires the response carries `evidence_clamped` and `evidence_dropped`.
 
@@ -3525,7 +3830,7 @@ def pm_review(
     """
     try:
         task_id = _resolve_id("task_id", task_id, id=id)
-        store = _store(project)
+        store = _store_for_id(task_id)
         return _yaml_dump(
             _do_verdict(store, "pm_review", task_id, note, evidence=evidence)
         )
@@ -3545,7 +3850,6 @@ def pm_done_next(
     note: Optional[str] = None,
     assignee: str = "claude",
     same_story_only: bool = False,
-    project: Optional[str] = None,
     id: Optional[str] = None,
     run_id: Optional[str] = None,
     evidence: Optional[Evidence] = None,
@@ -3572,7 +3876,6 @@ def pm_done_next(
         note: Run-log note describing what was accomplished. Longer notes are truncated server-side (4096 chars) with a visible marker, never rejected — the completion always lands. Omitting it — or passing a blank one, which counts as omitted — logs a placeholder note instead; prefer pm_accept, which requires a real one.
         assignee: Who claims the next task (default "claude")
         same_story_only: Only grab a next task from the same story; report and stop otherwise (default false)
-        project: Optional project name (hub mode only)
         id: Alias for task_id — either spelling works; passing both with different values is an error
         run_id: Opaque id of this orchestrator run. Recorded as `claimed_by_run` on the next task claimed here, and stamped on the activity-log events, so a restarted run can query `pm_activity` for what its predecessor claimed. Omit and the server's own per-process id is used.
         evidence: Structured proof for the run-log entry — an object with `files` (paths changed), `tests` (objects with `command`, `passed`, optional `summary`), `dod_met` and `dod_unmet` (criteria). Put lists here, never in the note; the note stays a one-line summary (recommended <= 200 chars). Bounded and clamped, never rejected: files <= 40, tests <= 10, each DoD list <= 20, each string <= 160 chars; when a clamp fires the response carries `evidence_clamped` and `evidence_dropped`.
@@ -3584,7 +3887,7 @@ def pm_done_next(
     """
     try:
         task_id = _resolve_id("task_id", task_id, id=id)
-        store = _store(project)
+        store = _store_for_id(task_id)
         return _yaml_dump(
             _do_accept(
                 store,
@@ -3616,21 +3919,19 @@ def pm_done_next(
 )
 def pm_estimate(
     id: Optional[str] = None,
-    project: Optional[str] = None,
     task_id: Optional[str] = None,
 ) -> str:
     """Get estimation context for a story or task — returns content + calibration guidelines.
 
     Args:
         id: Story or task ID to estimate (alias: task_id)
-        project: Optional project name (hub mode only)
         task_id: Alias for id — either spelling works; passing both with different values is an error
     """
     try:
         from .estimator import estimate
 
         id = _resolve_id("id", id, task_id=task_id)
-        store = _store(project)
+        store = _store_for_id(id)
         return estimate(store, id)
     except Exception as e:
         raise _failed(e) from e
@@ -3642,21 +3943,19 @@ def pm_estimate(
 )
 def pm_scope(
     id: Optional[str] = None,
-    project: Optional[str] = None,
     story_id: Optional[str] = None,
 ) -> str:
     """Get scoping context for a story — returns story + existing tasks + decomposition guidance.
 
     Args:
         id: Story ID to scope into tasks (alias: story_id)
-        project: Optional project name (hub mode only)
         story_id: Alias for id — either spelling works; passing both with different values is an error
     """
     try:
         from .scoper import scope
 
         id = _resolve_id("id", id, story_id=story_id)
-        store = _store(project)
+        store = _store_for_id(id)
         return scope(store, id)
     except Exception as e:
         raise _failed(e) from e
@@ -3668,7 +3967,7 @@ def pm_scope(
 )
 def pm_audit(
     include_info: bool = False,
-    project: Optional[str] = None,
+    prefix: Optional[str] = None,
     since: Optional[str] = None,
 ) -> str:
     """Run project audit — checks for drift, inconsistencies, stale items.
@@ -3692,68 +3991,28 @@ def pm_audit(
 
     Args:
         include_info: Include info-level findings in the response (default false)
-        project: Optional project name (hub mode only)
+        prefix: Project prefix (hub mode only, e.g. "API")
         since: Digest from a previous pm_audit; short-circuits if unchanged
     """
     try:
         from .audit import run_audit
 
         root = find_project_root()
-        if project:
-            config = load_config(root)
-            if config.hub:
-                pm_dir = root / ".project" / "projects" / project
-                if not (pm_dir / "config.yaml").exists():
-                    raise ToolError(f"project '{project}' not found in hub")
-                return run_audit(
-                    root,
-                    project_dir=pm_dir,
-                    include_info=include_info,
-                    since=since,
-                )
+        # A prefix naming the hub's own store lands on the same directory as
+        # no prefix at all, so only a subproject needs the explicit override.
+        entry = _hub_entry_for_prefix(prefix)
+        if entry is not None and not entry.get("hub"):
+            # Epics are hub-level (US-PM-36), so a subproject story linking up
+            # to one is correct, not orphaned.  Hand the check the hub's epic
+            # IDs rather than teaching the audit about hubs.
+            return run_audit(
+                root,
+                project_dir=Path(entry["path"]),
+                include_info=include_info,
+                since=since,
+                known_epic_ids={e.id for e in _store().list_epics()},
+            )
         return run_audit(root, include_info=include_info, since=since)
-    except Exception as e:
-        raise _failed(e) from e
-
-
-@mcp.tool(
-    title="Hub Repair",
-    annotations=ToolAnnotations(
-        title="Hub Repair", readOnlyHint=False, destructiveHint=False
-    ),
-)
-def pm_repair() -> str:
-    """Scan the hub for unregistered projects, initialize missing PM data
-    directories (hub_root/.project/projects/{name}/), rebuild all indexes
-    and embeddings, and regenerate dashboards.
-    Hub mode only. Writes a REPAIR.md report."""
-    try:
-        config = load_config(find_project_root())
-        if not config.hub:
-            raise ToolError("not a hub project")
-        from .hub.registry import repair
-
-        return _raise_on_hub_error(repair())
-    except Exception as e:
-        raise _failed(e) from e
-
-
-@mcp.tool(
-    title="Validate Branches",
-    annotations=ToolAnnotations(title="Validate Branches", readOnlyHint=True),
-)
-def pm_validate_branches() -> str:
-    """Validate that each hub submodule is on its expected tracked branch.
-
-    Returns structured data with aligned, misaligned, detached, and missing
-    projects plus an overall ok flag and summary string.
-    """
-    try:
-        from .hub.registry import validate_branches
-
-        root = find_project_root()
-        result = validate_branches(root=root)
-        return _yaml_dump(result)
     except Exception as e:
         raise _failed(e) from e
 
@@ -3762,13 +4021,13 @@ def pm_validate_branches() -> str:
     title="Next Malformed File",
     annotations=ToolAnnotations(title="Next Malformed File", readOnlyHint=True),
 )
-def pm_malformed(project: Optional[str] = None) -> str:
+def pm_malformed(prefix: Optional[str] = None) -> str:
     """Get the next malformed file to fix. Returns one file at a time with its full
     content. Call pm_fix_malformed to fix it (which removes it from the queue),
     then call pm_malformed again to get the next one. Repeat until done.
 
     Args:
-        project: Optional project name (hub mode only). Omit to scan all.
+        prefix: Project prefix (hub mode only). Omit to scan all.
     """
     try:
         import frontmatter
@@ -3779,19 +4038,21 @@ def pm_malformed(project: Optional[str] = None) -> str:
         # Collect all malformed files across projects
         all_files = []  # list of (project_name, path)
         dirs_to_scan = []
-        if project:
-            proj_dir = _resolve_project_dir(project)
+        entry = _hub_entry_for_prefix(prefix) if prefix else None
+        if prefix:
+            proj_dir = Path(entry["path"]) if entry else hub_store_dir(root)
             malformed_dir = proj_dir / "malformed"
             if malformed_dir.exists():
-                dirs_to_scan.append((project, malformed_dir))
+                label = entry["name"] if entry else config.name
+                dirs_to_scan.append((label, malformed_dir))
         elif config.hub:
             hub_mal = root / ".project" / "malformed"
             if hub_mal.exists() and any(hub_mal.iterdir()):
                 dirs_to_scan.append(("hub", hub_mal))
-            for name in config.projects:
-                mal = root / ".project" / "projects" / name / "malformed"
+            for entry in hub_stores(root):
+                mal = entry["path"] / "malformed"
                 if mal.exists() and any(mal.iterdir()):
-                    dirs_to_scan.append((name, mal))
+                    dirs_to_scan.append((entry["name"], mal))
         else:
             malformed_dir = root / ".project" / "malformed"
             if malformed_dir.exists():
@@ -3841,7 +4102,7 @@ def pm_fix_malformed(
     priority: Optional[str] = None,
     points: Optional[int] = None,
     story_id: Optional[str] = None,
-    project: Optional[str] = None,
+    prefix: Optional[str] = None,
 ) -> str:
     """Fix a malformed file by rewriting it with valid frontmatter, then restore it.
 
@@ -3855,14 +4116,14 @@ def pm_fix_malformed(
         priority: Priority for stories (must/should/could/wont)
         points: Story points
         story_id: Parent story ID (required for tasks)
-        project: Optional project name (hub mode only)
+        prefix: Project prefix (hub mode only, e.g. "API")
     """
     try:
         import frontmatter as fm
         from datetime import date
         from .models import StoryFrontmatter, TaskFrontmatter
 
-        proj_dir = _resolve_project_dir(project)
+        proj_dir = _project_dir_for_prefix(prefix)
         malformed_dir = proj_dir / "malformed"
         source = malformed_dir / filename
 
@@ -3924,8 +4185,6 @@ def pm_fix_malformed(
         if not any(malformed_dir.iterdir()):
             malformed_dir.rmdir()
 
-        store = _store(project)
-        write_index(store)
         return _yaml_dump(
             {"fixed": meta.model_dump(mode="json"), "restored_to": str(dest)}
         )
@@ -3939,18 +4198,18 @@ def pm_fix_malformed(
         title="Restore File", readOnlyHint=False, destructiveHint=True
     ),
 )
-def pm_restore(filename: str, project: Optional[str] = None) -> str:
+def pm_restore(filename: str, prefix: Optional[str] = None) -> str:
     """Restore a fixed file from the malformed quarantine back to stories/ or tasks/.
 
     Args:
         filename: The filename to restore (e.g. PRJ-1.md)
-        project: Optional project name (hub mode only)
+        prefix: Project prefix (hub mode only, e.g. "API")
     """
     try:
         import frontmatter as fm
         from .models import StoryFrontmatter, TaskFrontmatter
 
-        proj_dir = _resolve_project_dir(project)
+        proj_dir = _project_dir_for_prefix(prefix)
         malformed_dir = proj_dir / "malformed"
         source = malformed_dir / filename
 
@@ -3985,8 +4244,6 @@ def pm_restore(filename: str, project: Optional[str] = None) -> str:
         if not any(malformed_dir.iterdir()):
             malformed_dir.rmdir()
 
-        store = _store(project)
-        write_index(store)
         return f"restored: {filename} → {'tasks' if is_task else 'stories'}/"
     except Exception as e:
         raise _failed(e) from e
@@ -3998,14 +4255,14 @@ def pm_restore(filename: str, project: Optional[str] = None) -> str:
         title="Rebuild Index", readOnlyHint=False, destructiveHint=False
     ),
 )
-def pm_reindex(project: Optional[str] = None) -> str:
+def pm_reindex(prefix: Optional[str] = None) -> str:
     """Rebuild the project index and optionally reindex embeddings.
 
     Args:
-        project: Optional project name (hub mode only)
+        prefix: Project prefix (hub mode only, e.g. "API")
     """
     try:
-        store = _store(project)
+        store = _store_for_prefix(prefix)
         write_index(store)
 
         # Try to reindex embeddings too
@@ -4027,7 +4284,7 @@ def pm_reindex(project: Optional[str] = None) -> str:
 )
 def pm_auto_scope(
     mode: Optional[str] = None,
-    project: Optional[str] = None,
+    prefix: Optional[str] = None,
     limit: int = 5,
     offset: int = 0,
 ) -> str:
@@ -4038,14 +4295,14 @@ def pm_auto_scope(
 
     Args:
         mode: Force mode: "full" (codebase scan for new projects) or "incremental" (scope existing stories). Auto-detected if omitted.
-        project: Optional project name (hub mode only)
+        prefix: Project prefix - required in a hub (e.g. "API")
         limit: Max stories per batch in incremental mode (default 5)
         offset: Starting index for pagination in incremental mode (default 0)
     """
     try:
         from .scoper import auto_scope
 
-        store = _store(project)
+        store = _store_for_prefix(prefix, for_create=True, verb="pm_auto_scope")
         return auto_scope(store, mode=mode, limit=limit, offset=offset)
     except Exception as e:
         raise _failed(e) from e
@@ -4058,14 +4315,14 @@ def pm_auto_scope(
     title="Git Status Dashboard",
     annotations=ToolAnnotations(title="Git Status Dashboard", readOnlyHint=True),
 )
-def pm_git_status(project: Optional[str] = None) -> str:
-    """Show git status across all hub submodules — branch, dirty, ahead/behind.
+def pm_git_status(prefix: Optional[str] = None) -> str:
+    """Show each hub subproject's PM store — branch, dirty, ahead/behind.
 
-    Returns the structured list from git_status_all().
-    Use this as the first thing to check before any coordinated operation.
+    Read-only rollup: a row per store, plus its checked-out code branch.
+    A subproject with no store mounted is a row saying so, not an error.
 
     Args:
-        project: Optional project name to check a single subproject instead of all
+        prefix: Project prefix to check one subproject instead of all
     """
     try:
         from .hub.registry import git_status_all
@@ -4073,18 +4330,20 @@ def pm_git_status(project: Optional[str] = None) -> str:
         root = find_project_root()
         data = git_status_all(root=root)
 
-        if project:
-            # Filter to a single project
-            matched = [p for p in data.get("projects", []) if p["name"] == project]
+        entry = _hub_entry_for_prefix(prefix)
+        if entry is not None:
+            # Filter to the one subproject the prefix names
+            name = entry["name"]
+            matched = [p for p in data.get("projects", []) if p["name"] == name]
             if not matched:
-                raise ToolError(f"project '{project}' not found in hub status")
+                raise ToolError(f"project '{name}' not found in hub status")
             return _yaml_dump(
                 {
                     "projects": matched,
                     "total": 1,
                     "issues": 1 if matched[0].get("issues") else 0,
                     "ok": not matched[0].get("issues"),
-                    "summary": f"Status for {project}",
+                    "summary": f"Status for {name}",
                     "pm_store": data.get("pm_store"),
                 }
             )
@@ -4112,30 +4371,39 @@ def _nothing_to_commit() -> str:
     ),
 )
 def pm_commit(
-    scope: str = "all",
+    prefix: Optional[str] = None,
     message: Optional[str] = None,
 ) -> str:
     """Commit .project/ changes with an auto-generated message.
 
-    Stages changes under .project/ filtered by scope and commits them.
+    Stages and commits one store, in that store's own directory, so the
+    commit lands on the branch owning it ("projectman" for a worktree store).
     If no message is provided, one is generated from the changed files
     (e.g. "pm: update US-PRJ-5, US-PRJ-3-1").
 
     Args:
-        scope: Commit scope — "hub" (hub-level only, excludes subprojects), "project:<name>" (specific subproject), or "all" (everything under .project/)
+        prefix: In a hub, the project to commit ("API"). Omit for the hub's own store. Ignored outside a hub.
         message: Optional commit message (auto-generated if omitted)
     """
     try:
         root = find_project_root()
         config = load_config(root)
 
+        # The five index files are derived, not rewritten on every mutation
+        # (US-PM-29).  This is one of the three rebuild points, and it sits
+        # immediately before staging so the commit carries an index that
+        # matches the item files it commits.  The hub route rebuilds inside
+        # ``hub.registry.pm_commit``, for the one store it is committing.
         if config.hub:
             from .hub.registry import pm_commit as _hub_commit
 
-            result = _hub_commit(scope=scope, message=message, root=root)
+            entry = _hub_entry_for_prefix(prefix, verb="pm_commit")
+            store_dir = entry["path"] if entry else hub_store_dir(root)
+            result = _hub_commit(store_dir, message=message)
         else:
-            # Non-hub: scope is ignored (single project)
+            # Non-hub: the prefix is ignored (single project)
             store = Store(root)
+            write_index(store)
             result = store.commit_project_changes(message=message)
             # Normalize key name to match hub format
             if "files_changed" in result:
@@ -4171,15 +4439,15 @@ def pm_commit(
     ),
 )
 def pm_push(
-    scope: str = "hub",
+    prefix: Optional[str] = None,
 ) -> str:
     """Push committed .project/ changes to the remote.
 
-    Validates branch alignment before pushing.  In hub mode, uses
-    scope-aware routing with auto-rebase on conflict.
+    Pushes the branch that owns one store — "projectman" for a worktree
+    store, the checked-out branch otherwise — and nothing else.
 
     Args:
-        scope: Push scope — "hub" (hub repo on main), "project:<name>" (specific subproject), or "all" (coordinated push)
+        prefix: In a hub, the project to push ("API"). Omit for the hub's own store. Ignored outside a hub.
     """
     try:
         root = find_project_root()
@@ -4188,56 +4456,16 @@ def pm_push(
         if config.hub:
             from .hub.registry import pm_push as _hub_push
 
-            result = _raise_on_hub_error(_hub_push(scope=scope, root=root))
-            return _yaml_dump({"pushed": result})
+            entry = _hub_entry_for_prefix(prefix, verb="pm_push")
+            store_dir = entry["path"] if entry else hub_store_dir(root)
+            return _yaml_dump({"pushed": _hub_push(store_dir)})
         else:
-            # Non-hub: push normally
+            # Non-hub: the prefix is ignored (single project)
             store = Store(root)
             result = store.push_project_changes()
             return _yaml_dump({"pushed": result})
     except RuntimeError as e:
         raise _failed(e) from e
-    except Exception as e:
-        raise _failed(e) from e
-
-
-@mcp.tool(
-    title="Coordinated Push All",
-    annotations=ToolAnnotations(
-        title="Coordinated Push All", readOnlyHint=False, destructiveHint=True
-    ),
-)
-def pm_push_all(
-    dry_run: bool = False,
-    projects: Optional[str] = None,
-) -> str:
-    """Coordinated push: preflight, push subprojects, then push hub.
-
-    Discovers dirty projects automatically (or uses explicit list),
-    runs preflight validation, pushes subprojects in order, then pushes
-    the hub with auto-rebase.
-
-    Args:
-        dry_run: If True, show what would be pushed without executing
-        projects: Optional comma-separated project names (e.g. "api,web"). Omit to auto-discover dirty projects.
-    """
-    try:
-        from .hub.registry import coordinated_push
-
-        root = find_project_root()
-
-        project_list = (
-            [p.strip() for p in projects.split(",") if p.strip()] if projects else None
-        )
-
-        result = _raise_on_hub_error(
-            coordinated_push(
-                projects=project_list,
-                dry_run=dry_run,
-                root=root,
-            )
-        )
-        return _yaml_dump(result)
     except Exception as e:
         raise _failed(e) from e
 
@@ -4257,7 +4485,7 @@ def pm_create_sprint(
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
     planned_stories: Optional[Union[str, list[str]]] = None,
-    project: Optional[str] = None,
+    prefix: Optional[str] = None,
 ) -> str:
     """Create a sprint with a name, goal, dates, and planned stories.
 
@@ -4267,12 +4495,12 @@ def pm_create_sprint(
         start_date: Optional start date (YYYY-MM-DD)
         end_date: Optional end date (YYYY-MM-DD)
         planned_stories: Story IDs — a list (["US-PRJ-1", "US-PRJ-2"]) or a comma-separated string ("US-PRJ-1,US-PRJ-2"); both mean the same thing.
-        project: Optional project name (hub mode only)
+        prefix: Project prefix - required in a hub (e.g. "API")
 
     Returns dependency warnings if planned stories have unmet external dependencies.
     """
     try:
-        store = _store(project)
+        store = _store_for_prefix(prefix, for_create=True, verb="pm_create_sprint")
         story_list = _as_list(planned_stories) or []
 
         # Check for dependency issues
@@ -4320,7 +4548,6 @@ def pm_create_sprint(
 )
 def pm_get_sprint(
     sprint_id: Optional[str] = None,
-    project: Optional[str] = None,
     id: Optional[str] = None,
 ) -> str:
     """View sprint details with live progress per story.
@@ -4329,12 +4556,11 @@ def pm_get_sprint(
 
     Args:
         sprint_id: Sprint ID (e.g. SPRINT-PRJ-1) (alias: id)
-        project: Optional project name (hub mode only)
         id: Alias for sprint_id — either spelling works; passing both with different values is an error
     """
     try:
         sprint_id = _resolve_id("sprint_id", sprint_id, id=id)
-        store = _store(project)
+        store = _store_for_id(sprint_id)
         meta, body = store.get_sprint(sprint_id)
         result = meta.model_dump(mode="json")
 
@@ -4418,7 +4644,7 @@ def pm_get_sprint(
 )
 def pm_list_sprints(
     status: Optional[str] = None,
-    project: Optional[str] = None,
+    prefix: Optional[str] = None,
     brief: bool = False,
     fields: Optional[str] = None,
 ) -> str:
@@ -4433,12 +4659,12 @@ def pm_list_sprints(
 
     Args:
         status: Optional filter: planning, active, completed, cancelled
-        project: Optional project name (hub mode only)
+        prefix: Project prefix (hub mode only, e.g. "API")
         brief: Drop the free-text (default false). Keeps id, name, status, start_date, end_date, planned_points, completed_points and planned_stories, and omits goal. Use it to scan a sprint history: pm_list_sprints(status="completed", brief=True).
         fields: Comma-separated key names to return, e.g. "status,completed_points" — everything else is omitted and `id` is always kept, exactly as on pm_get. An unknown name is an error listing the valid ones. If both are given, `fields` wins — explicit beats preset. Omit both for the full sprints; `count` is always present and the default is unchanged.
     """
     try:
-        store = _store(project)
+        store = _store_for_prefix(prefix)
         names = _field_names(fields)
         sprints = [s.model_dump(mode="json") for s in store.list_sprints(status=status)]
         if names is not None:
@@ -4468,7 +4694,6 @@ def pm_update_sprint(
     end_date: Optional[str] = None,
     planned_stories: Optional[Union[str, list[str]]] = None,
     run_id: Optional[str] = None,
-    project: Optional[str] = None,
     id: Optional[str] = None,
 ) -> str:
     """Update sprint fields (status, stories, dates, etc.).
@@ -4484,14 +4709,13 @@ def pm_update_sprint(
         end_date: End date (YYYY-MM-DD)
         planned_stories: Story IDs replacing the current set — a list (["US-PRJ-1", "US-PRJ-2"]) or a comma-separated string ("US-PRJ-1,US-PRJ-2"); both mean the same thing.
         run_id: Opaque id of the orchestrator run completing (or otherwise editing) the sprint, stamped on the activity-log event so `pm_activity(run_id=...)` returns the sprint close beside the run's claims and verdicts. Not a sprint field.
-        project: Optional project name (hub mode only)
         id: Alias for sprint_id — either spelling works; passing both with different values is an error
 
     Returns dependency warnings if new planned stories have unmet dependencies.
     """
     try:
         sprint_id = _resolve_id("sprint_id", sprint_id, id=id)
-        store = _store(project)
+        store = _store_for_id(sprint_id)
         kwargs = {}
         if name is not None:
             kwargs["name"] = name
@@ -4725,7 +4949,7 @@ def pm_activity(
     run_id: Optional[str] = None,
     limit: int = 20,
     offset: int = 0,
-    project: Optional[str] = None,
+    prefix: Optional[str] = None,
     id: Optional[str] = None,
 ) -> str:
     """Query the activity log for project mutations.
@@ -4739,7 +4963,7 @@ def pm_activity(
         run_id: Filter to the events one orchestrator run produced — claims, releases, verdicts, the story closures they triggered, and anything tagged with the same id via `pm_update`/`pm_update_many`/`pm_update_sprint`. This is how a run builds its final report (and a restarted run its predecessor's) from the log rather than from memory: `actor` is the same string for every run on a machine, so only this separates one run from the next. Paginate with `offset` while the response reports `has_more: true`.
         limit: Max entries to return (default 20)
         offset: Starting index for pagination (default 0)
-        project: Optional project name (hub mode only)
+        prefix: Project prefix (hub mode only, e.g. "API")
         id: Alias for item_id — either spelling works; passing both with different values is an error
 
     Response: `total` (matching entries), `showing`, `has_more` (true when more
@@ -4751,7 +4975,7 @@ def pm_activity(
     try:
         # Optional filter, so "neither" means "no filter" rather than an error.
         item_id = _resolve_id("item_id", item_id, required=False, id=id)
-        pm_dir = _resolve_project_dir(project)
+        pm_dir = _project_dir_for_prefix(prefix)
         log_path = pm_dir / "activity.jsonl"
 
         if not log_path.exists():
@@ -4855,7 +5079,6 @@ def pm_run_log(
     id: Optional[str] = None,
     limit: int = 20,
     offset: int = 0,
-    project: Optional[str] = None,
     task_id: Optional[str] = None,
     has_evidence: Optional[bool] = None,
 ) -> str:
@@ -4866,7 +5089,6 @@ def pm_run_log(
         id: Epic, story, or task ID (alias: task_id)
         limit: Max entries to return (default 20, most recent first)
         offset: Number of entries to skip
-        project: Optional project name (hub mode only)
         task_id: Alias for id — either spelling works; passing both with different values is an error
         has_evidence: Filter by structured evidence — true returns only entries carrying an `evidence` object, false only those without, omitted returns everything. "Did this completion prove anything" is this one call. An `evidence` present but with all lists empty counts as evidence: it explicitly says "nothing to show".
 
@@ -4877,7 +5099,7 @@ def pm_run_log(
         import json
 
         id = _resolve_id("id", id, task_id=task_id)
-        store = _store(project)
+        store = _store_for_id(id)
         entries = store.get_run_log(
             id, limit=limit, offset=offset, has_evidence=has_evidence
         )
@@ -4909,17 +5131,13 @@ def pm_run_log(
 #:
 #: ``maintenance`` is the break-glass cluster.  Unlike the other two it is
 #: hidden because it is the *wrong audience*, not because nobody wants it:
-#: repairing a hub or un-quarantining a malformed file is a human recovery
-#: action, and each of the five has a ``projectman`` CLI equivalent
-#: (``repair``, ``restore``, ``validate-branches``, ``fix-malformed``,
-#: ``push-all``), so hiding them from the agent tool list costs no reach.
+#: un-quarantining a malformed file is a human recovery action, and each of
+#: the two has a ``projectman`` CLI equivalent (``restore``,
+#: ``fix-malformed``), so hiding them from the agent tool list costs no reach.
 TOOL_FAMILIES: dict[str, tuple[str, ...]] = {
     "maintenance": (
-        "pm_repair",
         "pm_restore",
-        "pm_validate_branches",
         "pm_fix_malformed",
-        "pm_push_all",
     ),
     "web": (
         "pm_web_start",

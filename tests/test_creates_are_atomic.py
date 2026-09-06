@@ -237,7 +237,7 @@ class TestATornCreateNeverBecomesAnItem:
         from projectman import server as srv
         from mcp.server.fastmcp.exceptions import ToolError
 
-        store = srv._store(None)
+        store = srv._store()
         proj = _proj(server_project)
         stories = proj / "stories"
         malformed = proj / "malformed"

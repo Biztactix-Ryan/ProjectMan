@@ -168,7 +168,11 @@ def init(name, prefix, description, hub, no_attach):
     (proj / "epics").mkdir()
 
     if hub:
-        (proj / "projects").mkdir()
+        # Subproject checkouts sit beside the hub store, not inside it: each
+        # one carries its own .project/ (US-PM-31).
+        from projectman.hub.stores import projects_dir
+
+        projects_dir(root).mkdir(exist_ok=True)
         (proj / "roadmap").mkdir()
         (proj / "dashboards").mkdir()
 
@@ -194,6 +198,13 @@ def init(name, prefix, description, hub, no_attach):
     }
     with open(proj / "index.yaml", "w") as f:
         yaml.dump(empty_index, f, default_flow_style=False)
+
+    # ...and keep it, and the four markdown indexes, out of git. They are
+    # derived from the item files and rebuilt on demand (US-PM-29); tracking
+    # them would put an index echo in every commit that touches an item.
+    from .indexer import write_store_gitignore
+
+    write_store_gitignore(proj)
 
     # Hub context docs
     if hub:
@@ -513,18 +524,89 @@ def sync():
 
 
 @cli.command()
-def repair():
-    """Scan hub, discover projects, init missing PM data dirs, rebuild indexes and embeddings."""
-    from projectman.hub.registry import repair as _repair
-    report = _repair()
-    click.echo(report)
+@click.option("--project", default=None, help="Project name (hub mode only)")
+def reindex(project):
+    """Regenerate index.yaml and the four markdown indexes from the item files.
+
+    One of the three rebuild points for the derived indexes (US-PM-29); the
+    other two are the ``pm_reindex`` tool and ``projectman commit``, which
+    rebuilds immediately before staging.
+    """
+    from projectman.config import find_project_root, load_config
+    from projectman.indexer import write_index
+    from projectman.store import Store
+
+    root = find_project_root()
+
+    if project:
+        config = load_config(root)
+        if not config.hub:
+            click.echo("Error: --project is hub mode only", err=True)
+            raise SystemExit(1)
+        from projectman.hub.stores import attached_store_path
+
+        try:
+            project_dir = attached_store_path(root, project)
+        except FileNotFoundError:
+            click.echo(f"Error: project '{project}' not found in hub", err=True)
+            raise SystemExit(1)
+        store = Store(root, project_dir=project_dir)
+    else:
+        store = Store(root)
+
+    write_index(store)
+    click.echo(f"Reindexed: {store.project_dir}")
+
+
+def _prefix_for_project(name):
+    """Translate the break-glass CLI's ``--project NAME`` into a store prefix.
+
+    The tools address a store by the prefix inside its IDs (US-PM-34), but a
+    human recovering a broken project knows its *name* — the directory they
+    are standing next to — and should not have to look the prefix up. Outside
+    a hub there is one store and nothing to translate.
+    """
+    if not name:
+        return None
+    from projectman.config import find_project_root, load_config
+    from projectman.hub.stores import hub_stores
+
+    root = find_project_root()
+    if not load_config(root).hub:
+        click.echo("Error: --project is hub mode only", err=True)
+        raise SystemExit(1)
+    for entry in hub_stores(root):
+        if entry["name"] == name:
+            return entry.get("prefix")
+    click.echo(f"Error: project '{name}' not found in hub", err=True)
+    raise SystemExit(1)
+
+
+def _store_dir_for_prefix(root, prefix):
+    """The one store ``projectman commit`` / ``push`` should act on.
+
+    The same rule the MCP verbs use, and the same resolver:
+    :func:`projectman.server._hub_entry_for_prefix` — no prefix means the
+    hub's own store, a prefix names one subproject's store, and an unknown
+    prefix is the coded ``not_found`` listing the prefixes that do exist.
+    Only called in a hub; outside one there is a single store and nothing to
+    resolve.
+    """
+    from projectman.hub.stores import hub_store_dir
+    from projectman.server import _hub_entry_for_prefix
+
+    try:
+        entry = _hub_entry_for_prefix(prefix)
+    except (FileNotFoundError, ValueError) as e:
+        click.echo(f"Error: {e}", err=True)
+        raise SystemExit(1)
+    return entry["path"] if entry else hub_store_dir(root)
 
 
 def _break_glass(fn, **kwargs) -> str:
     """Run one break-glass server function and turn its failure into exit 1.
 
-    The ``maintenance`` tool family (``pm_repair``, ``pm_restore``,
-    ``pm_validate_branches``, ``pm_fix_malformed``, ``pm_push_all``) is
+    The ``maintenance`` tool family (``pm_restore``, ``pm_fix_malformed``) is
     hidden from the agent tool list by default — see
     ``server.TOOL_FAMILIES`` — because recovering a broken project is a
     human action.  Hidden is not gone: these commands call the very same
@@ -544,7 +626,11 @@ def restore(filename, project):
     """Move a fixed file out of malformed/ back into stories/ or tasks/."""
     from projectman import server
 
-    click.echo(_break_glass(server.pm_restore, filename=filename, project=project))
+    click.echo(
+        _break_glass(
+            server.pm_restore, filename=filename, prefix=_prefix_for_project(project)
+        )
+    )
 
 
 @cli.command("fix-malformed")
@@ -574,19 +660,9 @@ def fix_malformed(filename, id_, title, item_type, body, status, priority, point
             priority=priority,
             points=points,
             story_id=story_id,
-            project=project,
+            prefix=_prefix_for_project(project),
         )
     )
-
-
-@cli.command("push-all")
-@click.option("--dry-run", is_flag=True, help="Show what would be pushed without executing")
-@click.option("--projects", default=None, help="Comma-separated project names (default: auto-discover dirty projects)")
-def push_all(dry_run, projects):
-    """Coordinated push: preflight, push subprojects, then push the hub."""
-    from projectman import server
-
-    click.echo(_break_glass(server.pm_push_all, dry_run=dry_run, projects=projects))
 
 
 @cli.command("migrate-archived")
@@ -614,7 +690,9 @@ def migrate_archived(apply_changes, project):
 
     root = find_project_root()
     if project:
-        store = Store(root, project_dir=root / ".project" / "projects" / project)
+        from projectman.hub.stores import store_path
+
+        store = Store(root, project_dir=store_path(root, project))
     else:
         store = Store(root)
 
@@ -688,6 +766,72 @@ def migrate_worktree(branch, no_push):
     click.echo(format_result(result))
 
 
+@cli.command("migrate-hub")
+@click.option("--no-push", "no_push", is_flag=True, help="Migrate locally only; never push, even when a subproject has an origin remote")
+@click.option("--dry-run", "dry_run", is_flag=True, help="Check every precondition and report the plan without changing anything")
+def migrate_hub(no_push, dry_run):
+    """Move PM data out of the hub, and subproject epics up into it.
+
+    One-time migration for a hub built before the store moved. Per-project PM
+    data used to live inside the hub's own store, so every task edit in every
+    project became a commit on the hub repo. It now lives at
+    projects/{name}/.project — a git worktree of that submodule's `projectman`
+    branch, the same layout `projectman add-project` creates today.
+
+    For each registered project that still has data in the hub, this attaches
+    the submodule's existing `projectman` branch (or creates the orphan branch
+    when there is none), copies the store across byte for byte, and commits it
+    there with a message naming where it came from. Then, once, it `git rm -r`s
+    the hub's copies and commits that removal on the hub.
+
+    \b
+    Then the epics
+    --------------
+    Epics live at hub level only, so a second half runs after the store move:
+    every epics/EPIC-{PROJECT}-N.md left in a subproject store moves into the
+    hub's .project/epics/ under a fresh hub-prefixed ID from the hub's own
+    counter, and every story in every store that linked to one — including a
+    story in one subproject pointing at an epic that lived in another — has
+    its epic_id rewritten. Each changed store is committed inside itself, with
+    the old-to-new mapping in the message, and that mapping is printed.
+
+    The halves are independent: a hub whose stores are already at
+    projects/{name}/.project gets just the epics step, so this is still the
+    command to run after the store move is long done.
+
+    \b
+    Refusals — checked before the first change, so nothing is half-migrated
+    -----------------------------------------------------------------------
+    It exits 1 without touching anything when the hub's working tree is dirty,
+    when any affected submodule's tree is dirty (same rule as
+    `projectman migrate-worktree`: a staged or unstaged change to a tracked
+    file), when an already-mounted subproject store the epics step would
+    commit in has uncommitted changes, when a submodule is not checked out, or
+    when a submodule's `projectman` branch already carries a store of its own —
+    merging two PM stores is not a call this command makes.
+
+    A hub with nothing left to move — no store in the old place and no
+    subproject epic — says so and exits 0, so re-running is safe. Use
+    --dry-run to check the preconditions and see the plan and the epic mapping
+    first; it changes nothing, not even next_epic_id.
+
+    Each `projectman` branch is pushed with `git push -u origin projectman`
+    when the subproject has an origin remote; --no-push skips that. A push
+    failure only warns — the local move is already complete. The hub's own
+    commit and its updated submodule pointers are yours to push.
+    """
+    from projectman.hub.migrate import format_migration, migrate_hub as _migrate_hub
+    from projectman.worktree import MigrationError
+
+    try:
+        results = _migrate_hub(Path.cwd(), push=not no_push, dry_run=dry_run)
+    except MigrationError as e:
+        click.echo(f"Error: {e}", err=True)
+        raise SystemExit(1)
+
+    click.echo(format_migration(results))
+
+
 @cli.command("attach")
 @click.option("--branch", default="projectman", help="Branch to mount at .project (default: projectman)")
 def attach(branch):
@@ -735,11 +879,31 @@ def audit(audit_all):
     if audit_all:
         config = load_config(root)
         if config.hub:
-            for name in config.projects:
-                pm_dir = root / ".project" / "projects" / name
-                if (pm_dir / "config.yaml").exists():
-                    click.echo(f"\n--- Auditing {name} ---")
-                    click.echo(run_audit(root, project_dir=pm_dir))
+            from projectman.hub.stores import hub_stores
+
+            from projectman.hub.stores import attach_hint
+            from projectman.store import Store
+
+            # Epics are hub-level (US-PM-36): a subproject story pointing at a
+            # hub epic is a correct link, so every subproject audit is told
+            # which epic IDs the hub owns.
+            hub_epic_ids = {e.id for e in Store(root).list_epics()}
+
+            for entry in hub_stores(root):
+                if entry["attached"]:
+                    click.echo(f"\n--- Auditing {entry['name']} ---")
+                    click.echo(
+                        run_audit(
+                            root,
+                            project_dir=entry["path"],
+                            known_epic_ids=hub_epic_ids,
+                        )
+                    )
+                else:
+                    # Say what was skipped and why — a silent skip made
+                    # "audited everything" untrue (US-PM-31-9).
+                    click.echo(f"\n--- Skipping {entry['name']}: not attached ---")
+                    click.echo(attach_hint(entry["name"]))
             return
 
     report = run_audit(root)
@@ -747,9 +911,9 @@ def audit(audit_all):
 
 
 @cli.command()
-@click.option("--scope", default="all", help="Scope: hub, project:<name>, or all (default: all)")
+@click.option("--prefix", default=None, help="In a hub, the prefix of the project to commit (default: the hub's own store). Ignored outside a hub")
 @click.option("--message", "-m", default=None, help="Commit message (auto-generated if omitted)")
-def commit(scope, message):
+def commit(prefix, message):
     """Commit .project/ changes with auto-generated message."""
     from projectman.config import find_project_root, load_config
     from projectman.store import Store
@@ -760,7 +924,7 @@ def commit(scope, message):
     if config.hub:
         from projectman.hub.registry import pm_commit
         try:
-            result = pm_commit(scope=scope, message=message, root=root)
+            result = pm_commit(_store_dir_for_prefix(root, prefix), message=message)
         except (ValueError, FileNotFoundError) as e:
             click.echo(f"Error: {e}", err=True)
             raise SystemExit(1)
@@ -780,7 +944,12 @@ def commit(scope, message):
         for f in result["files_committed"]:
             click.echo(f"  {f}")
     else:
+        from projectman.indexer import write_index
+
         store = Store(root)
+        # Rebuild the derived indexes immediately before staging (US-PM-29):
+        # mutating tools no longer rewrite them on every write.
+        write_index(store)
         try:
             result = store.commit_project_changes(message=message)
         except RuntimeError as e:
@@ -797,10 +966,8 @@ def commit(scope, message):
 
 
 @cli.command()
-@click.option("--scope", default="hub", help="Scope: hub, project:<name>, or all (default: hub)")
-@click.option("--dry-run", is_flag=True, help="Show what would be pushed without executing")
-@click.option("--projects", default=None, help="Comma-separated project names to push (default: all dirty)")
-def push(scope, dry_run, projects):
+@click.option("--prefix", default=None, help="In a hub, the prefix of the project to push (default: the hub's own store). Ignored outside a hub")
+def push(prefix):
     """Push committed .project/ changes to remote."""
     from projectman.config import find_project_root, load_config
     from projectman.store import Store
@@ -809,38 +976,15 @@ def push(scope, dry_run, projects):
     config = load_config(root)
 
     if config.hub:
-        from projectman.hub.registry import pm_push, coordinated_push
+        from projectman.hub.registry import pm_push
 
-        # --projects or --dry-run imply coordinated push
-        if projects is not None or dry_run:
-            project_list = (
-                [p.strip() for p in projects.split(",") if p.strip()]
-                if projects
-                else None
-            )
-            result = coordinated_push(
-                projects=project_list,
-                dry_run=dry_run,
-                root=root,
-            )
-            if "report" in result:
-                click.echo(result["report"])
-            if not dry_run and not result.get("pushed"):
-                raise SystemExit(1)
-        else:
-            result = pm_push(scope=scope, root=root)
-            if result.get("pushed"):
-                click.echo(f"Pushed ({scope})")
-                if "branch" in result:
-                    click.echo(f"Branch: {result['branch']}")
-                store = result.get("pm_store")
-                if store and store.get("pushed"):
-                    click.echo(f"PM store branch: {store['branch']}")
-                if "report" in result:
-                    click.echo(result["report"])
-            else:
-                click.echo(f"Error: {result.get('error', 'push failed')}", err=True)
-                raise SystemExit(1)
+        try:
+            result = pm_push(_store_dir_for_prefix(root, prefix))
+        except (RuntimeError, FileNotFoundError, ValueError) as e:
+            click.echo(f"Error: {e}", err=True)
+            raise SystemExit(1)
+
+        click.echo(f"Pushed {result['branch']} to {result['remote']}")
     else:
         store = Store(root)
         try:
@@ -867,21 +1011,6 @@ def git_status_cmd(verbose, as_json):
         click.echo(format_git_status(data, verbose=verbose))
 
     raise SystemExit(0 if data.get("ok") else 1)
-
-
-@cli.command("validate-branches")
-def validate_branches_cmd():
-    """Check that each submodule is on its expected tracked branch."""
-    import os
-    from projectman.hub.registry import validate_branches, format_branch_validation
-
-    root = os.environ.get("PROJECTMAN_ROOT")
-    root = Path(root) if root else None
-
-    result = validate_branches(root=root)
-
-    click.echo(format_branch_validation(result))
-    raise SystemExit(0 if result["ok"] else 1)
 
 
 @cli.command()

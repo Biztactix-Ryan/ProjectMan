@@ -27,7 +27,7 @@ import pytest
 from tools.usage_telemetry import baseline as bl
 from tools.usage_telemetry import report as rp_mod
 from tools.usage_telemetry.report import build_report
-from tools.usage_telemetry.extract import ToolCall, ToolResult
+from tools.usage_telemetry.extract import MatchRateError, ToolCall, ToolResult
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
@@ -63,11 +63,11 @@ def make_call(
     return call
 
 
-def _record(content, session="sess-a"):
+def _record(content, session="sess-a", timestamp="2026-07-29T00:00:00Z"):
     return {
         "type": "assistant",
         "sessionId": session,
-        "timestamp": "2026-07-29T00:00:00Z",
+        "timestamp": timestamp,
         "message": {"content": content},
     }
 
@@ -629,10 +629,19 @@ COMMITTED_README = TELEMETRY_DIR / "README.md"
 COMMITTED_POST = TELEMETRY_DIR / "baseline-post-subtraction.json"
 COMMITTED_POST_MD = TELEMETRY_DIR / "baseline-post-subtraction.md"
 
+# US-PM-32 added a third: the same corpus re-measured with every session that
+# predates the note-length fix windowed out. It is a deliverable on the same
+# terms as the other two -- same extractor, same schema, never overwritten --
+# so it joins ``COMMITTED_BASELINES`` and is covered by every artifact-level
+# guard rather than being validated only by its own two tests.
+COMMITTED_WINDOWED = TELEMETRY_DIR / "baseline-windowed-post-fix.json"
+COMMITTED_WINDOWED_MD = TELEMETRY_DIR / "baseline-windowed-post-fix.md"
+
 #: label -> (json, markdown). The label is also the pytest param id.
 COMMITTED_BASELINES: dict[str, tuple[Path, Path]] = {
     "pre-fix": (COMMITTED, COMMITTED_MD),
     "post-subtraction": (COMMITTED_POST, COMMITTED_POST_MD),
+    "windowed-post-fix": (COMMITTED_WINDOWED, COMMITTED_WINDOWED_MD),
 }
 
 #: Frozen pre-fix ground truth. The pre-fix baseline is a historical
@@ -823,9 +832,16 @@ def test_the_committed_baseline_conforms_to_the_artifact_schema(any_committed):
         "generator": str,
         "corpus_is_live": bool,
     }
-    assert set(prov) == set(expected)
+    # US-PM-32's capture window. Optional here and nowhere else: the two files
+    # committed before it existed do not carry the keys, and a reader who
+    # dereferences them must treat "absent" and "null" alike as "whole corpus".
+    optional = {"window_since": str, "sessions_excluded": int}
+    assert set(prov) - set(optional) == set(expected)
     for key, kind in expected.items():
         assert isinstance(prov[key], kind), f"{key}: {type(prov[key])} != {kind}"
+    for key, kind in optional.items():
+        if prov.get(key) is not None:
+            assert isinstance(prov[key], kind), f"{key}: {type(prov[key])} != {kind}"
     for key in ("repo", "commit", "branch", "dirty"):
         assert key in prov["git"], key
 
@@ -1502,3 +1518,661 @@ def test_an_empty_corpus_publishes_zeros_rather_than_crashing():
     assert m["pm_estimate_calls"] == 0
     assert m["pm_context_sessions_pct"] == 0.0
     assert m["pm_estimate_sessions_pct"] == 0.0
+
+
+# ------------------------------------------------------ the capture window --
+#
+# US-PM-32: the corpus mixes months of sessions run against different server
+# code, and the post-subtraction baseline found 906 of its 941 soft errors were
+# one defect (pm_update rejecting a run-log note over 1024 characters) that
+# US-PM-1 fixed in Sprint 3. A whole-corpus capture therefore reports a failure
+# rate dominated by code that no longer exists.
+#
+# ``--since`` windows the capture to sessions that started at or after a stated
+# moment. The properties that matter are the ones a reader has to be able to
+# trust a year later:
+#
+# * the cutoff is applied to the session's *start*, and inclusively;
+# * filtering is per session, never per call -- half a transcript is not a
+#   sample of anything;
+# * the window is in provenance, so a windowed file can never be mistaken for
+#   an unwindowed one;
+# * ``--since auto`` derives the cutoff from evidence in the corpus (the
+#   post-US-PM-1 ``note_truncated`` response) rather than from a guessed date;
+# * and when the corpus holds no such evidence the capture is *refused*, because
+#   a silent full capture published under a windowed name is the failure this
+#   whole mechanism exists to prevent.
+
+#: The pre-US-PM-1 server's rejection, and the post-fix server's reply. The
+#: second is the signature ``--since auto`` dates the window from.
+NOTE_TRUNCATED_RESULT = (
+    '{"result":"updated:\\n  task:\\n    id: US-X-1\\n    status: done\\n'
+    'note_truncated: true\\nnote_original_length: 4600\\nnote_stored_length: 4096"}'
+)
+
+#: A *mention* of the flag in prose -- a task body read back by ``pm_get``. This
+#: repo is full of them (US-PM-1-3 is literally titled after the flag), so the
+#: signature has to be matched as a response field or the window dates itself to
+#: whenever someone last read that task.
+NOTE_TRUNCATED_PROSE = (
+    '{"result":"task:\\n  id: US-PM-1-3\\n  title: Return a note_truncated flag '
+    'on the update response\\n  body: surface a note_truncated boolean so an '
+    'automated caller can react"}'
+)
+
+#: The field itself, but quoted inside a task body read back by ``pm_get`` --
+#: evidence pasted into ProjectMan, which this repo does constantly. It looks
+#: exactly like a truncation response and is not one; only the *tool* tells them
+#: apart.
+NOTE_TRUNCATED_QUOTED = (
+    '{"result":"task:\\n  id: US-PM-1-5\\n  body: evidence --- the server '
+    'replied note_truncated: true, note_original_length: 4600"}'
+)
+
+OLD_START = "2026-07-01T09:00:00Z"
+CUT_START = "2026-08-21T10:00:00Z"
+NEW_START = "2026-09-01T08:00:00Z"
+
+#: What ``--since auto`` should derive from :func:`windowed_corpus`: the *start*
+#: of the session that carries the signature, not the timestamp of the call that
+#: carries it, so that session is itself inside the window.
+CUT_CUTOFF = "2026-08-21T10:00:00+00:00"
+
+
+def _pair(call_id, tool, timestamp, session, result="ok", is_error=False, tool_input=None):
+    """A tool_use record and its tool_result record, both stamped ``timestamp``."""
+    return [
+        _record(
+            [_tool_use(call_id, f"mcp__projectman__{tool}", tool_input)],
+            session=session,
+            timestamp=timestamp,
+        ),
+        _record(
+            [_tool_result(call_id, result, is_error=is_error)],
+            session=session,
+            timestamp=timestamp,
+        ),
+    ]
+
+
+@pytest.fixture
+def windowed_corpus(tmp_path):
+    """Three sessions straddling the note-truncation fix.
+
+    * ``sess-old`` starts 2026-07-01, on the pre-fix server: its ``pm_update``
+      is *rejected* for an over-long note (the soft error US-PM-1 removed). It
+      also has a late call, well after the cutoff, so a filter that worked per
+      call instead of per session would leak it into the window.
+    * ``sess-cut`` starts 2026-08-21T10:00, and a later call in it carries the
+      post-fix ``note_truncated`` response -- this is the session ``--since
+      auto`` dates the window from.
+    * ``sess-new`` starts 2026-09-01 and is unremarkable.
+    """
+    root = tmp_path / "projects"
+    old = [
+        *_pair("o1", "pm_grab", OLD_START, "sess-old"),
+        *_pair("o2", "pm_update", "2026-07-01T09:05:00Z", "sess-old",
+               result=SOFT_NOTE_LIMIT),
+        # Long after the cutoff, but in a session that began before it.
+        *_pair("o3", "pm_get", "2026-09-02T12:00:00Z", "sess-old"),
+    ]
+    cut = [
+        *_pair("c1", "pm_grab", CUT_START, "sess-cut"),
+        *_pair("c2", "pm_update", "2026-08-21T11:30:00Z", "sess-cut",
+               result=NOTE_TRUNCATED_RESULT),
+    ]
+    new = [
+        *_pair("n1", "pm_grab", NEW_START, "sess-new"),
+        *_pair("n2", "pm_get", "2026-09-01T08:30:00Z", "sess-new"),
+        *_pair("n3", "pm_update", "2026-09-01T08:40:00Z", "sess-new"),
+    ]
+    _write_transcript(root, "proj", "sess-old", old)
+    _write_transcript(root, "proj", "sess-cut", cut)
+    _write_transcript(root, "proj", "sess-new", new)
+    return root
+
+
+def _capture(corpus, **kwargs):
+    return bl.capture(root=str(corpus), repo=REPO_ROOT, **kwargs)
+
+
+# ---- the filter itself ----
+
+
+def test_since_excludes_sessions_that_started_before_the_cutoff(windowed_corpus):
+    art = _capture(windowed_corpus, since=CUT_START)
+    assert art["report"]["totals"]["sessions"] == 2
+    # sess-cut (2) + sess-new (3); sess-old's 3 calls are gone.
+    assert art["report"]["totals"]["calls"] == 5
+    tools = {row["tool"] for row in art["report"]["by_tool"]}
+    assert tools == {"pm_grab", "pm_update", "pm_get"}
+
+
+def test_since_keeps_a_session_whose_first_timestamp_is_exactly_the_cutoff(
+    windowed_corpus,
+):
+    """"At or after" -- the boundary session is in, not out.
+
+    ``--since auto`` derives the cutoff *from* a session's start, so an
+    exclusive boundary would throw away the very session that supplied the
+    evidence.
+    """
+    art = _capture(windowed_corpus, since=CUT_START)
+    assert art["report"]["totals"]["sessions"] == 2
+    assert art["provenance"]["sessions_excluded"] == 1
+    # One second later and the boundary session drops out too.
+    later = _capture(windowed_corpus, since="2026-08-21T10:00:01Z")
+    assert later["report"]["totals"]["sessions"] == 1
+    assert later["report"]["totals"]["calls"] == 3
+    assert later["provenance"]["sessions_excluded"] == 2
+
+
+def test_a_cutoff_before_the_whole_corpus_excludes_nothing(windowed_corpus):
+    art = _capture(windowed_corpus, since=OLD_START)
+    full = _capture(windowed_corpus)
+    assert art["provenance"]["sessions_excluded"] == 0
+    assert art["report"]["totals"] == full["report"]["totals"]
+
+
+def test_the_window_drops_whole_sessions_not_individual_calls(windowed_corpus):
+    """``sess-old`` has a call dated after the cutoff; it must still be excluded.
+
+    Calls-per-session, run lengths and bigrams are all statements about a whole
+    transcript. Keeping the tail of an excluded session would corrupt every one
+    of them while looking, in the totals, like nothing had gone wrong.
+    """
+    art = _capture(windowed_corpus, since=CUT_START)
+    by_tool = {row["tool"]: row["calls"] for row in art["report"]["by_tool"]}
+    # sess-old's late ``pm_get`` (2026-09-02, after the cutoff) must not survive;
+    # only sess-new's remains.
+    assert by_tool["pm_get"] == 1, "a late call from an excluded session leaked in"
+    assert bl.headline_metrics(art)["calls"] == 5
+    # And the pre-fix rejection that lived only in sess-old is gone with it --
+    # which is the entire point of the window.
+    assert bl.headline_metrics(art)["soft_errors"] == 0
+    assert bl.headline_metrics(_capture(windowed_corpus))["soft_errors"] == 1
+
+
+def test_a_session_with_no_usable_timestamp_is_excluded(tmp_path):
+    """Unknown is not the same as recent, and the window must be provable."""
+    root = tmp_path / "projects"
+    _write_transcript(root, "p", "sess-dated", _pair("d1", "pm_get", NEW_START, "sess-dated"))
+    _write_transcript(root, "p", "sess-undated", [
+        _record([_tool_use("u1", "mcp__projectman__pm_get", {})],
+                session="sess-undated", timestamp=None),
+        _record([_tool_result("u1", "ok")], session="sess-undated", timestamp=None),
+    ])
+    art = bl.capture(root=str(root), repo=REPO_ROOT, since="2026-01-01")
+    assert art["report"]["totals"]["sessions"] == 1
+    assert art["provenance"]["sessions_excluded"] == 1
+
+
+def test_session_start_times_takes_the_earliest_timestamp_not_the_first_record(tmp_path):
+    """One out-of-order record must not make a session look younger than it is."""
+    from tools.usage_telemetry.extract import scan
+
+    root = tmp_path / "projects"
+    _write_transcript(root, "p", "sess-a", [
+        *_pair("a1", "pm_get", NEW_START, "sess-a"),
+        *_pair("a2", "pm_get", OLD_START, "sess-a"),
+    ])
+    starts = bl.session_start_times(scan(root=str(root)))
+    assert starts["sess-a"] == bl.parse_timestamp(OLD_START)
+
+
+# ---- provenance ----
+
+
+def test_provenance_records_the_window_and_the_number_of_excluded_sessions(
+    windowed_corpus,
+):
+    prov = _capture(windowed_corpus, since=CUT_START)["provenance"]
+    assert prov["window_since"] == CUT_CUTOFF
+    assert prov["sessions_excluded"] == 1
+    assert prov["sessions"] == 2
+
+
+def test_provenance_says_null_rather_than_zero_when_no_window_was_applied(
+    windowed_corpus,
+):
+    """``0 excluded`` would claim a window was applied and matched everything.
+
+    A reader comparing a windowed capture against an unwindowed one has to be
+    able to tell which is which from the file alone.
+    """
+    prov = _capture(windowed_corpus)["provenance"]
+    assert "window_since" in prov and "sessions_excluded" in prov
+    assert prov["window_since"] is None
+    assert prov["sessions_excluded"] is None
+
+
+def test_the_windowed_corpus_block_counts_only_the_windowed_transcripts(
+    windowed_corpus,
+):
+    """One session is one transcript file, so the two counts move together."""
+    art = _capture(windowed_corpus, since=CUT_START)
+    assert art["provenance"]["transcript_files"] == 2
+    assert art["report"]["corpus"]["files_scanned"] == 2
+    assert bl.headline_metrics(art)["transcript_files"] == 2
+
+
+def test_the_summary_publishes_the_window_only_when_there_is_one(windowed_corpus):
+    windowed = bl.format_summary(_capture(windowed_corpus, since=CUT_START))
+    assert "capture window" in windowed
+    assert CUT_CUTOFF in windowed
+    assert "1 earlier sessions excluded" in windowed
+    assert "This capture is windowed" in windowed
+
+    full = bl.format_summary(_capture(windowed_corpus))
+    assert "capture window" not in full
+    assert "This capture is windowed" not in full
+
+
+def test_a_committed_baseline_taken_before_the_window_existed_still_renders(committed):
+    """Every unwindowed artifact must render exactly as it always did."""
+    assert "capture window" not in bl.format_summary(committed)
+    assert bl.headline_metrics(committed)["calls"] == PRE_FIX["calls"]
+
+
+# ---- --since auto ----
+
+
+def test_since_auto_derives_the_cutoff_from_the_earliest_note_truncated_response(
+    windowed_corpus,
+):
+    """The window starts where the corpus proves the fixed server was running.
+
+    The evidence call is at 11:30, an hour into ``sess-cut``; the cutoff is the
+    session's 10:00 start, so the session that supplies the evidence is inside
+    its own window.
+    """
+    art = _capture(windowed_corpus, since="auto")
+    assert art["provenance"]["window_since"] == CUT_CUTOFF
+    assert art["provenance"]["sessions_excluded"] == 1
+    assert art["report"]["totals"]["sessions"] == 2
+    explicit = _capture(windowed_corpus, since=CUT_START)
+    assert art["report"]["totals"] == explicit["report"]["totals"]
+
+
+def test_since_auto_is_case_insensitive(windowed_corpus):
+    assert (
+        _capture(windowed_corpus, since="AUTO")["provenance"]["window_since"]
+        == CUT_CUTOFF
+    )
+
+
+def test_since_auto_picks_the_earliest_marked_session_not_the_last(tmp_path):
+    root = tmp_path / "projects"
+    _write_transcript(root, "p", "sess-first", [
+        *_pair("f1", "pm_update", CUT_START, "sess-first", result=NOTE_TRUNCATED_RESULT),
+    ])
+    _write_transcript(root, "p", "sess-later", [
+        *_pair("l1", "pm_update", NEW_START, "sess-later", result=NOTE_TRUNCATED_RESULT),
+    ])
+    art = bl.capture(root=str(root), repo=REPO_ROOT, since="auto")
+    assert art["provenance"]["window_since"] == CUT_CUTOFF
+    assert art["provenance"]["sessions_excluded"] == 0
+
+
+def test_prose_mentioning_the_flag_is_not_read_as_the_signature(tmp_path):
+    """The signature is a response *field*, not the word appearing somewhere.
+
+    This is not hypothetical: the flag is named in several task bodies in this
+    repo (US-PM-1-3 is titled after it), and those bodies come back through
+    ``pm_update`` responses. A substring match would date the window to whenever
+    someone last touched one of them -- an old session, which would silently
+    widen the window back to almost the whole corpus.
+    """
+    root = tmp_path / "projects"
+    _write_transcript(root, "p", "sess-prose", [
+        *_pair("p1", "pm_update", OLD_START, "sess-prose", result=NOTE_TRUNCATED_PROSE),
+    ])
+    _write_transcript(root, "p", "sess-real", [
+        *_pair("r1", "pm_update", CUT_START, "sess-real", result=NOTE_TRUNCATED_RESULT),
+    ])
+    art = bl.capture(root=str(root), repo=REPO_ROOT, since="auto")
+    assert art["provenance"]["window_since"] == CUT_CUTOFF
+    assert art["provenance"]["sessions_excluded"] == 1
+
+
+def test_the_signature_is_only_read_from_a_tool_that_can_emit_it(tmp_path):
+    """A task body quoting a truncation response is not a truncation response.
+
+    ``pm_get`` returns whatever text a human pasted into the item. That text can
+    carry the field verbatim -- evidence pasted into a task -- and reading it as
+    the server's own reply would date the fix to whenever that task was last
+    read. Only the note-writing tools in ``NOTE_TRUNCATION_TOOLS`` can actually
+    emit the field.
+    """
+    root = tmp_path / "projects"
+    _write_transcript(root, "p", "sess-quoted", [
+        *_pair("q1", "pm_get", OLD_START, "sess-quoted", result=NOTE_TRUNCATED_QUOTED),
+    ])
+    _write_transcript(root, "p", "sess-real", [
+        *_pair("r1", "pm_update", CUT_START, "sess-real", result=NOTE_TRUNCATED_RESULT),
+    ])
+    art = bl.capture(root=str(root), repo=REPO_ROOT, since="auto")
+    assert art["provenance"]["window_since"] == CUT_CUTOFF
+    assert art["provenance"]["sessions_excluded"] == 1
+    assert "pm_get" not in bl.NOTE_TRUNCATION_TOOLS
+    assert "pm_update" in bl.NOTE_TRUNCATION_TOOLS
+
+
+def test_since_auto_errors_when_no_session_carries_the_signature(tmp_path):
+    """The headline requirement: no evidence means no capture, not a full one.
+
+    A whole-corpus capture published under a windowed name is exactly the claim
+    US-PM-32 exists to stop being made by accident.
+    """
+    root = tmp_path / "projects"
+    _write_transcript(root, "p", "sess-old", [
+        *_pair("x1", "pm_update", OLD_START, "sess-old", result=SOFT_NOTE_LIMIT),
+    ])
+    with pytest.raises(bl.WindowError) as exc:
+        bl.capture(root=str(root), repo=REPO_ROOT, since="auto")
+    message = str(exc.value)
+    assert "note_truncated" in message
+    assert "--since" in message
+
+
+def test_since_rejects_a_value_that_is_not_a_timestamp(windowed_corpus):
+    with pytest.raises(bl.WindowError) as exc:
+        _capture(windowed_corpus, since="last tuesday")
+    assert "ISO-8601" in str(exc.value)
+
+
+def test_since_accepts_a_bare_date_and_reads_it_as_utc(windowed_corpus):
+    art = _capture(windowed_corpus, since="2026-08-21")
+    assert art["provenance"]["window_since"] == "2026-08-21T00:00:00+00:00"
+    assert art["provenance"]["sessions_excluded"] == 1
+
+
+def test_a_naive_timestamp_is_read_as_utc_not_local_time(windowed_corpus):
+    assert bl.parse_timestamp("2026-08-21T10:00:00") == bl.parse_timestamp(CUT_START)
+
+
+def test_the_match_rate_guard_runs_before_the_window(tmp_path, capsys):
+    """A broken join must not be hidden by excluding the sessions it broke in.
+
+    The join rate is a property of the extractor and the corpus. If a window
+    could suppress it, the guard would be defeatable by narrowing the capture.
+    """
+    root = tmp_path / "projects"
+    _write_transcript(root, "p", "sess-old", [
+        _record([_tool_use("u1", "mcp__projectman__pm_update", {})],
+                session="sess-old", timestamp=OLD_START),
+    ])
+    _write_transcript(root, "p", "sess-new", _pair("n1", "pm_get", NEW_START, "sess-new"))
+    with pytest.raises(MatchRateError):
+        bl.capture(root=str(root), repo=REPO_ROOT, since=NEW_START, min_match_rate=0.99)
+
+
+# ---- the cli ----
+
+
+def test_cli_capture_since_writes_a_windowed_artifact(windowed_corpus, tmp_path, capsys):
+    out = tmp_path / "t"
+    rc = _cli("capture", "--root", str(windowed_corpus), "--out-dir", str(out),
+              "--name", "windowed", "--label", "windowed-post-fix",
+              "--since", CUT_START)
+    assert rc == 0
+    art = bl.load_baseline(out / "windowed.json")
+    assert art["provenance"]["window_since"] == CUT_CUTOFF
+    assert art["provenance"]["sessions_excluded"] == 1
+    assert art["report"]["totals"]["calls"] == 5
+    text = capsys.readouterr().out
+    assert "window: sessions at or after" in text
+    assert "1 earlier sessions excluded" in text
+    assert "capture window" in (out / "windowed.md").read_text(encoding="utf-8")
+
+
+def test_cli_capture_since_auto_writes_a_windowed_artifact(windowed_corpus, tmp_path, capsys):
+    out = tmp_path / "t"
+    rc = _cli("capture", "--root", str(windowed_corpus), "--out-dir", str(out),
+              "--name", "auto", "--since", "auto")
+    assert rc == 0
+    art = bl.load_baseline(out / "auto.json")
+    assert art["provenance"]["window_since"] == CUT_CUTOFF
+    assert art["provenance"]["sessions_excluded"] == 1
+
+
+def test_cli_capture_since_auto_fails_loudly_and_writes_nothing(tmp_path, capsys):
+    root = tmp_path / "projects"
+    _write_transcript(root, "p", "sess-old", [
+        *_pair("x1", "pm_update", OLD_START, "sess-old", result=SOFT_NOTE_LIMIT),
+    ])
+    out = tmp_path / "never"
+    rc = _cli("capture", "--root", str(root), "--out-dir", str(out), "--since", "auto")
+    assert rc == 1
+    err = capsys.readouterr().err
+    assert "error:" in err and "note_truncated" in err
+    assert not out.exists(), "a refused capture must not leave an artifact behind"
+
+
+def test_cli_capture_rejects_an_unparseable_since_without_writing(tmp_path, capsys):
+    root = tmp_path / "projects"
+    _write_transcript(root, "p", "sess-a", _pair("a1", "pm_get", NEW_START, "sess-a"))
+    out = tmp_path / "never"
+    rc = _cli("capture", "--root", str(root), "--out-dir", str(out),
+              "--since", "yesterday")
+    assert rc == 1
+    assert "ISO-8601" in capsys.readouterr().err
+    assert not out.exists()
+
+
+def test_cli_capture_says_the_window_emptied_the_corpus_rather_than_calls_found(
+    windowed_corpus, tmp_path, capsys
+):
+    """Exit 2 still, but the message must name the real cause.
+
+    "no mcp__projectman__* calls found" against a corpus full of them would send
+    the reader looking for a broken extractor instead of a too-late cutoff.
+    """
+    out = tmp_path / "never"
+    rc = _cli("capture", "--root", str(windowed_corpus), "--out-dir", str(out),
+              "--since", "2030-01-01")
+    assert rc == 2
+    err = capsys.readouterr().err
+    assert "--since" in err and "excluded 3 sessions" in err
+    assert not out.exists()
+
+
+def test_the_windowed_capture_is_still_the_report_of_its_own_corpus(windowed_corpus):
+    """Windowing must filter the input, not reinterpret the analysis.
+
+    Capturing with a window has to equal running ``report`` over exactly the
+    sessions the window keeps -- otherwise ``--since`` is a second definition of
+    the metrics rather than a narrower corpus.
+    """
+    from tools.usage_telemetry.extract import scan
+    from tools.usage_telemetry.report import report_from_extraction
+
+    scanned = scan(root=str(windowed_corpus))
+    filtered, window = bl.filter_extraction_since(scanned, bl.parse_timestamp(CUT_START))
+    direct = report_from_extraction(filtered).as_dict()
+    art = _capture(windowed_corpus, since=CUT_START)
+    assert art["report"] == direct
+    assert window["sessions_kept"] == 2
+    assert scanned.total_calls == 8, "filtering must not mutate the scan it read"
+
+
+# -- (7) the US-PM-32 windowed baseline -------------------------------------
+#
+# Two guards, one per sibling verify criterion:
+#   US-PM-32-2 -- the pair of artifacts exists, carries a real window, and the
+#                 markdown actually compares against *both* committed baselines;
+#   US-PM-32-3 -- the markdown states a verdict, from a closed vocabulary, for
+#                 every Sprint 1-9 claim.
+#
+# They are deliberately about the *document*, not about the numbers in it. The
+# numbers move whenever the window is re-taken; what must not move is that the
+# comparison names what it compares and refuses to leave a claim unjudged.
+
+#: The only words a verdict may use. A free-text verdict ("mostly", "probably
+#: better") is unreadable as a result, and "improved" hides whether the window
+#: had anything to measure -- ``inconclusive`` exists precisely so that an
+#: absent tool cannot be written up as a win.
+VERDICT_VOCABULARY = frozenset({"holds", "does not hold", "inconclusive"})
+
+#: claim -> substrings that identify its row in the verdict table.
+SPRINT_CLAIMS: dict[str, tuple[str, ...]] = {
+    "fewer calls per task": ("calls per task",),
+    "less context per worker": ("context per worker",),
+    "shorter pm_update runs": ("pm_update", "run"),
+    "shorter pm_archive runs": ("pm_archive", "run"),
+    "fewer failures": ("failure",),
+}
+
+
+@pytest.fixture(scope="module")
+def windowed():
+    """The US-PM-32 windowed baseline specifically."""
+    json_path, md_path = COMMITTED_BASELINES["windowed-post-fix"]
+    return CommittedBaseline("windowed-post-fix", json_path, md_path)
+
+
+def _table_rows(markdown: str) -> list[list[str]]:
+    """Every markdown table row, as its stripped cells."""
+    rows = []
+    for line in markdown.splitlines():
+        line = line.strip()
+        if not line.startswith("|"):
+            continue
+        cells = [c.strip() for c in line.strip("|").split("|")]
+        if all(set(c) <= set("-: ") for c in cells):  # the --- separator row
+            continue
+        rows.append(cells)
+    return rows
+
+
+def _verdict_section(markdown: str) -> str:
+    """The verdict section only.
+
+    Scoped deliberately: the three-way headline table elsewhere in the document
+    also has rows naming ``pm_update_longest_run``, and a whole-file search would
+    happily accept a delta cell as a verdict.
+    """
+    marker = "## Verdicts on the Sprint 1 to 9 claims"
+    assert marker in markdown, f"the windowed markdown must contain {marker!r}"
+    body = markdown.split(marker, 1)[1]
+    for stop in ("\n### ", "\n## "):
+        body = body.split(stop, 1)[0]
+    return body
+
+
+def test_the_windowed_baseline_exists_as_a_json_and_markdown_pair(windowed):
+    """US-PM-32-2, first part."""
+    for path in (windowed.json_path, windowed.md_path):
+        assert path.is_file(), f"missing windowed artifact: {path}"
+        assert path.stat().st_size > 0
+    assert windowed.provenance["label"] == "windowed-post-fix"
+
+
+def test_the_windowed_baseline_json_records_the_window_it_was_taken_through(windowed):
+    """US-PM-32-2: a file named "windowed" that carries no window is a lie.
+
+    ``window_since`` must be a real, parseable, aware moment and
+    ``sessions_excluded`` a real count -- ``None`` in either means the capture
+    was taken over the whole corpus and published under a windowed name, which
+    is the exact failure ``--since`` exists to prevent.
+    """
+    prov = windowed.provenance
+    since = prov.get("window_since")
+    assert isinstance(since, str) and since, "window_since must be set"
+    cutoff = datetime.fromisoformat(since)
+    assert cutoff.tzinfo is not None, "an ambiguous cutoff windows nothing reproducibly"
+
+    excluded = prov.get("sessions_excluded")
+    assert isinstance(excluded, int) and not isinstance(excluded, bool)
+    assert excluded >= 0, excluded
+
+    # The window has to be inside the corpus it was carved from, and has to have
+    # left something behind: a capture with 0 sessions is not a measurement.
+    assert prov["sessions"] > 0
+    assert cutoff <= datetime.fromisoformat(prov["captured_at"])
+
+
+def test_the_windowed_markdown_compares_against_both_committed_baselines(windowed):
+    """US-PM-32-2: it must name both baselines *and* both their commits.
+
+    Naming the files alone would be satisfied by a "see also" line. The commit
+    is what makes a comparison checkable a year later, so both sides' commits
+    have to be on the page next to the claim they support.
+    """
+    md = windowed.markdown()
+    for label in ("pre-fix", "post-subtraction"):
+        json_path, md_path = COMMITTED_BASELINES[label]
+        assert json_path.name in md, f"{json_path.name} is not named in the comparison"
+        other = bl.load_baseline(json_path)
+        commit = other["provenance"]["git"]["commit"]
+        assert commit in md or commit[:12] in md, (
+            f"the {label} baseline's commit {commit[:12]} is not on the page"
+        )
+        assert other["provenance"]["label"] in md, label
+    # Both sides' headline numbers, not just their names.
+    for label in ("pre-fix", "post-subtraction"):
+        other = bl.load_baseline(COMMITTED_BASELINES[label][0])
+        assert f"{other['report']['totals']['sessions']:,}" in md, label
+        assert f"{bl.headline_metrics(other)['failure_rate_pct']:.2f}%" in md, label
+
+
+def test_the_windowed_markdown_states_a_verdict_for_every_sprint_claim(windowed):
+    """US-PM-32-3: no Sprint 1-9 claim may be left unjudged."""
+    section = _verdict_section(windowed.markdown())
+    rows = _table_rows(section)
+    assert rows, "the verdict section must contain a table"
+
+    unjudged = []
+    for claim, needles in SPRINT_CLAIMS.items():
+        matches = [
+            row
+            for row in rows
+            if all(n.lower() in row[0].lower() for n in needles)
+        ]
+        if not matches:
+            unjudged.append(claim)
+            continue
+        for row in matches:
+            verdict = row[-1].replace("*", "").replace("`", "").strip().lower()
+            assert verdict in VERDICT_VOCABULARY, (
+                f"{claim!r} is judged {verdict!r}, which is not one of "
+                f"{sorted(VERDICT_VOCABULARY)}"
+            )
+    assert not unjudged, f"claims with no verdict row: {unjudged}"
+
+
+def test_every_verdict_uses_the_closed_vocabulary(windowed):
+    """US-PM-32-3: and nothing in the table may invent a fourth verdict."""
+    rows = _table_rows(_verdict_section(windowed.markdown()))
+    header, body = rows[0], rows[1:]
+    assert header[-1].strip().lower() == "verdict", header
+    verdicts = {
+        row[-1].replace("*", "").replace("`", "").strip().lower() for row in body
+    }
+    assert verdicts, "the verdict table has no rows"
+    assert verdicts <= VERDICT_VOCABULARY, (
+        f"verdicts outside the vocabulary: {sorted(verdicts - VERDICT_VOCABULARY)}"
+    )
+
+
+def test_the_windowed_markdown_does_not_read_an_absent_tool_as_a_win(windowed):
+    """The one way this document could mislead while passing every other check.
+
+    ``pm_archive`` was never called inside the window, so its longest run reads
+    ``0`` and ``compare`` labels ``26 -> 0`` "better". That is arithmetic, not
+    evidence, and the write-up has to say so rather than bank it as a win.
+    """
+    metrics = bl.headline_metrics(windowed.data)
+    if metrics.get("pm_archive_longest_run"):
+        pytest.skip("the window now contains pm_archive calls; re-read the verdict")
+    calls = {t["tool"]: t["calls"] for t in windowed.data["report"]["by_tool"]}
+    assert calls.get("pm_archive", 0) == 0
+
+    rows = _table_rows(_verdict_section(windowed.markdown()))
+    archive = [r for r in rows if "pm_archive" in r[0]]
+    assert archive, "no pm_archive verdict row"
+    for row in archive:
+        verdict = row[-1].replace("*", "").replace("`", "").strip().lower()
+        assert verdict == "inconclusive", (
+            f"pm_archive was never called in the window but is judged {verdict!r}"
+        )

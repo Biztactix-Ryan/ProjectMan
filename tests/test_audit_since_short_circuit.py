@@ -192,7 +192,9 @@ def test_the_short_answer_does_not_run_the_checks(store, tmp_project, monkeypatc
 
     digest = _digest_of(_audit(tmp_project))
 
-    def boom(_store):
+    def boom(*_args, **_kwargs):
+        # Signature-agnostic: run_audit hands this check its pre-loaded done
+        # tasks (US-PRJ-42), and the point here is that it is never *called*.
         raise AssertionError("checks were run for an unchanged project")
 
     monkeypatch.setattr(audit_module, "check_completions_without_evidence", boom)
@@ -407,7 +409,8 @@ def tmp_hub(tmp_path_factory):
     """
     root = tmp_path_factory.mktemp("hub")
     proj = root / ".project"
-    (proj / "projects").mkdir(parents=True)
+    proj.mkdir(parents=True)
+    (root / "projects").mkdir()
     (proj / "stories").mkdir()
     (proj / "tasks").mkdir()
     (proj / "config.yaml").write_text(
@@ -428,7 +431,7 @@ def tmp_hub(tmp_path_factory):
 @pytest.fixture
 def hub_subproject(tmp_hub, monkeypatch):
     """One registered subproject, with the hub root as the cwd the tool sees."""
-    pm_dir = tmp_hub / ".project" / "projects" / "alpha"
+    pm_dir = tmp_hub / "projects" / "alpha" / ".project"
     (pm_dir / "stories").mkdir(parents=True)
     (pm_dir / "tasks").mkdir()
     (pm_dir / "config.yaml").write_text(
@@ -443,6 +446,14 @@ def hub_subproject(tmp_hub, monkeypatch):
             }
         )
     )
+    # The store map walks ``config.projects``, so a store only counts once
+    # the hub knows about it (US-PM-31).
+    from projectman.config import load_config, save_config
+
+    hub_config = load_config(tmp_hub)
+    hub_config.projects.append("alpha")
+    save_config(hub_config, tmp_hub)
+
     monkeypatch.chdir(tmp_hub)
     return pm_dir
 
@@ -455,12 +466,12 @@ def _subproject_drift(pm_dir):
 
 
 def test_the_hub_path_threads_since_and_answers_short(tmp_hub, hub_subproject):
-    """``project=`` and ``since=`` compose: US-PM-11-6 threads both branches."""
-    is_error, first = _audit_over_the_wire({"project": "alpha"})
+    """``prefix=`` and ``since=`` compose: US-PM-11-6 threads both branches."""
+    is_error, first = _audit_over_the_wire({"prefix": "ALP"})
     assert not is_error, first
     digest = _digest_of(first)
 
-    is_error, answer = _audit_over_the_wire({"project": "alpha", "since": digest})
+    is_error, answer = _audit_over_the_wire({"prefix": "ALP", "since": digest})
 
     assert not is_error, answer
     assert UNCHANGED_LINE in answer.splitlines()
@@ -472,11 +483,11 @@ def test_the_hub_path_threads_since_and_answers_short(tmp_hub, hub_subproject):
 def test_the_hub_short_answer_leaves_the_subprojects_drift_alone(
     tmp_hub, hub_subproject
 ):
-    _, first = _audit_over_the_wire({"project": "alpha"})
+    _, first = _audit_over_the_wire({"prefix": "ALP"})
     before = _subproject_drift(hub_subproject)
     assert before is not None, "the full hub audit should have written DRIFT.md"
 
-    _audit_over_the_wire({"project": "alpha", "since": _digest_of(first)})
+    _audit_over_the_wire({"prefix": "ALP", "since": _digest_of(first)})
 
     assert _subproject_drift(hub_subproject) == before
 
@@ -485,13 +496,13 @@ def test_a_change_inside_the_subproject_breaks_the_hub_match(
     tmp_hub, hub_subproject
 ):
     """The short answer must not be able to hide a subproject's own drift."""
-    _, first = _audit_over_the_wire({"project": "alpha"})
+    _, first = _audit_over_the_wire({"prefix": "ALP"})
     digest = _digest_of(first)
 
     store = Store(tmp_hub, project_dir=hub_subproject)
     store.create_story("Story", "Story body text long enough to matter.")
 
-    is_error, after = _audit_over_the_wire({"project": "alpha", "since": digest})
+    is_error, after = _audit_over_the_wire({"prefix": "ALP", "since": digest})
 
     assert not is_error, after
     assert UNCHANGED_LINE not in after.splitlines()
@@ -500,7 +511,7 @@ def test_a_change_inside_the_subproject_breaks_the_hub_match(
 
 
 def test_a_stale_since_on_the_hub_path_runs_the_full_audit(tmp_hub, hub_subproject):
-    is_error, report = _audit_over_the_wire({"project": "alpha", "since": "NOPE-1"})
+    is_error, report = _audit_over_the_wire({"prefix": "ALP", "since": "NOPE-1"})
 
     assert not is_error, report
     assert report.startswith("# Project Audit Report")

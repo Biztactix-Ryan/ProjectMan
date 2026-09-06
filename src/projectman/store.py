@@ -1066,7 +1066,10 @@ class Store:
     CRITERION_EDIT_SIMILARITY = 0.6
 
     def _test_tasks_for_story(
-        self, story_id: str, archived: Optional[bool] = False
+        self,
+        story_id: str,
+        archived: Optional[bool] = False,
+        task_entries: Optional[list[tuple[TaskFrontmatter, str]]] = None,
     ) -> list[tuple[TaskFrontmatter, str]]:
         """Return ``(meta, generated_criterion)`` for the story's test tasks.
 
@@ -1084,13 +1087,24 @@ class Store:
 
         Ordered by task number so positional reasoning is stable (the plain
         filename sort puts ``-10`` before ``-2``).
+
+        *task_entries* is an already-loaded ``(meta, body)`` list — every task
+        in the project — which is filtered in memory instead of going back to
+        the Store.  A caller looping over stories (pm_audit's criteria-drift
+        check) passes the snapshot it already holds and turns an N+1 into one
+        read; ``None`` keeps the standalone behaviour.
         """
+        if task_entries is None:
+            entries = self.list_tasks_with_bodies(story_id=story_id, archived=archived)
+        else:
+            entries = [
+                (m, b)
+                for m, b in task_entries
+                if m.story_id == story_id
+                and (archived is None or m.archived is archived)
+            ]
         result: list[tuple[TaskFrontmatter, str]] = []
-        for meta in self.list_tasks(story_id=story_id, archived=archived):
-            try:
-                _, body = self.get_task(meta.id)
-            except FileNotFoundError:
-                continue
+        for meta, body in entries:
             criterion = criterion_from_test_task_body(story_id, body)
             if criterion is None:
                 continue
@@ -1104,7 +1118,10 @@ class Store:
         return result
 
     def plan_criteria_reconciliation(
-        self, story_id: str, new_criteria: list[str]
+        self,
+        story_id: str,
+        new_criteria: list[str],
+        task_entries: Optional[list[tuple[TaskFrontmatter, str]]] = None,
     ) -> dict:
         """Work out how the story's test tasks map onto *new_criteria*.
 
@@ -1189,7 +1206,7 @@ class Store:
           since both texts still exist.  The task-to-criterion association
           flips but every task still quotes a live criterion.
         """
-        tasks = self._test_tasks_for_story(story_id)
+        tasks = self._test_tasks_for_story(story_id, task_entries=task_entries)
         claimed: set[str] = set()
         matched: dict[int, tuple[TaskFrontmatter, str]] = {}
 
@@ -1233,7 +1250,9 @@ class Store:
         # and genuinely does need one.  The exact-text case is the only one
         # where creating would produce a literal duplicate of text an
         # existing task already carries.
-        retired_tasks = self._test_tasks_for_story(story_id, archived=True)
+        retired_tasks = self._test_tasks_for_story(
+            story_id, archived=True, task_entries=task_entries
+        )
 
         def _covering_archived_task(
             criterion: str,
@@ -1282,10 +1301,13 @@ class Store:
             )
 
         orphaned = []
+        # Built once, not per orphan: the dependents scan below needs every
+        # task, and a caller that handed us a snapshot already has them.
+        known_tasks = [m for m, _ in task_entries] if task_entries is not None else None
         for meta, old_criterion in tasks:
             if meta.id in claimed:
                 continue
-            reasons = self._orphan_work_reasons(meta, old_criterion)
+            reasons = self._orphan_work_reasons(meta, old_criterion, all_tasks=known_tasks)
             orphaned.append(
                 {
                     "task_id": meta.id,
@@ -1310,7 +1332,10 @@ class Store:
         }
 
     def detect_criteria_drift(
-        self, story_id: str, criteria: Optional[list[str]] = None
+        self,
+        story_id: str,
+        criteria: Optional[list[str]] = None,
+        task_entries: Optional[list[tuple[TaskFrontmatter, str]]] = None,
     ) -> dict:
         """Report acceptance-criteria / test-task drift for one story.
 
@@ -1348,6 +1373,12 @@ class Store:
         could be untested — but it can still yield ``stale``: see below.
         Hand-written tasks and human-rewritten test-task bodies are invisible
         to the matcher and so can never appear here.
+
+        *task_entries* — every task in the project as ``(meta, body)`` — lets a
+        caller that already holds the whole set (pm_audit runs this over every
+        story) skip the per-story Store reads; see
+        :meth:`_test_tasks_for_story`.  Pass *criteria* as well to skip the
+        ``get_story`` this would otherwise do.
         """
         if criteria is None:
             try:
@@ -1357,7 +1388,9 @@ class Store:
             criteria = list(meta.acceptance_criteria or [])
         criteria = [c for c in criteria]
 
-        plan = self.plan_criteria_reconciliation(story_id, criteria)
+        plan = self.plan_criteria_reconciliation(
+            story_id, criteria, task_entries=task_entries
+        )
 
         # ``missing`` is defined relative to the criteria list, so an empty
         # list has none by construction (``plan["create"]`` is empty too).
@@ -1404,7 +1437,12 @@ class Store:
     ORPHAN_REASON_DEPENDS_ON = "has-dependencies"
     ORPHAN_REASON_DEPENDED_ON = "has-dependents"
 
-    def _orphan_work_reasons(self, meta: TaskFrontmatter, criterion: str) -> list[str]:
+    def _orphan_work_reasons(
+        self,
+        meta: TaskFrontmatter,
+        criterion: str,
+        all_tasks: Optional[list[TaskFrontmatter]] = None,
+    ) -> list[str]:
         """Every reason an orphaned test task counts as touched, or ``[]``.
 
         Empty means "nothing has happened to this task since it was
@@ -1427,7 +1465,13 @@ class Store:
         returns ``None``), and an already-archived task is excluded by
         :meth:`_test_tasks_for_story`.  Both are invisible to reconciliation
         and therefore untouchable by this policy.
+
+        *all_tasks* is every task in the project, for the "has dependents"
+        scan; ``None`` reads them here.  A caller that already holds them
+        passes them in so the scan is not one more full list per orphan.
         """
+        if all_tasks is None:
+            all_tasks = self.list_tasks()
         reasons: list[str] = []
         status = (
             meta.status.value if hasattr(meta.status, "value") else str(meta.status)
@@ -1442,7 +1486,7 @@ class Store:
             reasons.append(self.ORPHAN_REASON_RENAMED)
         if meta.depends_on:
             reasons.append(self.ORPHAN_REASON_DEPENDS_ON)
-        if any(meta.id in t.depends_on for t in self.list_tasks()):
+        if any(meta.id in t.depends_on for t in all_tasks):
             reasons.append(self.ORPHAN_REASON_DEPENDED_ON)
         return reasons
 
@@ -1717,12 +1761,24 @@ class Store:
 
         Cache is automatically invalidated if external file changes are detected.
         """
+        return [m for m, _ in self.list_stories_with_bodies(status=status)]
+
+    def list_stories_with_bodies(
+        self, status: Optional[str] = None
+    ) -> list[tuple[StoryFrontmatter, str]]:
+        """Like :meth:`list_stories`, but returns ``(frontmatter, body)`` pairs.
+
+        One pass over the same cached entries ``list_stories``/``get_story``
+        use, so a caller that needs every body (pm_audit's thin-description
+        check) can build a lookup once instead of calling ``get_story`` per
+        story — which is a linear scan each time, making the caller O(n^2).
+        The task-side twin of this is :meth:`list_tasks_with_bodies`.
+        """
         if not self.stories_dir.exists():
             return []
 
         if status == StoryStatus.archived.value:
-            entries = self._read_stories_from_disk(status_filter=status)
-            return [m for m, _ in entries]
+            return self._read_stories_from_disk(status_filter=status)
 
         key = self._cache_key("stories")
         if key not in _cache or self._is_cache_stale("stories"):
@@ -1745,8 +1801,8 @@ class Store:
                 _cache_stats["hits"] += 1
         all_entries = _cache[key]
         if status is None:
-            return [m for m, _ in all_entries]
-        return [m for m, _ in all_entries if m.status.value == status]
+            return list(all_entries)
+        return [(m, b) for m, b in all_entries if m.status.value == status]
 
     def create_epic(
         self,
@@ -2894,7 +2950,14 @@ class Store:
         }
 
     def _generate_commit_message(self, changed_files: list[str]) -> str:
-        """Generate a commit message summarizing .project/ changes."""
+        """Generate a commit message summarizing .project/ changes.
+
+        The five derived index files are not summarised: they are a
+        rendering of the items in the same commit, so counting them would
+        make a one-task edit read as "1 task, config, 4 files" (US-PM-29).
+        New stores gitignore them; stores created before that migration
+        still stage them, and this keeps both kinds of commit honest.
+        """
         stories_added = 0
         stories_updated = 0
         tasks_added = 0
@@ -2904,8 +2967,12 @@ class Store:
         config_changed = False
         other = 0
 
+        from .indexer import DERIVED_INDEX_FILES
+
         for f in changed_files:
             name = Path(f).name
+            if name in DERIVED_INDEX_FILES:
+                continue
             if "/stories/" in f or f.startswith("stories/"):
                 # Heuristic: new files are "added", modified are "updated"
                 # We can't easily distinguish from file list alone, so count all
@@ -2914,7 +2981,7 @@ class Store:
                 tasks_updated += 1
             elif "/epics/" in f or f.startswith("epics/"):
                 epics_updated += 1
-            elif name == "config.yaml" or name == "index.yaml":
+            elif name == "config.yaml":
                 config_changed = True
             else:
                 other += 1

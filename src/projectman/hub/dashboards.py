@@ -4,10 +4,18 @@ from pathlib import Path
 from typing import Optional
 
 from .rollup import rollup
+from .stores import NOT_ATTACHED
 
 
 def generate_dashboards(root: Optional[Path] = None) -> None:
-    """Write burndown.md and status.md dashboards from rollup data."""
+    """Write burndown.md and status.md dashboards from rollup data.
+
+    Every row the rollup produces is rendered, including the ones for
+    subprojects whose store is not mounted (US-PM-31-9): they appear in the
+    Projects table with a "not attached" status and again under their own
+    heading with the hint that says how to fix it.  Generating dashboards is a
+    read, so it never fails because a subproject has not been migrated.
+    """
     from ..config import find_project_root
     root = root or find_project_root()
 
@@ -54,6 +62,15 @@ def generate_dashboards(root: Optional[Path] = None) -> None:
         else:
             status_lines.append(f"| {p['name']} | — | — | — | — | — | {p['status']} |")
 
+    # Spell the fix out once per unattached project rather than leaving a bare
+    # status word in a table cell — the hint is the actionable half.
+    unattached = [p for p in data["projects"] if p.get("status") == NOT_ATTACHED]
+    if unattached:
+        status_lines.append("")
+        status_lines.append("## Not Attached\n")
+        for p in unattached:
+            status_lines.append(f"- **{p['name']}** — {p.get('hint', NOT_ATTACHED)}")
+
     (dashboards_dir / "status.md").write_text("\n".join(status_lines) + "\n")
 
     # Burndown dashboard
@@ -73,5 +90,7 @@ def generate_dashboards(root: Optional[Path] = None) -> None:
             filled = int(bar_len * done / max(total, 1))
             bar = "█" * filled + "░" * (bar_len - filled)
             burndown_lines.append(f"**{p['name']}**: [{bar}] {done}/{total} pts")
+        elif p.get("status") == NOT_ATTACHED:
+            burndown_lines.append(f"**{p['name']}**: {NOT_ATTACHED} — no points to burn")
 
     (dashboards_dir / "burndown.md").write_text("\n".join(burndown_lines) + "\n")

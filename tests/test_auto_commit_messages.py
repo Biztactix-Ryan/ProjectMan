@@ -47,10 +47,23 @@ class TestGenerateCommitMessage:
         msg = store._generate_commit_message([".project/config.yaml"])
         assert msg == "pm: update config"
 
-    def test_index_change(self, tmp_project):
+    def test_derived_index_files_are_not_counted(self, tmp_project):
+        """The five index files render the items, so they never add to a message.
+
+        Before US-PM-29-6 ``index.yaml`` landed in the "config" bucket and the
+        four markdown indexes in "files", so a one-task edit in a store that
+        still tracks them read as "1 task, config, 4 files".
+        """
+        from projectman.indexer import DERIVED_INDEX_FILES
+
         store = Store(tmp_project)
-        msg = store._generate_commit_message([".project/index.yaml"])
-        assert msg == "pm: update config"
+        derived = [f".project/{name}" for name in DERIVED_INDEX_FILES]
+
+        assert store._generate_commit_message(derived) == "pm: update project data"
+        assert (
+            store._generate_commit_message([".project/tasks/TST-1-1.md"] + derived)
+            == "pm: update 1 task"
+        )
 
     def test_story_and_task_combined(self, tmp_project):
         store = Store(tmp_project)

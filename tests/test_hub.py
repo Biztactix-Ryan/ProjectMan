@@ -8,23 +8,16 @@ import yaml
 from pathlib import Path
 
 from projectman.hub.registry import (
-    list_projects, repair, _init_subproject, _parse_github_repo,
+    list_projects, _init_subproject, _parse_github_repo,
     log_ref_update, REF_LOG_MAX_ENTRIES,
-    hub_push_with_rebase,
-    validate_branches,
-    format_branch_validation,
-    sync,
     pm_commit,
     _generate_hub_commit_message,
     pm_push,
-    _push_subproject,
-    push_preflight,
-    _has_staged_changes,
-    _remote_reachable,
 )
 from projectman.hub.rollup import rollup
 from projectman.indexer import _discover_badges, write_markdown_indexes
 from projectman.store import Store
+from conftest import make_hub_subproject, make_legacy_hub_side_store
 
 
 def test_list_projects_empty(tmp_hub):
@@ -39,31 +32,8 @@ def test_rollup_empty(tmp_hub):
 
 
 def test_rollup_with_subproject(tmp_hub):
-    # Manually create a subproject's source dir and PM data in hub
-    sub_path = tmp_hub / "projects" / "sub1"
-    sub_path.mkdir(parents=True)
-
-    pm_dir = tmp_hub / ".project" / "projects" / "sub1"
-    pm_dir.mkdir(parents=True)
-    (pm_dir / "stories").mkdir()
-    (pm_dir / "tasks").mkdir()
-
-    config = {
-        "name": "sub1",
-        "prefix": "SUB",
-        "description": "",
-        "hub": False,
-        "next_story_id": 1,
-        "projects": [],
-    }
-    with open(pm_dir / "config.yaml", "w") as f:
-        yaml.dump(config, f)
-
-    # Register in hub config
-    from projectman.config import load_config, save_config
-    hub_config = load_config(tmp_hub)
-    hub_config.projects.append("sub1")
-    save_config(hub_config, tmp_hub)
+    # The subproject's store lives inside its own checkout (US-PM-31).
+    pm_dir = make_hub_subproject(tmp_hub, "sub1")
 
     # Create a story in subproject using hub root + project_dir
     sub_store = Store(tmp_hub, project_dir=pm_dir)
@@ -78,36 +48,11 @@ def test_rollup_with_subproject(tmp_hub):
 # ─── Helper ──────────────────────────────────────────────────────
 
 
-def _register_subproject(hub_root, name, prefix="SUB"):
-    """Set up a subproject with source dir, PM data dir, and hub config entry."""
-    sub_path = hub_root / "projects" / name
-    sub_path.mkdir(parents=True, exist_ok=True)
 
-    pm_dir = hub_root / ".project" / "projects" / name
-    pm_dir.mkdir(parents=True, exist_ok=True)
-    (pm_dir / "stories").mkdir(exist_ok=True)
-    (pm_dir / "tasks").mkdir(exist_ok=True)
-    (pm_dir / "epics").mkdir(exist_ok=True)
-
-    config = {
-        "name": name,
-        "prefix": prefix,
-        "description": "",
-        "hub": False,
-        "next_story_id": 1,
-        "next_epic_id": 1,
-        "projects": [],
-    }
-    with open(pm_dir / "config.yaml", "w") as f:
-        yaml.dump(config, f)
-
-    from projectman.config import load_config, save_config
-    hub_config = load_config(hub_root)
-    if name not in hub_config.projects:
-        hub_config.projects.append(name)
-        save_config(hub_config, hub_root)
-
-    return pm_dir
+#: Every hub subproject in the suite is built by the one conftest factory
+#: (US-PM-31-9), so ``projects/{name}/.project`` is spelled in exactly one
+#: place and a later layout change is a single edit.
+_register_subproject = make_hub_subproject
 
 
 # ─── list_projects with new layout ──────────────────────────────
@@ -125,96 +70,18 @@ def test_list_projects_with_registered_projects(tmp_hub):
 
 
 def test_list_projects_missing_source_dir(tmp_hub):
-    """Project registered but source dir deleted -- exists=False, initialized=True."""
+    """Registered but the checkout is gone — and with it the store (US-PM-31).
+
+    The PM data lives inside the checkout now, so losing the checkout loses
+    the store: ``initialized`` follows ``exists`` rather than outliving it.
+    """
     _register_subproject(tmp_hub, "gone")
-    # Remove the source directory but keep PM data
     shutil.rmtree(tmp_hub / "projects" / "gone")
 
     projects = list_projects(tmp_hub)
     assert len(projects) == 1
     assert projects[0]["exists"] is False
-    assert projects[0]["initialized"] is True
-
-
-# ─── Migration path in repair() ─────────────────────────────────
-
-
-def test_repair_migrates_old_style_data(tmp_hub):
-    """repair() moves PM data from projects/{name}/.project/ to hub .project/projects/{name}/."""
-    from projectman.config import load_config, save_config
-
-    # Register a project in the hub config
-    hub_config = load_config(tmp_hub)
-    hub_config.projects.append("legacy")
-    save_config(hub_config, tmp_hub)
-
-    # Create old-style layout: projects/legacy/.project/ with config + a story
-    sub_path = tmp_hub / "projects" / "legacy"
-    old_pm = sub_path / ".project"
-    old_pm.mkdir(parents=True)
-    (old_pm / "stories").mkdir()
-    (old_pm / "tasks").mkdir()
-
-    old_config = {
-        "name": "legacy",
-        "prefix": "LEG",
-        "description": "",
-        "hub": False,
-        "next_story_id": 2,
-        "projects": [],
-    }
-    with open(old_pm / "config.yaml", "w") as f:
-        yaml.dump(old_config, f)
-    (old_pm / "stories" / "US-LEG-1.md").write_text(
-        "---\nid: US-LEG-1\ntitle: Old Story\nstatus: backlog\n"
-        "priority: should\ncreated: 2025-01-01\nupdated: 2025-01-01\n---\nOld story body\n"
-    )
-
-    # New-style PM dir should NOT exist yet
-    new_pm = tmp_hub / ".project" / "projects" / "legacy"
-    assert not (new_pm / "config.yaml").exists()
-
-    # Run repair
-    report = repair(tmp_hub)
-
-    # Migration should have happened
-    assert "migrated PM data" in report
-    assert (new_pm / "config.yaml").exists()
-    assert (new_pm / "stories" / "US-LEG-1.md").exists()
-
-    # Verify migrated config is intact
-    with open(new_pm / "config.yaml") as f:
-        migrated = yaml.safe_load(f)
-    assert migrated["prefix"] == "LEG"
-    assert migrated["next_story_id"] == 2
-
-
-def test_repair_discovers_unregistered_projects(tmp_hub):
-    """repair() auto-registers directories in projects/ not in hub config."""
-    # Create a project dir that is NOT in the hub config
-    (tmp_hub / "projects" / "new-thing").mkdir(parents=True)
-
-    report = repair(tmp_hub)
-
-    assert "new-thing" in report
-    assert "Discovered" in report
-
-    # Verify it was registered
-    from projectman.config import load_config
-    hub_config = load_config(tmp_hub)
-    assert "new-thing" in hub_config.projects
-
-
-def test_repair_initializes_pm_data_for_new_projects(tmp_hub):
-    """repair() creates PM data structure at hub .project/projects/{name}/."""
-    (tmp_hub / "projects" / "fresh").mkdir(parents=True)
-
-    repair(tmp_hub)
-
-    pm_dir = tmp_hub / ".project" / "projects" / "fresh"
-    assert (pm_dir / "config.yaml").exists()
-    assert (pm_dir / "stories").is_dir()
-    assert (pm_dir / "tasks").is_dir()
+    assert projects[0]["initialized"] is False
 
 
 # ─── _init_subproject ────────────────────────────────────────────
@@ -231,6 +98,11 @@ def test_init_subproject_creates_structure(tmp_path):
     assert (target / "tasks").is_dir()
     assert (target / "epics").is_dir()
     assert (target / "index.yaml").exists()
+    # ...and index.yaml is derived, so the subproject ignores it (US-PM-29-6).
+    from projectman.indexer import DERIVED_INDEX_FILES
+
+    ignored = (target / ".gitignore").read_text().splitlines()
+    assert all(name in ignored for name in DERIVED_INDEX_FILES)
 
     with open(target / "config.yaml") as f:
         config = yaml.safe_load(f)
@@ -549,1104 +421,24 @@ def test_log_ref_update_archive_appends(tmp_hub):
     assert archived[0]["old"] == "entry"
 
 
-# ─── hub_push_with_rebase ────────────────────────────────────────
+# ─── pm_commit ───────────────────────────────────────────────────
+#
+# US-PM-35-7: pm_commit acts on the *one* store it is handed — the hub's own
+# or a subproject's — and never on a set of them.  The prefix that picks the
+# store is resolved by the caller (``server.pm_commit``, ``projectman
+# commit``); these test what the registry does once it has one.
 
-from unittest.mock import patch, MagicMock
 
+def _hub_store(root):
+    return root / ".project"
 
-def _make_run_result(returncode=0, stdout="", stderr=""):
-    """Build a CompletedProcess-like object."""
-    r = MagicMock()
-    r.returncode = returncode
-    r.stdout = stdout
-    r.stderr = stderr
-    return r
 
-
-def _git_dispatcher(responses):
-    """Return a side_effect callable that dispatches on the git subcommand.
-
-    ``responses`` maps a git subcommand (e.g. "push", "fetch") to either:
-      - a CompletedProcess-like object (returned every time), or
-      - a list of such objects (popped in order, last one repeats).
-
-    For ``check=True`` calls, a non-zero returncode raises CalledProcessError.
-    """
-    # track call counts per subcommand
-    counters: dict[str, int] = {}
-
-    def side_effect(cmd, **kwargs):
-        # Determine the git subcommand
-        sub = None
-        for i, part in enumerate(cmd):
-            if part == "git" or part.endswith("/git"):
-                if i + 1 < len(cmd):
-                    sub = cmd[i + 1]
-                break
-
-        if sub and sub in responses:
-            val = responses[sub]
-            if isinstance(val, list):
-                idx = counters.get(sub, 0)
-                counters[sub] = idx + 1
-                result = val[min(idx, len(val) - 1)]
-            else:
-                result = val
-        else:
-            result = _make_run_result()
-
-        if kwargs.get("check") and result.returncode != 0:
-            raise subprocess.CalledProcessError(
-                result.returncode, cmd,
-                output=result.stdout, stderr=result.stderr,
-            )
-        return result
-
-    return side_effect
-
-
-def test_hub_push_with_rebase_not_a_hub(tmp_project):
-    """Returns error for non-hub projects."""
-    result = hub_push_with_rebase(root=tmp_project)
-    assert result["pushed"] is False
-    assert result["error"] == "not a hub project"
-
-
-@patch("projectman.hub.registry.subprocess.run")
-def test_hub_push_with_rebase_succeeds_first_try(mock_run, tmp_hub):
-    """Push succeeds on first attempt — no rebase needed."""
-    mock_run.side_effect = _git_dispatcher({
-        "push": _make_run_result(0),
-    })
-
-    result = hub_push_with_rebase(root=tmp_hub)
-    assert result == {"pushed": True, "retries": 0, "rebased": False, "error": None}
-
-
-@patch("projectman.hub.registry.subprocess.run")
-def test_hub_push_with_rebase_non_conflict_error(mock_run, tmp_hub):
-    """Push fails for a non-conflict reason (e.g. auth)."""
-    mock_run.side_effect = _git_dispatcher({
-        "push": _make_run_result(1, stderr="Permission denied"),
-    })
-
-    result = hub_push_with_rebase(root=tmp_hub)
-    assert result["pushed"] is False
-    assert "Permission denied" in result["error"]
-    assert result["rebased"] is False
-
-
-@patch("projectman.hub.registry.subprocess.run")
-def test_hub_push_with_rebase_conflict_then_success(mock_run, tmp_hub):
-    """Push rejected, rebase succeeds, second push succeeds."""
-    mock_run.side_effect = _git_dispatcher({
-        "push": [
-            _make_run_result(1, stderr="rejected non-fast-forward"),
-            _make_run_result(0),  # second push succeeds
-        ],
-        "fetch": _make_run_result(0),
-        "diff": _make_run_result(0, stdout="projects/api\n"),
-        "rebase": _make_run_result(0),
-    })
-
-    result = hub_push_with_rebase(root=tmp_hub)
-    assert result == {"pushed": True, "retries": 1, "rebased": True, "error": None}
-
-
-@patch("projectman.hub.registry.subprocess.run")
-def test_hub_push_with_rebase_fetch_fails(mock_run, tmp_hub):
-    """Push rejected but fetch fails — returns fetch error."""
-    mock_run.side_effect = _git_dispatcher({
-        "push": _make_run_result(1, stderr="rejected non-fast-forward"),
-        "fetch": _make_run_result(1, stderr="Could not resolve host"),
-    })
-
-    result = hub_push_with_rebase(root=tmp_hub)
-    assert result["pushed"] is False
-    assert "fetch failed" in result["error"]
-
-
-@patch("projectman.hub.registry.subprocess.run")
-def test_hub_push_with_rebase_conflict_project_files(mock_run, tmp_hub):
-    """Rebase fails on conflicting files — aborted, manual resolution asked for."""
-    mock_run.side_effect = _git_dispatcher({
-        "push": _make_run_result(1, stderr="rejected non-fast-forward"),
-        "fetch": _make_run_result(0),
-        "diff": _make_run_result(0, stdout=".project/index.yaml\n"),
-        "rebase": [
-            _make_run_result(1, stderr="CONFLICT"),  # rebase fails
-            _make_run_result(0),  # --abort succeeds (subcommand still "rebase")
-        ],
-    })
-
-    result = hub_push_with_rebase(root=tmp_hub)
-    assert result["pushed"] is False
-    assert "manual resolution required" in result["error"]
-
-
-@patch("projectman.hub.registry.subprocess.run")
-def test_hub_push_with_rebase_max_retries_exceeded(mock_run, tmp_hub):
-    """Push keeps getting rejected — exceeds max retries."""
-    mock_run.side_effect = _git_dispatcher({
-        "push": _make_run_result(1, stderr="rejected non-fast-forward"),
-        "fetch": _make_run_result(0),
-        "diff": _make_run_result(0, stdout="projects/api\n"),
-        "rebase": _make_run_result(0),
-    })
-
-    result = hub_push_with_rebase(root=tmp_hub, max_retries=2)
-    assert result["pushed"] is False
-    assert result["retries"] == 2
-    assert "max retries" in result["error"]
-
-
-@patch("projectman.hub.registry.subprocess.run")
-def test_hub_push_with_rebase_logs_ref_changes(mock_run, tmp_hub):
-    """After a successful rebase, ref changes are logged."""
-    # Register a subproject so refs can be tracked
-    pm_dir = _register_subproject(tmp_hub, "api", prefix="API")
-    (tmp_hub / "projects" / "api").mkdir(parents=True, exist_ok=True)
-
-    call_count = {"rev-parse": 0}
-
-    def dispatcher(cmd, **kwargs):
-        sub = None
-        for i, part in enumerate(cmd):
-            if part == "git" or part.endswith("/git"):
-                if i + 1 < len(cmd):
-                    sub = cmd[i + 1]
-                break
-
-        if sub == "push":
-            # First push rejected, second succeeds
-            if not hasattr(dispatcher, "_push_count"):
-                dispatcher._push_count = 0
-            dispatcher._push_count += 1
-            r = _make_run_result(
-                1 if dispatcher._push_count == 1 else 0,
-                stderr="rejected non-fast-forward" if dispatcher._push_count == 1 else "",
-            )
-        elif sub == "fetch":
-            r = _make_run_result(0)
-        elif sub == "diff":
-            r = _make_run_result(0, stdout="projects/api\n")
-        elif sub == "rev-parse":
-            call_count["rev-parse"] += 1
-            # Return different SHAs before and after rebase
-            sha = "aaa111" if call_count["rev-parse"] <= 1 else "bbb222"
-            r = _make_run_result(0, stdout=sha + "\n")
-            if kwargs.get("check") and r.returncode != 0:
-                raise subprocess.CalledProcessError(
-                    r.returncode, cmd, output=r.stdout, stderr=r.stderr,
-                )
-            return r
-        elif sub == "rebase":
-            r = _make_run_result(0)
-        else:
-            r = _make_run_result(0)
-
-        if kwargs.get("check") and r.returncode != 0:
-            raise subprocess.CalledProcessError(
-                r.returncode, cmd, output=r.stdout, stderr=r.stderr,
-            )
-        return r
-
-    mock_run.side_effect = dispatcher
-
-    result = hub_push_with_rebase(root=tmp_hub)
-    assert result["pushed"] is True
-    assert result["rebased"] is True
-
-    # Check that ref-log.yaml was written
-    log_path = tmp_hub / ".project" / "ref-log.yaml"
-    assert log_path.exists()
-    entries = yaml.safe_load(log_path.read_text())
-    assert len(entries) == 1
-    assert entries[0]["project"] == "api"
-    assert entries[0]["source"] == "auto_rebase"
-    assert entries[0]["old_ref"] == "aaa111"
-    assert entries[0]["new_ref"] == "bbb222"
-
-
-# ─── coordinated_push ────────────────────────────────────────────
-
-
-from projectman.hub.registry import coordinated_push
-
-
-def test_coordinated_push_not_a_hub(tmp_project):
-    """Returns error for non-hub projects."""
-    result = coordinated_push(root=tmp_project)
-    assert result["pushed"] is False
-    assert result["hub_result"] is None
-    assert "not a hub project" in result["report"]
-
-
-def test_coordinated_push_dry_run(tmp_hub):
-    """Dry run returns a report without pushing."""
-    result = coordinated_push(dry_run=True, root=tmp_hub)
-    assert result["pushed"] is False
-    assert result["hub_result"] is None
-    assert "Dry Run" in result["report"]
-
-
-@patch("projectman.hub.registry.subprocess.run")
-def test_coordinated_push_clean_push(mock_run, tmp_hub):
-    """Clean push reports success with SHA."""
-    mock_run.side_effect = _git_dispatcher({
-        "push": _make_run_result(0),
-        "rev-parse": _make_run_result(0, stdout="abc1234def5678\n"),
-    })
-
-    result = coordinated_push(root=tmp_hub)
-    assert result["pushed"] is True
-    assert result["hub_result"]["rebased"] is False
-    assert "\u2713" in result["report"]
-    assert "abc1234" in result["report"]
-    assert "rebased" not in result["report"]
-
-
-@patch("projectman.hub.registry.subprocess.run")
-def test_coordinated_push_rebased_push(mock_run, tmp_hub):
-    """Push with rebase reports the retry count."""
-    mock_run.side_effect = _git_dispatcher({
-        "push": [
-            _make_run_result(1, stderr="rejected non-fast-forward"),
-            _make_run_result(0),
-        ],
-        "fetch": _make_run_result(0),
-        "diff": _make_run_result(0, stdout="projects/api\n"),
-        "rebase": _make_run_result(0),
-        "rev-parse": _make_run_result(0, stdout="abc1234def5678\n"),
-    })
-
-    result = coordinated_push(root=tmp_hub)
-    assert result["pushed"] is True
-    assert result["hub_result"]["rebased"] is True
-    assert "rebased" in result["report"]
-    assert "1 retry" in result["report"]
-    assert "\u2713" in result["report"]
-
-
-@patch("projectman.hub.registry.subprocess.run")
-def test_coordinated_push_max_retries(mock_run, tmp_hub):
-    """Max retries exceeded shows clear failure message."""
-    mock_run.side_effect = _git_dispatcher({
-        "push": _make_run_result(1, stderr="rejected non-fast-forward"),
-        "fetch": _make_run_result(0),
-        "diff": _make_run_result(0, stdout="projects/api\n"),
-        "rebase": _make_run_result(0),
-    })
-
-    result = coordinated_push(root=tmp_hub, max_retries=2)
-    assert result["pushed"] is False
-    assert "max retries" in result["hub_result"]["error"]
-    assert "\u2717" in result["report"]
-    assert "manual resolution needed" in result["report"]
-
-
-@patch("projectman.hub.registry.subprocess.run")
-def test_coordinated_push_rebase_conflict(mock_run, tmp_hub):
-    """A rebase conflict aborts the push and is named in the report."""
-    _register_subproject(tmp_hub, "api", prefix="API")
-    (tmp_hub / "projects" / "api").mkdir(parents=True, exist_ok=True)
-
-    def dispatcher(cmd, **kwargs):
-        sub = None
-        for i, part in enumerate(cmd):
-            if part == "git" or part.endswith("/git"):
-                if i + 1 < len(cmd):
-                    sub = cmd[i + 1]
-                break
-
-        if sub == "push":
-            return _make_run_result(1, stderr="rejected non-fast-forward")
-        elif sub == "rebase" and "--abort" not in cmd:
-            return _make_run_result(1, stderr="CONFLICT")
-        elif sub == "diff" and "--diff-filter=U" in cmd:
-            return _make_run_result(0, stdout="projects/api\n")
-        elif sub == "ls-files":
-            return _make_run_result(
-                0,
-                stdout="160000 aaa 2\tprojects/api\n"
-                       "160000 bbb 3\tprojects/api\n",
-            )
-        elif sub == "merge-base":
-            return _make_run_result(1)  # diverged
-        elif sub == "rev-parse":
-            r = _make_run_result(0, stdout="some_sha\n")
-            if kwargs.get("check") and r.returncode != 0:
-                raise subprocess.CalledProcessError(
-                    r.returncode, cmd, output=r.stdout, stderr=r.stderr,
-                )
-            return r
-        else:
-            r = _make_run_result(0)
-            if kwargs.get("check") and r.returncode != 0:
-                raise subprocess.CalledProcessError(
-                    r.returncode, cmd, output=r.stdout, stderr=r.stderr,
-                )
-            return r
-
-    mock_run.side_effect = dispatcher
-
-    result = coordinated_push(root=tmp_hub)
-    assert result["pushed"] is False
-    assert "rebase conflict" in result["report"]
-    assert "manual resolution required" in result["report"]
-
-
-@patch("projectman.hub.registry.subprocess.run")
-def test_coordinated_push_report_format(mock_run, tmp_hub):
-    """Report starts with 'Hub:' header."""
-    mock_run.side_effect = _git_dispatcher({
-        "push": _make_run_result(0),
-        "rev-parse": _make_run_result(0, stdout="deadbeef1234\n"),
-    })
-
-    result = coordinated_push(root=tmp_hub)
-    assert result["report"].startswith("Hub:")
-
-
-# ─── validate_branches ────────────────────────────────────────────
-
-
-def test_validate_branches_not_a_hub(tmp_project):
-    """Returns error for non-hub projects."""
-    result = validate_branches(root=tmp_project)
-    assert result["ok"] is False
-    assert "Not a hub" in result["summary"]
-
-
-@patch("projectman.hub.registry.subprocess.run")
-def test_validate_branches_all_match(mock_run, tmp_hub):
-    """All submodules on correct tracking branch → ok=True."""
-    _register_subproject(tmp_hub, "api", prefix="API")
-    (tmp_hub / "projects" / "api").mkdir(parents=True, exist_ok=True)
-
-    def dispatcher(cmd, **kwargs):
-        if "config" in cmd and ".gitmodules" in cmd:
-            return _make_run_result(0, stdout="main\n")
-        if "rev-parse" in cmd and "--abbrev-ref" in cmd:
-            return _make_run_result(0, stdout="main\n")
-        if "status" in cmd and "--porcelain" in cmd:
-            return _make_run_result(0, stdout="")
-        r = _make_run_result(0)
-        if kwargs.get("check") and r.returncode != 0:
-            raise subprocess.CalledProcessError(
-                r.returncode, cmd, output=r.stdout, stderr=r.stderr,
-            )
-        return r
-
-    mock_run.side_effect = dispatcher
-
-    result = validate_branches(root=tmp_hub)
-    assert result["ok"] is True
-    assert len(result["aligned"]) == 1
-    assert result["aligned"][0]["name"] == "api"
-    assert result["aligned"][0]["branch"] == "main"
-    assert result["aligned"][0]["dirty"] is False
-    assert result["misaligned"] == []
-    assert result["detached"] == []
-    assert result["missing"] == []
-
-
-@patch("projectman.hub.registry.subprocess.run")
-def test_validate_branches_mismatch(mock_run, tmp_hub):
-    """Submodule on wrong branch → ok=False with expected vs actual."""
-    _register_subproject(tmp_hub, "api", prefix="API")
-    (tmp_hub / "projects" / "api").mkdir(parents=True, exist_ok=True)
-
-    def dispatcher(cmd, **kwargs):
-        if "config" in cmd and ".gitmodules" in cmd:
-            return _make_run_result(0, stdout="main\n")
-        if "rev-parse" in cmd and "--abbrev-ref" in cmd:
-            return _make_run_result(0, stdout="feature-x\n")
-        if "status" in cmd and "--porcelain" in cmd:
-            return _make_run_result(0, stdout="")
-        r = _make_run_result(0)
-        if kwargs.get("check") and r.returncode != 0:
-            raise subprocess.CalledProcessError(
-                r.returncode, cmd, output=r.stdout, stderr=r.stderr,
-            )
-        return r
-
-    mock_run.side_effect = dispatcher
-
-    result = validate_branches(root=tmp_hub)
-    assert result["ok"] is False
-    assert len(result["misaligned"]) == 1
-    assert result["misaligned"][0]["expected"] == "main"
-    assert result["misaligned"][0]["actual"] == "feature-x"
-    assert result["aligned"] == []
-
-
-@patch("projectman.hub.registry.subprocess.run")
-def test_validate_branches_no_tracking_branch_skipped(mock_run, tmp_hub):
-    """Projects without a tracking branch in .gitmodules are skipped."""
-    _register_subproject(tmp_hub, "api", prefix="API")
-    (tmp_hub / "projects" / "api").mkdir(parents=True, exist_ok=True)
-
-    def dispatcher(cmd, **kwargs):
-        if "config" in cmd and ".gitmodules" in cmd:
-            # No tracking branch configured
-            return _make_run_result(1, stdout="")
-        r = _make_run_result(0)
-        if kwargs.get("check") and r.returncode != 0:
-            raise subprocess.CalledProcessError(
-                r.returncode, cmd, output=r.stdout, stderr=r.stderr,
-            )
-        return r
-
-    mock_run.side_effect = dispatcher
-
-    result = validate_branches(root=tmp_hub)
-    assert result["ok"] is True
-    assert result["aligned"] == []
-    assert result["misaligned"] == []
-    assert result["detached"] == []
-    assert result["missing"] == []
-
-
-@patch("projectman.hub.registry.subprocess.run")
-def test_validate_branches_multiple_projects_mixed(mock_run, tmp_hub):
-    """Multiple projects: one matching, one mismatched → ok=False."""
-    _register_subproject(tmp_hub, "api", prefix="API")
-    _register_subproject(tmp_hub, "web", prefix="WEB")
-    (tmp_hub / "projects" / "api").mkdir(parents=True, exist_ok=True)
-    (tmp_hub / "projects" / "web").mkdir(parents=True, exist_ok=True)
-
-    def dispatcher(cmd, **kwargs):
-        if "config" in cmd and ".gitmodules" in cmd:
-            # Both track main
-            return _make_run_result(0, stdout="main\n")
-        if "rev-parse" in cmd and "--abbrev-ref" in cmd:
-            # Determine which project by cwd
-            cwd = kwargs.get("cwd", "")
-            if "api" in cwd:
-                return _make_run_result(0, stdout="main\n")
-            if "web" in cwd:
-                return _make_run_result(0, stdout="develop\n")
-            return _make_run_result(0, stdout="main\n")
-        if "status" in cmd and "--porcelain" in cmd:
-            return _make_run_result(0, stdout="")
-        r = _make_run_result(0)
-        if kwargs.get("check") and r.returncode != 0:
-            raise subprocess.CalledProcessError(
-                r.returncode, cmd, output=r.stdout, stderr=r.stderr,
-            )
-        return r
-
-    mock_run.side_effect = dispatcher
-
-    result = validate_branches(root=tmp_hub)
-    assert result["ok"] is False
-    assert len(result["aligned"]) == 1
-    assert result["aligned"][0]["name"] == "api"
-    assert len(result["misaligned"]) == 1
-    assert result["misaligned"][0]["name"] == "web"
-    assert result["misaligned"][0]["expected"] == "main"
-    assert result["misaligned"][0]["actual"] == "develop"
-
-
-def test_validate_branches_missing_project_dir(tmp_hub):
-    """Projects with missing directories go to the missing list."""
-    from projectman.config import load_config, save_config
-    hub_config = load_config(tmp_hub)
-    hub_config.projects.append("ghost")
-    save_config(hub_config, tmp_hub)
-
-    result = validate_branches(root=tmp_hub)
-    assert result["ok"] is False
-    assert len(result["missing"]) == 1
-    assert result["missing"][0]["name"] == "ghost"
-
-
-@patch("projectman.hub.registry.subprocess.run")
-def test_validate_branches_detached_head(mock_run, tmp_hub):
-    """Submodule in detached HEAD state → goes to detached list (informational in default mode)."""
-    _register_subproject(tmp_hub, "api", prefix="API")
-    (tmp_hub / "projects" / "api").mkdir(parents=True, exist_ok=True)
-
-    def dispatcher(cmd, **kwargs):
-        if "config" in cmd and ".gitmodules" in cmd:
-            return _make_run_result(0, stdout="main\n")
-        if "rev-parse" in cmd and "--abbrev-ref" in cmd:
-            return _make_run_result(0, stdout="HEAD\n")
-        if "status" in cmd and "--porcelain" in cmd:
-            return _make_run_result(0, stdout="")
-        r = _make_run_result(0)
-        if kwargs.get("check") and r.returncode != 0:
-            raise subprocess.CalledProcessError(
-                r.returncode, cmd, output=r.stdout, stderr=r.stderr,
-            )
-        return r
-
-    mock_run.side_effect = dispatcher
-
-    result = validate_branches(root=tmp_hub)
-    # In default (non-strict) mode, detached HEAD is informational → ok=True
-    assert result["ok"] is True
-    assert len(result["detached"]) == 1
-    assert result["detached"][0]["name"] == "api"
-    assert result["detached"][0]["expected"] == "main"
-    assert result["aligned"] == []
-
-
-@patch("projectman.hub.registry.subprocess.run")
-def test_validate_branches_dirty_working_tree(mock_run, tmp_hub):
-    """Dirty working tree is flagged on aligned projects."""
-    _register_subproject(tmp_hub, "api", prefix="API")
-    (tmp_hub / "projects" / "api").mkdir(parents=True, exist_ok=True)
-
-    def dispatcher(cmd, **kwargs):
-        if "config" in cmd and ".gitmodules" in cmd:
-            return _make_run_result(0, stdout="main\n")
-        if "rev-parse" in cmd and "--abbrev-ref" in cmd:
-            return _make_run_result(0, stdout="main\n")
-        if "status" in cmd and "--porcelain" in cmd:
-            return _make_run_result(0, stdout=" M file.py\n")
-        r = _make_run_result(0)
-        if kwargs.get("check") and r.returncode != 0:
-            raise subprocess.CalledProcessError(
-                r.returncode, cmd, output=r.stdout, stderr=r.stderr,
-            )
-        return r
-
-    mock_run.side_effect = dispatcher
-
-    result = validate_branches(root=tmp_hub)
-    assert result["ok"] is True
-    assert len(result["aligned"]) == 1
-    assert result["aligned"][0]["dirty"] is True
-
-
-@patch("projectman.hub.registry.subprocess.run")
-def test_validate_branches_summary_string(mock_run, tmp_hub):
-    """Summary string reflects the validation outcome."""
-    _register_subproject(tmp_hub, "api", prefix="API")
-    (tmp_hub / "projects" / "api").mkdir(parents=True, exist_ok=True)
-
-    def dispatcher(cmd, **kwargs):
-        if "config" in cmd and ".gitmodules" in cmd:
-            return _make_run_result(0, stdout="main\n")
-        if "rev-parse" in cmd and "--abbrev-ref" in cmd:
-            return _make_run_result(0, stdout="main\n")
-        if "status" in cmd and "--porcelain" in cmd:
-            return _make_run_result(0, stdout="")
-        r = _make_run_result(0)
-        if kwargs.get("check") and r.returncode != 0:
-            raise subprocess.CalledProcessError(
-                r.returncode, cmd, output=r.stdout, stderr=r.stderr,
-            )
-        return r
-
-    mock_run.side_effect = dispatcher
-
-    result = validate_branches(root=tmp_hub)
-    assert "summary" in result
-    assert "correct branch" in result["summary"]
-
-
-# ─── format_branch_validation (error message clarity) ────────────
-
-
-def test_format_branch_validation_mismatch_shows_expected_and_actual():
-    """Mismatch message clearly shows expected vs actual branch."""
-    result = {
-        "ok": False,
-        "aligned": [],
-        "misaligned": [
-            {"name": "api", "expected": "main", "actual": "feature-x", "dirty": False},
-        ],
-        "detached": [],
-        "missing": [],
-        "summary": "1 misaligned",
-    }
-    msg = format_branch_validation(result)
-    assert "Branch mismatch" in msg
-    assert "api" in msg
-    assert "expected 'main'" in msg
-    assert "actual 'feature-x'" in msg
-
-
-def test_format_branch_validation_multiple_mismatches():
-    """Multiple mismatched projects each listed with expected vs actual."""
-    result = {
-        "ok": False,
-        "aligned": [],
-        "misaligned": [
-            {"name": "api", "expected": "main", "actual": "feature-x", "dirty": False},
-            {"name": "web", "expected": "main", "actual": "develop", "dirty": False},
-        ],
-        "detached": [],
-        "missing": [],
-        "summary": "2 misaligned",
-    }
-    msg = format_branch_validation(result)
-    assert "api" in msg
-    assert "expected 'main', actual 'feature-x'" in msg
-    assert "web" in msg
-    assert "expected 'main', actual 'develop'" in msg
-
-
-def test_format_branch_validation_all_ok():
-    """All branches matching → positive confirmation message."""
-    result = {
-        "ok": True,
-        "aligned": [
-            {"name": "api", "branch": "main", "dirty": False},
-        ],
-        "misaligned": [],
-        "detached": [],
-        "missing": [],
-        "summary": "All 1 submodule(s) on correct branch.",
-    }
-    msg = format_branch_validation(result)
-    assert "correct branch" in msg
-    assert "mismatch" not in msg.lower()
-
-
-def test_format_branch_validation_with_missing():
-    """Missing directories included in formatted output."""
-    result = {
-        "ok": False,
-        "aligned": [],
-        "misaligned": [],
-        "detached": [],
-        "missing": [{"name": "ghost"}],
-        "summary": "1 missing",
-    }
-    msg = format_branch_validation(result)
-    assert "ghost" in msg
-    assert "not found" in msg
-
-
-def test_format_branch_validation_no_tracking_branches():
-    """No submodules to check → informative message."""
-    result = {
-        "ok": True,
-        "aligned": [],
-        "misaligned": [],
-        "detached": [],
-        "missing": [],
-        "summary": "No submodules with tracking branches to validate.",
-    }
-    msg = format_branch_validation(result)
-    assert "No submodules" in msg
-
-
-def test_format_branch_validation_detached_head():
-    """Detached HEAD projects shown in formatted output."""
-    result = {
-        "ok": False,
-        "aligned": [],
-        "misaligned": [],
-        "detached": [{"name": "worker", "expected": "main", "dirty": False}],
-        "missing": [],
-        "summary": "1 detached",
-    }
-    msg = format_branch_validation(result)
-    assert "Detached HEAD" in msg
-    assert "worker" in msg
-    assert "expected 'main'" in msg
-
-
-def test_format_branch_validation_dirty_flag():
-    """Dirty flag shown in formatted output for misaligned projects."""
-    result = {
-        "ok": False,
-        "aligned": [],
-        "misaligned": [
-            {"name": "api", "expected": "main", "actual": "feature-x", "dirty": True},
-        ],
-        "detached": [],
-        "missing": [],
-        "summary": "1 misaligned",
-    }
-    msg = format_branch_validation(result)
-    assert "(dirty)" in msg
-
-
-# ─── standalone command: CLI + MCP tool ───────────────────────────
-
-
-@patch("projectman.hub.registry.subprocess.run")
-def test_validate_branches_cli_standalone(mock_run, tmp_hub):
-    """validate-branches CLI command runs standalone and reports results."""
-    from click.testing import CliRunner
-    from projectman.cli import cli
-
-    _register_subproject(tmp_hub, "api", prefix="API")
-    (tmp_hub / "projects" / "api").mkdir(parents=True, exist_ok=True)
-
-    def dispatcher(cmd, **kwargs):
-        if "config" in cmd and ".gitmodules" in cmd:
-            return _make_run_result(0, stdout="main\n")
-        if "rev-parse" in cmd and "--abbrev-ref" in cmd:
-            return _make_run_result(0, stdout="main\n")
-        if "status" in cmd and "--porcelain" in cmd:
-            return _make_run_result(0, stdout="")
-        return _make_run_result(0)
-
-    mock_run.side_effect = dispatcher
-
-    runner = CliRunner()
-    result = runner.invoke(cli, ["validate-branches"], env={"PROJECTMAN_ROOT": str(tmp_hub)})
-    assert result.exit_code == 0
-    assert "correct branch" in result.output
-
-
-@patch("projectman.hub.registry.subprocess.run")
-def test_validate_branches_cli_standalone_shows_mismatch(mock_run, tmp_hub):
-    """validate-branches CLI command shows mismatch details when run standalone."""
-    from click.testing import CliRunner
-    from projectman.cli import cli
-
-    _register_subproject(tmp_hub, "api", prefix="API")
-    (tmp_hub / "projects" / "api").mkdir(parents=True, exist_ok=True)
-
-    def dispatcher(cmd, **kwargs):
-        if "config" in cmd and ".gitmodules" in cmd:
-            return _make_run_result(0, stdout="main\n")
-        if "rev-parse" in cmd and "--abbrev-ref" in cmd:
-            return _make_run_result(0, stdout="feature-x\n")
-        if "status" in cmd and "--porcelain" in cmd:
-            return _make_run_result(0, stdout="")
-        return _make_run_result(0)
-
-    mock_run.side_effect = dispatcher
-
-    runner = CliRunner()
-    result = runner.invoke(cli, ["validate-branches"], env={"PROJECTMAN_ROOT": str(tmp_hub)})
-    assert result.exit_code == 1
-    assert "Branch mismatch" in result.output
-    assert "api" in result.output
-    assert "expected 'main'" in result.output
-    assert "actual 'feature-x'" in result.output
-
-
-@patch("projectman.hub.registry.subprocess.run")
-def test_validate_branches_mcp_tool_standalone(mock_run, tmp_hub, monkeypatch):
-    """pm_validate_branches MCP tool can be called standalone."""
-    from projectman.server import pm_validate_branches
-
-    _register_subproject(tmp_hub, "api", prefix="API")
-    (tmp_hub / "projects" / "api").mkdir(parents=True, exist_ok=True)
-
-    monkeypatch.chdir(tmp_hub)
-
-    def dispatcher(cmd, **kwargs):
-        if "config" in cmd and ".gitmodules" in cmd:
-            return _make_run_result(0, stdout="main\n")
-        if "rev-parse" in cmd and "--abbrev-ref" in cmd:
-            return _make_run_result(0, stdout="main\n")
-        if "status" in cmd and "--porcelain" in cmd:
-            return _make_run_result(0, stdout="")
-        return _make_run_result(0)
-
-    mock_run.side_effect = dispatcher
-
-    result_str = pm_validate_branches()
-    data = yaml.safe_load(result_str)
-    assert data["ok"] is True
-    assert len(data["aligned"]) == 1
-    assert data["aligned"][0]["name"] == "api"
-
-
-@patch("projectman.hub.registry.subprocess.run")
-def test_validate_branches_mcp_tool_standalone_returns_mismatch(mock_run, tmp_hub, monkeypatch):
-    """pm_validate_branches MCP tool returns structured mismatch data."""
-    from projectman.server import pm_validate_branches
-
-    _register_subproject(tmp_hub, "api", prefix="API")
-    (tmp_hub / "projects" / "api").mkdir(parents=True, exist_ok=True)
-
-    monkeypatch.chdir(tmp_hub)
-
-    def dispatcher(cmd, **kwargs):
-        if "config" in cmd and ".gitmodules" in cmd:
-            return _make_run_result(0, stdout="main\n")
-        if "rev-parse" in cmd and "--abbrev-ref" in cmd:
-            return _make_run_result(0, stdout="feature-x\n")
-        if "status" in cmd and "--porcelain" in cmd:
-            return _make_run_result(0, stdout="")
-        return _make_run_result(0)
-
-    mock_run.side_effect = dispatcher
-
-    result_str = pm_validate_branches()
-    data = yaml.safe_load(result_str)
-    assert data["ok"] is False
-    assert data["misaligned"][0]["expected"] == "main"
-    assert data["misaligned"][0]["actual"] == "feature-x"
-
-
-# ─── validate_branches strict mode ───────────────────────────────
-
-
-@patch("projectman.hub.registry.subprocess.run")
-def test_validate_branches_strict_detached_is_blocking(mock_run, tmp_hub):
-    """In strict mode, detached HEAD causes ok=False."""
-    _register_subproject(tmp_hub, "api", prefix="API")
-    (tmp_hub / "projects" / "api").mkdir(parents=True, exist_ok=True)
-
-    def dispatcher(cmd, **kwargs):
-        if "config" in cmd and ".gitmodules" in cmd:
-            return _make_run_result(0, stdout="main\n")
-        if "rev-parse" in cmd and "--abbrev-ref" in cmd:
-            return _make_run_result(0, stdout="HEAD\n")
-        if "status" in cmd and "--porcelain" in cmd:
-            return _make_run_result(0, stdout="")
-        r = _make_run_result(0)
-        if kwargs.get("check") and r.returncode != 0:
-            raise subprocess.CalledProcessError(
-                r.returncode, cmd, output=r.stdout, stderr=r.stderr,
-            )
-        return r
-
-    mock_run.side_effect = dispatcher
-
-    result = validate_branches(root=tmp_hub, strict=True)
-    assert result["ok"] is False
-    assert result["strict"] is True
-    assert len(result["detached"]) == 1
-    assert "blocking" in result["summary"]
-
-
-@patch("projectman.hub.registry.subprocess.run")
-def test_validate_branches_default_detached_is_informational(mock_run, tmp_hub):
-    """In default mode, detached HEAD does not cause ok=False."""
-    _register_subproject(tmp_hub, "api", prefix="API")
-    (tmp_hub / "projects" / "api").mkdir(parents=True, exist_ok=True)
-
-    def dispatcher(cmd, **kwargs):
-        if "config" in cmd and ".gitmodules" in cmd:
-            return _make_run_result(0, stdout="main\n")
-        if "rev-parse" in cmd and "--abbrev-ref" in cmd:
-            return _make_run_result(0, stdout="HEAD\n")
-        if "status" in cmd and "--porcelain" in cmd:
-            return _make_run_result(0, stdout="")
-        r = _make_run_result(0)
-        if kwargs.get("check") and r.returncode != 0:
-            raise subprocess.CalledProcessError(
-                r.returncode, cmd, output=r.stdout, stderr=r.stderr,
-            )
-        return r
-
-    mock_run.side_effect = dispatcher
-
-    result = validate_branches(root=tmp_hub)
-    assert result["ok"] is True
-    assert result["strict"] is False
-    assert len(result["detached"]) == 1
-    assert "info" in result["summary"]
-
-
-@patch("projectman.hub.registry.subprocess.run")
-def test_validate_branches_strict_misaligned_still_blocking(mock_run, tmp_hub):
-    """In strict mode, misaligned branches are still blocking."""
-    _register_subproject(tmp_hub, "api", prefix="API")
-    (tmp_hub / "projects" / "api").mkdir(parents=True, exist_ok=True)
-
-    def dispatcher(cmd, **kwargs):
-        if "config" in cmd and ".gitmodules" in cmd:
-            return _make_run_result(0, stdout="main\n")
-        if "rev-parse" in cmd and "--abbrev-ref" in cmd:
-            return _make_run_result(0, stdout="feature-x\n")
-        if "status" in cmd and "--porcelain" in cmd:
-            return _make_run_result(0, stdout="")
-        r = _make_run_result(0)
-        if kwargs.get("check") and r.returncode != 0:
-            raise subprocess.CalledProcessError(
-                r.returncode, cmd, output=r.stdout, stderr=r.stderr,
-            )
-        return r
-
-    mock_run.side_effect = dispatcher
-
-    result = validate_branches(root=tmp_hub, strict=True)
-    assert result["ok"] is False
-    assert result["strict"] is True
-    assert len(result["misaligned"]) == 1
-
-
-@patch("projectman.hub.registry.subprocess.run")
-def test_validate_branches_strict_all_aligned_ok(mock_run, tmp_hub):
-    """In strict mode, all aligned → ok=True."""
-    _register_subproject(tmp_hub, "api", prefix="API")
-    (tmp_hub / "projects" / "api").mkdir(parents=True, exist_ok=True)
-
-    def dispatcher(cmd, **kwargs):
-        if "config" in cmd and ".gitmodules" in cmd:
-            return _make_run_result(0, stdout="main\n")
-        if "rev-parse" in cmd and "--abbrev-ref" in cmd:
-            return _make_run_result(0, stdout="main\n")
-        if "status" in cmd and "--porcelain" in cmd:
-            return _make_run_result(0, stdout="")
-        r = _make_run_result(0)
-        if kwargs.get("check") and r.returncode != 0:
-            raise subprocess.CalledProcessError(
-                r.returncode, cmd, output=r.stdout, stderr=r.stderr,
-            )
-        return r
-
-    mock_run.side_effect = dispatcher
-
-    result = validate_branches(root=tmp_hub, strict=True)
-    assert result["ok"] is True
-    assert result["strict"] is True
-
-
-def test_validate_branches_result_includes_strict_flag(tmp_project):
-    """Result dict always includes the strict flag."""
-    result = validate_branches(root=tmp_project)
-    assert "strict" in result
-    assert result["strict"] is False
-
-
-# ─── format_branch_validation strict/info labels ─────────────────
-
-
-def test_format_branch_validation_detached_strict_label():
-    """Detached HEAD section says 'blocking' in strict mode."""
-    result = {
-        "ok": False,
-        "aligned": [],
-        "misaligned": [],
-        "detached": [{"name": "worker", "expected": "main", "dirty": False}],
-        "missing": [],
-        "strict": True,
-        "summary": "1 detached (blocking)",
-    }
-    msg = format_branch_validation(result)
-    assert "blocking" in msg
-    assert "informational" not in msg
-
-
-def test_format_branch_validation_detached_default_label():
-    """Detached HEAD section says 'informational' in default mode."""
-    result = {
-        "ok": True,
-        "aligned": [],
-        "misaligned": [],
-        "detached": [{"name": "worker", "expected": "main", "dirty": False}],
-        "missing": [],
-        "strict": False,
-        "summary": "1 detached (info)",
-    }
-    msg = format_branch_validation(result)
-    assert "informational" in msg
-    assert "blocking" not in msg
-
-
-# ─── sync() with branch validation ───────────────────────────────
-
-
-@patch("projectman.hub.registry.subprocess.run")
-def test_sync_warns_on_misaligned_branches(mock_run, tmp_hub):
-    """sync() includes branch mismatch warnings before sync results."""
-    _register_subproject(tmp_hub, "api", prefix="API")
-    (tmp_hub / "projects" / "api").mkdir(parents=True, exist_ok=True)
-
-    def dispatcher(cmd, **kwargs):
-        if "config" in cmd and ".gitmodules" in cmd:
-            return _make_run_result(0, stdout="main\n")
-        if "rev-parse" in cmd and "--abbrev-ref" in cmd:
-            return _make_run_result(0, stdout="feature-x\n")
-        if "status" in cmd and "--porcelain" in cmd:
-            return _make_run_result(0, stdout="")
-        if "pull" in cmd:
-            return _make_run_result(0)
-        r = _make_run_result(0)
-        if kwargs.get("check") and r.returncode != 0:
-            raise subprocess.CalledProcessError(
-                r.returncode, cmd, output=r.stdout, stderr=r.stderr,
-            )
-        return r
-
-    mock_run.side_effect = dispatcher
-
-    result = sync(root=tmp_hub)
-    assert "branch validation" in result
-    assert "warning" in result
-    assert "api" in result
-    assert "feature-x" in result
-    assert "expected 'main'" in result
-    # sync still completes
-    assert "sync complete" in result
-
-
-@patch("projectman.hub.registry.subprocess.run")
-def test_sync_info_on_detached_head(mock_run, tmp_hub):
-    """sync() includes informational note for detached HEAD submodules."""
-    _register_subproject(tmp_hub, "api", prefix="API")
-    (tmp_hub / "projects" / "api").mkdir(parents=True, exist_ok=True)
-
-    def dispatcher(cmd, **kwargs):
-        if "config" in cmd and ".gitmodules" in cmd:
-            return _make_run_result(0, stdout="main\n")
-        if "rev-parse" in cmd and "--abbrev-ref" in cmd:
-            return _make_run_result(0, stdout="HEAD\n")
-        if "status" in cmd and "--porcelain" in cmd:
-            return _make_run_result(0, stdout="")
-        if "pull" in cmd:
-            return _make_run_result(0)
-        r = _make_run_result(0)
-        if kwargs.get("check") and r.returncode != 0:
-            raise subprocess.CalledProcessError(
-                r.returncode, cmd, output=r.stdout, stderr=r.stderr,
-            )
-        return r
-
-    mock_run.side_effect = dispatcher
-
-    result = sync(root=tmp_hub)
-    assert "branch validation" in result
-    assert "info" in result
-    assert "detached HEAD" in result
-    assert "sync complete" in result
-
-
-@patch("projectman.hub.registry.subprocess.run")
-def test_sync_no_warnings_when_aligned(mock_run, tmp_hub):
-    """sync() has no branch validation section when all branches match."""
-    _register_subproject(tmp_hub, "api", prefix="API")
-    (tmp_hub / "projects" / "api").mkdir(parents=True, exist_ok=True)
-
-    def dispatcher(cmd, **kwargs):
-        if "config" in cmd and ".gitmodules" in cmd:
-            return _make_run_result(0, stdout="main\n")
-        if "rev-parse" in cmd and "--abbrev-ref" in cmd:
-            return _make_run_result(0, stdout="main\n")
-        if "status" in cmd and "--porcelain" in cmd:
-            return _make_run_result(0, stdout="")
-        if "pull" in cmd:
-            return _make_run_result(0)
-        r = _make_run_result(0)
-        if kwargs.get("check") and r.returncode != 0:
-            raise subprocess.CalledProcessError(
-                r.returncode, cmd, output=r.stdout, stderr=r.stderr,
-            )
-        return r
-
-    mock_run.side_effect = dispatcher
-
-    result = sync(root=tmp_hub)
-    assert "branch validation" not in result
-    assert "sync complete" in result
-
-
-# ─── pm_commit tests ─────────────────────────────────────────────
-
-
-def test_pm_commit_all_scope(tmp_git_hub):
-    """pm_commit with scope='all' commits all .project/ changes."""
-    # Create a new story file to produce a change
+def test_pm_commit_commits_the_store_it_is_given(tmp_git_hub):
+    """The hub's own store commits its own changed files."""
     stories_dir = tmp_git_hub / ".project" / "stories"
     (stories_dir / "US-HUB-1.md").write_text("---\ntitle: Test\nstatus: backlog\n---\nBody\n")
 
-    result = pm_commit(scope="all", root=tmp_git_hub)
+    result = pm_commit(_hub_store(tmp_git_hub))
 
     assert "commit_hash" in result
     assert result["message"].startswith("pm: ")
@@ -1654,73 +446,56 @@ def test_pm_commit_all_scope(tmp_git_hub):
     assert any("US-HUB-1" in f for f in result["files_committed"])
 
 
-def test_pm_commit_hub_scope_excludes_subprojects(tmp_git_hub):
-    """pm_commit with scope='hub' only commits hub-level files, not subproject files."""
-    # Create hub-level story
+def test_pm_commit_on_the_hub_store_excludes_subproject_files(tmp_git_hub):
+    """A subproject store is a different store; the hub's commit cannot see it."""
     (tmp_git_hub / ".project" / "stories" / "US-HUB-1.md").write_text(
         "---\ntitle: Hub story\nstatus: backlog\n---\nHub body\n"
     )
-    # Create subproject story
-    sub_dir = tmp_git_hub / ".project" / "projects" / "api"
-    (sub_dir / "stories").mkdir(parents=True)
-    (sub_dir / "tasks").mkdir()
-    (sub_dir / "config.yaml").write_text("name: api\nprefix: API\n")
+    sub_dir = make_hub_subproject(tmp_git_hub, "api", prefix="API")
     (sub_dir / "stories" / "US-API-1.md").write_text(
         "---\ntitle: API story\nstatus: backlog\n---\nAPI body\n"
     )
 
-    result = pm_commit(scope="hub", root=tmp_git_hub)
+    result = pm_commit(_hub_store(tmp_git_hub))
 
     assert "commit_hash" in result
-    # Hub story should be committed
     assert any("US-HUB-1" in f for f in result["files_committed"])
-    # Subproject story should NOT be committed
     assert not any("US-API-1" in f for f in result["files_committed"])
     assert not any("projects/api" in f for f in result["files_committed"])
 
 
-def test_pm_commit_project_scope(tmp_git_hub):
-    """pm_commit with scope='project:api' only commits that subproject's files."""
-    # Create hub-level story
+def test_pm_commit_on_a_subproject_store_commits_only_that_store(tmp_git_hub):
+    """The mirror image: naming the subproject store leaves the hub's alone."""
     (tmp_git_hub / ".project" / "stories" / "US-HUB-1.md").write_text(
         "---\ntitle: Hub story\nstatus: backlog\n---\nHub body\n"
     )
-    # Create subproject story
-    sub_dir = tmp_git_hub / ".project" / "projects" / "api"
-    (sub_dir / "stories").mkdir(parents=True)
-    (sub_dir / "tasks").mkdir()
-    (sub_dir / "config.yaml").write_text("name: api\nprefix: API\n")
+    sub_dir = make_hub_subproject(tmp_git_hub, "api", prefix="API")
     (sub_dir / "stories" / "US-API-1.md").write_text(
         "---\ntitle: API story\nstatus: backlog\n---\nAPI body\n"
     )
 
-    result = pm_commit(scope="project:api", root=tmp_git_hub)
+    result = pm_commit(sub_dir)
 
     assert "commit_hash" in result
-    # Subproject story should be committed
     assert any("US-API-1" in f for f in result["files_committed"])
-    # Hub story should NOT be committed
     assert not any("US-HUB-1" in f for f in result["files_committed"])
 
 
 def test_pm_commit_nothing_to_commit(tmp_git_hub):
     """pm_commit returns nothing_to_commit when no .project/ files changed."""
-    result = pm_commit(scope="all", root=tmp_git_hub)
+    result = pm_commit(_hub_store(tmp_git_hub))
     assert result == {"nothing_to_commit": True}
 
 
-def test_pm_commit_nothing_to_commit_scoped(tmp_git_hub):
-    """pm_commit returns nothing_to_commit when scope matches no changed files."""
-    # Create hub-level change only
+def test_pm_commit_nothing_to_commit_for_a_clean_subproject(tmp_git_hub):
+    """A store with nothing of its own is the expected negative, not the hub's changes."""
     (tmp_git_hub / ".project" / "stories" / "US-HUB-1.md").write_text(
         "---\ntitle: Hub story\nstatus: backlog\n---\nBody\n"
     )
-    # Create the subproject dir so scope validation passes
-    sub_dir = tmp_git_hub / ".project" / "projects" / "api"
+    sub_dir = tmp_git_hub / "projects" / "api" / ".project"
     sub_dir.mkdir(parents=True)
 
-    result = pm_commit(scope="project:api", root=tmp_git_hub)
-    assert result == {"nothing_to_commit": True}
+    assert pm_commit(sub_dir) == {"nothing_to_commit": True}
 
 
 def test_pm_commit_custom_message(tmp_git_hub):
@@ -1729,7 +504,7 @@ def test_pm_commit_custom_message(tmp_git_hub):
         "---\ntitle: Test\nstatus: backlog\n---\nBody\n"
     )
 
-    result = pm_commit(scope="all", message="custom: my msg", root=tmp_git_hub)
+    result = pm_commit(_hub_store(tmp_git_hub), message="custom: my msg")
 
     assert result["message"] == "custom: my msg"
 
@@ -1740,32 +515,22 @@ def test_pm_commit_auto_message_lists_ids(tmp_git_hub):
         "---\ntitle: Five\nstatus: backlog\n---\nBody\n"
     )
 
-    result = pm_commit(scope="all", root=tmp_git_hub)
+    result = pm_commit(_hub_store(tmp_git_hub))
 
     assert "US-HUB-5" in result["message"]
 
 
-def test_pm_commit_invalid_scope(tmp_git_hub):
-    """pm_commit raises ValueError for an unrecognised scope."""
-    with pytest.raises(ValueError, match="Invalid scope"):
-        pm_commit(scope="bogus", root=tmp_git_hub)
+def test_pm_commit_no_store_dir(tmp_path):
+    """pm_commit raises the coded not_found when the store isn't there."""
+    from projectman.errors import NotFoundError
 
-
-def test_pm_commit_missing_project_scope(tmp_git_hub):
-    """pm_commit raises ValueError when scoped to a non-existent project."""
-    with pytest.raises(ValueError, match="not found"):
-        pm_commit(scope="project:nonexistent", root=tmp_git_hub)
-
-
-def test_pm_commit_no_project_dir(tmp_path):
-    """pm_commit raises FileNotFoundError when .project/ doesn't exist."""
-    # tmp_path has no .project/
     subprocess.run(["git", "init"], cwd=str(tmp_path), capture_output=True, check=True)
     subprocess.run(["git", "config", "user.email", "t@t.com"], cwd=str(tmp_path), capture_output=True, check=True)
     subprocess.run(["git", "config", "user.name", "T"], cwd=str(tmp_path), capture_output=True, check=True)
 
-    with pytest.raises(FileNotFoundError, match=".project/"):
-        pm_commit(scope="all", root=tmp_path)
+    with pytest.raises(NotFoundError, match=".project") as exc:
+        pm_commit(tmp_path / ".project")
+    assert exc.value.code == "not_found"
 
 
 def test_generate_hub_commit_message_few_ids():
@@ -1800,27 +565,22 @@ def test_generate_hub_commit_message_config_only():
 
 
 def test_pm_commit_ignores_non_project_files(tmp_git_hub):
-    """pm_commit never touches files outside .project/ — src/ changes stay unstaged."""
-    # Create a non-.project file change
+    """pm_commit never touches files outside the store — src/ changes stay unstaged."""
     src_dir = tmp_git_hub / "src"
     src_dir.mkdir()
     (src_dir / "main.py").write_text("print('hello')\n")
 
-    # Create a .project change too
     (tmp_git_hub / ".project" / "stories" / "US-HUB-1.md").write_text(
         "---\ntitle: Test\nstatus: backlog\n---\nBody\n"
     )
 
-    result = pm_commit(scope="all", root=tmp_git_hub)
+    result = pm_commit(_hub_store(tmp_git_hub))
 
     assert "commit_hash" in result
-    # Only .project/ files should be committed
     for f in result["files_committed"]:
         assert f.startswith(".project/"), f"Non-.project file committed: {f}"
     assert not any("src/" in f for f in result["files_committed"])
 
-    # src/main.py should still show as untracked
-    import subprocess
     status = subprocess.run(
         ["git", "status", "--porcelain", "--untracked-files=all", "--", "src/"],
         cwd=str(tmp_git_hub), capture_output=True, text=True,
@@ -1828,612 +588,53 @@ def test_pm_commit_ignores_non_project_files(tmp_git_hub):
     assert "src/main.py" in status.stdout
 
 
-def test_pm_commit_all_scope_hub_and_two_subprojects(tmp_git_hub):
-    """pm_commit(scope='all') commits hub + 2 subprojects in one commit."""
-    # Register two subprojects
-    _register_subproject(tmp_git_hub, "api", prefix="API")
-    _register_subproject(tmp_git_hub, "web", prefix="WEB")
+def test_pm_commit_leaves_the_other_subproject_uncommitted(tmp_git_hub):
+    """Two subprojects, one named: the other's story is still uncommitted."""
+    api = make_hub_subproject(tmp_git_hub, "api", prefix="API")
+    web = make_hub_subproject(tmp_git_hub, "web", prefix="WEB")
 
-    # Commit registration so these are baseline
-    import subprocess
     subprocess.run(["git", "add", "."], cwd=str(tmp_git_hub), capture_output=True, check=True)
     subprocess.run(["git", "commit", "-m", "register subs"], cwd=str(tmp_git_hub), capture_output=True, check=True)
 
-    # Create changes in hub + both subprojects
-    (tmp_git_hub / ".project" / "stories" / "US-HUB-1.md").write_text(
-        "---\ntitle: Hub story\nstatus: backlog\n---\nHub body\n"
-    )
-    (tmp_git_hub / ".project" / "projects" / "api" / "stories" / "US-API-1.md").write_text(
+    (api / "stories" / "US-API-1.md").write_text(
         "---\ntitle: API story\nstatus: backlog\n---\nAPI body\n"
     )
-    (tmp_git_hub / ".project" / "projects" / "web" / "stories" / "US-WEB-1.md").write_text(
+    (web / "stories" / "US-WEB-1.md").write_text(
         "---\ntitle: Web story\nstatus: backlog\n---\nWeb body\n"
     )
 
-    result = pm_commit(scope="all", root=tmp_git_hub)
+    result = pm_commit(api)
 
-    assert "commit_hash" in result
-    files = result["files_committed"]
-    # All three scopes should be in the same commit
-    assert any("US-HUB-1" in f for f in files), "Hub story not committed"
-    assert any("projects/api" in f for f in files), "API subproject not committed"
-    assert any("projects/web" in f for f in files), "Web subproject not committed"
+    assert any("projects/api" in f for f in result["files_committed"])
+    assert not any("projects/web" in f for f in result["files_committed"])
 
-    # Verify it was a single commit (check git log)
-    log = subprocess.run(
-        ["git", "log", "--oneline", "-1"],
+    status = subprocess.run(
+        ["git", "status", "--porcelain", "--", "projects/web/.project/"],
         cwd=str(tmp_git_hub), capture_output=True, text=True,
     )
-    assert result["commit_hash"][:7] in log.stdout
-
-
-# ─── _push_subproject ─────────────────────────────────────────────
-
-
-@patch("projectman.hub.registry.subprocess.run")
-def test_push_subproject_success(mock_run, tmp_hub):
-    """Pushes subproject on its current branch."""
-    _register_subproject(tmp_hub, "api", prefix="API")
-    (tmp_hub / "projects" / "api").mkdir(parents=True, exist_ok=True)
-
-    def dispatcher(cmd, **kwargs):
-        if "rev-parse" in cmd and "--abbrev-ref" in cmd:
-            return _make_run_result(0, stdout="feature-x\n")
-        return _make_run_result(0)
-
-    mock_run.side_effect = dispatcher
-
-    result = _push_subproject("api", tmp_hub)
-    assert result["pushed"] is True
-    assert result["branch"] == "feature-x"
-
-
-@patch("projectman.hub.registry.subprocess.run")
-def test_push_subproject_detached_head(mock_run, tmp_hub):
-    """Refuses to push when subproject is in detached HEAD state."""
-    _register_subproject(tmp_hub, "api", prefix="API")
-    (tmp_hub / "projects" / "api").mkdir(parents=True, exist_ok=True)
-
-    def dispatcher(cmd, **kwargs):
-        if "rev-parse" in cmd and "--abbrev-ref" in cmd:
-            return _make_run_result(0, stdout="HEAD\n")
-        return _make_run_result(0)
-
-    mock_run.side_effect = dispatcher
-
-    result = _push_subproject("api", tmp_hub)
-    assert result["pushed"] is False
-    assert "detached HEAD" in result["error"]
-
-
-@patch("projectman.hub.registry.subprocess.run")
-def test_push_subproject_push_failure(mock_run, tmp_hub):
-    """Reports error when git push fails."""
-    _register_subproject(tmp_hub, "api", prefix="API")
-    (tmp_hub / "projects" / "api").mkdir(parents=True, exist_ok=True)
-
-    def dispatcher(cmd, **kwargs):
-        if "rev-parse" in cmd and "--abbrev-ref" in cmd:
-            r = _make_run_result(0, stdout="main\n")
-            if kwargs.get("check") and r.returncode != 0:
-                raise subprocess.CalledProcessError(
-                    r.returncode, cmd, output=r.stdout, stderr=r.stderr,
-                )
-            return r
-        if "push" in cmd:
-            return _make_run_result(1, stderr="Permission denied")
-        return _make_run_result(0)
-
-    mock_run.side_effect = dispatcher
-
-    result = _push_subproject("api", tmp_hub)
-    assert result["pushed"] is False
-    assert "Permission denied" in result["error"]
+    assert status.stdout.strip(), "Web story should still be uncommitted"
 
 
 # ─── pm_push ──────────────────────────────────────────────────────
+#
+# The push against real repos with real bare remotes lives in
+# tests/test_hub_commit_push_prefix.py and tests/test_worktree_git_ops.py;
+# what belongs here is the refusal that needs no remote at all.
 
 
-def test_pm_push_not_a_hub(tmp_project):
-    """Returns error for non-hub projects."""
-    result = pm_push(root=tmp_project)
-    assert result["pushed"] is False
-    assert "not a hub project" in result["error"]
+def test_pm_push_refuses_a_store_that_is_not_there(tmp_git_hub):
+    """An unmounted store has no branch to push — coded not_found."""
+    from projectman.errors import NotFoundError
 
+    with pytest.raises(NotFoundError, match="nothing to push") as exc:
+        pm_push(tmp_git_hub / "projects" / "ghost" / ".project")
+    assert exc.value.code == "not_found"
 
-def test_pm_push_invalid_scope(tmp_hub):
-    """Returns error for unrecognised scope."""
-    result = pm_push(scope="bogus", root=tmp_hub)
-    assert result["pushed"] is False
-    assert "invalid scope" in result["error"]
 
+def test_pm_push_refuses_a_store_with_no_remote(tmp_git_hub):
+    """tmp_git_hub has no origin, so there is nothing to push to — coded store."""
+    from projectman.errors import StoreError
 
-def test_pm_push_project_scope_unregistered(tmp_hub):
-    """Returns error when project is not registered in hub."""
-    result = pm_push(scope="project:ghost", root=tmp_hub)
-    assert result["pushed"] is False
-    assert "not registered" in result["error"]
-
-
-def test_pm_push_project_scope_missing_dir(tmp_hub):
-    """Returns error when project directory doesn't exist."""
-    from projectman.config import load_config, save_config
-    hub_config = load_config(tmp_hub)
-    hub_config.projects.append("ghost")
-    save_config(hub_config, tmp_hub)
-
-    result = pm_push(scope="project:ghost", root=tmp_hub)
-    assert result["pushed"] is False
-    assert "not found" in result["error"]
-
-
-@patch("projectman.hub.registry.subprocess.run")
-def test_pm_push_hub_scope_delegates_to_push_hub(mock_run, tmp_hub):
-    """Hub scope delegates to push_hub and returns status."""
-    mock_run.side_effect = _git_dispatcher({
-        "push": _make_run_result(0),
-        "rev-parse": _make_run_result(0, stdout="abc1234\n"),
-    })
-
-    result = pm_push(scope="hub", root=tmp_hub)
-    assert result["pushed"] is True
-    assert result["scope"] == "hub"
-    assert result["status"] == "pushed"
-
-
-@patch("projectman.hub.registry.subprocess.run")
-def test_pm_push_hub_scope_failure(mock_run, tmp_hub):
-    """Hub scope reports push failure."""
-    mock_run.side_effect = _git_dispatcher({
-        "push": _make_run_result(1, stderr="Permission denied"),
-    })
-
-    result = pm_push(scope="hub", root=tmp_hub)
-    assert result["pushed"] is False
-    assert result["scope"] == "hub"
-    assert "error" in result
-
-
-@patch("projectman.hub.registry.subprocess.run")
-def test_pm_push_all_scope_delegates_to_coordinated_push(mock_run, tmp_hub):
-    """All scope delegates to coordinated_push."""
-    mock_run.side_effect = _git_dispatcher({
-        "push": _make_run_result(0),
-        "rev-parse": _make_run_result(0, stdout="abc1234\n"),
-    })
-
-    result = pm_push(scope="all", root=tmp_hub)
-    assert result["pushed"] is True
-    assert result["scope"] == "all"
-    assert "report" in result  # coordinated_push includes a report
-
-
-@patch("projectman.hub.registry.subprocess.run")
-def test_pm_push_project_scope_success(mock_run, tmp_hub):
-    """Project scope pushes the specific subproject."""
-    _register_subproject(tmp_hub, "api", prefix="API")
-    (tmp_hub / "projects" / "api").mkdir(parents=True, exist_ok=True)
-
-    def dispatcher(cmd, **kwargs):
-        # validate_branches calls
-        if "config" in cmd and ".gitmodules" in cmd:
-            return _make_run_result(0, stdout="main\n")
-        if "rev-parse" in cmd and "--abbrev-ref" in cmd:
-            return _make_run_result(0, stdout="main\n")
-        if "status" in cmd and "--porcelain" in cmd:
-            return _make_run_result(0, stdout="")
-        # push calls
-        if "push" in cmd:
-            return _make_run_result(0)
-        r = _make_run_result(0)
-        if kwargs.get("check") and r.returncode != 0:
-            raise subprocess.CalledProcessError(
-                r.returncode, cmd, output=r.stdout, stderr=r.stderr,
-            )
-        return r
-
-    mock_run.side_effect = dispatcher
-
-    result = pm_push(scope="project:api", root=tmp_hub)
-    assert result["pushed"] is True
-    assert result["scope"] == "project:api"
-    assert result["branch"] == "main"
-
-
-@patch("projectman.hub.registry.subprocess.run")
-def test_pm_push_project_scope_branch_validation_fails_misaligned(mock_run, tmp_hub):
-    """Project scope aborts when branch validation detects mismatch."""
-    _register_subproject(tmp_hub, "api", prefix="API")
-    (tmp_hub / "projects" / "api").mkdir(parents=True, exist_ok=True)
-
-    def dispatcher(cmd, **kwargs):
-        if "config" in cmd and ".gitmodules" in cmd:
-            return _make_run_result(0, stdout="main\n")
-        if "rev-parse" in cmd and "--abbrev-ref" in cmd:
-            return _make_run_result(0, stdout="feature-x\n")
-        if "status" in cmd and "--porcelain" in cmd:
-            return _make_run_result(0, stdout="")
-        r = _make_run_result(0)
-        if kwargs.get("check") and r.returncode != 0:
-            raise subprocess.CalledProcessError(
-                r.returncode, cmd, output=r.stdout, stderr=r.stderr,
-            )
-        return r
-
-    mock_run.side_effect = dispatcher
-
-    result = pm_push(scope="project:api", root=tmp_hub)
-    assert result["pushed"] is False
-    assert "branch validation failed" in result["error"]
-    assert "feature-x" in result["error"]
-    assert "main" in result["error"]
-
-
-@patch("projectman.hub.registry.subprocess.run")
-def test_pm_push_project_scope_branch_validation_fails_detached(mock_run, tmp_hub):
-    """Project scope aborts when branch validation detects detached HEAD."""
-    _register_subproject(tmp_hub, "api", prefix="API")
-    (tmp_hub / "projects" / "api").mkdir(parents=True, exist_ok=True)
-
-    def dispatcher(cmd, **kwargs):
-        if "config" in cmd and ".gitmodules" in cmd:
-            return _make_run_result(0, stdout="main\n")
-        if "rev-parse" in cmd and "--abbrev-ref" in cmd:
-            return _make_run_result(0, stdout="HEAD\n")
-        if "status" in cmd and "--porcelain" in cmd:
-            return _make_run_result(0, stdout="")
-        r = _make_run_result(0)
-        if kwargs.get("check") and r.returncode != 0:
-            raise subprocess.CalledProcessError(
-                r.returncode, cmd, output=r.stdout, stderr=r.stderr,
-            )
-        return r
-
-    mock_run.side_effect = dispatcher
-
-    result = pm_push(scope="project:api", root=tmp_hub)
-    assert result["pushed"] is False
-    assert "branch validation failed" in result["error"]
-    assert "detached HEAD" in result["error"]
-
-
-@patch("projectman.hub.registry.subprocess.run")
-def test_pm_push_all_scope_branch_validation_fails(mock_run, tmp_hub):
-    """All scope aborts when branch validation fails."""
-    _register_subproject(tmp_hub, "api", prefix="API")
-    (tmp_hub / "projects" / "api").mkdir(parents=True, exist_ok=True)
-
-    def dispatcher(cmd, **kwargs):
-        if "config" in cmd and ".gitmodules" in cmd:
-            return _make_run_result(0, stdout="main\n")
-        if "rev-parse" in cmd and "--abbrev-ref" in cmd:
-            return _make_run_result(0, stdout="feature-x\n")
-        if "status" in cmd and "--porcelain" in cmd:
-            return _make_run_result(0, stdout="")
-        r = _make_run_result(0)
-        if kwargs.get("check") and r.returncode != 0:
-            raise subprocess.CalledProcessError(
-                r.returncode, cmd, output=r.stdout, stderr=r.stderr,
-            )
-        return r
-
-    mock_run.side_effect = dispatcher
-
-    result = pm_push(scope="all", root=tmp_hub)
-    assert result["pushed"] is False
-    assert "branch validation failed" in result["error"]
-    assert "validation" in result  # includes full validation dict
-
-
-@patch("projectman.hub.registry.subprocess.run")
-def test_pm_push_hub_scope_skips_branch_validation(mock_run, tmp_hub):
-    """Hub scope does not run branch validation (hub is always on main)."""
-    # Register a misaligned subproject — should NOT block hub push
-    _register_subproject(tmp_hub, "api", prefix="API")
-    (tmp_hub / "projects" / "api").mkdir(parents=True, exist_ok=True)
-
-    mock_run.side_effect = _git_dispatcher({
-        "push": _make_run_result(0),
-        "rev-parse": _make_run_result(0, stdout="abc1234\n"),
-    })
-
-    result = pm_push(scope="hub", root=tmp_hub)
-    # Hub push succeeds even though subproject is misaligned
-    assert result["pushed"] is True
-
-
-@patch("projectman.hub.registry.subprocess.run")
-def test_pm_push_project_scope_other_project_misaligned_ok(mock_run, tmp_hub):
-    """Project scope only checks the targeted project, not others."""
-    _register_subproject(tmp_hub, "api", prefix="API")
-    _register_subproject(tmp_hub, "web", prefix="WEB")
-    (tmp_hub / "projects" / "api").mkdir(parents=True, exist_ok=True)
-    (tmp_hub / "projects" / "web").mkdir(parents=True, exist_ok=True)
-
-    def dispatcher(cmd, **kwargs):
-        if "config" in cmd and ".gitmodules" in cmd:
-            return _make_run_result(0, stdout="main\n")
-        if "rev-parse" in cmd and "--abbrev-ref" in cmd:
-            cwd = kwargs.get("cwd", "")
-            if "api" in cwd:
-                return _make_run_result(0, stdout="main\n")
-            if "web" in cwd:
-                return _make_run_result(0, stdout="feature-x\n")  # misaligned
-            return _make_run_result(0, stdout="main\n")
-        if "status" in cmd and "--porcelain" in cmd:
-            return _make_run_result(0, stdout="")
-        if "push" in cmd:
-            return _make_run_result(0)
-        r = _make_run_result(0)
-        if kwargs.get("check") and r.returncode != 0:
-            raise subprocess.CalledProcessError(
-                r.returncode, cmd, output=r.stdout, stderr=r.stderr,
-            )
-        return r
-
-    mock_run.side_effect = dispatcher
-
-    # Push api — should succeed even though web is misaligned
-    result = pm_push(scope="project:api", root=tmp_hub)
-    assert result["pushed"] is True
-    assert result["branch"] == "main"
-
-
-# ─── push_preflight ──────────────────────────────────────────────
-
-
-def test_push_preflight_not_a_hub(tmp_project):
-    result = push_preflight(root=tmp_project)
-    assert result["can_proceed"] is False
-    assert len(result["blocked"]) == 1
-    assert "not a hub" in result["blocked"][0]["reason"]
-
-
-@patch("projectman.hub.registry.subprocess.run")
-def test_push_preflight_all_ready(mock_run, tmp_hub):
-    """All projects pass: aligned, remote reachable, no blockers."""
-    _register_subproject(tmp_hub, "api", prefix="API")
-    _register_subproject(tmp_hub, "web", prefix="WEB")
-
-    def dispatcher(cmd, **kwargs):
-        # validate_branches helpers
-        if "config" in cmd and ".gitmodules" in cmd:
-            return _make_run_result(0, stdout="main\n")
-        if "rev-parse" in cmd and "--abbrev-ref" in cmd:
-            return _make_run_result(0, stdout="main\n")
-        # _is_dirty → clean
-        if "status" in cmd and "--porcelain" in cmd:
-            return _make_run_result(0, stdout="")
-        # _remote_reachable → yes
-        if "ls-remote" in cmd:
-            return _make_run_result(0)
-        r = _make_run_result(0)
-        if kwargs.get("check") and r.returncode != 0:
-            raise subprocess.CalledProcessError(
-                r.returncode, cmd, output=r.stdout, stderr=r.stderr,
-            )
-        return r
-
-    mock_run.side_effect = dispatcher
-
-    result = push_preflight(root=tmp_hub)
-    assert result["can_proceed"] is True
-    assert sorted(result["ready"]) == ["api", "web"]
-    assert result["blocked"] == []
-    assert result["warnings"] == []
-
-
-@patch("projectman.hub.registry.subprocess.run")
-def test_push_preflight_branch_mismatch_blocks(mock_run, tmp_hub):
-    """A misaligned project is blocked with a clear reason."""
-    _register_subproject(tmp_hub, "api", prefix="API")
-
-    def dispatcher(cmd, **kwargs):
-        if "config" in cmd and ".gitmodules" in cmd:
-            return _make_run_result(0, stdout="main\n")
-        if "rev-parse" in cmd and "--abbrev-ref" in cmd:
-            return _make_run_result(0, stdout="feature-x\n")
-        if "status" in cmd and "--porcelain" in cmd:
-            return _make_run_result(0, stdout="")
-        r = _make_run_result(0)
-        if kwargs.get("check") and r.returncode != 0:
-            raise subprocess.CalledProcessError(
-                r.returncode, cmd, output=r.stdout, stderr=r.stderr,
-            )
-        return r
-
-    mock_run.side_effect = dispatcher
-
-    result = push_preflight(root=tmp_hub)
-    assert result["can_proceed"] is False
-    assert len(result["blocked"]) == 1
-    assert result["blocked"][0]["name"] == "api"
-    assert "branch mismatch" in result["blocked"][0]["reason"]
-    assert "feature-x" in result["blocked"][0]["reason"]
-
-
-@patch("projectman.hub.registry.subprocess.run")
-def test_push_preflight_detached_head_blocks(mock_run, tmp_hub):
-    """Detached HEAD blocks in push preflight (strict mode)."""
-    _register_subproject(tmp_hub, "api", prefix="API")
-
-    def dispatcher(cmd, **kwargs):
-        if "config" in cmd and ".gitmodules" in cmd:
-            return _make_run_result(0, stdout="main\n")
-        if "rev-parse" in cmd and "--abbrev-ref" in cmd:
-            return _make_run_result(0, stdout="HEAD\n")
-        if "status" in cmd and "--porcelain" in cmd:
-            return _make_run_result(0, stdout="")
-        r = _make_run_result(0)
-        if kwargs.get("check") and r.returncode != 0:
-            raise subprocess.CalledProcessError(
-                r.returncode, cmd, output=r.stdout, stderr=r.stderr,
-            )
-        return r
-
-    mock_run.side_effect = dispatcher
-
-    result = push_preflight(root=tmp_hub)
-    assert result["can_proceed"] is False
-    assert len(result["blocked"]) == 1
-    assert result["blocked"][0]["name"] == "api"
-    assert "detached HEAD" in result["blocked"][0]["reason"]
-
-
-@patch("projectman.hub.registry.subprocess.run")
-def test_push_preflight_remote_unreachable_blocks(mock_run, tmp_hub):
-    """Project with unreachable remote is blocked."""
-    _register_subproject(tmp_hub, "api", prefix="API")
-
-    def dispatcher(cmd, **kwargs):
-        if "config" in cmd and ".gitmodules" in cmd:
-            return _make_run_result(0, stdout="main\n")
-        if "rev-parse" in cmd and "--abbrev-ref" in cmd:
-            return _make_run_result(0, stdout="main\n")
-        if "status" in cmd and "--porcelain" in cmd:
-            return _make_run_result(0, stdout="")
-        # Remote unreachable
-        if "ls-remote" in cmd:
-            return _make_run_result(128, stderr="fatal: Could not read from remote")
-        r = _make_run_result(0)
-        if kwargs.get("check") and r.returncode != 0:
-            raise subprocess.CalledProcessError(
-                r.returncode, cmd, output=r.stdout, stderr=r.stderr,
-            )
-        return r
-
-    mock_run.side_effect = dispatcher
-
-    result = push_preflight(root=tmp_hub)
-    assert result["can_proceed"] is False
-    assert len(result["blocked"]) == 1
-    assert result["blocked"][0]["name"] == "api"
-    assert "remote" in result["blocked"][0]["reason"]
-
-
-@patch("projectman.hub.registry.subprocess.run")
-def test_push_preflight_dirty_no_staged_warns(mock_run, tmp_hub):
-    """Dirty project with no staged changes produces a warning, not a blocker."""
-    _register_subproject(tmp_hub, "api", prefix="API")
-
-    def dispatcher(cmd, **kwargs):
-        if "config" in cmd and ".gitmodules" in cmd:
-            return _make_run_result(0, stdout="main\n")
-        if "rev-parse" in cmd and "--abbrev-ref" in cmd:
-            return _make_run_result(0, stdout="main\n")
-        # _is_dirty → yes (has untracked files)
-        if "status" in cmd and "--porcelain" in cmd:
-            return _make_run_result(0, stdout="?? newfile.txt\n")
-        # _has_staged_changes → no (diff --cached --quiet exits 0)
-        if "diff" in cmd and "--cached" in cmd:
-            return _make_run_result(0)
-        # Remote reachable
-        if "ls-remote" in cmd:
-            return _make_run_result(0)
-        r = _make_run_result(0)
-        if kwargs.get("check") and r.returncode != 0:
-            raise subprocess.CalledProcessError(
-                r.returncode, cmd, output=r.stdout, stderr=r.stderr,
-            )
-        return r
-
-    mock_run.side_effect = dispatcher
-
-    result = push_preflight(root=tmp_hub)
-    assert result["can_proceed"] is True
-    assert "api" in result["ready"]
-    assert len(result["warnings"]) == 1
-    assert "no staged changes" in result["warnings"][0]
-
-
-@patch("projectman.hub.registry.subprocess.run")
-def test_push_preflight_missing_project_blocks(mock_run, tmp_hub):
-    """Missing project directory is a blocker."""
-    _register_subproject(tmp_hub, "api", prefix="API")
-    # Remove the source directory
-    shutil.rmtree(tmp_hub / "projects" / "api")
-
-    mock_run.side_effect = _git_dispatcher({})
-
-    result = push_preflight(root=tmp_hub)
-    assert result["can_proceed"] is False
-    assert len(result["blocked"]) == 1
-    assert result["blocked"][0]["name"] == "api"
-    assert "not found" in result["blocked"][0]["reason"]
-
-
-@patch("projectman.hub.registry.subprocess.run")
-def test_push_preflight_scoped_to_specific_projects(mock_run, tmp_hub):
-    """When projects list is given, only those are checked."""
-    _register_subproject(tmp_hub, "api", prefix="API")
-    _register_subproject(tmp_hub, "web", prefix="WEB")
-
-    def dispatcher(cmd, **kwargs):
-        if "config" in cmd and ".gitmodules" in cmd:
-            return _make_run_result(0, stdout="main\n")
-        if "rev-parse" in cmd and "--abbrev-ref" in cmd:
-            cwd = kwargs.get("cwd", "")
-            if "api" in cwd:
-                return _make_run_result(0, stdout="main\n")
-            if "web" in cwd:
-                return _make_run_result(0, stdout="feature-x\n")  # misaligned
-            return _make_run_result(0, stdout="main\n")
-        if "status" in cmd and "--porcelain" in cmd:
-            return _make_run_result(0, stdout="")
-        if "ls-remote" in cmd:
-            return _make_run_result(0)
-        r = _make_run_result(0)
-        if kwargs.get("check") and r.returncode != 0:
-            raise subprocess.CalledProcessError(
-                r.returncode, cmd, output=r.stdout, stderr=r.stderr,
-            )
-        return r
-
-    mock_run.side_effect = dispatcher
-
-    # Only check api — web misalignment doesn't affect result
-    result = push_preflight(projects=["api"], root=tmp_hub)
-    assert result["can_proceed"] is True
-    assert result["ready"] == ["api"]
-
-
-@patch("projectman.hub.registry.subprocess.run")
-def test_push_preflight_collects_all_issues(mock_run, tmp_hub):
-    """Preflight collects all non-fatal issues at once (not one at a time)."""
-    _register_subproject(tmp_hub, "api", prefix="API")
-    _register_subproject(tmp_hub, "web", prefix="WEB")
-    _register_subproject(tmp_hub, "worker", prefix="WRK")
-    # Remove worker source dir to make it missing
-    shutil.rmtree(tmp_hub / "projects" / "worker")
-
-    def dispatcher(cmd, **kwargs):
-        if "config" in cmd and ".gitmodules" in cmd:
-            return _make_run_result(0, stdout="main\n")
-        if "rev-parse" in cmd and "--abbrev-ref" in cmd:
-            cwd = kwargs.get("cwd", "")
-            if "api" in cwd:
-                return _make_run_result(0, stdout="feature-x\n")  # misaligned
-            if "web" in cwd:
-                return _make_run_result(0, stdout="main\n")  # ok
-            return _make_run_result(0, stdout="main\n")
-        if "status" in cmd and "--porcelain" in cmd:
-            return _make_run_result(0, stdout="")
-        if "ls-remote" in cmd:
-            return _make_run_result(0)
-        r = _make_run_result(0)
-        if kwargs.get("check") and r.returncode != 0:
-            raise subprocess.CalledProcessError(
-                r.returncode, cmd, output=r.stdout, stderr=r.stderr,
-            )
-        return r
-
-    mock_run.side_effect = dispatcher
-
-    result = push_preflight(root=tmp_hub)
-    assert result["can_proceed"] is False
-    # Should have 2 blockers: api (misaligned) + worker (missing)
-    blocked_names = {b["name"] for b in result["blocked"]}
-    assert "api" in blocked_names
-    assert "worker" in blocked_names
-    # web should be ready
-    assert "web" in result["ready"]
+    with pytest.raises(StoreError, match="not configured") as exc:
+        pm_push(_hub_store(tmp_git_hub))
+    assert exc.value.code == "store"

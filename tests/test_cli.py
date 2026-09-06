@@ -26,7 +26,7 @@ class TestInit:
         with runner.isolated_filesystem(temp_dir=tmp_path):
             result = runner.invoke(cli, ["init", "--name", "myhub", "--hub"])
             assert result.exit_code == 0
-            assert Path(".project/projects").is_dir()
+            assert Path("projects").is_dir()
             assert Path(".project/roadmap").is_dir()
             assert Path(".project/dashboards").is_dir()
 
