@@ -1,4 +1,5 @@
 ---
+archived: true
 assignee: null
 created: '2026-02-17'
 id: US-PRJ-9-8
@@ -6,7 +7,7 @@ points: 1
 status: todo
 story_id: US-PRJ-9
 title: Add commit message formatting helpers
-updated: '2026-02-17'
+updated: '2026-09-06'
 ---
 
 Implement helpers that generate convention-compliant commit messages.

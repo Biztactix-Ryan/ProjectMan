@@ -8,12 +8,12 @@ epic_id: EPIC-PRJ-7
 id: US-PRJ-41
 points: 5
 priority: could
-status: backlog
+status: archived
 tags:
 - performance
 - hub
 title: Optimize hub git subprocess calls with batching
-updated: '2026-03-09'
+updated: '2026-09-06'
 ---
 
 As a hub operator, I want status collection to be fast so that pm_git_status responds quickly with many subprojects. Currently hub/registry.py makes 4+ separate git subprocess calls per project (_get_ahead_behind, _get_dirty_count, _get_last_commit, _get_open_prs). Batch into fewer calls per project.

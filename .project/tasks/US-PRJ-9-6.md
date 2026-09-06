@@ -1,4 +1,5 @@
 ---
+archived: true
 assignee: null
 created: '2026-02-17'
 id: US-PRJ-9-6
@@ -6,7 +7,7 @@ points: 2
 status: todo
 story_id: US-PRJ-9
 title: Add hub-level conventions config schema
-updated: '2026-02-17'
+updated: '2026-09-06'
 ---
 
 Define a conventions block in the hub's `.project/config.yaml` that all subprojects inherit.

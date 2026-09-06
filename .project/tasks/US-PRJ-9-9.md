@@ -1,4 +1,5 @@
 ---
+archived: true
 assignee: null
 created: '2026-02-17'
 id: US-PRJ-9-9
@@ -6,7 +7,7 @@ points: 2
 status: todo
 story_id: US-PRJ-9
 title: Wire convention checks into existing operations
-updated: '2026-02-17'
+updated: '2026-09-06'
 ---
 
 Integrate validate_conventions() as guardrails into existing and planned operations.

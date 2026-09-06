@@ -1,4 +1,5 @@
 ---
+archived: true
 assignee: null
 created: '2026-02-16'
 id: US-PRJ-9-3
@@ -6,7 +7,7 @@ points: null
 status: todo
 story_id: US-PRJ-9
 title: 'Test: Direct pushes to deploy branch blocked'
-updated: '2026-02-16'
+updated: '2026-09-06'
 ---
 
 Verify acceptance criterion for story US-PRJ-9:

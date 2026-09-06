@@ -1,4 +1,5 @@
 ---
+archived: true
 assignee: null
 created: '2026-03-09'
 depends_on: []
@@ -8,7 +9,7 @@ status: todo
 story_id: US-PRJ-46
 tags: []
 title: 'Test: _next_task_id uses directory glob count instead of list_tasks'
-updated: '2026-03-09'
+updated: '2026-09-06'
 ---
 
 Verify acceptance criterion for story US-PRJ-46:

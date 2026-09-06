@@ -1,4 +1,5 @@
 ---
+archived: true
 assignee: null
 created: '2026-02-17'
 id: US-PRJ-9-7
@@ -6,7 +7,7 @@ points: 3
 status: todo
 story_id: US-PRJ-9
 title: Implement validate_conventions() unified checker
-updated: '2026-02-17'
+updated: '2026-09-06'
 ---
 
 Add a single validation function that checks all conventions at once.

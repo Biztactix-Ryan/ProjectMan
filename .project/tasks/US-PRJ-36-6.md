@@ -1,4 +1,5 @@
 ---
+archived: true
 assignee: null
 created: '2026-03-06'
 depends_on: []
@@ -8,7 +9,7 @@ status: todo
 story_id: US-PRJ-36
 tags: []
 title: Add changeset caching following stories/epics/tasks pattern
-updated: '2026-03-06'
+updated: '2026-09-06'
 ---
 
 Add changeset cache to store.py following the same module-level dict pattern. Populate on list_changesets(), update on create/update, invalidate on archive. Include archived exclusion.

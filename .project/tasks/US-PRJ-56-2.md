@@ -3,12 +3,12 @@ assignee: null
 created: '2026-03-09'
 depends_on: []
 id: US-PRJ-56-2
-points: null
+points: 1
 status: todo
 story_id: US-PRJ-56
 tags: []
 title: 'Test: Quick reference table mapping operations to CLI/MCP/skill access'
-updated: '2026-03-09'
+updated: '2026-09-06'
 ---
 
 Verify acceptance criterion for story US-PRJ-56:

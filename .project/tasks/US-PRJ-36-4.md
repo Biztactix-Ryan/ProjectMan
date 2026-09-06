@@ -1,4 +1,5 @@
 ---
+archived: true
 assignee: null
 created: '2026-03-06'
 depends_on: []
@@ -8,7 +9,7 @@ status: todo
 story_id: US-PRJ-36
 tags: []
 title: 'Test: Duplicate depends_on entries deduplicated in model validator'
-updated: '2026-03-06'
+updated: '2026-09-06'
 ---
 
 Verify acceptance criterion for story US-PRJ-36:
