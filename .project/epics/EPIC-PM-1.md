@@ -3,14 +3,14 @@ created: '2026-07-29'
 id: EPIC-PM-1
 points: null
 priority: must
-status: draft
+status: done
 tags:
 - reliability
 - mcp
 - agent-facing
 target_date: null
 title: Correctness & Observability
-updated: '2026-07-29'
+updated: '2026-09-08'
 ---
 
 Make ProjectMan's failures visible and stop losing writes.

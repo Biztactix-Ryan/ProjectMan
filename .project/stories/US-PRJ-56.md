@@ -8,12 +8,12 @@ epic_id: EPIC-PRJ-10
 id: US-PRJ-56
 points: 2
 priority: could
-status: backlog
+status: done
 tags:
 - docs
 - skills
 title: Clarify skill routing and CLI vs MCP in docs
-updated: '2026-03-09'
+updated: '2026-09-07'
 ---
 
 As a user, I want clear documentation on which operations are available where so that I know when to use CLI vs MCP vs skills. Current docs show /pm scope as standalone when it routes through /pm. Skills reference section doesn't clearly explain the routing. Add a quick reference card mapping operations to their access method.

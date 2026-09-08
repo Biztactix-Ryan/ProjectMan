@@ -1,8 +1,8 @@
 # Project Audit Report
 
-digest: 90b468c3e493fa20
+digest: eb1296ec614d62c5
 
-**Errors:** 0 | **Warnings:** 3 | **Info:** 87
+**Errors:** 0 | **Warnings:** 3 | **Info:** 94
 
 - [INFO] Story US-PM-1 has 2pts but tasks sum to 5pts
 - [INFO] Story US-PM-10 has 5pts but tasks sum to 11pts
@@ -39,6 +39,12 @@ digest: 90b468c3e493fa20
 - [INFO] Story US-PM-4 has 2pts but tasks sum to 6pts
 - [INFO] Story US-PM-40 has 1pts but tasks sum to 3pts
 - [INFO] Story US-PM-41 has 2pts but tasks sum to 6pts
+- [INFO] Story US-PM-42 has 5pts but tasks sum to 11pts
+- [INFO] Story US-PM-43 has 3pts but tasks sum to 8pts
+- [INFO] Story US-PM-44 has 5pts but tasks sum to 9pts
+- [INFO] Story US-PM-45 has 3pts but tasks sum to 7pts
+- [INFO] Story US-PM-46 has 5pts but tasks sum to 9pts
+- [INFO] Story US-PM-47 has 3pts but tasks sum to 6pts
 - [INFO] Story US-PM-5 has 5pts but tasks sum to 16pts
 - [INFO] Story US-PM-6 has 3pts but tasks sum to 11pts
 - [INFO] Story US-PM-7 has 8pts but tasks sum to 14pts
@@ -79,6 +85,7 @@ digest: 90b468c3e493fa20
 - [INFO] Story US-PRJ-49 has 1pts but tasks sum to 6pts
 - [INFO] Story US-PRJ-5 has 5pts but tasks sum to 15pts
 - [INFO] Story US-PRJ-50 has 3pts but tasks sum to 8pts
+- [INFO] Story US-PRJ-52 has 3pts but tasks sum to 8pts
 - [INFO] Story US-PRJ-53 has 1pts but tasks sum to 2pts
 - [INFO] Story US-PRJ-54 has 3pts but tasks sum to 7pts
 - [INFO] Story US-PRJ-55 has 3pts but tasks sum to 8pts

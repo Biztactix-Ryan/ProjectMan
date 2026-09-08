@@ -1,4 +1,5 @@
 ---
+archived: true
 assignee: null
 created: '2026-03-06'
 depends_on: []
@@ -8,7 +9,7 @@ status: todo
 story_id: US-PRJ-35
 tags: []
 title: 'Test: FAISS or similar lightweight solution (no heavy external DB)'
-updated: '2026-03-06'
+updated: '2026-09-08'
 ---
 
 Verify acceptance criterion for story US-PRJ-35:

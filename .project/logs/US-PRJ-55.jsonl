@@ -1,1 +1,3 @@
 {"timestamp":"2026-09-06T13:55:39.773098Z","outcome":"info","status":"backlog","note":"Re-scoped for the projects/{name}/.project layout; old criteria referenced removed auto-rebase and pm repair.","actor":"Farhan Rich"}
+{"timestamp":"2026-09-06T13:59:36.179703Z","outcome":"info","status":"active","note":"Sprint 12 stories set active in orchestrator pre-flight (run orch-2026-09-06-365d)","actor":"Farhan Rich"}
+{"timestamp":"2026-09-06T15:47:46.595667Z","outcome":"success","status":"done","note":"Closed by orchestrator: 7/7 live tasks done; auto-close blocked only by the three archived todo tasks (US-PRJ-55-2/3/4) from the 2026-09-06 re-scope","actor":"Farhan Rich"}

@@ -8,12 +8,12 @@ depends_on:
 - US-PM-41-5
 id: US-PM-41-3
 points: 1
-status: todo
+status: done
 story_id: US-PM-41
 tags: []
 title: 'Test: Tests that reached rollup or the not-attached rows through generate_dashboards
   now call rollup directly and the...'
-updated: '2026-09-06'
+updated: '2026-09-07'
 ---
 
 Verify acceptance criterion for story US-PM-41:

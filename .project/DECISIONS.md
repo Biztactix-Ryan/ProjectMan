@@ -4,11 +4,52 @@ Architectural decision record for ProjectMan. Newest first. Each entry: context,
 
 ---
 
+<a id="adr-004"></a>
+
+## ADR-004: Hub mode is removed — ProjectMan is a single-project tool (2026-09-08)
+
+**Status:** Accepted — supersedes [ADR-003](#adr-003). Decided 2026-09-08 and carried out in EPIC-PM-6 (US-PM-44, US-PM-45, US-PM-46, US-PM-47).
+
+**Context.** ADR-003 (2026-09-06) answered the 2026-09-05 audit by *redesigning* hub mode rather than removing it. The redesign shipped in full — 59 points across Sprints 10 and 11 — and then the measurements that motivated it were re-read against what the redesign actually bought:
+
+- **9 hub or changeset uses in 484 sessions.** The 2026-09-05 usage audit counted every session in the corpus and found the multi-project surface used nine times. That is not a feature with light adoption; it is a feature with no adoption, carrying the largest share of the package's conditional branches.
+- **71 of the 97 error sites had zero observed traffic, mostly hub and web** (`docs/reference/error-paths-inventory.md`, now marked as history). Three quarters of the error handling in the package guarded paths nobody walked, and the hub was the bulk of it.
+- **The ADR-003 redesign gained no user.** Six weeks of the audit's evidence said the mode was unused; two sprints of work made the unused mode better. Nobody attached a project to a hub after it landed, and no `projectman migrate-hub` was ever run against a real hub. Rebuilding a thing before checking whether anyone wants it is the mistake ADR-003 made, and it does not get corrected by rebuilding it again.
+- **US-PRJ-34 (parallel rollup) was archived as moot on 2026-09-08.** It was the last piece of hub work still in the backlog; nothing in it made sense once the mode it optimised had no traffic.
+
+The decision is therefore not "the redesign was wrong". ADR-003's four moves were the right shape *given* that hub mode had to exist. The premise was the defect: hub mode did not have to exist.
+
+**Decision.** ProjectMan is a single-project tool.
+
+1. **Single-project mode only.** The hub package, hub-only tools, hub CLI commands (`add-project`, `set-branch`, `migrate-hub`, `sync`), the `projects/{name}/.project` layout, hub rollups and hub docs all leave the package. One store, one repo, no registry.
+2. **IDs keep their prefix.** `US-PRJ-1` stays `US-PRJ-1`. The prefix is part of the ID's identity and appears in filenames, branch history, run logs and every doc — dropping it would be a rename of every artefact in every existing project for no gain now that the prefix addresses nothing.
+3. **ADR-001's orphan-branch storage is unchanged.** `.project` remains a worktree of the repo's own `projectman` branch. That design was never hub-specific and is untouched here.
+4. **Removed in EPIC-PM-6** — US-PM-44 (the hub package and its tools), US-PM-45 (CLI and web), US-PM-46 (config, templates and scaffolding), US-PM-47 (docs, templates and this record).
+
+**Alternatives rejected.**
+
+- *Keep hub mode behind an off-by-default flag.* Rejected: a flag does not remove the branches, the tests, the docs or the error paths — it only removes the mode from the default answer while every cost stays. The nine uses in 484 sessions do not pay for a second code path, gated or not.
+- *Keep the ADR-003 redesign and wait for adoption.* Rejected: this is what the last two sprints were. The redesign has been available since Sprint 11 and its adoption is zero. Waiting longer only spends more maintenance on the same evidence.
+- *Ship a migration that folds a hub into N single projects.* Rejected as unbuildable-for-nobody: writing, testing and supporting a one-shot converter costs more than the hubs it would convert, of which the observed count is zero outside this repo's own experiments. The path forward is stated in the consequences instead, and is short enough to follow by hand.
+- *Drop the ID prefix along with the hub.* Rejected: see decision 2. The prefix's *addressing* role is gone; its *naming* role is not, and a mass rename would break every external reference to an ID for cosmetic tidiness.
+- *Leave the hub code in the tree, undocumented and untested.* Rejected: unexercised code that no doc describes is the worst of both — it still breaks the build, still shows up in every refactor, and now has no statement of intent to check it against.
+
+**Consequences and known edges.**
+
+- **Existing hubs keep working on 0.8.x.** Nothing is retracted from a released version; a hub that works today keeps working on the version it is pinned to. Hub mode is absent from 0.9.0 onward.
+- **A legacy `config.yaml` still loads.** `hub:` and `projects:` keys are stripped at load with a single line on stderr (`projectman: ignoring retired config key(s) … (hub mode was removed)`; `LEGACY_CONFIG_KEYS` in `src/projectman/config.py`), so a checkout predating the removal opens rather than erroring. The keys are ignored, not migrated.
+- **No migration path is offered.** There is no `migrate-hub` and no replacement for it.
+- **Each former subproject works as a single project on 0.9.0.** Its store is already a `projectman` branch of its own repo (ADR-003's decision 1, which shipped), so a subproject needs no conversion — it is a single project already. What is lost is the hub-level rollup across them, and hub-level epics, which have no single-project equivalent.
+- **ADR-003 stands as the record of what was removed.** It is superseded, not deleted; its context and alternatives explain the design that EPIC-PM-6 took out.
+- **The two reference documents that inventoried hub code are kept as history** (`docs/reference/error-paths-inventory.md`, `docs/reference/readiness-warnings-determination.md`), each marked with a History blockquote naming this ADR's epic. `CHANGELOG.md` and this file are the other two places hub mode may still be named; every other page is swept by `tests/test_docs_after_subtraction.py`.
+
+---
+
 <a id="adr-003"></a>
 
 ## ADR-003: PM data lives with its code — the hub is a read-only rollup (2026-09-06)
 
-**Status:** Accepted — scoped from the 2026-09-05 audit, implemented in EPIC-PM-5 (US-PM-31, US-PM-34, US-PM-35, US-PM-36, US-PM-37).
+**Status:** Superseded by [ADR-004](#adr-004) (2026-09-08) — hub mode was removed outright in EPIC-PM-6. Originally Accepted — scoped from the 2026-09-05 audit, implemented in EPIC-PM-5 (US-PM-31, US-PM-34, US-PM-35, US-PM-36, US-PM-37).
 
 **Context.** The 2026-09-05 audit of hub mode (recorded in the EPIC-PM-5 body, and at length in the five `docs/hub-mode` audit documents now folded into a History section of `setup.md`) found four structural problems, not a list of bugs:
 
@@ -40,6 +81,7 @@ Architectural decision record for ProjectMan. Newest first. Each entry: context,
 - **A hub built before this change needs `projectman migrate-hub` once.** It moves each `.project/projects/{name}` into that subproject's own `projectman` branch, lifts per-store epics to the hub, and leaves the hub's commit and submodule pointers for a human to push.
 - **Advancing submodule refs stays manual.** ProjectMan reports what each subproject's ref says; it does not move code between repos.
 - **The web API's `?project=` query parameter remains** (`get_store` in `src/projectman/web/routes/api.py`). It is an HTTP route parameter, not a tool argument, and is out of scope here; it goes in the web layer's own cleanup.
+- **Closed (US-PM-39, 2026-09-07):** that cleanup happened. The web layer now routes by prefix like every MCP tool — ID-taking routes resolve the store from the ID's prefix, ID-less routes take an optional `?prefix=`, and `?project=` is gone from `src/projectman/web/routes/api.py`, so the remaining-parameter caveat above is closed and no argument in the package addresses a store by project name.
 
 ---
 

@@ -9,13 +9,13 @@ epic_id: EPIC-PRJ-6
 id: US-PRJ-34
 points: 3
 priority: should
-status: backlog
+status: archived
 tags:
 - tier-2
 - performance
 - hub
 title: Parallelize hub rollup
-updated: '2026-03-06'
+updated: '2026-09-08'
 ---
 
 As a hub user, I want rollup to be fast across many projects so that dashboards don't take 10+ seconds to generate. Currently rollup() scans projects sequentially. git_status_all() already uses ThreadPoolExecutor — rollup should follow the same pattern.

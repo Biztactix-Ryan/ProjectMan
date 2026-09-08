@@ -9,12 +9,12 @@ depends_on:
 - US-PM-38-5
 id: US-PM-38-3
 points: 1
-status: todo
+status: done
 story_id: US-PM-38
 tags: []
 title: 'Test: The full unit suite passes with zero failures outside tests/integration
   and the environment-blocked telemetry b...'
-updated: '2026-09-06'
+updated: '2026-09-07'
 ---
 
 Verify acceptance criterion for story US-PM-38:

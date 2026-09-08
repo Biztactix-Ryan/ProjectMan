@@ -3,14 +3,14 @@ created: '2026-08-20'
 id: EPIC-PM-3
 points: null
 priority: should
-status: draft
+status: done
 tags:
 - git
 - storage
 - architecture
 target_date: null
 title: Orphan-branch worktree storage for PM data
-updated: '2026-08-20'
+updated: '2026-09-08'
 ---
 
 Move .project/ out of main's history onto a dedicated orphan branch ("projectman") mounted back into the repo root as a git worktree. Locally nothing changes: .project/ stays as plain files in the repo root and Claude Code / the MCP server read and write them exactly as now — but commits made inside that directory land on the projectman branch with its own history, so `git log main` never sees a task update again.

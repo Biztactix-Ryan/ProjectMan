@@ -3,7 +3,7 @@ created: '2026-07-29'
 id: EPIC-PM-2
 points: null
 priority: must
-status: active
+status: done
 tags:
 - workflow
 - orchestrator
@@ -11,7 +11,7 @@ tags:
 - agent-facing
 target_date: null
 title: Workflow API for Agent Orchestration
-updated: '2026-07-30'
+updated: '2026-09-08'
 ---
 
 Give the store a vocabulary for the orchestrator's state machine.

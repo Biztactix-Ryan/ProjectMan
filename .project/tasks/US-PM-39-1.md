@@ -7,12 +7,12 @@ created: '2026-09-06'
 depends_on: []
 id: US-PM-39-1
 points: 1
-status: todo
+status: done
 story_id: US-PM-39
 tags: []
 title: 'Test: No route or dependency in src/projectman/web/routes/api.py declares
   a project query parameter'
-updated: '2026-09-06'
+updated: '2026-09-07'
 ---
 
 Verify acceptance criterion for story US-PM-39:
