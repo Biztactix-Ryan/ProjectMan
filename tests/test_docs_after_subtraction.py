@@ -344,16 +344,16 @@ def _changelog_section(text: str, heading: re.Match) -> str:
     return text[heading.end() :]
 
 
-def test_changelog_records_the_removal_in_its_newest_release():
-    """The newest released section carries a ``### Removed`` naming changesets.
+def test_changelog_records_the_removal_in_a_released_section():
+    """Some *released* section carries a ``### Removed`` naming changesets.
 
     US-PM-42-7 cut ``## [Unreleased]`` as ``## [0.9.0]`` and opened a fresh,
     empty ``Unreleased`` above it, which is where the subtraction's record went
-    with it. The check follows the content rather than the heading: the topmost
-    *versioned* section is the release the removal shipped in, and it must still
-    explain why changesets are absent. A fresh ``Unreleased`` is expected to be
-    empty and is deliberately not searched — asserting against it would have
-    made this pass on a changelog that had lost the record entirely.
+    with it. Later releases stack above 0.9.0, so the check follows the content
+    rather than position: at least one *versioned* section must still explain
+    why changesets are absent. A fresh ``Unreleased`` is expected to be empty
+    and is deliberately not searched — asserting against it would have made
+    this pass on a changelog that had lost the record entirely.
     """
     text = CHANGELOG.read_text(encoding="utf-8")
 
@@ -362,27 +362,28 @@ def test_changelog_records_the_removal_in_its_newest_release():
         "one open above the newest release for what has landed since it."
     )
 
-    release = VERSION_HEADING_RE.search(text)
-    assert release, "CHANGELOG.md has no `## [X.Y.Z]` release section at all"
-    version = release.group(1)
-    section = _changelog_section(text, release)
+    releases = list(VERSION_HEADING_RE.finditer(text))
+    assert releases, "CHANGELOG.md has no `## [X.Y.Z]` release section at all"
 
-    removed = re.search(r"^###\s+Removed\s*$", section, re.MULTILINE)
-    assert removed, (
-        f"CHANGELOG.md's newest release `[{version}]` has no `### Removed` "
-        "heading — US-PM-27 took a documented feature out and the changelog "
-        "must say so."
-    )
+    for release in releases:
+        section = _changelog_section(text, release)
+        removed = re.search(r"^###\s+Removed\s*$", section, re.MULTILINE)
+        if not removed:
+            continue
+        nxt = re.search(r"^###\s+", section[removed.end() :], re.MULTILINE)
+        body = (
+            section[removed.end() : removed.end() + nxt.start()]
+            if nxt
+            else section[removed.end() :]
+        )
+        if CHANGESET_RE.search(body):
+            return
 
-    nxt = re.search(r"^###\s+", section[removed.end() :], re.MULTILINE)
-    body = (
-        section[removed.end() : removed.end() + nxt.start()]
-        if nxt
-        else section[removed.end() :]
-    )
-    assert CHANGESET_RE.search(body), (
-        f"the `### Removed` entry under `## [{version}]` does not mention "
-        "changesets; the only surviving record of the subtraction is gone."
+    versions = ", ".join(r.group(1) for r in releases)
+    raise AssertionError(
+        f"no `### Removed` entry under any released section ({versions}) "
+        "mentions changesets; the only surviving record of the subtraction "
+        "is gone."
     )
 
 

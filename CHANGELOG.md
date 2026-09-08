@@ -5,6 +5,13 @@ All notable changes to ProjectMan are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.9.1] - 2026-09-08
+
+### Removed
+
+- A stray ProjectMan store that had been tracked under `src/projectman/web/`
+  since 0.7.0. Nothing referenced it and it was never shipped in the wheel.
+
 ## [0.9.0] - 2026-09-08
 
 Changes landed between 2026-08-19 and 2026-09-08.
@@ -508,7 +515,8 @@ The 0.8.0 link points at its own release commit, having no predecessor here.
 0.9.0 onward is tagged `vX.Y.Z`.
 -->
 
-[Unreleased]: https://github.com/Biztactix-Ryan/ProjectMan/compare/v0.9.0...main
+[Unreleased]: https://github.com/Biztactix-Ryan/ProjectMan/compare/v0.9.1...main
+[0.9.1]: https://github.com/Biztactix-Ryan/ProjectMan/compare/v0.9.0...v0.9.1
 [0.9.0]: https://github.com/Biztactix-Ryan/ProjectMan/compare/657efba...v0.9.0
 [0.8.15]: https://github.com/Biztactix-Ryan/ProjectMan/compare/2261a0d...657efba
 [0.8.14]: https://github.com/Biztactix-Ryan/ProjectMan/compare/1982933...2261a0d
