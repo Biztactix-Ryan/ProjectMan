@@ -5,6 +5,12 @@ All notable changes to ProjectMan are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.9.2] - 2026-09-08
+
+Version bump only, no code changes. `pipx upgrade` replaces an install only
+when the version number rises, so this release exists to move clients that
+were pinned at an earlier build.
+
 ## [0.9.1] - 2026-09-08
 
 ### Removed
@@ -515,7 +521,8 @@ The 0.8.0 link points at its own release commit, having no predecessor here.
 0.9.0 onward is tagged `vX.Y.Z`.
 -->
 
-[Unreleased]: https://github.com/Biztactix-Ryan/ProjectMan/compare/v0.9.1...main
+[Unreleased]: https://github.com/Biztactix-Ryan/ProjectMan/compare/v0.9.2...main
+[0.9.2]: https://github.com/Biztactix-Ryan/ProjectMan/compare/v0.9.1...v0.9.2
 [0.9.1]: https://github.com/Biztactix-Ryan/ProjectMan/compare/v0.9.0...v0.9.1
 [0.9.0]: https://github.com/Biztactix-Ryan/ProjectMan/compare/657efba...v0.9.0
 [0.8.15]: https://github.com/Biztactix-Ryan/ProjectMan/compare/2261a0d...657efba
