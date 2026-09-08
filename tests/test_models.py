@@ -177,7 +177,6 @@ class TestProjectConfig:
     def test_defaults(self):
         config = ProjectConfig(name="test")
         assert config.prefix == "PRJ"
-        assert config.hub is False
         assert config.auto_commit is False
         assert config.next_story_id == 1
 

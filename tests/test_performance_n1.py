@@ -630,7 +630,7 @@ def test_pm_search_tag_filter_reads_metadata_in_two_listings(
     )
 
     store_spy.reset()
-    data = yaml.safe_load(pm_search("zzqqxx", tag="api"))
+    data = yaml.safe_load(pm_search("zzqqxx", tag="api"))["results"]
 
     counts = store_spy.counts
     assert counts["get"] == 0, (
@@ -682,7 +682,7 @@ def test_pm_search_keyword_path_reads_no_store_items(
     )
 
     store_spy.reset()
-    data = yaml.safe_load(pm_search("handler", tag="api"))
+    data = yaml.safe_load(pm_search("handler", tag="api"))["results"]
 
     assert store_spy.nonzero() == {}, (
         "pm_search's keyword path must not read items through the Store "

@@ -350,30 +350,26 @@ class TestInitAttachEdgeCases:
         source, _ = migrated
         expected = store_files(source)
 
-        result = init(runner, clone, "--hub", "--name", "ignored", "--prefix", "ZZ")
+        result = init(runner, clone, "--name", "ignored", "--prefix", "ZZ")
         assert result.exit_code == 0, result.output
-        assert "--hub ignored: attaching existing store" in result.stderr
         assert "--name ignored: attaching existing store" in result.stderr
         assert "--prefix ignored: attaching existing store" in result.stderr
 
         assert worktree_branch_for(clone, clone / ".project") == "refs/heads/projectman"
         assert store_files(clone) == expected
-        # None of the hub scaffolding happened.
-        assert not (clone / "projects").exists()
+        # None of the scaffolding happened.
         assert not (clone / ".project/VISION.md").exists()
 
-    def test_hub_alone_attaches_and_builds_no_hub_scaffold(self, runner, clone):
-        # `--hub` on its own leaves `name` unset: the attach path must still be
-        # taken (no prompt, no hub directories), not the scaffold's.
-        result = init(runner, clone, "--hub", input="")
+    def test_a_scaffold_option_alone_attaches_without_prompting(self, runner, clone):
+        # `--prefix` on its own leaves `name` unset: the attach path must still
+        # be taken (no prompt, no scaffolding), not the scaffold's.
+        result = init(runner, clone, "--prefix", "ZZ", input="")
         assert result.exit_code == 0, result.output
-        assert "--hub ignored: attaching existing store" in result.stderr
+        assert "--prefix ignored: attaching existing store" in result.stderr
         assert "Project name" not in result.output
 
         proj = clone / ".project"
         assert worktree_branch_for(clone, proj) == "refs/heads/projectman"
-        for name in ("projects", "roadmap", "dashboards"):
-            assert not (proj / name).exists()
         assert out("status", "--porcelain", cwd=proj) == ""
 
     def test_default_options_attach_without_any_ignored_warning(self, runner, clone):

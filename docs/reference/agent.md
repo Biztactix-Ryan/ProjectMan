@@ -1,6 +1,6 @@
 # PM Agent Reference
 
-The PM agent (`.claude/agents/pm.md`) is a Claude Code agent specialized in project management. It manages epics, stories, tasks, estimation, and sprint planning using ProjectMan's MCP tools, including the task board and hub context.
+The PM agent (`.claude/agents/pm.md`) is a Claude Code agent specialized in project management. It manages epics, stories, tasks, estimation, and sprint planning using ProjectMan's MCP tools, including the task board and project context.
 
 ## When It Activates
 
@@ -14,7 +14,7 @@ The agent follows strict rules to minimize context window usage:
 2. **One story/task at a time** via `pm_get` — never load everything
 3. **Use `pm_search` for discovery** — don't scan files directly
 4. **Read PROJECT.md for architecture context** — only when scoping or estimating
-5. **`pm_context` is optional** — `pm_context(max_doc_chars=2000, limit=5)` returns a bounded brief over the hub and project layers (hub vision/architecture + project docs + active epics/stories), and `prefix="API"` narrows it to one subproject. `pm_grab` and `pm_get` already carry the item context you usually need, so reach for it only when you want the wider picture.
+5. **`pm_context` is optional** — `pm_context(max_doc_chars=2000, limit=5)` returns a bounded brief over the project (its docs plus active epics and stories). `pm_grab` and `pm_get` already carry the item context you usually need, so reach for it only when you want the wider picture.
 
 ## Story Point Calibration
 

@@ -11,7 +11,11 @@ snippets always come back lower-cased.
 import frontmatter
 import pytest
 
-from projectman.search import SearchResult, keyword_search
+from projectman.search import (
+    SearchResult,
+    keyword_search,
+    keyword_search_with_skipped,
+)
 
 
 def write_item(project_dir, subdir, stem, content="", **meta):
@@ -265,3 +269,80 @@ class TestEdgeCases:
         (project_dir / "stories" / "notes.txt").write_text("auth work", encoding="utf-8")
 
         assert keyword_search("auth", project_dir) == []
+
+
+class TestMalformedFilesAreSkipped:
+    """One unreadable file costs that file, not the whole sweep (US-PM-40).
+
+    ``frontmatter.load`` used to run bare, so a single item file with broken
+    YAML raised out of ``pm_search`` and ``GET /api/search`` and made search
+    unusable for the whole store.
+    """
+
+    BROKEN = "---\n: bad\n---\n"
+
+    def test_other_files_still_come_back(self, project_dir):
+        (project_dir / "stories" / "US-M-1.md").write_text(
+            self.BROKEN, encoding="utf-8"
+        )
+        write_item(project_dir, "stories", "US-M-2", "auth work here",
+                   id="US-M-2", title="Good Story")
+        write_item(project_dir, "tasks", "US-M-2-1", "more auth work",
+                   id="US-M-2-1", title="Good Task")
+
+        results = keyword_search("auth", project_dir)
+
+        assert {r.id for r in results} == {"US-M-2", "US-M-2-1"}
+
+    def test_the_broken_file_is_counted_as_skipped(self, project_dir):
+        (project_dir / "stories" / "US-M-1.md").write_text(
+            self.BROKEN, encoding="utf-8"
+        )
+        write_item(project_dir, "stories", "US-M-2", "auth work here",
+                   id="US-M-2", title="Good Story")
+
+        outcome = keyword_search_with_skipped("auth", project_dir)
+
+        assert outcome.skipped == 1
+        assert [r.id for r in outcome.results] == ["US-M-2"]
+
+    def test_a_broken_file_in_every_subdirectory_is_counted_once_each(
+        self, project_dir
+    ):
+        for sub, stem in (("epics", "EP-M"), ("stories", "US-M"), ("tasks", "US-M-1")):
+            (project_dir / sub / f"{stem}.md").write_text(
+                self.BROKEN, encoding="utf-8"
+            )
+
+        outcome = keyword_search_with_skipped("auth", project_dir)
+
+        assert outcome.skipped == 3
+        assert outcome.results == []
+
+    def test_a_clean_store_reports_zero_skipped(self, project_dir):
+        write_item(project_dir, "stories", "US-M-3", "auth work here",
+                   id="US-M-3", title="Good Story")
+
+        outcome = keyword_search_with_skipped("auth", project_dir)
+
+        assert outcome.skipped == 0
+        assert [r.id for r in outcome.results] == ["US-M-3"]
+
+    def test_an_empty_store_reports_zero_skipped(self, project_dir):
+        outcome = keyword_search_with_skipped("auth", project_dir)
+
+        assert outcome.results == []
+        assert outcome.skipped == 0
+
+    def test_keyword_search_still_returns_a_bare_list(self, project_dir):
+        """The old signature is untouched — callers that want hits only."""
+        (project_dir / "stories" / "US-M-4.md").write_text(
+            self.BROKEN, encoding="utf-8"
+        )
+        write_item(project_dir, "stories", "US-M-5", "auth work here",
+                   id="US-M-5", title="Good Story")
+
+        results = keyword_search("auth", project_dir)
+
+        assert isinstance(results, list)
+        assert all(isinstance(r, SearchResult) for r in results)

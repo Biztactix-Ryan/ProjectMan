@@ -325,8 +325,8 @@ def test_pm_grab_explicit_fields_none_equals_omitted(project):
 # ═══ Signatures: projection stays trailing and optional ═════════
 
 # The full parameter order, pinned.  `project` was removed from the ID-taking
-# tools by US-PM-34-7 — the ID's prefix names the store — so it survives here
-# only on `pm_list_sprints`, which takes no ID (US-PM-34-8 replaces it).
+# tools by US-PM-34-7 — the ID's prefix names the store — and its `prefix`
+# replacement went with hub mode (US-PM-44), so no tool here carries either.
 # A positional caller of any of these tools
 # — `pm_get(task_id, True)` — lands on a *different* parameter the moment
 # somebody inserts `fields` earlier in the list, and nothing else in the suite
@@ -342,7 +342,7 @@ EXPECTED_SIGNATURES = {
         ("task_id", "assignee", "include_story", "id", "run_id"),
         ("fields",),
     ),
-    "pm_list_sprints": (("status", "prefix"), ("brief", "fields")),
+    "pm_list_sprints": (("status",), ("brief", "fields")),
 }
 
 PROJECTION_DEFAULTS = {"fields": None, "brief": False}

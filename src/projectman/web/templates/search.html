@@ -12,15 +12,22 @@
 <script>
 document.addEventListener("htmx:afterRequest", function(evt) {
   if (evt.detail.pathInfo && evt.detail.pathInfo.requestPath.match(/^\/api\/search/)) {
-    var results = JSON.parse(evt.detail.xhr.responseText);
+    var payload = JSON.parse(evt.detail.xhr.responseText);
+    var results = payload.results || [];
+    var skipped = payload.skipped || 0;
     var target = document.getElementById("search-results");
+    // A partial sweep says so: these files could not be parsed and were not
+    // searched at all.
+    var partial = skipped
+      ? '<p><em>' + skipped + ' unreadable file(s) were skipped.</em></p>'
+      : '';
 
     if (results.length === 0) {
-      target.innerHTML = '<p>No results found for "{{ query }}".</p>';
+      target.innerHTML = '<p>No results found for "{{ query }}".</p>' + partial;
       return;
     }
 
-    var html = '<p>' + results.length + ' result(s) for "<strong>{{ query }}</strong>"</p>';
+    var html = '<p>' + results.length + ' result(s) for "<strong>{{ query }}</strong>"</p>' + partial;
     html += '<table role="grid"><thead><tr><th>ID</th><th>Title</th><th>Type</th><th>Score</th></tr></thead><tbody>';
     results.forEach(function(r) {
       var link = r.type === "story" ? "/stories/" + r.id : r.type === "task" ? "/tasks/" + r.id : "/epics/" + r.id;

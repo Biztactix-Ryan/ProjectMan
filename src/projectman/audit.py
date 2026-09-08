@@ -3,14 +3,15 @@
 import hashlib
 import os
 import re
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
 
 import yaml
 
-from .config import load_config
+from .activity_log import log_paths, read_log_entries
 from .deps import build_combined_dep_graph, detect_cycle
+from .models import RunLogEntry
 from .store import Store
 
 # ── State digest (US-PM-11-5) ────────────────────────────────────────────
@@ -23,10 +24,10 @@ from .store import Store
 # ``since`` to short-circuit the whole report.
 #
 # WHAT IS HASHED, AND WHY THE WHOLE TREE: every audit check reads its inputs
-# through the Store or straight off ``project_dir`` — item files, config.yaml,
-# PROJECT/INFRASTRUCTURE/SECURITY.md, hub docs, malformed/, logs/*.jsonl (the
+# through the Store or straight off the PM directory — item files, config.yaml,
+# PROJECT/INFRASTRUCTURE/SECURITY.md, malformed/, logs/*.jsonl (the
 # evidence check), sprints, index files.  Enumerating those paths here would
-# mean this function goes stale the day someone adds check 19, so it hashes
+# mean this function goes stale the day someone adds another check, so it hashes
 # the *entire* PM directory instead: path + size + bytes, in sorted order.
 # Over-sensitivity is safe (it costs one extra full report); under-sensitivity
 # would hide a real finding, which is the failure that matters.
@@ -43,6 +44,13 @@ from .store import Store
 #   * __pycache__ / *.pyc and *.lock / *.tmp — scratch, not state.
 #   * NEXT.md — the next-session note (US-PM-28): scratch text for a human,
 #     read by no check, so rewriting it must not force a full re-audit.
+#
+# activity.jsonl (and its rotated siblings) is deliberately NOT excluded: as
+# of US-PM-43-6 Check 17 reads it to decide which completions could have
+# carried evidence, so a run-stamped `done` written into it must move the
+# digest or `since=` would hide the finding it produces.  The whole-tree walk
+# already covers it; the rule is written down here so nobody adds it to the
+# skip lists as "just a log".
 DIGEST_LENGTH = 16
 DIGEST_LINE_PREFIX = "digest: "
 
@@ -68,25 +76,22 @@ def _digest_skips(path: Path, pm_dir: Path) -> bool:
     return any(part in _DIGEST_SKIP_DIRS for part in path.relative_to(pm_dir).parts)
 
 
-def compute_state_digest(root: Path, project_dir: Optional[Path] = None) -> str:
+def compute_state_digest(root: Path) -> str:
     """A short, stable fingerprint of everything the audit reads.
 
     Returns ``DIGEST_LENGTH`` lowercase hex characters — fixed width, cheap to
     log, cheap to compare.  Equal digests mean no audit input changed; a
     different digest means something did.
 
-    *root* / *project_dir* resolve exactly as ``Store`` resolves them, so the
-    digest always covers the same directory the audit reads.  When auditing a
-    hub subproject, the hub's own ``config.yaml`` is mixed in as well: Check 11
-    reads it (``load_config(root).hub``) and it lives outside the subproject
-    directory.
+    *root* resolves exactly as ``Store`` resolves it, so the digest always
+    covers the same directory the audit reads: ``root/.project``.
 
     Callers may compute this without running the audit — that is how
     US-PM-11-6 answers an unchanged project in a few bytes.  Measured on this
     repo's own ``.project`` (791 files, 1.3 MB of hashed bytes): 106 ms against
     5,056 ms for a full ``run_audit`` — about 2% of the work it can skip.
     """
-    pm_dir = project_dir if project_dir is not None else root / ".project"
+    pm_dir = root / ".project"
     hasher = hashlib.sha256()
     # Version tag: bump if the hashing rule changes, so stale digests from an
     # older build compare unequal instead of falsely matching.
@@ -107,13 +112,6 @@ def compute_state_digest(root: Path, project_dir: Optional[Path] = None) -> str:
             hasher.update(str(len(data)).encode())
             hasher.update(b"\0")
             hasher.update(data)
-
-    hub_config = root / ".project" / "config.yaml"
-    if project_dir is not None and pm_dir.resolve() != hub_config.parent.resolve():
-        try:
-            hasher.update(b"hub-config\0" + hub_config.read_bytes())
-        except OSError:
-            pass
 
     return hasher.hexdigest()[:DIGEST_LENGTH]
 
@@ -146,14 +144,14 @@ def _last_report_counts(pm_dir: Path, digest: str) -> Optional[tuple[int, int]]:
     return int(match.group(1)), int(match.group(2))
 
 
-def unchanged_report(root: Path, project_dir: Optional[Path], digest: str) -> str:
+def unchanged_report(root: Path, digest: str) -> str:
     """The few-byte answer for "nothing changed since *digest*" (US-PM-11-6).
 
     Under 100 bytes against the 162-10,440 char full report, and it performs no
     check and no DRIFT.md write — the digest already proved there is nothing
     new to say.
     """
-    pm_dir = project_dir if project_dir is not None else root / ".project"
+    pm_dir = root / ".project"
     lines = [f"{DIGEST_LINE_PREFIX}{digest}", UNCHANGED_LINE]
     counts = _last_report_counts(pm_dir, digest)
     if counts is not None:
@@ -161,15 +159,149 @@ def unchanged_report(root: Path, project_dir: Optional[Path], digest: str) -> st
     return "\n".join(lines) + "\n"
 
 
+# ── Check 17's rule: which completions could have carried evidence ───────
+#
+# The evidence contract (US-PM-9, Sprint 4) shipped long after this project
+# started completing tasks, so "done with no evidence" once meant 447 tasks on
+# this repo alone — a count that can never shrink, because the only way to
+# move it is to rewrite history.  A warning nobody can act on is noise, and
+# noise is what hides the warning that matters (US-PM-43).
+#
+# The cutoff is what the record shows, not a date, so it needs no maintenance
+# as history rolls forward.  A done task is counted only when the completion
+# *could* have carried evidence:
+#
+#   1. its run log has an entry written no earlier than the first
+#      evidence-bearing run-log entry anywhere in this store — by then the
+#      contract was demonstrably in use here, so whoever wrote that verdict
+#      could have attached evidence to it; or
+#   2. its transition to ``done`` was made under an orchestrator run — an
+#      activity-log ``update`` event whose ``changes.status.after`` is
+#      ``"done"`` and whose ``run_id`` is set.
+#
+# A done task with neither is a pre-contract completion: nothing was ever
+# written that evidence could have hung off, and nobody can go back and add
+# one.  It is not counted.
+#
+# WHY THE STORE'S OWN FIRST EVIDENCE IS THE LINE, and not a date: the contract
+# shipped on different days for different projects, and a project that adopts
+# ProjectMan tomorrow imports history that predates it entirely.  The store
+# proves its own adoption — the earliest entry it holds that carries evidence
+# is the first moment anyone here demonstrably could have written some.  The
+# 67 remaining warnings on this repo were all verdicts (note/outcome) written
+# before that moment; none can gain evidence now without editing history.
+#
+# A store whose logs contain no evidence at all has never used the contract,
+# so limb 1 counts nothing there — but limb 2 is unconditional, so the very
+# first orchestrator run that accepts a task without evidence is caught even
+# in a project that has never recorded any.
+
+
+def _run_stamped_done_ids(store: Store) -> set[str]:
+    """Item ids whose transition to ``done`` was made under a run (US-PM-43-6).
+
+    One pass over the activity log per audit — not one per done task.  The log
+    on this repo is ~1,400 lines and the check runs over hundreds of done
+    tasks, so this reads it exactly once and the caller does set membership
+    against the result.
+
+    Raw log dicts, as ``read_log_entries`` yields them: lines written by older
+    builds may lack ``run_id`` altogether, so every field is probed by name and
+    type-checked rather than validated into a model.  One odd historical line
+    must never make the audit refuse to answer.
+    """
+    stamped: set[str] = set()
+    for entry in read_log_entries(log_paths(store.project_dir)):
+        if entry.get("event_type") != "update" or not entry.get("run_id"):
+            continue
+        changes = entry.get("changes")
+        if not isinstance(changes, dict):
+            continue
+        status = changes.get("status")
+        if isinstance(status, dict) and status.get("after") == "done":
+            item_id = entry.get("item_id")
+            if item_id:
+                stamped.add(item_id)
+    return stamped
+
+
+def _as_utc(moment: datetime) -> datetime:
+    """A naive timestamp is UTC — old log lines were written without an offset.
+
+    Comparing a naive datetime with an aware one raises, and one hand-edited
+    line must never make the audit refuse to answer.
+    """
+    if moment.tzinfo is None:
+        return moment.replace(tzinfo=timezone.utc)
+    return moment
+
+
+def _first_evidence_timestamp(store: Store) -> Optional[datetime]:
+    """When this store first recorded structured evidence, or ``None``.
+
+    One pass over ``.project/logs/*.jsonl`` per audit, cheap in the common
+    case: a file whose bytes never contain ``"evidence"`` is skipped without
+    parsing a line, and within a file only the lines carrying that key are
+    validated.  ``None`` means the contract has never been used here, which
+    Check 17 reads as "no run-log entry in this store could have carried
+    evidence" (see the rule above).
+    """
+    logs_dir = store.project_dir / "logs"
+    if not logs_dir.is_dir():
+        return None
+    earliest: Optional[datetime] = None
+    for path in sorted(logs_dir.glob("*.jsonl")):
+        try:
+            text = path.read_text()
+        except OSError:  # pragma: no cover - unreadable log, not a finding
+            continue
+        if '"evidence"' not in text:
+            continue
+        for line in text.splitlines():
+            if '"evidence"' not in line:
+                continue
+            try:
+                entry = RunLogEntry.model_validate_json(line)
+            except Exception:
+                continue
+            if entry.evidence is None:
+                continue
+            moment = _as_utc(entry.timestamp)
+            if earliest is None or moment < earliest:
+                earliest = moment
+    return earliest
+
+
 def check_completions_without_evidence(
     store: Store, done_tasks: Optional[list] = None
 ) -> list[dict]:
-    """Find ``done`` tasks whose run log proves nothing (US-PM-9-8).
+    """Find ``done`` tasks that could have carried evidence and did not.
 
-    A completion without evidence is a task with ``status == done`` whose run
-    log contains no entry whose ``evidence`` is not ``None``.  A done task with
-    no run log at all qualifies — that is the 13% of completions the telemetry
-    could not see.
+    THE RULE (US-PM-9-8, narrowed by US-PM-43-6 and US-PM-43-7).  A completion
+    without evidence is a task with ``status == done`` whose run log contains
+    no entry whose ``evidence`` is not ``None`` **and** whose completion could
+    have carried evidence in the first place, meaning either
+
+      * its run log has an entry written no earlier than this store's first
+        evidence-bearing entry — by then the contract was in use here, so that
+        verdict could have carried evidence and carried none; or
+      * its ``done`` transition carries a ``run_id`` — an orchestrator
+        accepted it, under a contract that asks for evidence.
+
+    Everything else is a pre-contract completion and is **not** counted: a
+    done task with no run log and no run-stamped completion has no entry to
+    attach evidence to and no run to have attached it, and a verdict written
+    before this store had ever recorded evidence could not have carried any.
+    The only way to clear such a warning would be to rewrite history.  That
+    was 447 tasks on this repo, then 67 — numbers that could never shrink,
+    drowning the findings a reader can act on (US-PM-43).
+
+    The line is what the store proves about itself, never a magic date: the
+    contract shipped on different days for different projects, and an imported
+    history predates it entirely.  A store with no evidence anywhere has never
+    used the contract, so the first limb counts nothing there — while the
+    second limb is unconditional, so the first orchestrator run that accepts
+    without evidence is caught even in a project that has recorded none.
 
     Presence, never truthiness: ``Evidence()`` with four empty lists explicitly
     says "nothing to show" — the genuinely non-code task (docs, a config
@@ -178,7 +310,13 @@ def check_completions_without_evidence(
     and never the truthiness of the lists.  ``Store.get_run_log`` applies the
     ``has_evidence`` filter before ``limit``, so asking for one evidence-bearing
     entry is an existence probe: one pass over the log per done task, and no
-    re-parse of anything the other checks already read.
+    re-parse of anything the other checks already read.  The second probe —
+    the newest entry without evidence, which ``limit=1`` returns because the
+    log reads most-recent-first — is only made for tasks that failed the
+    first, so a project whose completions are evidenced pays nothing for it.
+    The logs directory and the activity log are each read at most once per
+    call, and only on demand (see ``_first_evidence_timestamp`` and
+    ``_run_stamped_done_ids``).
 
     Archived tasks are skipped — an archived task is abandoned history, not a
     completion anyone is still standing behind.
@@ -186,15 +324,14 @@ def check_completions_without_evidence(
     One aggregate finding, the shape of ``done-story-incomplete-tasks``, so
     DRIFT.md gets one line rather than one per task.
 
-    SEVERITY: warning, not error, for the reason written at Check 17 below.
+    SEVERITY: warning, not error, for the reason written at Check 16 below.
     /pm-orchestrate halts a sprint on any error-level finding, so error is
     reserved for structural contradictions — a done story with open tasks, a
     dependency cycle.  This is a coverage gap: nothing is lost and nothing is
-    unreachable.  Decisively, every task completed before evidence shipped has
-    none, so at error level the first audit after release would brick the
-    orchestrator on every existing project (this repo alone has ~330 such
-    tasks).  Firing broadly on legacy completions is expected, and is exactly
-    why it is a warning.
+    unreachable.  The narrowed rule makes the count actionable but not
+    necessarily small — a project that completed tasks through verdicts before
+    evidence existed still has entries with nothing attached — so it stays a
+    warning.
 
     *done_tasks* is the already-filtered list of live done tasks — what
     ``list_tasks(status="done", archived=False)`` would return — so
@@ -204,20 +341,45 @@ def check_completions_without_evidence(
     """
     if done_tasks is None:
         done_tasks = store.list_tasks(status="done", archived=False)
-    offenders = [
-        task.id
-        for task in done_tasks
+
+    run_stamped: Optional[set[str]] = None
+    first_evidence: Optional[datetime] = None
+    first_evidence_read = False
+    offenders = []
+    for task in done_tasks:
         # limit=1: existence probe, not a fetch — see docstring.
-        if not store.get_run_log(task.id, limit=1, has_evidence=True)
-    ]
+        if store.get_run_log(task.id, limit=1, has_evidence=True):
+            continue
+        latest = store.get_run_log(task.id, limit=1)
+        if latest:
+            if not first_evidence_read:
+                # Read once, and only if some done task has a bare verdict.
+                first_evidence = _first_evidence_timestamp(store)
+                first_evidence_read = True
+            if (
+                first_evidence is not None
+                and _as_utc(latest[0].timestamp) >= first_evidence
+            ):
+                # A verdict written under the contract, with nothing attached.
+                offenders.append(task.id)
+                continue
+        if run_stamped is None:
+            # Read once, and only if some done task got this far.
+            run_stamped = _run_stamped_done_ids(store)
+        if task.id in run_stamped:
+            offenders.append(task.id)
+
     if not offenders:
         return []
     return [{
         "severity": "warning",
         "check": "done-without-evidence",
         "message": (
-            f"{len(offenders)} done task(s) have no structured evidence on any "
-            f"run-log entry — record files/tests/dod_met with the verdict"
+            f"{len(offenders)} done task(s) that could have carried evidence "
+            f"have none on any run-log entry — record files/tests/dod_met with "
+            f"the verdict (counted only where a run-log entry was written at "
+            f"or after this project's first evidence, or the done transition "
+            f"carried a run_id)"
         ),
         "items": offenders,
     }]
@@ -225,19 +387,18 @@ def check_completions_without_evidence(
 
 # ── Documentation checks (US-PRJ-42-6) ───────────────────────────────────
 #
-# The project docs (PROJECT/INFRASTRUCTURE/SECURITY.md) and the hub docs
-# (VISION/ARCHITECTURE/DECISIONS.md) were each testing "is this still the
-# template?" with their own copy of the same line filter, and each doing its
-# own mtime arithmetic.  Both now go through ``_content_lines``; the project
-# docs' whole check lives in ``_check_documentation``.
+# The project docs (PROJECT/INFRASTRUCTURE/SECURITY.md) test "is this still
+# the template?" with one line filter and one piece of mtime arithmetic: the
+# filter is ``_content_lines`` and the whole check lives in
+# ``_check_documentation``.
 #
-# The two filters are NOT identical and must not be merged: the templates for
-# the project docs end in a ``*Last reviewed: …*`` / ``*Update this …*``
-# footer that the hub templates do not have, so only the project filter drops
-# those lines.  Folding them together would change which files read as
-# unfilled, which is a behaviour change, not a cleanup.
-_DOC_SKIP_PREFIXES = ("#", "<!--", "-->", "---", "|")
-_PROJECT_DOC_SKIP_PREFIXES = _DOC_SKIP_PREFIXES + ("*Last reviewed", "*Update this")
+# The ``*Last reviewed: …*`` / ``*Update this …*`` lines are dropped along with
+# the headings and table rules because every one of those templates ends in
+# that footer, so leaving them in would make an untouched template read as
+# filled.
+_DOC_SKIP_PREFIXES = (
+    "#", "<!--", "-->", "---", "|", "*Last reviewed", "*Update this",
+)
 
 # A doc with fewer real content lines than this is treated as an unfilled
 # template (a heading-and-boilerplate skeleton).
@@ -249,7 +410,7 @@ _STALE_DOC_DAYS = 30
 
 def _content_lines(
     text: str,
-    skip_prefixes: tuple[str, ...] = _PROJECT_DOC_SKIP_PREFIXES,
+    skip_prefixes: tuple[str, ...] = _DOC_SKIP_PREFIXES,
 ) -> list[str]:
     """Real content lines of a doc — headings, comments and boilerplate dropped.
 
@@ -310,23 +471,12 @@ def _check_documentation(
 
 def run_audit(
     root: Path,
-    project_dir: Optional[Path] = None,
     include_info: bool = True,
     since: Optional[str] = None,
-    known_epic_ids: Optional[set[str]] = None,
 ) -> str:
     """Run all audit checks and generate a report. Also writes DRIFT.md.
 
-    When *project_dir* is given (hub subproject), the Store is rooted at
-    *root* but reads PM data from *project_dir* instead of ``root/.project/``.
-
-    *known_epic_ids* names epics that exist somewhere this store cannot see —
-    in practice the hub's own epics when auditing a subproject, since epics are
-    hub-level (US-PM-36).  It is unioned with the store's own epic IDs for the
-    orphaned-epic-reference check and used nowhere else, so a story that
-    legitimately links up to a hub epic is not reported as dangling.  It is
-    deliberately *not* part of the state digest: it can only ever suppress a
-    warning, never produce one, so a stale digest cannot hide a new finding.
+    The Store is rooted at *root* and reads PM data from ``root/.project/``.
 
     When *include_info* is False, info-level findings are omitted from the
     returned report (summarized as a count); DRIFT.md always gets the full report.
@@ -353,11 +503,11 @@ def run_audit(
     # at the end of this function cannot perturb the digest it reports — and
     # it is the only work done before the short-circuit decision, measured at
     # ~2% of a full audit on this repo's own .project.
-    digest = compute_state_digest(root, project_dir)
+    digest = compute_state_digest(root)
     if since is not None and since.strip().lower() == digest:
-        return unchanged_report(root, project_dir, digest)
+        return unchanged_report(root, digest)
 
-    store = Store(root, project_dir=project_dir) if project_dir else Store(root)
+    store = Store(root)
     findings = []
 
     # ── The snapshot every check below reads (US-PRJ-42) ──────────────────
@@ -525,7 +675,7 @@ def run_audit(
             })
 
     # Check 9: Orphaned epic reference (story references non-existent epic_id)
-    epic_ids = {e.id for e in all_epics} | set(known_epic_ids or ())
+    epic_ids = {e.id for e in all_epics}
     for story in all_stories:
         if story.epic_id and story.epic_id not in epic_ids:
             findings.append({
@@ -549,47 +699,7 @@ def run_audit(
                     "items": [epic.id],
                 })
 
-    # Check 11: Hub documentation checks (when hub mode)
-    config = load_config(root)
-    if config.hub:
-        hub_docs = {
-            "VISION.md": ["## Mission", "## Product Principles"],
-            "ARCHITECTURE.md": ["## Overview", "## Service Map"],
-            "DECISIONS.md": ["## Decisions"],
-        }
-        for doc_name, _sections in hub_docs.items():
-            doc_path = store.project_dir / doc_name
-            if not doc_path.exists():
-                findings.append({
-                    "severity": "warning",
-                    "check": "missing-hub-documentation",
-                    "message": f"{doc_name} is missing from hub .project/",
-                    "items": [doc_name],
-                })
-                continue
-
-            # Hub templates carry no "*Last reviewed*" footer, so this uses the
-            # narrower prefix set — see the note on _DOC_SKIP_PREFIXES.
-            lines = _content_lines(doc_path.read_text(), _DOC_SKIP_PREFIXES)
-            if len(lines) < _UNFILLED_DOC_MAX_LINES:
-                findings.append({
-                    "severity": "info",
-                    "check": "unfilled-hub-documentation",
-                    "message": f"{doc_name} appears to be an unfilled template — needs real content",
-                    "items": [doc_name],
-                })
-
-            mtime = date.fromtimestamp(os.path.getmtime(doc_path))
-            age_days = (date.today() - mtime).days
-            if age_days > _STALE_DOC_DAYS:
-                findings.append({
-                    "severity": "info",
-                    "check": "stale-hub-documentation",
-                    "message": f"{doc_name} hasn't been updated in {age_days} days",
-                    "items": [doc_name],
-                })
-
-    # Check 12: Stale task assignment (in-progress with assignee, no updates in 14+ days)
+    # Check 11: Stale task assignment (in-progress with assignee, no updates in 14+ days)
     for task in tasks_in_progress:
         if task.assignee and task.updated < stale_threshold:
             days = (date.today() - task.updated).days
@@ -600,7 +710,7 @@ def run_audit(
                 "items": [task.id],
             })
 
-    # Check 13: Malformed files in quarantine
+    # Check 12: Malformed files in quarantine
     malformed_dir = store.project_dir / "malformed"
     if malformed_dir.exists():
         malformed_count = len(list(malformed_dir.glob("*.md")))
@@ -612,7 +722,7 @@ def run_audit(
                 "items": [f.name for f in sorted(malformed_dir.glob("*.md"))[:5]],
             })
 
-    # Check 14: Dependency cycles (project-wide, across tasks and stories)
+    # Check 13: Dependency cycles (project-wide, across tasks and stories)
     # Both lists are the snapshot loaded at the top — this check used to
     # re-read them from the Store.
     if all_tasks or all_stories:
@@ -627,7 +737,7 @@ def run_audit(
                 "items": cycle,
             })
 
-    # Check 15: Orphaned dependency references (project-wide)
+    # Check 14: Orphaned dependency references (project-wide)
     all_task_ids = {t.id for t in all_tasks}
     all_story_ids = {s.id for s in all_stories}
     all_known_ids = all_task_ids | all_story_ids
@@ -654,7 +764,7 @@ def run_audit(
                 "items": [story.id, orphan],
             })
 
-    # Check 16: Missing implementation tasks (only test tasks, no impl tasks)
+    # Check 15: Missing implementation tasks (only test tasks, no impl tasks)
     for story in all_stories:
         if story.status.value in ("active", "ready"):
             tasks = tasks_by_story.get(story.id, [])
@@ -666,7 +776,7 @@ def run_audit(
                     "items": [story.id],
                 })
 
-    # Check 17: Acceptance-criteria / test-task drift (US-PM-5-7)
+    # Check 16: Acceptance-criteria / test-task drift (US-PM-5-7)
     #
     # Editing a story's acceptance criteria used to leave its auto-generated
     # test tasks quoting the old text and create nothing for the new — and the
@@ -700,6 +810,19 @@ def run_audit(
     # get_story plus two list_tasks per story (US-PRJ-42).  It is still the
     # same detector — the audit and the reconciler cannot disagree — it just
     # no longer re-reads what is already in hand.
+    #
+    # Archived stories are skipped entirely: nothing about them is live.
+    # Done stories are skipped for criteria-without-test-task only (US-PM-43-5).
+    # That finding's whole remedy is "re-apply the criteria with pm_update to
+    # reconcile", and on a done story that would create todo test tasks under
+    # work that is already finished — its criteria were verified some other
+    # way, so there is nothing left to act on and the warning can never be
+    # cleared honestly.  US-PM-1 and US-PM-2 sat in exactly that state for
+    # weeks.  Backlog, ready and active stories still fire: for them the
+    # remedy is real.  The stale-criterion finding is deliberately NOT
+    # skipped for done stories — a test task quoting text that no longer
+    # exists is a wrong artifact on disk whatever the story's status, and it
+    # is fixed by reconciling or archiving the task, not by adding work.
     for story in all_stories:
         if story.status.value == "archived":
             continue
@@ -708,7 +831,7 @@ def run_audit(
             criteria=list(story.acceptance_criteria or []),
             task_entries=task_entries,
         )
-        if drift["missing"]:
+        if drift["missing"] and story.status.value != "done":
             findings.append({
                 "severity": "warning",
                 "check": "criteria-without-test-task",
@@ -730,8 +853,8 @@ def run_audit(
                 "items": [e["task_id"] for e in drift["stale"]],
             })
 
-    # Check 18: Completions carrying no evidence (US-PM-9-8).  Warning, not
-    # error, for the same reason as Check 17 — see the docstring on
+    # Check 17: Completions carrying no evidence (US-PM-9-8).  Warning, not
+    # error, for the same reason as Check 16 — see the docstring on
     # check_completions_without_evidence.
     findings.extend(check_completions_without_evidence(store, tasks_done_live))
 

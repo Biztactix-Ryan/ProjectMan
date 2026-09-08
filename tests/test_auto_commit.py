@@ -7,7 +7,7 @@ Covers seven scenarios:
 4. Only .project/ files → other dirty files excluded from commit
 5. Not a git repo → mutation succeeds, warning logged, no crash
 6. No auto-push → `git log origin/main..HEAD` shows unpushed commit
-7. Hub mode subproject → subproject auto_commit overrides hub setting
+7. A second store under the same repo → its own auto_commit wins
 """
 
 import subprocess
@@ -334,27 +334,30 @@ class TestNoAutoPush:
         )
 
 
-# ─── Scenario 7: Hub mode subproject ────────────────────────────
+# ─── Scenario 7: a second store in the same repo ────────────────
 
 
-class TestHubSubprojectOverride:
-    """auto_commit in subproject config overrides hub setting."""
+class TestExplicitProjectDirOverride:
+    """auto_commit is read from the store being written, not from the root.
+
+    ``Store(root, project_dir=...)`` is still supported after hub mode was
+    removed (EPIC-PM-6) — a repo can carry a second store somewhere under it.
+    The flag that decides whether a write auto-commits is that store's own.
+    """
 
     @pytest.fixture
-    def hub_with_subproject(self, tmp_git_hub):
-        """Create a hub with auto_commit=False and a subproject with auto_commit=True."""
-        hub_root = tmp_git_hub
-        hub_config_path = hub_root / ".project" / "config.yaml"
+    def repo_with_second_store(self, tmp_git_project):
+        """Root store with auto_commit=False, a nested one with it True."""
+        root = tmp_git_project
+        root_config_path = root / ".project" / "config.yaml"
 
-        # Hub has auto_commit=False (default)
-        with open(hub_config_path) as f:
-            hub_config = yaml.safe_load(f)
-        hub_config["auto_commit"] = False
-        with open(hub_config_path, "w") as f:
-            yaml.dump(hub_config, f)
+        with open(root_config_path) as f:
+            root_config = yaml.safe_load(f)
+        root_config["auto_commit"] = False
+        with open(root_config_path, "w") as f:
+            yaml.dump(root_config, f)
 
-        # Create subproject directory structure
-        sub_dir = hub_root / "projects" / "myapp" / ".project"
+        sub_dir = root / "nested" / "myapp" / ".project"
         sub_dir.mkdir(parents=True)
         (sub_dir / "stories").mkdir()
         (sub_dir / "tasks").mkdir()
@@ -363,12 +366,10 @@ class TestHubSubprojectOverride:
         sub_config = {
             "name": "myapp",
             "prefix": "APP",
-            "description": "A sub-project",
-            "hub": False,
+            "description": "A second store",
             "auto_commit": True,
             "next_story_id": 1,
             "next_epic_id": 1,
-            "projects": [],
         }
         with open(sub_dir / "config.yaml", "w") as f:
             yaml.dump(sub_config, f)
@@ -376,49 +377,51 @@ class TestHubSubprojectOverride:
         # Commit all setup
         subprocess.run(
             ["git", "add", "-A"],
-            cwd=str(hub_root), capture_output=True, check=True,
+            cwd=str(root), capture_output=True, check=True,
         )
         subprocess.run(
-            ["git", "commit", "-m", "setup hub with subproject"],
-            cwd=str(hub_root), capture_output=True, check=True,
+            ["git", "commit", "-m", "setup second store"],
+            cwd=str(root), capture_output=True, check=True,
         )
 
-        return hub_root
+        return root
 
-    def test_subproject_auto_commits_when_hub_does_not(self, hub_with_subproject):
-        """Subproject with auto_commit=True creates commits even if hub is False."""
-        hub_root = hub_with_subproject
-        sub_dir = hub_root / "projects" / "myapp" / ".project"
+    def test_the_second_store_auto_commits_when_the_root_does_not(
+        self, repo_with_second_store
+    ):
+        """auto_commit=True on the scoped store creates commits regardless of the root."""
+        root = repo_with_second_store
+        sub_dir = root / "nested" / "myapp" / ".project"
 
-        sub_store = Store(hub_root, project_dir=sub_dir)
+        sub_store = Store(root, project_dir=sub_dir)
 
-        initial_log = _git_log(hub_root)
+        initial_log = _git_log(root)
 
-        sub_store.create_story("Subproject feature", "Implemented in subproject")
+        sub_store.create_story("Second-store feature", "Implemented over there")
 
-        after_log = _git_log(hub_root, 1)
+        after_log = _git_log(root, 1)
         assert after_log[0] == "pm: create US-APP-1"
         assert after_log != initial_log
 
-    def test_hub_store_does_not_auto_commit(self, hub_with_subproject):
-        """Hub Store with auto_commit=False does not create commits."""
-        hub_root = hub_with_subproject
+    def test_the_root_store_does_not_auto_commit(self, repo_with_second_store):
+        """The root Store with auto_commit=False does not create commits."""
+        root = repo_with_second_store
 
-        hub_store = Store(hub_root)
-        initial_log = _git_log(hub_root)
+        root_store = Store(root)
+        initial_log = _git_log(root)
 
-        hub_store.create_story("Hub story", "Should not auto-commit")
+        root_store.create_story("Root story", "Should not auto-commit")
 
-        after_log = _git_log(hub_root)
+        after_log = _git_log(root)
         assert initial_log == after_log
 
-    def test_subproject_commit_contains_subproject_files(self, hub_with_subproject):
-        """Auto-commit from subproject should include subproject files."""
-        hub_root = hub_with_subproject
-        sub_dir = hub_root / "projects" / "myapp" / ".project"
+    def test_the_commit_contains_the_second_stores_files(self, repo_with_second_store):
+        """Auto-commit from the scoped store should include its files."""
+        root = repo_with_second_store
+        sub_dir = root / "nested" / "myapp" / ".project"
 
-        sub_store = Store(hub_root, project_dir=sub_dir)
+        sub_store = Store(root, project_dir=sub_dir)
         sub_store.create_story("Feature", "Description")
 
-        files = _git_show_files(hub_root)
-        assert any("projects/myapp/" in f for f in files)
+        files = _git_show_files(root)
+        assert any("nested/myapp/" in f for f in files)

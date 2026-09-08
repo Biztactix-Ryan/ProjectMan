@@ -25,22 +25,6 @@ def _clear_config_cache():
     clear_config_cache()
 
 
-@pytest.fixture(autouse=True)
-def _clear_hub_store_map():
-    """Keep the per-process hub store map from leaking between tests.
-
-    ``hub.stores.hub_stores`` caches its map keyed by resolved root the way
-    ``server._store_cache`` caches Stores (US-PM-31).  Fixtures build a hub
-    directory tree *after* something may already have read the map for that
-    root, so it is dropped on both sides of every test.
-    """
-    from projectman.hub.stores import invalidate
-
-    invalidate()
-    yield
-    invalidate()
-
-
 @pytest.fixture
 def tmp_project(tmp_path):
     """Create a minimal .project/ directory for testing."""
@@ -53,9 +37,7 @@ def tmp_project(tmp_path):
         "name": "test-project",
         "prefix": "TST",
         "description": "A test project",
-        "hub": False,
         "next_story_id": 1,
-        "projects": [],
     }
     with open(proj / "config.yaml", "w") as f:
         yaml.dump(config, f)
@@ -66,196 +48,6 @@ def tmp_project(tmp_path):
     (proj / "SECURITY.md").write_text("# test-project — Security\n\n## Authentication\n\nNone — CLI tool.\n\n## Authorization\n\nN/A.\n\n## Known Risks\n\nNone identified.\n")
 
     return tmp_path
-
-
-@pytest.fixture
-def tmp_hub(tmp_path):
-    """Create a minimal hub project for testing."""
-    proj = tmp_path / ".project"
-    proj.mkdir()
-    (proj / "stories").mkdir()
-    (proj / "tasks").mkdir()
-    (proj / "roadmap").mkdir()
-    (proj / "dashboards").mkdir()
-    # Subproject checkouts live beside the hub store, each with its own
-    # .project/ inside it (US-PM-31) — see projectman.hub.stores.
-    (tmp_path / "projects").mkdir()
-
-    config = {
-        "name": "test-hub",
-        "prefix": "HUB",
-        "description": "A test hub",
-        "hub": True,
-        "next_story_id": 1,
-        "projects": [],
-    }
-    with open(proj / "config.yaml", "w") as f:
-        yaml.dump(config, f)
-
-    return tmp_path
-
-
-# ─── Hub subprojects (US-PM-31) ────────────────────────────────────
-
-
-def _register_in_hub(hub_root, name):
-    """Add *name* to the hub's config.projects if it isn't already there."""
-    from projectman.config import load_config, save_config
-
-    hub_config = load_config(hub_root)
-    if name not in hub_config.projects:
-        hub_config.projects.append(name)
-        save_config(hub_config, hub_root)
-
-
-def make_hub_subproject(
-    hub_root,
-    name,
-    prefix="SUB",
-    *,
-    attached=True,
-    register=True,
-):
-    """Build a subproject store at ``projects/{name}/.project`` and register it.
-
-    This is *the* place tests build hub subprojects, so the layout lives in
-    one file (US-PM-31): the store is inside the subproject's own checkout,
-    never in the hub's ``.project/``.
-
-    ``attached=False`` produces the case the migration exists to fix — a store
-    that was *copied* into a real checkout rather than mounted as a worktree.
-    It plants a ``.git`` directory beside the store, which is what makes
-    ``hub.stores.default_attached_check`` fall back to its strict clause and
-    answer False.  Everything else about the store is identical, so a test can
-    prove that the unattached path is chosen by the mount state and not by
-    missing data.
-
-    Returns the store directory (``{hub_root}/projects/{name}/.project``).
-    """
-    from projectman.hub.stores import invalidate, store_path, subproject_path
-
-    sub_path = subproject_path(hub_root, name)
-    sub_path.mkdir(parents=True, exist_ok=True)
-
-    pm_dir = store_path(hub_root, name)
-    pm_dir.mkdir(parents=True, exist_ok=True)
-    (pm_dir / "stories").mkdir(exist_ok=True)
-    (pm_dir / "tasks").mkdir(exist_ok=True)
-    (pm_dir / "epics").mkdir(exist_ok=True)
-
-    config = {
-        "name": name,
-        "prefix": prefix,
-        "description": "",
-        "hub": False,
-        "next_story_id": 1,
-        "next_epic_id": 1,
-        "projects": [],
-    }
-    with open(pm_dir / "config.yaml", "w") as f:
-        yaml.dump(config, f)
-
-    if not attached:
-        # A checkout that *is* a git repository: the store beside it is now
-        # only attached if it is a real worktree, and a plain directory isn't.
-        (sub_path / ".git").mkdir(exist_ok=True)
-
-    if register:
-        _register_in_hub(hub_root, name)
-
-    # The map caches per root and the tree just changed underneath it.
-    invalidate(hub_root)
-    return pm_dir
-
-
-def make_unattached_hub_subproject(hub_root, name, prefix="SUB", **kwargs):
-    """A registered subproject whose store exists but is not mounted."""
-    return make_hub_subproject(hub_root, name, prefix, attached=False, **kwargs)
-
-
-def register_hub_subproject_without_store(hub_root, name):
-    """Register *name* in the hub with no checkout and no store at all.
-
-    The other flavour of unattached: nothing has been cloned yet, so there is
-    no ``projects/{name}`` either.  Reads must report it, not raise.
-    """
-    from projectman.hub.stores import invalidate
-
-    _register_in_hub(hub_root, name)
-    invalidate(hub_root)
-    return None
-
-
-def make_legacy_hub_side_store(hub_root, name, prefix="SUB", *, register=True):
-    """Build a *pre*-US-PM-31 store at ``.project/projects/{name}/``.
-
-    The only place in the suite that writes the old layout, and it writes it
-    deliberately: this is the leftover ``projectman repair`` reports and
-    ``projectman migrate-hub`` (US-PM-31-8) moves.  Nothing reads it — a test
-    that wants a *readable* subproject wants :func:`make_hub_subproject`.
-
-    The checkout at ``projects/{name}`` is created too, empty, because that is
-    what a hub looks like mid-migration: the submodule is cloned, its store is
-    still in the hub.
-    """
-    from projectman.hub.stores import PROJECTS_DIRNAME, invalidate, subproject_path
-
-    subproject_path(hub_root, name).mkdir(parents=True, exist_ok=True)
-
-    hub_side = hub_root / ".project" / PROJECTS_DIRNAME / name
-    (hub_side / "stories").mkdir(parents=True, exist_ok=True)
-    (hub_side / "tasks").mkdir(parents=True, exist_ok=True)
-    with open(hub_side / "config.yaml", "w") as f:
-        yaml.dump(
-            {
-                "name": name,
-                "prefix": prefix,
-                "description": "",
-                "hub": False,
-                "next_story_id": 1,
-                "projects": [],
-            },
-            f,
-        )
-
-    if register:
-        _register_in_hub(hub_root, name)
-
-    invalidate(hub_root)
-    return hub_side
-
-
-@pytest.fixture
-def legacy_hub_side_store():
-    """Factory for the pre-US-PM-31 hub-side store that migrate-hub moves."""
-    return make_legacy_hub_side_store
-
-
-@pytest.fixture
-def hub_subproject():
-    """Factory: ``hub_subproject(hub_root, name, prefix="SUB")`` -> store dir.
-
-    The attached case — use it wherever a test needs a subproject the hub can
-    actually read.
-    """
-    return make_hub_subproject
-
-
-@pytest.fixture
-def hub_unattached_subproject():
-    """Factory for a subproject whose store is present but not mounted.
-
-    ``hub_unattached_subproject(hub_root, name, prefix="SUB")`` -> store dir.
-    Pair it with :func:`hub_subproject` to prove a hub read reports the
-    unattached one while still returning the attached one's numbers.
-    """
-    return make_unattached_hub_subproject
-
-
-@pytest.fixture
-def hub_registered_subproject_only():
-    """Factory for a name in ``config.projects`` with nothing on disk."""
-    return register_hub_subproject_without_store
 
 
 @pytest.fixture
@@ -328,21 +120,6 @@ def tmp_git_project_with_remote(tmp_git_project, tmp_path_factory):
     )
 
     return tmp_git_project
-
-
-@pytest.fixture
-def tmp_git_hub(tmp_hub):
-    """Create a tmp_hub inside a git repository with an initial commit."""
-    import subprocess
-
-    _seed_indexes(tmp_hub)
-    subprocess.run(["git", "init"], cwd=str(tmp_hub), capture_output=True, check=True)
-    subprocess.run(["git", "config", "user.email", "test@test.com"], cwd=str(tmp_hub), capture_output=True, check=True)
-    subprocess.run(["git", "config", "user.name", "Test"], cwd=str(tmp_hub), capture_output=True, check=True)
-    subprocess.run(["git", "add", "."], cwd=str(tmp_hub), capture_output=True, check=True)
-    subprocess.run(["git", "commit", "-m", "init"], cwd=str(tmp_hub), capture_output=True, check=True)
-
-    return tmp_hub
 
 
 @pytest.fixture(scope="module")

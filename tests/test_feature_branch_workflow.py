@@ -121,7 +121,7 @@ def hub_with_deploy_branches(tmp_path):
     # Set up PM structure
     proj = hub / ".project"
     proj.mkdir()
-    for d in ("stories", "tasks", "projects", "dashboards"):
+    for d in ("stories", "tasks", "projects"):
         (proj / d).mkdir()
     config = {
         "name": "test-hub",

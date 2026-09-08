@@ -25,8 +25,6 @@ _GITIGNORE_HEADER = (
     "# Derived index files — regenerated from the epic, story and task files\n"
     "# by pm_reindex, pm_commit, `projectman reindex` and indexer.ensure_fresh\n"
     "# on the read path, so git never needs to carry them (US-PM-29).\n"
-    "# The patterns are unanchored: a hub's subproject stores under projects/\n"
-    "# are covered by this one file.\n"
 )
 
 _STATUS_EMOJI = {
@@ -183,36 +181,26 @@ def write_markdown_indexes(
             points_per_epic[s.epic_id] += s.points
 
     project_name = store.config.name
-    is_hub = store.config.hub
 
-    # --- INDEX.md (or README.md at repo root for hubs) ---
-    # For hubs the index lives at the repo root as README.md, so links
-    # must be prefixed with .project/ to reach the sub-indexes.
-    link_prefix = ".project/" if is_hub else ""
+    # --- INDEX.md ---
+    lines = [
+        f"# {project_name}",
+        "",
+        "| Metric | Count |",
+        "| ------ | ----- |",
+        f"| Epics | {len(epics)} |",
+        f"| Stories | {len(stories)} |",
+        f"| Tasks | {len(tasks)} |",
+        "",
+        "## Indexes",
+        "",
+        "- [Epics](INDEX-EPICS.md)",
+        "- [Stories](INDEX-STORIES.md)",
+        "- [Tasks](INDEX-TASKS.md)",
+        "",
+    ]
+    index_content = "\n".join(lines)
 
-    if is_hub:
-        index_content = _build_hub_readme(store, epics, stories, tasks, link_prefix)
-    else:
-        lines = [
-            f"# {project_name}",
-            "",
-            "| Metric | Count |",
-            "| ------ | ----- |",
-            f"| Epics | {len(epics)} |",
-            f"| Stories | {len(stories)} |",
-            f"| Tasks | {len(tasks)} |",
-            "",
-            "## Indexes",
-            "",
-            f"- [Epics]({link_prefix}INDEX-EPICS.md)",
-            f"- [Stories]({link_prefix}INDEX-STORIES.md)",
-            f"- [Tasks]({link_prefix}INDEX-TASKS.md)",
-            "",
-        ]
-        index_content = "\n".join(lines)
-
-    if is_hub:
-        (store.root / "README.md").write_text(index_content)
     (store.project_dir / "INDEX.md").write_text(index_content)
 
     # --- INDEX-EPICS.md ---
@@ -285,110 +273,6 @@ def write_markdown_indexes(
     (store.project_dir / "INDEX-TASKS.md").write_text("\n".join(lines))
 
 
-def _progress_bar(completed: int, total: int, width: int = 20) -> str:
-    """Return a text progress bar like '██████████░░░░░░░░░░ 51%'."""
-    if total == 0:
-        return "░" * width + " 0%"
-    pct = round(completed / total * 100)
-    filled = round(width * completed / total)
-    bar = "█" * filled + "░" * (width - filled)
-    return f"{bar} {pct}%"
-
-
-def _discover_badges(root: Path, name: str, repo: str) -> list[str]:
-    """Scan projects/{name}/.github/workflows/ for workflow files and return badge markdown."""
-    if not repo:
-        return []
-    from .hub.stores import subproject_path
-
-    workflows_dir = subproject_path(root, name) / ".github" / "workflows"
-    if not workflows_dir.is_dir():
-        return []
-    badges = []
-    for wf in sorted(workflows_dir.iterdir()):
-        if wf.suffix not in (".yml", ".yaml"):
-            continue
-        # Try to extract the workflow name from the YAML file
-        wf_name = wf.stem
-        try:
-            data = yaml.safe_load(wf.read_text())
-            if isinstance(data, dict) and data.get("name"):
-                wf_name = data["name"]
-        except Exception:
-            pass
-        badge_url = f"https://github.com/{repo}/actions/workflows/{wf.name}/badge.svg"
-        action_url = f"https://github.com/{repo}/actions/workflows/{wf.name}"
-        badges.append(f"[![{wf_name}]({badge_url})]({action_url})")
-    return badges
-
-
-def _build_hub_readme(
-    store: Store, epics: list, stories: list, tasks: list, link_prefix: str
-) -> str:
-    """Build an enhanced hub README with per-project stats, badges, and progress bars."""
-    from .hub.rollup import rollup
-
-    project_name = store.config.name
-    data = rollup(store.root)
-
-    lines = [
-        f"# {project_name}",
-        "",
-        "| Metric | Count |",
-        "| ------ | ----- |",
-        f"| Projects | {len(data['projects'])} |",
-        f"| Epics | {data['total_epics']} |",
-        f"| Stories | {data['total_stories']} |",
-        f"| Tasks | {data['total_tasks']} |",
-        f"| Completion | {data['completion']} |",
-        "",
-    ]
-
-    # Per-project sections
-    if data["projects"]:
-        lines.append("## Projects")
-        lines.append("")
-
-    for proj in data["projects"]:
-        name = proj["name"]
-        lines.append(f"### {name}")
-        lines.append("")
-
-        # Badges
-        repo = proj.get("repo", "")
-        badges = _discover_badges(store.root, name, repo)
-        if badges:
-            lines.append(" ".join(badges))
-            lines.append("")
-
-        if proj.get("status") == "active":
-            tp = proj.get("total_points", 0)
-            cp = proj.get("completed_points", 0)
-            bar = _progress_bar(cp, tp)
-            lines.append("| Epics | Stories | Tasks | Points | Progress |")
-            lines.append("|-------|---------|-------|--------|----------|")
-            lines.append(
-                f"| {proj.get('epics', 0)} "
-                f"| {proj.get('stories', 0)} "
-                f"| {proj.get('tasks', 0)} "
-                f"| {cp}/{tp} "
-                f"| {bar} |"
-            )
-        else:
-            lines.append(f"_{proj.get('status', 'unknown')}_")
-        lines.append("")
-
-    # Index links
-    lines.append("## Indexes")
-    lines.append("")
-    lines.append(f"- [Epics]({link_prefix}INDEX-EPICS.md)")
-    lines.append(f"- [Stories]({link_prefix}INDEX-STORIES.md)")
-    lines.append(f"- [Tasks]({link_prefix}INDEX-TASKS.md)")
-    lines.append("")
-
-    return "\n".join(lines)
-
-
 def write_index(store: Store) -> None:
     """Build index and write index.yaml and markdown indexes to disk.
 
@@ -414,8 +298,8 @@ def write_index(store: Store) -> None:
 def write_store_gitignore(project_dir: Path) -> Path:
     """Ensure ``{project_dir}/.gitignore`` excludes the derived index files.
 
-    Called when a store is scaffolded (``projectman init`` and the hub's
-    subproject initialiser).  The five files in
+    Called when a store is scaffolded (``projectman init``).  The five
+    files in
     :data:`DERIVED_INDEX_FILES` are a rendering of the item files beside
     them, so tracking them buys nothing and costs on every write: the item
     change and its index echo land in the same commit, a one-task edit

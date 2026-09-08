@@ -48,6 +48,9 @@ To upgrade later:
 pipx upgrade projectman
 ```
 
+That reinstalls from the git URL above. If you install from a local checkout instead,
+`pipx upgrade` will not see your changes — see [Upgrading](#upgrading).
+
 ## Install with pip (in a venv)
 
 If you prefer managing your own virtual environments:
@@ -83,7 +86,7 @@ projectman --help
 
 `pipx upgrade projectman` reinstalls from the source pipx recorded — for a git URL that
 means the published branch, **not** your working tree. A plain `pipx upgrade` never picks
-up local changes.
+up local changes. The current release is 0.9.0; `CHANGELOG.md` records what changed in it.
 
 **Stale install symptoms:** the CLI or MCP server behaves like an older version than your
 checkout — a tool argument the code accepts is rejected as unexpected, a flag you can see

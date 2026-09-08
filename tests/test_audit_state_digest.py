@@ -198,6 +198,27 @@ def test_a_run_log_entry_changes_the_digest(store, tmp_project):
     assert _audit_digest(tmp_project) != before
 
 
+def test_an_activity_log_append_changes_the_digest(store, tmp_project):
+    """The done-without-evidence check reads activity.jsonl too (US-PM-43-6).
+
+    A run-stamped ``done`` in the activity log is now what makes a task with
+    no run log count as a completion without evidence, so an append to that
+    file can produce a finding.  If it did not move the digest, ``since=``
+    would answer "unchanged" over a report that had gained a warning.
+    """
+    before = _audit_digest(tmp_project)
+    store.update("US-TST-1-2", status="done", run_id="orch-test-1")
+    assert _audit_digest(tmp_project) != before
+
+    # And an append that touches nothing else still moves it: the log is
+    # hashed for its own sake, not as a side effect of the item write.
+    log = tmp_project / ".project" / "activity.jsonl"
+    assert log.exists()
+    after_write = _audit_digest(tmp_project)
+    log.write_text(log.read_text() + log.read_text().splitlines()[-1] + "\n")
+    assert _audit_digest(tmp_project) != after_write
+
+
 def test_the_digest_changes_when_a_task_is_archived(store, tmp_project):
     """Archiving sets the orthogonal ``archived`` flag and leaves ``status``
     alone, so it is a state change no status comparison would catch."""
@@ -330,79 +351,3 @@ def test_every_distinct_project_state_gets_a_distinct_digest(store, tmp_project)
     record("run-log entry")
 
     assert len(seen) == 8
-
-
-# ═══ hub subprojects ════════════════════════════════════════════
-
-
-@pytest.fixture
-def tmp_hub(tmp_path_factory):
-    """A minimal hub, built off its own root.
-
-    Not the shared ``tmp_hub`` fixture: the autouse ``chdir_to_project`` above
-    already claims ``tmp_path`` for a non-hub project, and both fixtures create
-    ``<tmp_path>/.project``.
-    """
-    root = tmp_path_factory.mktemp("hub")
-    proj = root / ".project"
-    proj.mkdir(parents=True)
-    (root / "projects").mkdir()
-    (proj / "stories").mkdir()
-    (proj / "tasks").mkdir()
-    (proj / "config.yaml").write_text(
-        yaml.dump(
-            {
-                "name": "test-hub",
-                "prefix": "HUB",
-                "description": "A test hub",
-                "hub": True,
-                "next_story_id": 1,
-                "projects": [],
-            }
-        )
-    )
-    return root
-
-
-@pytest.fixture
-def hub_subproject(tmp_hub):
-    """A hub with one registered subproject holding its own PM data."""
-    pm_dir = tmp_hub / "projects" / "alpha" / ".project"
-    (pm_dir / "stories").mkdir(parents=True)
-    (pm_dir / "tasks").mkdir()
-    (pm_dir / "config.yaml").write_text(
-        yaml.dump(
-            {
-                "name": "alpha",
-                "prefix": "ALP",
-                "description": "A subproject",
-                "hub": False,
-                "next_story_id": 1,
-                "projects": [],
-            }
-        )
-    )
-    return pm_dir
-
-
-def test_a_hub_subproject_audit_reports_a_stable_digest(tmp_hub, hub_subproject):
-    report = run_audit(tmp_hub, project_dir=hub_subproject)
-    digest = _digest_of(report)
-    assert re.fullmatch(r"[0-9a-f]{16}", digest)
-    assert _digest_of(run_audit(tmp_hub, project_dir=hub_subproject)) == digest
-    # And it fingerprints the subproject, not the hub root.
-    assert digest != _digest_of(run_audit(tmp_hub))
-
-
-def test_a_hub_subproject_digest_covers_the_hub_config(tmp_hub, hub_subproject):
-    """Check 11 keys off ``load_config(root).hub``, and that file lives outside
-    the subproject directory — so it has to be hashed explicitly."""
-    before = _digest_of(run_audit(tmp_hub, project_dir=hub_subproject))
-
-    hub_config = tmp_hub / ".project" / "config.yaml"
-    config = yaml.safe_load(hub_config.read_text())
-    config["hub"] = False
-    hub_config.write_text(yaml.dump(config))
-    clear_all_caches()
-
-    assert _digest_of(run_audit(tmp_hub, project_dir=hub_subproject)) != before

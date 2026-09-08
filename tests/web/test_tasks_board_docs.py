@@ -255,9 +255,27 @@ def test_search_returns_results(client):
 
     r = client.get("/api/search?q=Searchable")
     assert r.status_code == 200
-    results = r.json()
+    payload = r.json()
+    results = payload["results"]
     assert len(results) >= 1
     assert any("Searchable" in item.get("title", "") for item in results)
+    # Every file parsed, so the sweep was complete.
+    assert payload["skipped"] == 0
+
+
+def test_search_reports_files_it_could_not_parse(client, tmp_project):
+    """A broken item file is skipped and counted, not raised (US-PM-40)."""
+    _create_story(client, "Searchable Story")
+    (tmp_project / ".project" / "stories" / "US-TST-99.md").write_text(
+        "---\n: bad\n---\n", encoding="utf-8"
+    )
+
+    r = client.get("/api/search?q=Searchable")
+
+    assert r.status_code == 200
+    payload = r.json()
+    assert any("Searchable" in item.get("title", "") for item in payload["results"])
+    assert payload["skipped"] == 1
 
 
 def test_search_requires_query(client):

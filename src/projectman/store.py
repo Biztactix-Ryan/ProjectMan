@@ -34,10 +34,102 @@ from projectman.errors import (
 
 logger = logging.getLogger(__name__)
 
+class _CacheEntries:
+    """``(frontmatter, body)`` entries in insertion order, indexed by item ID.
+
+    The cache used to hold a plain ``list`` of pairs, so every by-ID operation
+    — ``get_task``/``get_story``/``get_epic``, the single-entry replace in
+    ``_cache_update_entry``, and evict-on-archive — walked the whole list
+    (US-PRJ-39).  This is that list backed by a ``dict`` keyed by item ID: a
+    Python dict preserves insertion order, so iteration still yields the
+    entries in the order they were cached, while ``lookup``/``replace``/
+    ``remove_id`` are O(1) and a removal shifts nothing.
+
+    It deliberately reads like the list it replaced — iteration yields
+    ``(meta, body)`` pairs, and ``len()``, integer/slice indexing and
+    ``list(...)`` all behave as before — so every existing reader of the
+    cache keeps working unchanged.
+    """
+
+    __slots__ = ("_by_id",)
+
+    def __init__(self, entries=()) -> None:
+        self._by_id: dict[str, tuple] = {}
+        for entry in entries:
+            self._by_id[entry[0].id] = entry
+
+    # --- list-compatible reads ------------------------------------------
+    def __iter__(self):
+        return iter(self._by_id.values())
+
+    def __len__(self) -> int:
+        return len(self._by_id)
+
+    def __getitem__(self, index):
+        return list(self._by_id.values())[index]
+
+    def __contains__(self, entry) -> bool:
+        return entry in self._by_id.values()
+
+    def __eq__(self, other) -> bool:
+        if isinstance(other, _CacheEntries):
+            return self._by_id == other._by_id
+        if isinstance(other, list):
+            return list(self._by_id.values()) == other
+        return NotImplemented
+
+    def __repr__(self) -> str:  # pragma: no cover - debugging aid
+        return f"_CacheEntries({list(self._by_id.values())!r})"
+
+    # --- O(1) by-ID operations ------------------------------------------
+    def ids(self) -> list[str]:
+        """The cached item IDs, in insertion order."""
+        return list(self._by_id)
+
+    def lookup(self, item_id: str):
+        """Return the ``(meta, body)`` entry for ``item_id``, or ``None``."""
+        return self._by_id.get(item_id)
+
+    def append(self, entry: tuple) -> None:
+        """Add (or overwrite) the entry for ``entry[0].id``."""
+        self._by_id[entry[0].id] = entry
+
+    def replace(self, item_id: str, entry: tuple) -> bool:
+        """Replace the entry for ``item_id`` in place; no-op if it is absent.
+
+        Returns whether the ID was cached.  Keeping its position is free: a
+        dict assignment to an existing key does not move it.
+        """
+        if item_id not in self._by_id:
+            return False
+        self._by_id[item_id] = entry
+        return True
+
+    def remove_id(self, item_id: str) -> bool:
+        """Drop the entry for ``item_id``; returns whether it was there."""
+        return self._by_id.pop(item_id, None) is not None
+
+
 # Module-level cache: keyed by (base_dir, item_type) where item_type is
-# "stories", "tasks", or "epics".  Values are lists of (frontmatter, body)
-# tuples.  Populated on first list call; get methods extract from here first.
-_cache: dict[tuple[str, str], list[tuple]] = {}
+# "stories", "tasks", or "epics".  Values are :class:`_CacheEntries` — the
+# (frontmatter, body) pairs in insertion order, with an ID index beside them.
+# Populated on first list call; get methods extract from here first.
+_cache: dict[tuple[str, str], _CacheEntries] = {}
+
+
+def _cache_entries(key: tuple[str, str]):
+    """Return the :class:`_CacheEntries` under ``key``, or ``None``.
+
+    A plain list found under the key (tests poke one in to simulate a stale
+    server process) is upgraded in place, so the by-ID paths below never have
+    to carry a second, index-less implementation.
+    """
+    entries = _cache.get(key)
+    if entries is None or isinstance(entries, _CacheEntries):
+        return entries
+    upgraded = _CacheEntries(entries)
+    _cache[key] = upgraded
+    return upgraded
 
 # Track when each cache entry was last populated (mtime of newest file at populate time)
 _cache_mtimes: dict[tuple[str, str], tuple[float, int]] = {}
@@ -816,7 +908,17 @@ class Store:
                 run_id=run_id,
             )
             log_path = self.project_dir / "activity.jsonl"
-            append_log_entry(log_path, entry)
+            # The rotation bounds ride along on every append: the writer
+            # checks them against the file already on disk and rotates
+            # before writing, so the entry below is never the one lost.
+            # Both default to None, so a project that has not configured a
+            # bound appends exactly as it always did (US-PRJ-52-10).
+            append_log_entry(
+                log_path,
+                entry,
+                max_bytes=getattr(self.config, "activity_log_max_bytes", None),
+                max_days=getattr(self.config, "activity_log_max_days", None),
+            )
         except Exception:
             logger.debug("activity log: failed to emit %s for %s", event_type, item_id)
 
@@ -1628,11 +1730,11 @@ class Store:
         """Read a story, returning (frontmatter, body). Uses cache if populated and fresh."""
         key = self._cache_key("stories")
         if key in _cache and not self._is_cache_stale("stories"):
-            for meta, body in _cache[key]:
-                if meta.id == story_id:
-                    if _cache_debug:
-                        _cache_stats["hits"] += 1
-                    return meta, body
+            entry = _cache_entries(key).lookup(story_id)
+            if entry is not None:
+                if _cache_debug:
+                    _cache_stats["hits"] += 1
+                return entry
         path = self._story_path(story_id)
         if not path.exists():
             raise NotFoundError(f"Story not found: {story_id}")
@@ -1695,40 +1797,42 @@ class Store:
         will repopulate from disk which will include this item.
         """
         key = self._cache_key(item_type)
-        if key not in _cache:
+        entries = _cache_entries(key)
+        if entries is None:
             return
-        _cache[key].append((meta, body))
+        entries.append((meta, body))
 
     def _cache_update_entry(
         self, item_type: str, item_id: str, meta, body: str
     ) -> None:
         """Replace a single entry in the cache if it is populated.
 
+        O(1) by ID: the entry is found through :class:`_CacheEntries`'s index
+        rather than by walking the cached list (US-PRJ-39).
+
         If the item has transitioned to archived status, evict it from the
         cache instead of updating — archived items are excluded from the
         cache to bound memory usage.
         """
         key = self._cache_key(item_type)
-        if key in _cache:
-            # Check if item should be evicted (archived status)
-            should_evict = (
-                item_type == "stories"
-                and hasattr(meta, "status")
-                and meta.status == StoryStatus.archived
-            ) or (
-                item_type == "epics"
-                and hasattr(meta, "status")
-                and meta.status == EpicStatus.archived
-            )
-            for i, (m, _) in enumerate(_cache[key]):
-                if m.id == item_id:
-                    if should_evict:
-                        _cache[key].pop(i)
-                        if _cache_debug:
-                            _cache_stats["invalidations"] += 1
-                    else:
-                        _cache[key][i] = (meta, body)
-                    return
+        entries = _cache_entries(key)
+        if entries is None:
+            return
+        # Check if item should be evicted (archived status)
+        should_evict = (
+            item_type == "stories"
+            and hasattr(meta, "status")
+            and meta.status == StoryStatus.archived
+        ) or (
+            item_type == "epics"
+            and hasattr(meta, "status")
+            and meta.status == EpicStatus.archived
+        )
+        if should_evict:
+            if entries.remove_id(item_id) and _cache_debug:
+                _cache_stats["invalidations"] += 1
+        else:
+            entries.replace(item_id, (meta, body))
 
     def clear_cache(self) -> None:
         """Clear all cached entries for this Store instance."""
@@ -1794,7 +1898,7 @@ class Store:
                     entries.append((meta, post.content))
                 except Exception:
                     continue
-            _cache[key] = entries
+            _cache[key] = _CacheEntries(entries)
             _cache_mtimes[key] = self._get_dir_mtime(self.stories_dir)
         else:
             if _cache_debug:
@@ -1850,11 +1954,11 @@ class Store:
         """Read an epic, returning (frontmatter, body). Uses cache if populated and fresh."""
         key = self._cache_key("epics")
         if key in _cache and not self._is_cache_stale("epics"):
-            for meta, body in _cache[key]:
-                if meta.id == epic_id:
-                    if _cache_debug:
-                        _cache_stats["hits"] += 1
-                    return meta, body
+            entry = _cache_entries(key).lookup(epic_id)
+            if entry is not None:
+                if _cache_debug:
+                    _cache_stats["hits"] += 1
+                return entry
         path = self._epic_path(epic_id)
         if not path.exists():
             raise NotFoundError(f"Epic not found: {epic_id}")
@@ -1909,7 +2013,7 @@ class Store:
                     entries.append((meta, post.content))
                 except Exception:
                     continue
-            _cache[key] = entries
+            _cache[key] = _CacheEntries(entries)
             _cache_mtimes[key] = self._get_dir_mtime(self.epics_dir)
         else:
             if _cache_debug:
@@ -2125,11 +2229,11 @@ class Store:
         """Read a task, returning (frontmatter, body). Uses cache if populated and fresh."""
         key = self._cache_key("tasks")
         if key in _cache and not self._is_cache_stale("tasks"):
-            for meta, body in _cache[key]:
-                if meta.id == task_id:
-                    if _cache_debug:
-                        _cache_stats["hits"] += 1
-                    return meta, body
+            entry = _cache_entries(key).lookup(task_id)
+            if entry is not None:
+                if _cache_debug:
+                    _cache_stats["hits"] += 1
+                return entry
         path = self._task_path(task_id)
         if not path.exists():
             raise NotFoundError(f"Task not found: {task_id}")
@@ -2186,7 +2290,7 @@ class Store:
                     entries.append((meta, post.content))
                 except Exception:
                     continue
-            _cache[key] = entries
+            _cache[key] = _CacheEntries(entries)
             _cache_mtimes[key] = self._get_dir_mtime(self.tasks_dir)
         else:
             if _cache_debug:

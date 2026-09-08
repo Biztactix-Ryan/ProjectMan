@@ -6,7 +6,7 @@
 /pm audit
 ```
 
-Or via CLI: `projectman audit` (use `--all` for all hub projects)
+Or via CLI: `projectman audit`
 
 ## Checks
 
@@ -27,14 +27,13 @@ for convenience.
 | 9 | Done epic with open stories | Error | Epic marked done but has stories still open |
 | 10 | Orphaned epic reference | Warning | Story references a non-existent epic ID |
 | 11 | Stale draft epic | Info | Epic in draft >30 days with no linked stories |
-| 12 | Hub documentation checks | Error/Warning/Info | Missing, unfilled or stale hub docs (VISION.md, ARCHITECTURE.md, DECISIONS.md) |
-| 13 | Stale task assignment | Warning | Task assigned to someone with no updates for 14+ days |
-| 14 | Malformed files | Warning | Files quarantined in .project/malformed/ |
-| 15 | Dependency cycle | Error | A cycle exists in the task/story `depends_on` graph |
-| 16 | Orphaned dependency reference | Warning | A task/story depends on an ID that doesn't exist |
-| 17 | Missing implementation tasks | Warning | Story has only test tasks and no implementation tasks |
-| 18 | Acceptance-criteria / test-task drift | Warning | A criterion has no test task, or a test task names a criterion the story no longer has |
-| 19 | Completion carrying no evidence | Warning | Task marked done with no run-log entry or evidence recorded |
+| 12 | Stale task assignment | Warning | Task assigned to someone with no updates for 14+ days |
+| 13 | Malformed files | Warning | Files quarantined in .project/malformed/ |
+| 14 | Dependency cycle | Error | A cycle exists in the task/story `depends_on` graph |
+| 15 | Orphaned dependency reference | Warning | A task/story depends on an ID that doesn't exist |
+| 16 | Missing implementation tasks | Warning | Story has only test tasks and no implementation tasks |
+| 17 | Acceptance-criteria / test-task drift | Warning | A criterion has no test task, or a test task names a criterion the story no longer has |
+| 18 | Completion carrying no evidence | Warning | Task marked done with no run-log entry or evidence recorded |
 
 ## Severity Levels
 

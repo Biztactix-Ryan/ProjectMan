@@ -10,8 +10,6 @@ implemented — ``build_index`` — and at ``pm_status``, ``pm_burndown``,
 * the web ``/api/status`` and ``/api/burndown`` routes, which re-implement the
   same arithmetic in ``web/routes/api.py`` rather than calling the MCP tools,
   so they can drift independently (covered in ``tests/web/``);
-* the hub rollup, which sums ``build_index`` across subprojects and feeds both
-  hub-mode ``pm_burndown`` and the generated ``burndown.md`` dashboard;
 * archived epics, whose exclusion runs through a *different* mechanism
   (``list_epics`` drops them before ``build_index`` ever sees them).
 
@@ -27,7 +25,6 @@ be just as wrong and must fail these tests too.
 import yaml
 
 from projectman.indexer import build_index
-from conftest import make_hub_subproject
 
 
 # ─── Helpers ─────────────────────────────────────────────────────
@@ -67,12 +64,6 @@ def _mixed_project():
     pm_archive("US-TST-1-3")
     pm_archive("US-TST-1-4")
 
-
-
-#: Every hub subproject in the suite is built by the one conftest factory
-#: (US-PM-31-9), so ``projects/{name}/.project`` is spelled in exactly one
-#: place and a later layout change is a single edit.
-_register_subproject = make_hub_subproject
 
 
 # ─── Burndown arithmetic holds together ──────────────────────────
@@ -203,77 +194,10 @@ class TestStatusAndBurndownDoNotDisagree:
         assert status["completion"] == burndown["completion"]
 
 
-# ─── Hub rollup ──────────────────────────────────────────────────
-
-
-class TestHubRollupExcludesArchived:
-    """Hub-mode ``pm_burndown`` returns ``rollup()`` verbatim, and the
-    generated ``burndown.md`` dashboard is rendered from the same dict, so
-    archived work leaking in here corrupts the whole-portfolio view."""
-
-    def _subproject_store(self, tmp_hub, name="api", prefix="API"):
-        from projectman.store import Store, _cache
-
-        pm_dir = _register_subproject(tmp_hub, name, prefix=prefix)
-        _cache.clear()
-        return Store(tmp_hub, project_dir=pm_dir)
-
-    def test_rollup_drops_archived_points_from_both_sides(self, tmp_hub):
-        store = self._subproject_store(tmp_hub)
-        story, _ = store.create_story("Story", "Desc")
-        delivered = store.create_task(story.id, "Delivered", "D" * 40, points=5)
-        outstanding = store.create_task(story.id, "Outstanding", "D" * 40, points=3)
-        abandoned = store.create_task(story.id, "Abandoned", "D" * 40, points=8)
-        store.update(delivered.id, status="done")
-        store.update(abandoned.id, status="done")
-        store.archive(abandoned.id)
-        assert outstanding.id  # still live, still owed
-
-        from projectman.hub.rollup import rollup
-
-        data = rollup(tmp_hub)
-        assert data["total_points"] == 8
-        assert data["completed_points"] == 5
-        assert data["completion"] == "62%"
-        assert data["projects"][0]["total_points"] == 8
-        assert data["projects"][0]["completed_points"] == 5
-
-    def test_rollup_still_counts_genuinely_delivered_work(self, tmp_hub):
-        store = self._subproject_store(tmp_hub)
-        story, _ = store.create_story("Story", "Desc")
-        for title, points in (("A", 5), ("B", 3)):
-            task = store.create_task(story.id, title, "D" * 40, points=points)
-            store.update(task.id, status="done")
-
-        from projectman.hub.rollup import rollup
-
-        data = rollup(tmp_hub)
-        assert data["total_points"] == 8
-        assert data["completed_points"] == 8
-        assert data["completion"] == "100%"
-
-    def test_hub_burndown_dashboard_reports_delivered_work_only(self, tmp_hub):
-        store = self._subproject_store(tmp_hub)
-        story, _ = store.create_story("Story", "Desc")
-        delivered = store.create_task(story.id, "Delivered", "D" * 40, points=5)
-        abandoned = store.create_task(story.id, "Abandoned", "D" * 40, points=8)
-        store.update(delivered.id, status="done")
-        store.update(abandoned.id, status="done")
-        store.archive(abandoned.id)
-
-        from projectman.hub.dashboards import generate_dashboards
-
-        generate_dashboards(tmp_hub)
-        text = (tmp_hub / ".project" / "dashboards" / "burndown.md").read_text()
-        assert "**Total Points:** 5" in text
-        assert "**Completed:** 5" in text
-        assert "**Remaining:** 0" in text
-
-
 # ─── Archived epics ──────────────────────────────────────────────
 
 
-class TestArchivedEpicsLeaveTheRollup:
+class TestArchivedEpicsLeaveTheCounts:
     """Epics are excluded by a *different* mechanism to tasks: they carry
     ``archived`` as a status value and ``list_epics`` drops them before
     ``build_index`` is called.  Pinned so a refactor that consolidates the

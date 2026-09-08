@@ -15,7 +15,6 @@ projectman init --name "My Project" --prefix MP
 | `--name` | _(prompted)_ | Project name — prompted for only when a store is actually scaffolded |
 | `--prefix` | `PRJ` | Uppercase prefix for IDs (e.g. `MP` → `US-MP-1`, `US-MP-1-1`, `EPIC-MP-1`) |
 | `--description` | `""` | Project description |
-| `--hub` | `false` | Initialize in hub mode (multi-repo management) |
 | `--no-attach` | `false` | Scaffold a fresh store even when a `projectman` branch exists |
 
 **On a clone it attaches instead of scaffolding:**
@@ -36,7 +35,7 @@ Attached .project/ to branch 'projectman'
 | Same, but `.project/` is a plain directory with content | `Error: .project/ already exists`, exit 1, nothing touched |
 | No such branch — including outside a git repo | Scaffolds exactly as it always did |
 
-Detection reads **local ref storage only and never fetches**, so run `git fetch origin` first if the branch was pushed after your last fetch. In the attach case `--name`, `--prefix`, `--description` and `--hub` describe a store that is not being created, so each one you passed is reported as ignored on stderr (`--hub ignored: attaching existing store`) and the attach still runs. Pass `--no-attach` to force the scaffolding path; it then refuses an existing `.project/` as usual.
+Detection reads **local ref storage only and never fetches**, so run `git fetch origin` first if the branch was pushed after your last fetch. In the attach case `--name`, `--prefix` and `--description` describe a store that is not being created, so each one you passed is reported as ignored on stderr (`--prefix ignored: attaching existing store`) and the attach still runs. Pass `--no-attach` to force the scaffolding path; it then refuses an existing `.project/` as usual.
 
 **What it creates:**
 
@@ -50,17 +49,6 @@ Detection reads **local ref storage only and never fetches**, so run `git fetch 
 ├── epics/
 ├── stories/
 └── tasks/
-```
-
-With `--hub`, also creates:
-```
-.project/
-├── VISION.md
-├── ARCHITECTURE.md
-├── DECISIONS.md
-├── projects/
-├── roadmap/
-└── dashboards/
 ```
 
 ## projectman setup-claude
@@ -159,68 +147,13 @@ projectman serve --transport sse --host 0.0.0.0 --port 22001
 
 Requires the `mcp` extra: `pip install "projectman[mcp] @ git+https://github.com/Biztactix-Ryan/ProjectMan.git"`
 
-## projectman add-project
-
-Add a project as a git submodule to a hub. Only available in hub mode.
-
-```bash
-projectman add-project my-api git@github.com:org/my-api.git
-```
-
-**Arguments:**
-
-| Argument | Description |
-|----------|-------------|
-| `name` | Short name for the project (becomes directory name under `projects/`) |
-| `git_url` | Git remote URL for the repository |
-
-**What it does:**
-
-1. Runs `git submodule add <url> projects/<name>`
-2. Mounts the subproject's PM store at `projects/<name>/.project` — a worktree of that submodule's `projectman` branch, attached when the clone brought `origin/projectman` down and otherwise created as an orphan branch and scaffolded
-3. Registers the project in `.project/config.yaml`, only once the store is actually there
-
-## projectman sync
-
-Pull every hub submodule, then re-attach any store whose worktree is missing. Hub mode only. This is the one hub-wide git verb: the hub never commits or pushes on a subproject's behalf.
-
-```bash
-projectman sync
-```
-
-**What it does:**
-
-1. Fast-forward pulls (`git pull --ff-only`) every checked-out submodule, skipping one that is dirty, diverged or missing with a note rather than touching it
-2. Re-attaches every registered project whose store worktree at `projects/<name>/.project` has gone — a removed worktree, a fresh submodule clone — by mounting that submodule's `projectman` branch, or creating and mounting it when the branch does not exist yet
-3. Reports both passes: `sync complete: N updated, N skipped, N failed, N stores attached`, then a line per project and a `stores:` block naming what was attached
-
-A store that cannot be mounted — PM data still sitting in the directory as plain files, for instance — gets its own line saying why, and the rest of the sync continues. That case is [`projectman migrate-hub`](#projectman-migrate-hub)'s job.
-
-## projectman set-branch
-
-Set the tracking branch for a subproject. Hub mode only.
-
-```bash
-projectman set-branch my-api develop
-```
-
-**Arguments:**
-
-| Argument | Description |
-|----------|-------------|
-| `name` | Name of the registered subproject |
-| `branch` | Branch name to track |
-
 ## projectman commit
 
-Commit one store's `.project/` changes to git.
+Commit this project's `.project/` changes to git.
 
 ```bash
-# Commit this project's store (in a hub: the hub's own store)
+# Commit this project's store
 projectman commit
-
-# In a hub, commit one subproject's store — in that subproject's own repo
-projectman commit --prefix API
 
 # With a custom message
 projectman commit --message "Update sprint 3 tasks"
@@ -230,44 +163,30 @@ projectman commit --message "Update sprint 3 tasks"
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `--prefix` | _(the hub's own store)_ | In a hub, the prefix of the project to commit (`API`). Ignored outside a hub |
 | `--message` | _(auto-generated)_ | Commit message |
 
 Git runs inside the store directory, so the commit lands on the branch that
-owns it: `projectman` for a worktree store (which every subproject store is),
-the checked-out branch for a plain `.project/`. An unknown prefix is an error
-listing the prefixes the hub knows.
+owns it: `projectman` for a worktree store, the checked-out branch for a plain
+`.project/`.
 
 ## projectman push
 
-Push one store's committed changes to remote.
+Push this project's committed store changes to remote.
 
 ```bash
-# Push this project's store branch (in a hub: the hub's own)
 projectman push
-
-# In a hub, push one subproject's store branch, on that subproject's origin
-projectman push --prefix API
 ```
 
-**Options:**
-
-| Option | Default | Description |
-|--------|---------|-------------|
-| `--prefix` | _(the hub's own store)_ | In a hub, the prefix of the project to push (`API`). Ignored outside a hub |
-
-The push sends the branch that owns the named store — `projectman` for a
-worktree store, the checked-out branch otherwise — and nothing else. A hub
-never pushes on a subproject's behalf; advancing submodule pointers on the
-hub repo stays a plain `git push` you make yourself.
+The push sends the branch that owns the store — `projectman` for a worktree
+store, the checked-out branch otherwise — and nothing else.
 
 ## projectman git-status
 
-Show each hub subproject's **PM store** in a table, plus the hub's own store.
+Show the git state of this project's **PM store** — the branch that owns
+`.project/`.
 
 ```bash
 projectman git-status
-projectman git-status --verbose
 projectman git-status --json
 ```
 
@@ -275,23 +194,26 @@ projectman git-status --json
 
 | Option | Description |
 |--------|-------------|
-| `--verbose` | Show the store's last commit and every issue per project |
 | `--json` | Output as JSON |
 
-**Output includes**, one row per registered project in hub order:
+The human output is a one-line summary followed by a compact table:
 
-| Column | What it is |
+| Row | What it is |
 |--------|------------|
-| `Project` | The registered project name |
-| `Store branch` | The branch owning `projects/<name>/.project` — `projectman` for an attached store — or `not attached` |
-| `Checkout` | The submodule's own checked-out code branch, reported separately because the code branch and the PM branch are different facts |
-| `Dirty` | Uncommitted files **under the store**, never conflated with the code checkout's |
-| `Ahead/Behind` | The store branch against its upstream |
-| `Issues` | Detached store HEAD, uncommitted store changes, behind upstream, missing directory, or an unmounted store |
+| `path` | The store directory, relative to the project root — `.project` |
+| `branch` | The branch owning the store — `projectman` for a worktree store (ADR-001), the checked-out branch otherwise, or `detached HEAD` |
+| `mount` | `worktree` or `plain directory` |
+| `upstream` | The store branch's upstream, or `-` when it has none |
+| `ahead/behind` | The store branch against that upstream |
+| `uncommitted` | Uncommitted files **under the store**, never conflated with the code checkout's |
 
-The JSON adds `attached`, `prefix`, `worktree`, `upstream` and `last_commit` (the store's last commit — the last PM change) per project, and a `pm_store` entry for the hub's own store. A subproject with no store mounted is a row carrying `attached: false`, `status: not attached` and a `hint` naming the two commands that fix it — never an error. There is no deploy-branch alignment: a read-only rollup reports what each subproject's `projectman` branch says and nothing about how that repo deploys.
+The JSON is the same payload the `pm_git_status` MCP tool returns: a `summary`
+string and a `pm_store` object carrying `path`, `worktree`, `branch`,
+`detached`, `head`, `upstream`, `ahead`, `behind`, `dirty`, `dirty_count` and
+the one-line `description`.
 
-Exits non-zero when any project has an issue.
+An unreadable store degrades to the all-clean shape with `branch: null` rather
+than failing — a status call must never be the thing that breaks.
 
 ## projectman migrate-archived
 
@@ -312,7 +234,6 @@ projectman migrate-archived --apply
 | Option | Description |
 |--------|-------------|
 | `--apply` | Write the changes. Without it the command only reports. |
-| `--project` | Project name (hub mode only) |
 
 **Safety:**
 
@@ -441,49 +362,6 @@ Attach reads **local ref storage only and never fetches**, so a branch pushed si
 
 Refusals happen before any mutation, so a refused attach leaves the repo exactly as it was: no branch created, no worktree registered, `.project/` byte for byte as it was found.
 
-## projectman migrate-hub
-
-Move per-project PM data out of a hub's own store and onto each subproject's `projectman` branch, then carry the subprojects' epics up to the hub. Hub mode only, one time.
-
-```bash
-projectman migrate-hub [--dry-run] [--no-push]
-```
-
-Older hubs kept every subproject's stories, tasks and epics inside the hub's `.project/`, so every task edit in every project became a commit on the hub repo. The layout now is `projects/{name}/.project` — a worktree of that submodule's `projectman` branch, the same thing [`add-project`](#projectman-add-project) creates today.
-
-For each registered project that still has data in the hub it attaches (or creates) the submodule's `projectman` branch, copies the store across byte for byte, and commits it there with a message naming the hub path it came from. Then, once for the run, it `git rm -r`s the hub's copies and commits that removal on the hub.
-
-**The epics step.** Epics live at hub level only ([hub-mode/epics.md](../hub-mode/epics.md)), so a second half runs after the store move: every `epics/EPIC-{PROJECT}-N.md` left in a subproject store is moved into the hub's `.project/epics/` under a fresh hub-prefixed ID from the hub's own counter (`next_epic_id` advances exactly as `pm_create_epic` would advance it), and every story in *every* store whose `epic_id` named one of them is rewritten to the new ID — including a story in one subproject that pointed at an epic living in another. Each store that changed is committed inside itself, so a worktree store commits on its `projectman` branch, with the old-to-new mapping in the message; the hub's derived indexes are rebuilt before its commit. The mapping is printed:
-
-```
-Moved 2 subproject epics up to the hub.
-  alpha: EPIC-ALP-1 -> EPIC-HUB-1 (1 story relinked: US-ALP-2)
-  beta:  EPIC-BET-1 -> EPIC-HUB-2 (2 stories relinked: US-ALP-3, US-BET-2)
-```
-
-The two halves are independent. A hub whose stores already live at `projects/{name}/.project` gets only the epics step, so this command is still the right one to run long after US-PM-31's move is done; a hub with no subproject epics gets only the store move. An epic that already carries the hub's prefix is left where it is.
-
-**Options:**
-
-| Option | Description |
-|--------|-------------|
-| `--dry-run` | Check every precondition and print the plan; change nothing |
-| `--no-push` | Migrate locally only; never push, even when a subproject has an origin remote |
-
-**Refusals** — all checked before the first change, so nothing is ever half-migrated (exit 1, tree untouched):
-
-| Situation | Why |
-|-----------|-----|
-| The hub's working tree is dirty | Same rule as [`migrate-worktree`](#projectman-migrate-worktree): a staged or unstaged change to a tracked file. A submodule's *work tree* dirt is reported against that submodule instead |
-| An affected submodule's tree is dirty | The move commits inside that repo |
-| An already-mounted subproject store has uncommitted changes | The epics step commits inside that store |
-| A submodule is not checked out | `git submodule update --init projects/<name>` first |
-| The submodule's `projectman` branch already carries a store | That is a merge of two PM stores, not a move — resolve it by hand |
-
-A hub with nothing left to move — no subproject store in the old place and no subproject epic — prints a friendly no-op and exits 0, so re-running is safe. `--dry-run` lists the planned store moves and the planned epic mapping and changes nothing, not even `next_epic_id`.
-
-Each `projectman` branch is pushed with `git push -u origin projectman` when the subproject has an origin remote; a push failure only warns, because the local move is already complete. The hub's own commit and its updated submodule pointers are yours to push.
-
 ## Living with the projectman worktree
 
 Once `.project/` is a worktree of the `projectman` branch, the files are exactly where they always were and every ProjectMan command reads and writes them as before. What changes is git, and the edges below are the ones worth knowing about. [ADR-001](../../.project/DECISIONS.md) records the decision and its consequences; US-PM-21 verified them.
@@ -495,7 +373,7 @@ Once `.project/` is a worktree of the `projectman` branch, the files are exactly
 | Command | Plain `.project/` (unmigrated) | Worktree-mounted `.project/` |
 |---|---|---|
 | `projectman commit` | Commits on the checked-out branch, paths reported as `.project/...` | Commits on `projectman`, paths reported relative to the store (`stories/...`). The output names the branch: `Branch: projectman`. |
-| `projectman push` | Pushes the checked-out branch | Pushes **only** `projectman`. An unpushed commit on `main` stays unpushed — in a hub too, where the submodule-ref commits on `main` are yours to push. |
+| `projectman push` | Pushes the checked-out branch | Pushes **only** `projectman`. An unpushed commit on `main` stays unpushed. |
 | `projectman git-status` | `PM store: .project on main (plain directory), clean` | `PM store: .project on projectman (worktree), clean, 1 ahead` — its own dirty count and ahead/behind, never conflated with `main`'s |
 
 The hypothesis in ADR-001 that the shell-outs would need zero changes turned out to be false: run from the repo root, `git add .project` refuses the now-ignored path and `git status .project/` reports nothing. Every PM git command now runs inside the store it was pointed at, which is what makes the same command work in both layouts.
@@ -507,7 +385,7 @@ Pushes go to `origin`. To push somewhere else (see the sibling-repo variant belo
 The migration adds `.project/` to `.gitignore` so `main` never sees the store again. Ignored is not disposable:
 
 - `git status` and `git add -A` on `main` skip it — good, that is the point.
-- `git clean -fdx` does **not** descend into a nested worktree, so a routine clean leaves it alone. `git clean -ffdx` (two `f`s) *does* remove it, along with any uncommitted PM changes inside. Run `git -C .project status` first, or commit with `projectman commit`, before any double-force clean. In a hub, [`projectman sync`](#projectman-sync) re-mounts a subproject store that was removed this way; committed PM history is on the branch and comes back with the mount, uncommitted changes do not.
+- `git clean -fdx` does **not** descend into a nested worktree, so a routine clean leaves it alone. `git clean -ffdx` (two `f`s) *does* remove it, along with any uncommitted PM changes inside. Run `git -C .project status` first, or commit with `projectman commit`, before any double-force clean. Committed PM history is on the branch and comes back when the store is re-attached with [`projectman attach`](#projectman-attach); uncommitted changes do not.
 - `git stash` on `main` ignores the store. To stash PM changes, run `git -C .project stash`.
 - Deleting `.project/` by hand leaves a stale worktree registration; `git worktree prune` clears it and `projectman attach` mounts the branch again.
 
@@ -538,18 +416,8 @@ Remotes belong to the repository, not to a worktree, so the extra remote is visi
 Run drift detection and generate a `DRIFT.md` report.
 
 ```bash
-# Audit current project
 projectman audit
-
-# Audit all projects in hub
-projectman audit --all
 ```
-
-**Options:**
-
-| Option | Description |
-|--------|-------------|
-| `--all` | Audit all projects in the hub (hub mode only) |
 
 **Checks performed** (this table is the canonical list; other docs link here rather than repeating a count):
 
@@ -566,13 +434,12 @@ projectman audit --all
 | 9 | Done epic with open stories | ERROR | Epic marked done but has stories not done/archived |
 | 10 | Orphaned epic reference | WARNING | Story references a non-existent epic ID |
 | 11 | Stale draft epic | INFO | Draft epic with no stories for >30 days |
-| 12 | Hub documentation checks | WARNING/INFO | Missing or unfilled hub docs (VISION.md, ARCHITECTURE.md, DECISIONS.md) |
-| 13 | Stale task assignment | WARNING | Task assigned to someone with no updates for >14 days |
-| 14 | Malformed files in quarantine | WARNING | Files quarantined in `.project/malformed/` needing repair |
-| 15 | Dependency cycle | ERROR | A cycle exists in the task/story `depends_on` graph |
-| 16 | Orphaned dependency reference | WARNING | A task/story depends on an ID that doesn't exist |
-| 17 | Missing implementation tasks | WARNING | Story has only test tasks and no implementation tasks — needs scoping |
-| 18 | Acceptance-criteria / test-task drift | WARNING | A criterion has no test task, or a test task names a criterion the story no longer has |
-| 19 | Completion carrying no evidence | WARNING | Task marked done with no run-log entry or evidence recorded |
+| 12 | Stale task assignment | WARNING | Task assigned to someone with no updates for >14 days |
+| 13 | Malformed files in quarantine | WARNING | Files quarantined in `.project/malformed/` needing repair |
+| 14 | Dependency cycle | ERROR | A cycle exists in the task/story `depends_on` graph |
+| 15 | Orphaned dependency reference | WARNING | A task/story depends on an ID that doesn't exist |
+| 16 | Missing implementation tasks | WARNING | Story has only test tasks and no implementation tasks — needs scoping |
+| 17 | Acceptance-criteria / test-task drift | WARNING | A criterion has no test task, or a test task names a criterion the story no longer has |
+| 18 | Completion carrying no evidence | WARNING | Task marked done with no run-log entry or evidence recorded |
 
 Output is written to `.project/DRIFT.md` and printed to stdout.

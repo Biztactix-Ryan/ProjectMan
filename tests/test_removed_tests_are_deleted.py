@@ -87,10 +87,12 @@ REMOVED_NAMES = re.compile(
     r"|\bpm_changeset_"
 )
 
+# ``test_hub_pr_workflow_removed.py`` was on this list until EPIC-PM-6: it
+# pinned the absence of those names inside ``hub/registry.py``, and the whole
+# hub package is gone now (US-PM-46), so the file went with it.
 NAME_ALLOWLIST = frozenset(
     {
         "test_changesets_removed.py",
-        "test_hub_pr_workflow_removed.py",
         "test_docs_after_subtraction.py",
         "test_removed_tests_are_deleted.py",
     }
@@ -231,8 +233,8 @@ def test_removed_names_appear_only_in_the_files_that_pin_their_absence():
 
 def test_the_name_scanner_matches_where_the_absence_is_pinned():
     """Guard the guard, again: the regex must still match real occurrences."""
-    pinned = TESTS_DIR / "test_hub_pr_workflow_removed.py"
-    assert pinned.exists(), "the PR-removal pin test is missing"
+    pinned = TESTS_DIR / "test_docs_after_subtraction.py"
+    assert pinned.exists(), "the docs-subtraction pin test is missing"
     text = pinned.read_text(encoding="utf-8")
     assert REMOVED_NAMES.search(text), (
         "the removed-name regex matches nothing in the file that exists to "

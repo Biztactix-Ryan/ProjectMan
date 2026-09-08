@@ -304,7 +304,7 @@ def test_pm_commit_nothing_to_commit_is_not_a_soft_error(tmp_git_project, monkey
 def test_pm_commit_nothing_to_commit_survives_the_generic_handler(
     tmp_git_project, monkeypatch
 ):
-    """The non-hub route reaches this by *raising*, not by returning a dict.
+    """The store route reaches this by *raising*, not by returning a dict.
 
     ``store.commit_project_changes`` raises ``NothingToCommit`` from
     ``store.py``; without the dedicated ``except`` in ``pm_commit`` it would
@@ -697,11 +697,12 @@ def test_already_correct_negatives_from_the_real_tools_are_not_failures(tmp_proj
     These are the bodies the tools actually return on an empty project.
 
     Finding recorded here rather than fixed (out of scope for US-PM-2-6): none
-    of these carry the ``outcome`` discriminator, and two are not even mappings
-    -- ``pm_malformed`` returns the bare sentence ``no malformed files`` and
-    ``pm_search`` returns ``[]``. They are correctly *not failures*, which is
-    what this task's criterion requires, but a caller still cannot branch on
-    them uniformly. Converting them is a separate change.
+    of these carry the ``outcome`` discriminator, and one is not even a mapping
+    -- ``pm_malformed`` returns the bare sentence ``no malformed files``. They
+    are correctly *not failures*, which is what this task's criterion requires,
+    but a caller still cannot branch on them uniformly. Converting them is a
+    separate change.  (``pm_search`` returned a bare ``[]`` when this was
+    written; US-PM-40 made it the mapping ``{results, skipped}``.)
     """
     from projectman.server import (
         pm_active,

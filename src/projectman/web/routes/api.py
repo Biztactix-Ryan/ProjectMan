@@ -1,4 +1,11 @@
-"""JSON API endpoints (/api/*)."""
+"""JSON API endpoints (/api/*).
+
+Every route acts on the one store this app serves — ``{root}/.project``,
+found from the project root the app started in (US-PM-45).  No route takes a
+project or routing argument of any kind: a route with an item ID checks the
+ID's shape and reads that store, and an ID-less route reads the same one.  An
+ID this project has no file for is a plain 404, exactly as it always was.
+"""
 
 from pathlib import Path
 from typing import Optional
@@ -6,15 +13,11 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from projectman.config import find_project_root, load_config
-from projectman.hub.stores import (
-    attached_store_path,
-    hub_store_dir,
-    subproject_status,
-)
+from projectman.errors import ValidationError
 from projectman.indexer import build_index, ensure_fresh
-from projectman.models import EPIC_ID, STORY_ID
+from projectman.models import EPIC_ID, SPRINT_ID, STORY_ID, TASK_ID
 from projectman.store import Store
-from projectman.web.errors import coded_errors, require_id_shape
+from projectman.web.errors import coded_errors, http_error, require_id_shape
 from projectman.web.schemas import (
     CreateEpicRequest,
     CreateStoryRequest,
@@ -31,79 +34,78 @@ router = APIRouter(prefix="/api")
 
 
 def get_root() -> Path:
-    """Return the project root directory (always the hub/repo root)."""
+    """Return the project root directory."""
     return find_project_root()
 
 
-def get_project_dir(project: Optional[str] = Query(None)) -> Path:
-    """Return the .project/ data directory, routing to hub subprojects when needed.
+def get_project_dir(root: Path = Depends(get_root)) -> Path:
+    """The one store directory this app serves: ``{root}/.project``.
 
-    Subproject stores are located through the store map
-    (:mod:`projectman.hub.stores`) — ``projects/{name}/.project`` (US-PM-31).
+    The dependency for the routes that read files inside the store directory
+    (the docs, the activity log, the search index) rather than through the
+    Store API.
+    """
+    return Path(root) / ".project"
+
+
+#: One Store per store directory, for the life of the process — the web twin
+#: of ``server._store_cache``.  There is exactly one store per root, so this
+#: holds one object outside tests and one per ``tmp_path`` root inside them.
+_store_cache: dict[Path, Store] = {}
+
+
+def get_store() -> Store:
+    """The Store every route acts on: the one over ``{root}/.project``.
+
+    ``app.state.store`` when startup built it for this root — the object the
+    app has always used — and a cached Store over the root otherwise, so a
+    route still answers in a test that never ran startup and never hands back
+    a Store built over some other root.
     """
     root = find_project_root()
-    if project:
-        config = load_config(root)
-        if config.hub:
-            try:
-                return attached_store_path(root, project)
-            except FileNotFoundError:
-                raise HTTPException(
-                    status_code=404, detail=f"Project '{project}' not found in hub"
-                )
-    return hub_store_dir(root)
+    store_dir = Path(root) / ".project"
+
+    from projectman.web.app import app
+
+    existing = getattr(app.state, "store", None)
+    if existing is not None and Path(existing.project_dir) == store_dir:
+        return existing
+    if store_dir not in _store_cache:
+        _store_cache[store_dir] = Store(root)
+    return _store_cache[store_dir]
 
 
-_hub_store_cache: dict[str, Store] = {}
+#: The four ID shapes :func:`store_for_id` accepts, in the order it tries them.
+_ID_PATTERNS = (TASK_ID, STORY_ID, EPIC_ID, SPRINT_ID)
 
 
-def get_store(project: Optional[str] = Query(None)) -> Store:
-    """Provide a Store instance, routing hub subprojects through the store map.
+def store_for_id(item_id: str) -> Store:
+    """The Store that owns *item_id* — there is one, so it is :func:`get_store`.
 
-    For the main project, returns the cached store from app.state.
-    For hub subprojects, the store lives at ``projects/{name}/.project``
-    (US-PM-31); a module-level cache avoids creating new instances.
+    The shape is still checked first, the way ``server._store_for_id`` checks
+    it: the store only ever asks whether a file exists, so a malformed ID
+    would come back as "not found" alongside a well-formed one that simply is
+    not here.  A well-formed ID whose middle segment is not this project's own
+    is *not* refused — it just has no file, and that is the 404 the route
+    already raises (US-PM-34-5, US-PM-44).
     """
-    if project:
-        if project in _hub_store_cache:
-            return _hub_store_cache[project]
-        root = find_project_root()
-        config = load_config(root)
-        if config.hub:
-            try:
-                project_dir = attached_store_path(root, project)
-            except FileNotFoundError:
-                raise HTTPException(
-                    status_code=404, detail=f"Project '{project}' not found in hub"
-                )
-            store = Store(root, project_dir=project_dir)
-            _hub_store_cache[project] = store
-            return store
-        raise HTTPException(
-            status_code=404, detail=f"Project '{project}' not found (not in hub mode)"
+    if not any(pattern.match(item_id or "") for pattern in _ID_PATTERNS):
+        raise http_error(
+            ValidationError(
+                f"malformed id {item_id!r} — expected US-<PREFIX>-<n>, "
+                f"US-<PREFIX>-<n>-<m>, EPIC-<PREFIX>-<n> or "
+                f"SPRINT-<PREFIX>-<n> with an uppercase prefix"
+            )
         )
-
-    from ..app import app
-
-    return app.state.store
+    return get_store()
 
 
 # ─── Project ─────────────────────────────────────────────────────
 
 
 @router.get("/status")
-def api_status(
-    store: Store = Depends(get_store),
-    project: Optional[str] = Query(None),
-) -> dict:
-    """Project status summary: counts, points, completion.
-
-    In a hub with no ``?project=``, the hub's own totals carry a
-    ``subprojects`` list — the same rows ``pm_status`` returns, each with its
-    ``attached`` state and, when it is not mounted, the hint that says how to
-    attach it (US-PM-31-9).  Reading the store map cannot fail on an
-    unattached subproject, so neither can this route.
-    """
+def api_status(store: Store = Depends(get_store)) -> dict:
+    """Project status summary: counts, points, completion."""
     # Writes no longer rebuild the indexes (US-PM-29), so the read side is
     # what keeps them honest: bring the derived files up to date if any item
     # has been written since, then report from the Store.
@@ -131,11 +133,6 @@ def api_status(
         "by_status": status_groups,
     }
 
-    if project is None:
-        root = find_project_root()
-        if load_config(root).hub:
-            result["subprojects"] = subproject_status(root)
-
     return result
 
 
@@ -160,7 +157,10 @@ def list_epics(
 
 
 @router.post("/epics", status_code=201)
-def create_epic(body: CreateEpicRequest, store: Store = Depends(get_store)) -> dict:
+def create_epic(
+    body: CreateEpicRequest,
+    store: Store = Depends(get_store),
+) -> dict:
     """Create a new epic.
 
     A refusal from the store (a taken ID, a malformed field) becomes a coded
@@ -178,8 +178,9 @@ def create_epic(body: CreateEpicRequest, store: Store = Depends(get_store)) -> d
 
 
 @router.get("/epics/{epic_id}")
-def get_epic(epic_id: str, store: Store = Depends(get_store)) -> dict:
+def get_epic(epic_id: str) -> dict:
     """Get epic detail with linked stories and rollup."""
+    store = store_for_id(epic_id)
     try:
         meta, body = store.get_epic(epic_id)
     except FileNotFoundError:
@@ -225,12 +226,9 @@ def get_epic(epic_id: str, store: Store = Depends(get_store)) -> dict:
 
 
 @router.patch("/epics/{epic_id}")
-def update_epic(
-    epic_id: str,
-    body: UpdateItemRequest,
-    store: Store = Depends(get_store),
-) -> dict:
+def update_epic(epic_id: str, body: UpdateItemRequest) -> dict:
     """Update epic fields."""
+    store = store_for_id(epic_id)
     try:
         kwargs = body.model_dump(exclude_none=True)
         meta = store.update(epic_id, **kwargs)
@@ -240,8 +238,9 @@ def update_epic(
 
 
 @router.delete("/epics/{epic_id}")
-def archive_epic(epic_id: str, store: Store = Depends(get_store)) -> dict:
+def archive_epic(epic_id: str) -> dict:
     """Archive an epic."""
+    store = store_for_id(epic_id)
     try:
         store.archive(epic_id)
         return {"archived": epic_id}
@@ -263,7 +262,10 @@ def list_stories(
 
 
 @router.post("/stories", status_code=201)
-def create_story(body: CreateStoryRequest, store: Store = Depends(get_store)) -> dict:
+def create_story(
+    body: CreateStoryRequest,
+    store: Store = Depends(get_store),
+) -> dict:
     """Create a new story, optionally linking it to an epic.
 
     ``epic_id`` is shape-checked before anything is written: linking is a
@@ -291,8 +293,9 @@ def create_story(body: CreateStoryRequest, store: Store = Depends(get_store)) ->
 
 
 @router.get("/stories/{story_id}")
-def get_story(story_id: str, store: Store = Depends(get_store)) -> dict:
+def get_story(story_id: str) -> dict:
     """Get story detail with body and child tasks."""
+    store = store_for_id(story_id)
     try:
         meta, body = store.get_story(story_id)
     except FileNotFoundError:
@@ -306,12 +309,9 @@ def get_story(story_id: str, store: Store = Depends(get_store)) -> dict:
 
 
 @router.patch("/stories/{story_id}")
-def update_story(
-    story_id: str,
-    body: UpdateItemRequest,
-    store: Store = Depends(get_store),
-) -> dict:
+def update_story(story_id: str, body: UpdateItemRequest) -> dict:
     """Update story fields."""
+    store = store_for_id(story_id)
     try:
         kwargs = body.model_dump(exclude_none=True)
         meta = store.update(story_id, **kwargs)
@@ -321,8 +321,9 @@ def update_story(
 
 
 @router.delete("/stories/{story_id}")
-def archive_story(story_id: str, store: Store = Depends(get_store)) -> dict:
+def archive_story(story_id: str) -> dict:
     """Archive a story."""
+    store = store_for_id(story_id)
     try:
         store.archive(story_id)
         return {"archived": story_id}
@@ -345,7 +346,10 @@ def list_tasks(
 
 
 @router.post("/tasks", status_code=201)
-def create_task(body: CreateTaskRequest, store: Store = Depends(get_store)) -> dict:
+def create_task(
+    body: CreateTaskRequest,
+    store: Store = Depends(get_store),
+) -> dict:
     """Create a new task under a story.
 
     A well-formed ``story_id`` that names no story is still the existing 404;
@@ -370,8 +374,9 @@ def create_task(body: CreateTaskRequest, store: Store = Depends(get_store)) -> d
 
 
 @router.get("/tasks/{task_id}")
-def get_task(task_id: str, store: Store = Depends(get_store)) -> dict:
+def get_task(task_id: str) -> dict:
     """Get task detail with body."""
+    store = store_for_id(task_id)
     try:
         meta, body = store.get_task(task_id)
     except FileNotFoundError:
@@ -380,12 +385,9 @@ def get_task(task_id: str, store: Store = Depends(get_store)) -> dict:
 
 
 @router.patch("/tasks/{task_id}")
-def update_task(
-    task_id: str,
-    body: UpdateItemRequest,
-    store: Store = Depends(get_store),
-) -> dict:
+def update_task(task_id: str, body: UpdateItemRequest) -> dict:
     """Update task fields."""
+    store = store_for_id(task_id)
     try:
         kwargs = body.model_dump(exclude_none=True)
         meta = store.update(task_id, **kwargs)
@@ -398,11 +400,11 @@ def update_task(
 def grab_task(
     task_id: str,
     body: GrabTaskRequest = GrabTaskRequest(),
-    store: Store = Depends(get_store),
 ) -> dict:
     """Claim a task — validates readiness, assigns, sets in-progress."""
     from projectman.readiness import check_readiness
 
+    store = store_for_id(task_id)
     try:
         task_meta, task_body = store.get_task(task_id)
     except FileNotFoundError:
@@ -444,8 +446,9 @@ def grab_task(
 
 
 @router.delete("/tasks/{task_id}")
-def archive_task(task_id: str, store: Store = Depends(get_store)) -> dict:
+def archive_task(task_id: str) -> dict:
     """Archive a task."""
+    store = store_for_id(task_id)
     try:
         store.archive(task_id)
         return {"archived": task_id}
@@ -564,39 +567,50 @@ def api_audit(root: Path = Depends(get_root)) -> dict:
 def api_search(
     q: str = Query(..., min_length=1),
     proj_dir: Path = Depends(get_project_dir),
-) -> list[dict]:
-    """Search stories and tasks by keyword."""
+) -> dict:
+    """Search stories and tasks by keyword.
+
+    Returns ``results`` (the ranked hits) and ``skipped`` -- the number of item
+    files whose frontmatter would not parse, 0 when the whole store was read.
+    """
     try:
         from projectman.embeddings import EmbeddingStore
 
         emb_store = EmbeddingStore(proj_dir)
         results = emb_store.search(q, top_k=10)
         if results:
-            return [
-                {
-                    "id": r.id,
-                    "title": r.title,
-                    "type": r.type,
-                    "score": round(r.score, 3),
-                }
-                for r in results
-            ]
+            return {
+                "results": [
+                    {
+                        "id": r.id,
+                        "title": r.title,
+                        "type": r.type,
+                        "score": round(r.score, 3),
+                    }
+                    for r in results
+                ],
+                # One index file, read whole: nothing to skip per item.
+                "skipped": 0,
+            }
     except (ImportError, Exception):
         pass
 
-    from projectman.search import keyword_search
+    from projectman.search import keyword_search_with_skipped
 
-    results = keyword_search(q, proj_dir)
-    return [
-        {
-            "id": r.id,
-            "title": r.title,
-            "type": r.type,
-            "score": r.score,
-            "snippet": r.snippet,
-        }
-        for r in results
-    ]
+    outcome = keyword_search_with_skipped(q, proj_dir)
+    return {
+        "results": [
+            {
+                "id": r.id,
+                "title": r.title,
+                "type": r.type,
+                "score": r.score,
+                "snippet": r.snippet,
+            }
+            for r in outcome.results
+        ],
+        "skipped": outcome.skipped,
+    }
 
 
 # ─── Documentation ───────────────────────────────────────────────
@@ -662,29 +676,16 @@ def get_doc(name: str, proj_dir: Path = Depends(get_project_dir)) -> dict:
 def api_activity(
     limit: int = Query(20, ge=1, le=100),
     offset: int = Query(0, ge=0),
-    project: Optional[str] = Query(None),
+    proj_dir: Path = Depends(get_project_dir),
 ) -> dict:
     """Recent activity log entries (newest first)."""
-    import json
+    from projectman.activity_log import log_paths, read_log_entries
 
-    proj_dir = get_project_dir(project)
-    log_path = proj_dir / "activity.jsonl"
-
-    if not log_path.exists():
-        return {"entries": [], "total": 0}
-
-    entries = []
-    for line in log_path.read_text().splitlines():
-        line = line.strip()
-        if line:
-            try:
-                entries.append(json.loads(line))
-            except json.JSONDecodeError:
-                continue
-
+    # Rotated siblings first, then the live file, so the dashboard's page
+    # count does not shrink the moment the log rotates (US-PRJ-52-10).
+    entries = read_log_entries(log_paths(proj_dir))
     total = len(entries)
-    entries = list(reversed(entries))
-    entries = entries[offset : offset + limit]
+    entries = list(reversed(entries))[offset : offset + limit]
 
     return {"entries": entries, "total": total}
 

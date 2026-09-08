@@ -17,7 +17,6 @@ import pytest
 
 DOCS = Path(__file__).resolve().parent.parent / "docs"
 CLI_DOC = DOCS / "reference" / "cli.md"
-HUB_DOC = DOCS / "hub-mode" / "git-workflow.md"
 TOOLS_DOC = DOCS / "reference" / "mcp-tools.md"
 DECISIONS = Path(__file__).resolve().parent.parent / ".project" / "DECISIONS.md"
 
@@ -86,12 +85,6 @@ class TestPrivateSiblingRepoVariant:
 
 
 class TestOtherDocsAgree:
-    def test_hub_workflow_covers_the_store_branch(self):
-        text = HUB_DOC.read_text()
-        assert "## PM Store on Its Own Branch" in text
-        assert "never a gitlink" in text
-        assert "living-with-the-projectman-worktree" in text
-
     def test_mcp_tools_document_the_new_fields(self):
         text = TOOLS_DOC.read_text()
         assert "`pm_store`" in text

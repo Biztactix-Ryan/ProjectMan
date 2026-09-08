@@ -109,22 +109,12 @@ def test_every_family_is_off_for_a_plain_project():
     assert enabled_tool_families(config) == ALL_OFF
 
 
-def test_a_hub_gets_no_family_by_inference():
-    """Hub mode turns nothing on by itself: every family is opt-in."""
-    config = ProjectConfig(name="h", prefix="HUB", hub=True)
-    assert enabled_tool_families(config) == ALL_OFF
-
-
-def test_maintenance_takes_no_hub_inference(tmp_project):
+def test_maintenance_takes_no_inference(tmp_project):
     """US-PM-15-6: break-glass is off until a human writes ``true``.
 
-    Repairing takes no inference — a hub breaks no more often than a leaf
-    repo — so the flag is a plain bool, and opting in stays a one-line
-    config change.
+    Repairing takes no inference from anything else in the config, so the
+    flag is a plain bool and opting in stays a one-line config change.
     """
-    hub = ProjectConfig(name="h", prefix="HUB", hub=True)
-    assert enabled_tool_families(hub)["maintenance"] is False
-
     on = ProjectConfig(name="p", prefix="TST", tools={"maintenance": True})
     assert enabled_tool_families(on)["maintenance"] is True
 
@@ -386,14 +376,6 @@ def test_one_flag_in_the_file_restores_exactly_that_family(
     assert len(hidden) == {"web": 3, "maintenance": 2}[family]
 
 
-def test_a_hub_on_disk_gets_no_family_by_inference(tmp_hub, monkeypatch):
-    """Hub mode over a real ``tools/list`` rather than the flags: still off."""
-    enter(monkeypatch, tmp_hub)
-
-    assert apply_tool_gating() == ALL_OFF
-    assert not GATED_TOOLS & listed()
-
-
 @pytest.mark.parametrize(
     "tools_value",
     [
@@ -649,14 +631,6 @@ def test_the_carve_outs_are_listed_for_every_config_on_disk(
     resolved = apply_tool_gating()
     assert resolved == (ALL_OFF if tools_section is None else tools_section)
     assert NEVER_GATED <= listed(), tools_section
-
-
-def test_the_carve_outs_are_listed_in_hub_mode(tmp_hub, monkeypatch):
-    """Hub mode is no different: the carve-outs are listed there too."""
-    enter(monkeypatch, tmp_hub)
-
-    assert apply_tool_gating() == ALL_OFF
-    assert NEVER_GATED <= listed()
 
 
 def test_the_carve_outs_are_listed_outside_any_project(tmp_path, monkeypatch):

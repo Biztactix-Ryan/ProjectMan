@@ -33,7 +33,7 @@ checking nothing.
 
 Sibling coverage, deliberately not duplicated here:
 ``tests/test_genuine_failures_raise.py`` (US-PM-2-3, one representative per
-class plus the hub-guard unit tests) and ``tests/test_expected_negatives.py``
+class) and ``tests/test_expected_negatives.py``
 (US-PM-2-4, the converse — the three sites that must *not* raise).
 """
 
@@ -169,17 +169,11 @@ CASES: list[Case] = [
     # writes nothing and consumes nothing, so the seeded world survives them.
     Case("create_target_exists", "3.1", "pm_fix_malformed", {"filename": "REAL-1.md", "id": "US-TST-1", "title": "T", "item_type": "story"}, "US-TST-1 already exists"),
     Case("create_target_exists", "3.1", "pm_restore", {"filename": "US-TST-1.md"}, "US-TST-1 already exists"),
-    # -- a store prefix nobody in the hub claims (inventory 3.2).  Since
-    #    US-PM-34 a store is addressed by prefix, never by project name, so
-    #    this is the shape an ID-less verb fails with.
-    Case("unknown_store_prefix", "3.2", "pm_audit", {"prefix": "NOPE"}, "no project in this hub uses the prefix 'NOPE'", world="hub"),
-    Case("unknown_store_prefix", "3.2", "pm_git_status", {"prefix": "NOPE"}, "no project in this hub uses the prefix 'NOPE'", world="hub"),
-    #    US-PM-35-7 puts the two git verbs in this class too: they take the
-    #    same optional prefix, and the hub-guard class they used to represent
-    #    (inventory 4, registry.py's in-band error dict) is gone with the
-    #    cross-project push — nothing reaches those shapes from a tool now.
-    Case("unknown_store_prefix", "3.2", "pm_push", {"prefix": "NOPE"}, "no project in this hub uses the prefix 'NOPE'", world="hub"),
-    Case("unknown_store_prefix", "3.2", "pm_commit", {"prefix": "NOPE"}, "no project in this hub uses the prefix 'NOPE'", world="hub"),
+    # -- inventory 3.2 used to hold ``unknown_store_prefix``: a store prefix
+    #    nobody in the hub claimed.  Hub mode is gone (EPIC-PM-6), there is one
+    #    store per project and no tool takes a ``prefix`` argument any more, so
+    #    the class has no reachable site and left both this table and
+    #    :data:`EXPECTED_CLASSES` with it.
     # -- web / port failures (inventory 3.4).
     Case("port_in_use", "3.4", "pm_web_start", {}, "is already in use", world="port_taken", from_world=("port",)),
     Case("missing_web_dependency", "3.4", "pm_web_start", {}, "Web dependencies not installed", world="no_web_deps", from_world=("port",)),
@@ -214,7 +208,6 @@ EXPECTED_CLASSES = {
     "missing_required_argument",
     "not_found_file",
     "create_target_exists",
-    "unknown_store_prefix",
     "port_in_use",
     "missing_web_dependency",
     "no_project_for_web",
@@ -233,9 +226,7 @@ PROJECT_CONFIG = {
     "name": "test-project",
     "prefix": "TST",
     "description": "A test project",
-    "hub": False,
     "next_story_id": 1,
-    "projects": [],
 }
 
 
@@ -337,18 +328,6 @@ class Worlds:
             (root / ".project" / "stories" / "US-TST-1.md").read_text()
         )
 
-    def _hub_root(self) -> Path:
-        if "hub" not in self._roots:
-            root = self._factory.mktemp("hub")
-            proj = root / ".project"
-            for sub in ("stories", "tasks", "projects", "roadmap", "dashboards"):
-                (proj / sub).mkdir(parents=True)
-            (proj / "config.yaml").write_text(
-                yaml.safe_dump({**PROJECT_CONFIG, "name": "test-hub", "prefix": "HUB", "hub": True})
-            )
-            self._roots["hub"] = root
-        return self._roots["hub"]
-
     def _target_exists_root(self) -> Path:
         """A project where the sprint the counter would mint is already written.
 
@@ -385,9 +364,6 @@ class Worlds:
 
         if name == "empty":
             self._mp.chdir(self._empty_root())
-            return {}
-        if name == "hub":
-            self._mp.chdir(self._hub_root())
             return {}
         if name == "target_exists":
             self._mp.chdir(self._target_exists_root())

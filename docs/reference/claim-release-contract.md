@@ -78,7 +78,7 @@ that is fixable with more prose.
 
 **Port-forward hazard — resolved by the 0.8.15 rebase.** The analysis below was written
 when this tree was v0.8.9 and `2261a0d` was **not** an ancestor of HEAD. It is now: the
-tree is v0.8.15 and `store.py:1936` carries the `unassign = kwargs.get("assignee") == ""`
+tree is v0.9.0 and `store.py:1936` carries the `unassign = kwargs.get("assignee") == ""`
 normalisation, so only the `origin/main` column below still describes this checkout. The
 two baselines *as they stood then* differed:
 

@@ -128,11 +128,11 @@ asserted it while writing on evidence that could not support it.
 
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Optional
 
+from .activity_log import log_paths, read_log_entries
 from .models import TaskStatus
 
 __all__ = [
@@ -205,27 +205,20 @@ class MigrationReport:
 
 
 def read_activity_log(project_dir: Path) -> list[dict[str, Any]]:
-    """Read ``activity.jsonl``, tolerating a missing file and bad lines.
+    """Read the whole activity log, tolerating a missing file and bad lines.
 
     A corrupt line is skipped rather than fatal: a migration that refuses to
     run because one historical line is malformed is less useful than one that
     reports on everything it could parse.
+
+    "The whole log" means the rotated siblings oldest-first and then the
+    live ``activity.jsonl`` (US-PRJ-52-10) — a migration that reconstructs
+    history must not stop seeing the past because the log was rotated.
+
+    Kept as the project-dir-shaped entry point migrations call; the parsing
+    itself lives in :mod:`projectman.activity_log`, which is the one reader.
     """
-    log_path = Path(project_dir) / "activity.jsonl"
-    if not log_path.exists():
-        return []
-    entries: list[dict[str, Any]] = []
-    for line in log_path.read_text().splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            entry = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if isinstance(entry, dict):
-            entries.append(entry)
-    return entries
+    return read_log_entries(log_paths(Path(project_dir)))
 
 
 def _changes(entry: dict[str, Any]) -> dict[str, Any]:

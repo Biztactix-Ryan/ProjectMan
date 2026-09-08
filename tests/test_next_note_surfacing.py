@@ -227,7 +227,7 @@ class TestSearchIgnoresTheNote:
         from projectman.server import pm_search
 
         write_note(server_project)
-        assert not yaml.safe_load(pm_search("zarquon"))
+        assert not yaml.safe_load(pm_search("zarquon"))["results"]
 
     def test_real_items_are_still_found_alongside_a_note(self, server_project):
         """Guard against passing by breaking search altogether."""
@@ -235,7 +235,7 @@ class TestSearchIgnoresTheNote:
 
         write_note(server_project)
         Store(server_project).create_story("Findable story", "about zarquon too")
-        hits = yaml.safe_load(pm_search("zarquon"))
+        hits = yaml.safe_load(pm_search("zarquon"))["results"]
         assert [h["type"] for h in hits] == ["story"]
 
 

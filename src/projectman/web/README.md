@@ -103,15 +103,12 @@ Thin wrappers around existing `Store` methods and MCP tool functions.
 | GET | `/api/docs/{name}` | `pm_docs(doc=name)` |
 | PUT | `/api/docs/{name}` | `pm_update_doc()` |
 
-### Hub mode (multi-project)
+### Which store a route acts on
 
-All endpoints accept an optional `?project=` query parameter, matching the existing MCP tool pattern. Hub-level endpoints:
+There is one store — `{root}/.project`, found from the project root the server started in — and every route acts on it. No route takes a routing argument of any kind (US-PM-45):
 
-| Method | Endpoint | Maps to |
-|---|---|---|
-| GET | `/api/hub/projects` | `config.projects` list |
-| GET | `/api/hub/rollup` | `hub.rollup.rollup()` |
-| GET | `/api/hub/context` | `pm_context()` |
+- **A route with an item ID** (`/api/epics/{id}`, `/api/stories/{id}`, `/api/tasks/{id}`, `/api/tasks/{id}/grab`) checks the ID's shape and reads that store. A malformed ID is `422` `invalid`; a well-formed ID with no file behind it is the route's plain `404`.
+- **An ID-less route** (`/api/status`, `/api/board`, `/api/burndown`, `/api/audit`, `/api/search`, `/api/activity`, `/api/docs*`, and the list/create endpoints) reads and writes the same store, with no argument to say so.
 
 ---
 
@@ -200,9 +197,8 @@ src/projectman/web/
 ### Phase 3: Polish
 
 13. **Search** — Search bar in nav, results page
-14. **Hub mode** — Project switcher in nav, rollup dashboard
-15. **Notifications** — Toast messages for create/update/error feedback
-16. **Mobile** — Responsive layout
+14. **Notifications** — Toast messages for create/update/error feedback
+15. **Mobile** — Responsive layout
 
 ---
 
@@ -239,7 +235,6 @@ Because the existing codebase is well-structured:
 - **Readiness checks** — Board view can show ready/not-ready badges using existing `check_readiness()`
 - **Audit** — One-click project health check using existing `run_audit()`
 - **Search** — Semantic search (if sentence-transformers installed) or keyword fallback
-- **Hub mode** — Multi-project support already handled by `_resolve_root(project)`
 - **Git integration** — Every edit through the web UI modifies files that git tracks, giving full history
 - **OpenAPI docs** — FastAPI auto-generates interactive API docs at `/docs`
 

@@ -59,9 +59,11 @@ This creates a story with an ID like `US-APP-1`. Link it to your epic during cre
 
 ### 6. Scope the Story
 
-```
-/pm scope US-APP-1
-```
+Ask the `/pm` skill to scope the story: type `/pm` followed by `scope US-APP-1`.
+Scoping is an argument to `/pm`, not a command of its own — the same operation is
+`pm_scope` over MCP. See
+[Routing and access](reference/skills.md#routing-and-access) for the full map of
+operations to CLI commands, MCP tools and skill invocations.
 
 Claude reads your project docs for context, proposes a task breakdown, and creates approved tasks with implementation details and definitions of done.
 

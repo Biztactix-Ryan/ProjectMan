@@ -385,3 +385,55 @@ def test_same_size_external_rewrite_is_caught_by_the_mtime_half(tmp_project):
     second = load_config(tmp_project)
     assert second is not first
     assert second.description == "B test project"
+
+
+# --- legacy config keys (US-PM-46) -----------------------------------------
+# Hub mode is gone, but checkouts made before its removal still have `hub:`
+# and `projects:` on disk.  Those keys must be ignored, never fatal.
+
+
+def test_load_config_ignores_legacy_hub_and_projects_keys(tmp_path):
+    """A config.yaml carrying hub:/projects: loads; the keys are dropped."""
+    import yaml as yaml_module
+
+    proj = tmp_path / ".project"
+    proj.mkdir()
+    (proj / "config.yaml").write_text(
+        yaml_module.dump(
+            {
+                "name": "legacy-project",
+                "prefix": "LEG",
+                "description": "Written before hub mode was removed",
+                "hub": True,
+                "projects": ["alpha", "beta"],
+                "next_story_id": 7,
+                "next_epic_id": 3,
+                "auto_commit": True,
+                "stale_claim_hours": 4.0,
+                "tools": {"web": True},
+            }
+        )
+    )
+
+    config = load_config(tmp_path)
+
+    assert not hasattr(config, "hub")
+    assert not hasattr(config, "projects")
+    assert "hub" not in config.model_dump()
+    assert "projects" not in config.model_dump()
+    # ...and everything alongside them survived the strip.
+    assert config.name == "legacy-project"
+    assert config.prefix == "LEG"
+    assert config.description == "Written before hub mode was removed"
+    assert config.next_story_id == 7
+    assert config.next_epic_id == 3
+    assert config.auto_commit is True
+    assert config.stale_claim_hours == 4.0
+    assert config.tools.web is True
+    assert config.tools.maintenance is False
+
+
+def test_project_config_has_no_hub_or_projects_field():
+    fields = set(ProjectConfig.model_fields)
+    assert "hub" not in fields
+    assert "projects" not in fields

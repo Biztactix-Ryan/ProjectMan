@@ -9,13 +9,11 @@ taking their numbers from it, so the browser view cannot drift away from what
 As elsewhere in US-PM-16, the half-fix under test is excluding archived work
 from the denominator only; a genuinely done task is the control.
 
-These tests use their own client fixture rather than the package one: the
-shared fixture reaches ``get_store``'s ``from .app import app`` branch, which
-raises ``ModuleNotFoundError`` on an unrelated pre-existing import bug in
-``web/routes/api.py`` (the relative import resolves to
-``projectman.web.routes.app``).  Overriding the dependency injects the same
-``Store`` the shared fixture intends to supply, so the routes' arithmetic is
-exercised for real without riding on that broken branch.
+These tests use their own client fixture rather than the package one: it
+overrides the store dependency outright (``routes.api.get_store``, the one
+every route takes since US-PM-45), so the routes' arithmetic is exercised
+against exactly the ``Store`` this module builds, with no root discovery in
+the way.
 """
 
 from pathlib import Path

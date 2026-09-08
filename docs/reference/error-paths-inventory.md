@@ -1,6 +1,11 @@
 # Error-return path inventory
 
-Every site in the MCP server (and the hub code it delegates to) that returns an
+> **History (2026-09-08, EPIC-PM-6):** hub mode has been **removed**. Every row
+> below that names hub code (`hub/registry.py`, `hub/rollup.py`, "in hub mode")
+> describes code that no longer exists; the rows are kept as the record of what
+> was inventoried at v0.8.9, not as a description of the package today.
+
+Every site in the MCP server (and the code it delegated to) that returns an
 error as a **response body** instead of raising, with a classification per site.
 
 This document is the input to:

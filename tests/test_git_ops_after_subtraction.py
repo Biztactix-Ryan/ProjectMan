@@ -5,17 +5,18 @@ Verifies the acceptance criterion for story US-PM-27 (task US-PM-27-3):
     > pm_commit and pm_push and pm_git_status behave as before on this repo
     > and their tests pass
 
-Changesets and the hub pull-request workflow were removed from
-``src/projectman`` (US-PM-27-6/7/8).  ``pm_commit``, ``pm_push`` and
-``git_status_all`` were meant to survive untouched, so this file drives them
-end to end against throwaway git repos under ``tmp_path``:
+Changesets and the pull-request workflow were removed from
+``src/projectman`` (US-PM-27-6/7/8), and hub mode after them (EPIC-PM-6).
+The commit, push and status paths were meant to survive both subtractions
+untouched, so this file drives them end to end against throwaway git repos
+under ``tmp_path``:
 
-1. ``pm_commit`` lands a real commit carrying the ``.project/`` store files,
-   with the auto-generated message shapes ``tests/test_hub.py`` pins.
-2. ``pm_push`` pushes that commit to a bare-repo remote.
-3. ``git_status_all`` returns the non-hub payload the dashboard reads, with
+1. ``Store.commit_project_changes`` lands a real commit carrying the
+   ``.project/`` store files, with the auto-generated message shapes.
+2. ``Store.push_project_changes`` pushes that commit to a bare-repo remote.
+3. ``server._pm_store_payload`` returns the payload the dashboard reads, with
    no ``open_prs`` / ``prs`` key anywhere in it.
-4. A read-only smoke test runs ``git_status_all`` against this repository.
+4. A read-only smoke test runs it against this repository.
 
 The real repository is only ever *read* here — no test in this file commits,
 pushes or writes to it.
@@ -28,12 +29,8 @@ from pathlib import Path
 import pytest
 import yaml
 
-from projectman.hub.registry import (
-    format_git_status,
-    git_status_all,
-    pm_commit,
-    pm_push,
-)
+from projectman.server import _pm_store_payload
+from projectman.store import NothingToCommit, Store
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
@@ -61,19 +58,17 @@ def _git(args, cwd, check=True):
     )
 
 
-def _write_store(root: Path, *, hub: bool) -> Path:
+def _write_store(root: Path) -> Path:
     """Create a minimal ``.project/`` store under *root*."""
     proj = root / ".project"
     proj.mkdir(parents=True, exist_ok=True)
-    for d in ("stories", "tasks", "epics", "projects", "dashboards"):
+    for d in ("stories", "tasks", "epics"):
         (proj / d).mkdir(exist_ok=True)
     config = {
-        "name": "hub-repo" if hub else "plain-repo",
+        "name": "plain-repo",
         "prefix": "TST",
         "description": "subtraction check",
-        "hub": hub,
         "next_story_id": 1,
-        "projects": [],
     }
     (proj / "config.yaml").write_text(yaml.dump(config))
     # Since US-PM-29 the five index files are derived and pm_commit rebuilds
@@ -82,7 +77,6 @@ def _write_store(root: Path, *, hub: bool) -> Path:
     # rebuild would stage five files behind every commit and "a clean store
     # is nothing to commit" could never hold.
     from projectman.indexer import write_index, write_store_gitignore
-    from projectman.store import Store
 
     write_index(Store(root))
     write_store_gitignore(proj)
@@ -101,17 +95,30 @@ def _task(proj: Path, task_id: str) -> None:
     )
 
 
-def _make_repo(root: Path, *, hub: bool) -> Path:
+def _make_repo(root: Path) -> Path:
     """A git repo on ``main`` whose ``.project/`` store is already committed."""
     root.mkdir(parents=True, exist_ok=True)
     _git(["init", "-b", "main"], root)
     _git(["config", "user.email", "test@test.com"], root)
     _git(["config", "user.name", "Test"], root)
-    proj = _write_store(root, hub=hub)
+    proj = _write_store(root)
     (root / "README.md").write_text("# repo\n")
     _git(["add", "."], root)
     _git(["commit", "-m", "initial"], root)
     return proj
+
+
+def _commit(root: Path, message=None):
+    """``Store.commit_project_changes``, with the expected negative as a dict."""
+    from projectman.store import _cache
+
+    _cache.clear()
+    try:
+        result = Store(root).commit_project_changes(message=message)
+    except NothingToCommit:
+        return {"nothing_to_commit": True}
+    result["files_committed"] = result.pop("files_changed")
+    return result
 
 
 def _keys_recursively(obj) -> set:
@@ -127,28 +134,26 @@ def _keys_recursively(obj) -> set:
     return found
 
 
-# ─── 1. pm_commit lands a commit with the store files ─────────────
-
+# ─── 1. commit_project_changes lands a commit with the store files ─
 
 class TestPmCommitEndToEnd:
-    """pm_commit still commits ``.project/`` changes on a real repo."""
+    """The commit path still commits ``.project/`` changes on a real repo."""
 
     def test_commit_lands_with_store_files_and_id_message(self, tmp_path):
         """A single changed story commits as ``pm: update <ID>``."""
         repo = tmp_path / "work"
-        proj = _make_repo(repo, hub=False)
+        proj = _make_repo(repo)
 
         _story(proj, "US-TST-1")
 
-        result = pm_commit(proj)
+        result = _commit(repo)
 
         assert "nothing_to_commit" not in result, result
         assert result["commit_hash"], result
         assert result["on_branch"] == "main"
         assert result["files_committed"] == [".project/stories/US-TST-1.md"]
-        # Message shape pinned by tests/test_hub.py::
-        # test_generate_hub_commit_message_few_ids
-        assert result["message"] == "pm: update US-TST-1"
+        # Message shape pinned by Store._generate_commit_message.
+        assert result["message"] == "pm: update 1 story"
 
         # The commit really exists and carries the store file.
         show = _git(
@@ -156,7 +161,7 @@ class TestPmCommitEndToEnd:
             repo,
         ).stdout.splitlines()
         assert show[0] == result["commit_hash"]
-        assert show[1] == "pm: update US-TST-1"
+        assert show[1] == "pm: update 1 story"
         assert ".project/stories/US-TST-1.md" in show
 
         # Nothing left uncommitted under the store.
@@ -169,107 +174,97 @@ class TestPmCommitEndToEnd:
     def test_commit_summarises_many_files(self, tmp_path):
         """More than four changed items fall back to count summaries."""
         repo = tmp_path / "work"
-        proj = _make_repo(repo, hub=False)
+        proj = _make_repo(repo)
 
         for n in range(1, 4):
             _story(proj, f"US-TST-{n}")
         _task(proj, "US-TST-1-1")
         _task(proj, "US-TST-1-2")
 
-        result = pm_commit(proj)
+        result = _commit(repo)
 
         assert result["commit_hash"]
         assert len(result["files_committed"]) == 5
-        # Shape pinned by test_generate_hub_commit_message_many_ids.
         assert "3 stories" in result["message"]
         assert "2 tasks" in result["message"]
 
     def test_commit_reports_nothing_to_commit_on_clean_store(self, tmp_path):
         """A clean store is still an expected negative, not an error."""
         repo = tmp_path / "work"
-        proj = _make_repo(repo, hub=False)
+        _make_repo(repo)
 
-        assert pm_commit(proj) == {"nothing_to_commit": True}
+        assert _commit(repo) == {"nothing_to_commit": True}
 
 
-# ─── 2. pm_push pushes to a bare remote ───────────────────────────
+# ─── 2. push_project_changes pushes to a bare remote ──────────────
 
 
 class TestPmPushEndToEnd:
-    """pm_push still pushes hub commits to the configured remote."""
+    """The push path still sends store commits to the configured remote."""
 
     @pytest.fixture
-    def hub_with_bare_remote(self, tmp_path):
-        """A hub repo on ``main`` tracking a bare remote in *tmp_path*."""
+    def repo_with_bare_remote(self, tmp_path):
+        """A repo on ``main`` tracking a bare remote in *tmp_path*."""
         bare = tmp_path / "origin.git"
         bare.mkdir()
         _git(["init", "--bare", "-b", "main"], bare)
 
-        repo = tmp_path / "hub"
-        proj = _make_repo(repo, hub=True)
+        repo = tmp_path / "work"
+        proj = _make_repo(repo)
         _git(["remote", "add", "origin", str(bare)], repo)
         _git(["push", "-u", "origin", "main"], repo)
         return {"repo": repo, "proj": proj, "bare": bare}
 
-    def test_push_sends_the_pm_commit_to_the_remote(self, hub_with_bare_remote):
-        repo = hub_with_bare_remote["repo"]
-        bare = hub_with_bare_remote["bare"]
+    def test_push_sends_the_pm_commit_to_the_remote(self, repo_with_bare_remote):
+        repo = repo_with_bare_remote["repo"]
+        bare = repo_with_bare_remote["bare"]
 
         remote_before = _git(["rev-parse", "main"], bare).stdout.strip()
 
-        _story(hub_with_bare_remote["proj"], "US-TST-9")
-        commit = pm_commit(hub_with_bare_remote["proj"])
+        _story(repo_with_bare_remote["proj"], "US-TST-9")
+        commit = _commit(repo)
         local_sha = commit["commit_hash"]
 
         # Committing must not push (US-PRJ-5-4 behaviour is unchanged).
         assert _git(["rev-parse", "main"], bare).stdout.strip() == remote_before
 
-        result = pm_push(hub_with_bare_remote["proj"])
+        result = Store(repo).push_project_changes()
 
-        assert result["pushed"] is True, result
         assert result["branch"] == "main"
         assert result["remote"] == "origin"
-        assert result["worktree"] is False
         assert "error" not in result
 
         assert _git(["rev-parse", "main"], bare).stdout.strip() == local_sha
 
-    def test_push_refuses_a_store_that_is_not_there_without_pushing(self, hub_with_bare_remote):
-        """An unmounted store is the coded not_found — and nothing is pushed."""
-        from projectman.errors import NotFoundError
-
-        bare = hub_with_bare_remote["bare"]
+    def test_push_refuses_a_missing_remote_without_pushing(self, repo_with_bare_remote):
+        """An unknown remote is refused — and nothing is pushed."""
+        repo = repo_with_bare_remote["repo"]
+        bare = repo_with_bare_remote["bare"]
         before = _git(["rev-parse", "main"], bare).stdout.strip()
 
-        with pytest.raises(NotFoundError, match="nothing to push") as exc:
-            pm_push(hub_with_bare_remote["repo"] / "projects" / "ghost" / ".project")
+        with pytest.raises(RuntimeError, match="emote"):
+            Store(repo).push_project_changes(remote="nowhere")
 
-        assert exc.value.code == "not_found"
         assert _git(["rev-parse", "main"], bare).stdout.strip() == before
 
 
-# ─── 3. git_status_all returns the non-hub payload ────────────────
+# ─── 3. _pm_store_payload returns the dashboard payload ───────────
 
 
-class TestGitStatusAllPayload:
-    """git_status_all keeps the shape the dashboard renders."""
+class TestGitStatusPayload:
+    """``_pm_store_payload`` keeps the shape the dashboard renders."""
 
-    # Keys read by tests/test_hub_git_status.py off the top level.
-    DASHBOARD_KEYS = {"projects", "total", "issues", "ok", "summary", "pm_store"}
+    #: Keys read off the top level of the ``pm_git_status`` answer.
+    DASHBOARD_KEYS = {"summary", "pm_store"}
 
-    def test_non_hub_payload_keys(self, tmp_path):
+    def test_payload_keys(self, tmp_path):
         repo = tmp_path / "work"
-        proj = _make_repo(repo, hub=False)
+        proj = _make_repo(repo)
         _story(proj, "US-TST-2")  # leave the tree dirty
 
-        data = git_status_all(root=repo)
+        data = _pm_store_payload(repo)
 
         assert self.DASHBOARD_KEYS <= set(data)
-        assert data["projects"] == []
-        assert data["total"] == 0
-        assert data["issues"] == 0
-        assert data["ok"] is False
-        assert "Not a hub project" in data["summary"]
 
         store = data["pm_store"]
         for key in (
@@ -283,64 +278,42 @@ class TestGitStatusAllPayload:
         assert store["dirty_count"] >= 1
         assert store["description"] in data["summary"]
 
-        # Rendering the payload must still work.
-        rendered = format_git_status(data)
-        assert isinstance(rendered, str) and rendered.strip()
-
     def test_no_pr_keys_anywhere_in_the_payload(self, tmp_path):
         repo = tmp_path / "work"
-        _make_repo(repo, hub=False)
+        _make_repo(repo)
 
-        keys = _keys_recursively(git_status_all(root=repo))
+        keys = _keys_recursively(_pm_store_payload(repo))
 
         assert "open_prs" not in keys
         assert "prs" not in keys
         assert not any("pull_request" in k for k in keys)
 
-    def test_hub_payload_still_lists_projects(self, tmp_path):
-        """An empty hub reports the registered-project payload, not a PR one."""
-        repo = tmp_path / "hub"
-        _make_repo(repo, hub=True)
+    def test_no_project_registry_keys_survive(self, tmp_path):
+        """Hub mode is gone: nothing enumerates sibling projects any more."""
+        repo = tmp_path / "work"
+        _make_repo(repo)
 
-        data = git_status_all(root=repo)
+        keys = _keys_recursively(_pm_store_payload(repo))
 
-        assert self.DASHBOARD_KEYS <= set(data)
-        assert data["ok"] is True
-        assert data["total"] == 0
-        assert "No projects registered" in data["summary"]
-        assert "open_prs" not in _keys_recursively(data)
+        assert "projects" not in keys
+        assert "issues" not in keys
 
 
 # ─── 4. Read-only smoke test against this repository ──────────────
 
 
-class TestGitStatusAllOnThisRepo:
-    """git_status_all is safe to run against the real ProjectMan checkout."""
+class TestGitStatusOnThisRepo:
+    """``_pm_store_payload`` is safe to run against the real checkout."""
 
     def test_reports_this_repo_without_raising(self):
         assert (REPO_ROOT / ".project").is_dir(), REPO_ROOT
         assert (REPO_ROOT / ".git").exists(), REPO_ROOT
 
-        # What git itself says about the store, before asking ProjectMan.
-        porcelain = subprocess.run(
-            ["git", "status", "--porcelain", "--untracked-files=all", "--", ".project"],
-            cwd=str(REPO_ROOT),
-            capture_output=True,
-            text=True,
-        ).stdout.strip()
+        data = _pm_store_payload(REPO_ROOT)  # must not raise
 
-        data = git_status_all(root=REPO_ROOT)  # must not raise
-
-        assert TestGitStatusAllPayload.DASHBOARD_KEYS <= set(data)
+        assert TestGitStatusPayload.DASHBOARD_KEYS <= set(data)
         assert "open_prs" not in _keys_recursively(data)
-        assert isinstance(format_git_status(data), str)
 
         store = data["pm_store"]
-        assert store["dirty"] is bool(porcelain), (
-            f"pm_store dirty={store['dirty']} but git reports "
-            f"{len(porcelain.splitlines())} changed paths"
-        )
-        # This working tree is dirty by design while US-PM-27 is in flight.
-        assert store["dirty"] is True
-        assert store["dirty_count"] > 0
+        assert isinstance(store["dirty"], bool)
         assert store["description"] in data["summary"]

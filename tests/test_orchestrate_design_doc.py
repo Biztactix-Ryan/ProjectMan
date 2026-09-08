@@ -10,7 +10,8 @@ A split like that has two failure modes, and neither is caught by a size check:
 
 * **the rationale is lost**, because "move it to a doc" quietly became "delete
   it".  Every assertion below that names a phrase from the *pre-rewrite*
-  template, read straight out of ``git show HEAD:``, is a guard against that:
+  template, read straight out of ``git show`` at the pinned pre-rewrite
+  commit, is a guard against that:
   the fact has to be findable in the design doc today.
 * **the rationale is duplicated**, because a copy was left behind or a second
   doc grew its own version.  The same assertions therefore also require the
@@ -44,6 +45,13 @@ from tests.test_orchestrate_skill_size import (
 
 CURRENT_TEMPLATE = REPO_ROOT / TEMPLATE_REPO_PATH
 
+#: the last commit before the US-PM-25-6 rewrite, holding the 31,731-byte
+#: pre-rewrite template.  It is a SHA and not ``HEAD`` on purpose: ``HEAD`` now
+#: carries the shortened template, so every "this phrase used to be in the
+#: skill" assertion below would fail against it.  This history is post-rewrite,
+#: so the SHA is stable.
+PRE_REWRITE_COMMIT = "1061084"
+
 #: every ``## `` section US-PM-25-5 wrote, in document order.  The list is the
 #: doc's table of contents, so a section quietly dropped in a later edit fails
 #: here rather than being noticed by the next reader who cannot find it.
@@ -74,8 +82,8 @@ def _norm(text: str) -> str:
 
 
 @functools.lru_cache(maxsize=1)
-def head_template() -> str:
-    """The pre-US-PM-25-6 template, read (read-only) out of git HEAD.
+def pre_rewrite_template() -> str:
+    """The pre-US-PM-25-6 template, read (read-only) out of ``PRE_REWRITE_COMMIT``.
 
     This is the ground truth for "the rationale that used to be in the skill":
     a phrase is only evidence of a *migration* if it can be shown to have been
@@ -83,14 +91,17 @@ def head_template() -> str:
     """
     try:
         out = subprocess.run(
-            ["git", "show", f"HEAD:{TEMPLATE_REPO_PATH}"],
+            ["git", "show", f"{PRE_REWRITE_COMMIT}:{TEMPLATE_REPO_PATH}"],
             cwd=REPO_ROOT,
             capture_output=True,
             text=True,
             check=True,
         )
     except (OSError, subprocess.CalledProcessError) as exc:  # pragma: no cover
-        pytest.skip(f"git show HEAD:{TEMPLATE_REPO_PATH} unavailable: {exc}")
+        pytest.skip(
+            f"git show {PRE_REWRITE_COMMIT}:{TEMPLATE_REPO_PATH} unavailable "
+            f"(source tarball or shallow clone?): {exc}"
+        )
     return out.stdout
 
 
@@ -352,7 +363,7 @@ def test_at_least_eight_rationale_phrases_are_pinned():
 
 @pytest.mark.parametrize("was_in_skill,now_in_doc", MIGRATED)
 def test_rationale_moved_from_the_skill_to_the_design_doc(was_in_skill, now_in_doc):
-    assert was_in_skill in _norm(head_template()), (
+    assert was_in_skill in _norm(pre_rewrite_template()), (
         f"{was_in_skill!r} is not in the pre-rewrite template — this case no "
         "longer demonstrates a migration and needs re-picking"
     )
@@ -404,7 +415,7 @@ def test_the_resume_essay_lives_in_exactly_one_doc(sentence):
 # ─── 6. the absorbed map accounts for the whole old template ─────
 
 
-def test_absorbed_map_lists_every_section_of_the_head_template():
+def test_absorbed_map_lists_every_section_of_the_pre_rewrite_template():
     """Nothing is dropped silently: every old ``## `` heading has a row.
 
     A heading whose title carries a parenthetical (``## Stop Conditions
@@ -412,10 +423,10 @@ def test_absorbed_map_lists_every_section_of_the_head_template():
     uses; what may not happen is a section vanishing from the map entirely.
     """
     table = _norm(design_section("## Template sections absorbed"))
-    headings = re.findall(r"^## (.+)$", head_template(), re.M)
+    headings = re.findall(r"^## (.+)$", pre_rewrite_template(), re.M)
     assert len(headings) == 11, (
         f"the pre-rewrite template had {len(headings)} '## ' sections, not 11 — "
-        "re-check the map against HEAD"
+        f"re-check the map against {PRE_REWRITE_COMMIT}"
     )
     missing = [
         heading

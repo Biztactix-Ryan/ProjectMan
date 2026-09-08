@@ -43,7 +43,9 @@ def tmp_project(tmp_path):
 @pytest.fixture
 def client(tmp_project):
     """TestClient that uses the tmp_project as its project root."""
-    # Patch at both import sites so all code paths resolve to tmp_project
+    # Patch at every import site so all code paths resolve to tmp_project.
+    # ``routes/api.py`` binds ``find_project_root`` at import, and it is the
+    # module that hands every route the one store (US-PM-45).
     with (
         patch("projectman.web.routes.api.find_project_root", return_value=tmp_project),
         patch("projectman.config.find_project_root", return_value=tmp_project),

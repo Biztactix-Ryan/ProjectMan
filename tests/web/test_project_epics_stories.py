@@ -17,7 +17,6 @@ def test_config_returns_project_config(client):
     data = r.json()
     assert data["name"] == "test-project"
     assert data["prefix"] == "TST"
-    assert data["hub"] is False
 
 
 # ─── Epics CRUD ──────────────────────────────────────────────────

@@ -312,7 +312,7 @@ class TestNoGeneratorEmitsTheDemandedStructure:
 # The list is derived from the directory, never hardcoded, so a new template
 # carrying `## Implementation` / `## Testing` / `- [ ]` fails on arrival.
 #
-# Three templates legitimately carry a marker and are NOT task producers.
+# Two templates legitimately carry a marker and are NOT task producers.
 # Each is allowlisted with the reason; the allowlist is itself asserted to be
 # neither stale nor over-broad.
 
@@ -320,7 +320,6 @@ NON_TASK_TEMPLATES_WITH_MARKERS = {
     # name: (destination document, why the marker is fine there)
     "epic.md.j2": "EPIC-*.md — epic-level success-criteria checkboxes",
     "story.md.j2": "US-*.md — story-level acceptance-criteria checkboxes",
-    "architecture_hub.md.j2": "ARCHITECTURE.md — a '## Testing' prose section",
 }
 
 

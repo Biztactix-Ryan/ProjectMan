@@ -6,15 +6,14 @@ from datetime import date, datetime, timezone
 from enum import Enum
 from typing import Any, Optional
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, ValidationInfo, field_validator
 
 FIBONACCI_POINTS = {1, 2, 3, 5, 8, 13}
 
 #: Charset for the project prefix embedded in every ID (US-PRJ-50-6).
 #:
 #: Uppercase alphanumeric, because that is what actually produces prefixes:
-#: ``cli.py`` defaults to ``PRJ`` and ``hub/registry.py`` derives one as
-#: ``clean[:3].upper()``.  Kept as a raw *fragment* rather than a compiled
+#: ``cli.py`` defaults to ``PRJ``.  Kept as a raw *fragment* rather than a compiled
 #: pattern because its only job is to be interpolated into the four anchored
 #: patterns below — it is not anchored and must never be matched on its own.
 PREFIX = r"[A-Z][A-Z0-9]*"
@@ -288,8 +287,8 @@ class ToolFlags(BaseModel):
     ``maintenance`` is the break-glass cluster — ``pm_restore`` and
     ``pm_fix_malformed``.  These are human recovery tools, not agent work,
     and both have a ``projectman`` CLI equivalent, so hiding them from the
-    tool list costs nobody reach.  Plain ``bool``: no hub inference,
-    because a hub needs recovering no more routinely than a leaf repo does.
+    tool list costs nobody reach.  Plain ``bool``: no inference from
+    anything else, because it is off until someone writes ``true``.
     """
 
     maintenance: bool = False
@@ -301,13 +300,11 @@ class ProjectConfig(BaseModel):
     prefix: str = "PRJ"
     description: str = ""
     repo: str = ""
-    hub: bool = False
     auto_commit: bool = False
     deploy_branch: Optional[str] = None
     next_story_id: int = 1
     next_epic_id: int = 1
     next_sprint_id: int = 1
-    projects: list[str] = []
     tools: ToolFlags = Field(default_factory=ToolFlags)
     #: How long a claim may sit untouched before `pm_active` / `pm_board`
     #: flag it `stale: true` (US-PM-14-5).  Two hours is roughly four times
@@ -316,6 +313,13 @@ class ProjectConfig(BaseModel):
     #: orchestrator loop.  A float so a fast pool can say `0.25`; set it
     #: high rather than to 0 to disable -- 0 would flag every live claim.
     stale_claim_hours: float = DEFAULT_STALE_CLAIM_HOURS
+    #: Bounds on the activity log (US-PRJ-52-10).  Both default to None,
+    #: meaning the log grows forever exactly as it always has; set either
+    #: and the append that finds `activity.jsonl` over the bound rotates it
+    #: to a dated sibling first.  Size is the file's bytes on disk; age is
+    #: measured from the log's *oldest* entry, so a busy log still rotates.
+    activity_log_max_bytes: Optional[int] = None
+    activity_log_max_days: Optional[float] = None
 
     @field_validator("prefix")
     @classmethod
@@ -351,6 +355,32 @@ class ProjectConfig(BaseModel):
             return DEFAULT_STALE_CLAIM_HOURS
         if not math.isfinite(parsed) or parsed < 0:
             return DEFAULT_STALE_CLAIM_HOURS
+        return parsed
+
+    @field_validator("activity_log_max_bytes", "activity_log_max_days", mode="before")
+    @classmethod
+    def tolerate_a_junk_log_bound(cls, v: object, info: ValidationInfo) -> object:
+        """A malformed activity-log bound means "no bound", not a broken project.
+
+        Same reasoning as `stale_claim_hours`: these two keys tune
+        housekeeping on a file nothing reads for correctness, and raising
+        on a typo would take `load_config` — and with it every tool in the
+        server — down. Anything `float()` refuses, a non-finite value, and
+        anything at or below zero all fall back to `None` (never rotate).
+        Zero is *not* kept here, unlike `stale_claim_hours`: a bound of
+        zero would rotate on every append, which nobody means by it. A
+        fractional byte count is floored rather than rejected.
+        """
+        if v is None:
+            return None
+        try:
+            parsed = float(v)  # type: ignore[arg-type]
+        except (TypeError, ValueError):
+            return None
+        if not math.isfinite(parsed) or parsed <= 0:
+            return None
+        if info.field_name == "activity_log_max_bytes":
+            return int(parsed)
         return parsed
 
 

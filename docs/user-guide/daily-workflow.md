@@ -1,5 +1,13 @@
 # Daily Workflow
 
+Every `/pm …` line on this page is the same skill. `/pm` takes the operation as
+arguments (`/pm board`, `/pm commit`, `/pm push`), and `/pm-status`, `/pm-do`,
+`/pm-next` and friends are named shortcuts into that same path — none of them is
+a standalone command of its own. See
+[Routing and access](../reference/skills.md#routing-and-access) in the skills
+reference for the quick-reference table mapping each operation to its CLI
+command, MCP tool and skill invocation.
+
 ## Morning Check-in
 
 1. `/pm-status` — see project dashboard with epic/story/task counts
@@ -14,13 +22,13 @@
 /pm-do US-APP-1-1
 ```
 
-The `/pm-do` command auto-grabs the task if it's available:
+`/pm-do` is the task-execution shortcut into `/pm`; it auto-grabs the task if it's available:
 - Validates readiness (has estimate, description, parent story is active)
 - Claims the task and sets it to in-progress
 - Loads parent story context and sibling tasks
 - If readiness fails, shows what needs fixing first
 
-**Tip:** In a Web UI environment, `/pm grab <task-id>` auto-spawns a focused task session — no need to manually run `/pm-do`.
+**Tip:** In a Web UI environment, `/pm grab <task-id>` auto-spawns a focused task session — no need to reach for `/pm-do` yourself.
 
 ## During Work
 
@@ -47,30 +55,9 @@ ProjectMan includes built-in git integration for committing and pushing `.projec
 /pm push                # push committed changes to remote
 ```
 
-In hub mode, each command acts on exactly **one** store, named by its prefix.
-Omit the prefix and it is the hub's own store:
-
-```
-/pm commit              # the hub's own store
-/pm commit API          # the API subproject's store, in API's own repo
-/pm push                # push the hub's own store branch
-/pm push API            # push API's store branch, on API's origin
-```
-
-There is no `project` argument and no "all" — the prefix names the store.
-
-### Pulling a Hub Up to Date
-
-`projectman sync` is the one hub-wide git verb: it pulls every submodule and
-re-attaches any store whose worktree is missing.
-
-```
-/pm sync                # pull all submodules, re-mount missing stores
-```
-
-It never commits or pushes on a subproject's behalf. Advancing the hub's
-submodule refs stays a plain `git add` / `git commit` / `git push` you make
-yourself — see [hub-mode/git-workflow.md](../hub-mode/git-workflow.md).
+Both act on the project's one PM store: there is no `project` argument and no
+"all" — `/pm commit` commits `.project/`, `/pm push` pushes the branch that
+owns it.
 
 ### Auto-Commit
 
@@ -94,7 +81,7 @@ Context runs out mid-plan. When it does, the thing that gets lost is not the bac
 ```
 /pm-next                                    # read the note back
 /pm-next fix the cache by keying on digest  # save one (replaces what is there)
-/pm-next also check the hub path            # "also"/"add" appends, dated
+/pm-next also check the retry path          # "also"/"add" appends, dated
 /pm-next clear                              # delete it
 ```
 
@@ -110,7 +97,7 @@ Write one before you clear context, and clear it once the work it describes is f
 - Update in-progress tasks with notes
 - `/pm-next <what we decided>` if you are stopping mid-thread — see [A Note to the Next Session](#a-note-to-the-next-session)
 - `/pm commit` to commit any uncommitted `.project/` changes
-- `/pm push` to send that store to its remote (add the prefix in a hub: `/pm push API`)
+- `/pm push` to send that store to its remote
 - `/pm-status` for a final check — confirm nothing is left in-progress unexpectedly
 
 ## Quick Reference: Manual vs Automated Workflow
@@ -123,8 +110,6 @@ Write one before you clear context, and clear it once the work it describes is f
 | Commit PM data | `git add .project/ && git commit` | `/pm commit` (auto-generated message) |
 | Commit on every change | N/A | `auto_commit: true` in config |
 | Push single repo | `git push origin branch` | `/pm push` |
-| Push one store in a hub | `cd` to the repo, then `git push` | `/pm push API` (by prefix) |
-| Pull a hub up to date | `git submodule update --remote` per repo | `/pm sync` |
 | End-of-day sync | `git add . && git commit && git push` | `/pm commit` then `/pm push` |
 
 ## Web Dashboard

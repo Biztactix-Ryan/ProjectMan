@@ -26,18 +26,41 @@ Five checks, all against the real artefacts rather than a memory of them:
 4. **``docs/reference/cli.md`` documents no command the click CLI lacks** —
    walked over the real command tree, groups included.
 5. **``CHANGELOG.md`` still records the removal**, so the trail back to *why*
-   these things are absent is not itself swept away.
+   these things are absent is not itself swept away. Read out of the newest
+   *versioned* section, since cutting a release moves the record out of
+   ``Unreleased`` and into the version it shipped in.
 
 US-PM-37-5 added three more of the same shape, for the *second* subtraction —
 EPIC-PM-5's hub redesign:
 
 6. **No doc names the removed hub surface** — ``.project/projects``, the
    coordinated push, the repair command or the branch-alignment check — and no
-   doc gives a ``pm_`` tool a ``project`` argument. ``docs/telemetry/`` and the
-   History section of ``docs/hub-mode/setup.md`` are excluded; the latter exists
-   to name retired commands *as* retired.
-7. **``.project/DECISIONS.md`` records ADR-003**, with its Alternatives section
-   and above ADR-002, since ``docs/hub-mode/setup.md`` links at that anchor.
+   doc gives a ``pm_`` tool a ``project`` argument. ``docs/telemetry/`` is
+   excluded, as is any page carrying the history marker (see below).
+7. **``.project/DECISIONS.md`` records ADR-003**, with its Alternatives section,
+   and the ADRs stay in the file's stated newest-first order.
+
+US-PM-47-5 added the third and last of these, for EPIC-PM-6 — the removal of
+hub mode itself (ADR-004):
+
+8. **No page describes hub mode at all.** The sweep is the strongest of the
+   three: it runs over ``docs/`` (telemetry included — those files are hub-free),
+   ``README.md`` *and* ``src/projectman/templates``, and it forbids the mode by
+   name (``hub mode``, ``hub-mode``), its CLI verbs (``migrate-hub``,
+   ``add-project``, ``set-branch``), its store layout
+   (``projects/{name}/.project``) and the ``prefix`` *argument* that used to
+   address a store — while leaving the ID prefix alone, since ADR-004 keeps it
+   (``US-PREFIX-N``, ``prefix: PRJ``, ``projectman init --prefix``).
+
+   ``CHANGELOG.md`` and ``.project/DECISIONS.md`` are outside the swept set:
+   both exist to record that hub mode was here and is gone. A reference document
+   that must keep naming hub internals earns its exemption by carrying a
+   **history marker** — a blockquote under its H1 saying hub mode has been
+   removed and that what follows is a record. The exemption is by marker and
+   never by filename, so a page written tomorrow gets it the same way and a page
+   that drops the marker loses it in the same commit;
+   ``test_hub_sweep_rejects_an_unmarked_page`` pins that this stays a rule about
+   the page and not a hole in the sweep.
 
 Scope note: ``docs/telemetry/`` is excluded from checks 1 and 2. Those files are
 recorded measurements of a past state, not instructions, and rewriting them
@@ -309,20 +332,46 @@ def test_cli_doc_documents_no_absent_command():
 # ─── 5. The changelog still records why all of this is absent ─────
 
 
-def test_changelog_unreleased_records_the_removal():
-    """``## [Unreleased]`` carries a ``### Removed`` heading mentioning changesets."""
+#: ``## [0.9.0] - 2026-09-08`` → ``0.9.0``; ``## [Unreleased]`` does not match.
+VERSION_HEADING_RE = re.compile(r"^##\s+\[(\d+\.\d+\.\d+)\]", re.MULTILINE)
+
+
+def _changelog_section(text: str, heading: re.Match) -> str:
+    """The body under *heading*, down to the next ``## `` heading."""
+    following = re.search(r"^##\s+(?!#)", text[heading.end() :], re.MULTILINE)
+    if following:
+        return text[heading.end() : heading.end() + following.start()]
+    return text[heading.end() :]
+
+
+def test_changelog_records_the_removal_in_its_newest_release():
+    """The newest released section carries a ``### Removed`` naming changesets.
+
+    US-PM-42-7 cut ``## [Unreleased]`` as ``## [0.9.0]`` and opened a fresh,
+    empty ``Unreleased`` above it, which is where the subtraction's record went
+    with it. The check follows the content rather than the heading: the topmost
+    *versioned* section is the release the removal shipped in, and it must still
+    explain why changesets are absent. A fresh ``Unreleased`` is expected to be
+    empty and is deliberately not searched — asserting against it would have
+    made this pass on a changelog that had lost the record entirely.
+    """
     text = CHANGELOG.read_text(encoding="utf-8")
 
-    start = re.search(r"^##\s+\[Unreleased\]", text, re.MULTILINE)
-    assert start, "CHANGELOG.md has no `## [Unreleased]` section"
+    assert re.search(r"^##\s+\[Unreleased\]", text, re.MULTILINE), (
+        "CHANGELOG.md has no `## [Unreleased]` heading — Keep a Changelog keeps "
+        "one open above the newest release for what has landed since it."
+    )
 
-    following = re.search(r"^##\s+(?!#)", text[start.end() :], re.MULTILINE)
-    section = text[start.end() : start.end() + following.start()] if following else text[start.end() :]
+    release = VERSION_HEADING_RE.search(text)
+    assert release, "CHANGELOG.md has no `## [X.Y.Z]` release section at all"
+    version = release.group(1)
+    section = _changelog_section(text, release)
 
     removed = re.search(r"^###\s+Removed\s*$", section, re.MULTILINE)
     assert removed, (
-        "CHANGELOG.md's `## [Unreleased]` section has no `### Removed` heading — "
-        "US-PM-27 took a documented feature out and the changelog must say so."
+        f"CHANGELOG.md's newest release `[{version}]` has no `### Removed` "
+        "heading — US-PM-27 took a documented feature out and the changelog "
+        "must say so."
     )
 
     nxt = re.search(r"^###\s+", section[removed.end() :], re.MULTILINE)
@@ -332,7 +381,7 @@ def test_changelog_unreleased_records_the_removal():
         else section[removed.end() :]
     )
     assert CHANGESET_RE.search(body), (
-        "the `### Removed` entry under `## [Unreleased]` does not mention "
+        f"the `### Removed` entry under `## [{version}]` does not mention "
         "changesets; the only surviving record of the subtraction is gone."
     )
 
@@ -346,12 +395,20 @@ def test_changelog_unreleased_records_the_removal():
 # check (US-PM-35). The sweep in US-PM-37-5 is a one-off edit; these two checks
 # keep it swept, in the same shape as checks 1 and 5 above.
 
-#: The one place a retired hub command may still be named: ``setup.md``'s
-#: History section exists precisely to explain commands found in old notes, and
-#: names them *as retired*. Everything before that heading is live documentation
-#: and is swept normally.
-HUB_SETUP_DOC = DOCS / "hub-mode" / "setup.md"
-HISTORY_HEADING_RE = re.compile(r"^##\s+History\b", re.MULTILINE)
+#: A page may still name retired hub machinery if it declares itself history in
+#: its preamble — a blockquote immediately under the H1 saying hub mode has been
+#: removed and that what follows is a record, not a description of the package.
+#: Matched as a *marker*, never as a filename: a future page that earns the same
+#: exemption gets it by carrying the marker, and a page that loses the marker
+#: loses the exemption in the same commit.
+#:
+#: ``docs/hub-mode/setup.md`` used to hold this exemption by name, with an
+#: ``## History`` heading; US-PM-47-4 deleted the whole directory, so the rule
+#: moved to the marker and the filename left the test.
+HISTORY_MARKER_RE = re.compile(
+    r"^>\s*\*\*History\s*\([^)]*\):\*\*[^\n]*\bhub mode has been\b[^\n]*\bremoved\b",
+    re.IGNORECASE | re.MULTILINE,
+)
 
 #: Symbols and phrases EPIC-PM-5 removed. Matched case-insensitively, one line
 #: at a time, over the same swept files as check 1.
@@ -371,45 +428,42 @@ REDESIGN_FORBIDDEN_RES = [
 
 #: ``pm_get("US-API-3", project="api")`` / ``pm_status(project?)`` — a
 #: ``project`` argument in the same line as a ``pm_`` tool. Deliberately *not* a
-#: bare ``project=``: ``src/projectman/web/routes/api.py`` still takes a
-#: ``?project=`` HTTP query parameter, which is a route parameter and not a tool
-#: argument, and a doc describing it accurately is not an offender.
+#: bare ``project=``: the web layer routes by prefix as of US-PM-39, so no live
+#: surface takes a project name any more, but ``src/projectman/web/resolve.py``
+#: and this file's own history explain the removed ``?project=`` parameter in
+#: prose, and a doc naming it *as retired* is not an offender.
 TOOL_PROJECT_ARG_RE = re.compile(r"pm_[a-z_]+\([^)]*\bproject\s*[=?]")
 
 
-def _history_line_span(path: Path) -> range:
-    """1-based line numbers of ``setup.md``'s History section, else empty."""
-    if path != HUB_SETUP_DOC:
-        return range(0)
-    text = path.read_text(encoding="utf-8")
-    match = HISTORY_HEADING_RE.search(text)
-    if not match:
-        return range(0)
-    first = text[: match.start()].count("\n") + 1
-    return range(first, text.count("\n") + 2)
+def _is_history_marked(text: str) -> bool:
+    """True when the page's *preamble* declares it a historical record.
+
+    The marker only counts above the first ``##`` heading. A blockquote buried
+    in a later section describes that section, not the page, and must not
+    launder live prose sitting above it — ``test_hub_sweep_rejects_an_unmarked_page``
+    pins that.
+    """
+    preamble = re.split(r"^##\s", text, maxsplit=1, flags=re.MULTILINE)[0]
+    return bool(HISTORY_MARKER_RE.search(preamble))
 
 
 def test_no_doc_describes_the_removed_hub_surface():
     """No swept line names a symbol EPIC-PM-5 removed.
 
-    Excludes ``docs/telemetry/`` (recorded measurements) and the History section
-    of ``docs/hub-mode/setup.md``, which may name retired commands as retired.
+    Excludes ``docs/telemetry/`` (recorded measurements) and any page carrying
+    the history marker, which may name retired commands as retired.
     """
-    history = {
-        path: _history_line_span(path)
-        for path in _swept_files()
-        if path == HUB_SETUP_DOC
-    }
-    history_span = history.get(HUB_SETUP_DOC, range(0))
-
     offenders = []
-    for relative, number, line in _swept_lines():
-        if relative == HUB_SETUP_DOC.relative_to(REPO_ROOT) and number in history_span:
+    for path in _swept_files():
+        text = path.read_text(encoding="utf-8")
+        if _is_history_marked(text):
             continue
-        for pattern in REDESIGN_FORBIDDEN_RES:
-            if pattern.search(line):
-                offenders.append(f"{relative}:{number}: {line.strip()}")
-                break
+        relative = path.relative_to(REPO_ROOT)
+        for number, line in enumerate(text.splitlines(), start=1):
+            for pattern in REDESIGN_FORBIDDEN_RES:
+                if pattern.search(line):
+                    offenders.append(f"{relative}:{number}: {line.strip()}")
+                    break
 
     assert not offenders, (
         "EPIC-PM-5 removed the coordinated push, the repair command, the "
@@ -476,11 +530,148 @@ def test_decisions_records_adr_003_with_its_alternatives():
 
 
 def test_adr_003_is_newest_first():
-    """ADR-003 sits above ADR-002, keeping the file's stated newest-first order."""
+    """The ADRs run newest first: ADR-004 above ADR-003 above ADR-002.
+
+    ADR-004 (US-PM-47-5) records hub mode's removal and supersedes ADR-003, so
+    the file's stated order now has three entries to keep straight.
+    """
     text = DECISIONS.read_text(encoding="utf-8")
-    third = text.find("## ADR-003:")
-    second = text.find("## ADR-002:")
-    assert third != -1 and second != -1, "DECISIONS.md is missing ADR-002 or ADR-003"
-    assert third < second, (
-        "DECISIONS.md says 'Newest first' but ADR-003 was appended below ADR-002"
+    positions = {}
+    for number in ("004", "003", "002"):
+        found = text.find(f"## ADR-{number}:")
+        assert found != -1, f"DECISIONS.md is missing ADR-{number}"
+        positions[number] = found
+
+    assert positions["004"] < positions["003"] < positions["002"], (
+        "DECISIONS.md says 'Newest first' but the ADRs are out of order: "
+        f"{sorted(positions, key=positions.get)}"
     )
+
+
+# ─── 8. US-PM-47-5 — no page describes hub mode at all ─────
+#
+# EPIC-PM-6 removed hub mode outright (ADR-004). Check 6 above sweeps the
+# symbols EPIC-PM-5's *redesign* dropped; this is the stronger sweep that
+# followed it — the mode itself, its CLI verbs, its store layout and the
+# ``prefix`` argument that addressed a store — over a wider set of files:
+# docs/ (telemetry included, it is hub-free), README.md and the Jinja templates
+# the pm agent and skills are generated from.
+#
+# ``CHANGELOG.md`` and ``.project/DECISIONS.md`` are outside the swept set by
+# construction: both exist to record that hub mode was there and is gone.
+# History-marked pages are exempted by their marker, never by name.
+
+TEMPLATES = REPO_ROOT / "src" / "projectman" / "templates"
+
+#: ``pm_next(prefix="API")`` / ``**prefix**`` in a parameter table — a tool
+#: argument naming a store. Deliberately narrow: the *ID* prefix survives ADR-004
+#: (decision 2), so ``US-PREFIX-N``, ``prefix: PRJ`` in config.yaml and
+#: ``projectman init --prefix APP`` are all live surface and must not match.
+#: The lookbehind is what keeps ``--prefix=APP`` out.
+PREFIX_ARG_RE = re.compile(r"(?<![-\w])prefix\s*[=?](?!=)", re.IGNORECASE)
+PREFIX_BOLD_RE = re.compile(r"\*\*prefix\*\*", re.IGNORECASE)
+
+#: Everything a page may no longer say, with the reason it may not say it.
+HUB_FORBIDDEN = [
+    (re.compile(r"hub[\s\-]mode", re.IGNORECASE), "hub mode / hub-mode"),
+    (re.compile(r"migrate-hub", re.IGNORECASE), "the migrate-hub command"),
+    (re.compile(r"add-project", re.IGNORECASE), "the add-project command"),
+    (re.compile(r"set-branch", re.IGNORECASE), "the set-branch command"),
+    (
+        re.compile(r"projects/\{name\}/\.project", re.IGNORECASE),
+        "the hub's per-project store layout",
+    ),
+    (PREFIX_ARG_RE, "a `prefix` argument on a tool"),
+    (PREFIX_BOLD_RE, "a `prefix` argument on a tool"),
+]
+
+
+def _hub_swept_files() -> list[Path]:
+    """docs/ + README.md + every template file the generator renders."""
+    files = sorted(DOCS.rglob("*.md"))
+    files.append(README)
+    files.extend(sorted(path for path in TEMPLATES.rglob("*") if path.is_file()))
+    return files
+
+
+def _hub_offenders(text: str):
+    """Yield ``(line number, line, reason)`` unless the page is marked history."""
+    if _is_history_marked(text):
+        return
+    for number, line in enumerate(text.splitlines(), start=1):
+        for pattern, reason in HUB_FORBIDDEN:
+            if pattern.search(line):
+                yield number, line, reason
+                break
+
+
+def test_hub_sweep_covers_docs_readme_and_templates():
+    """The swept set is the real one — and excludes the two history records."""
+    files = _hub_swept_files()
+    assert README in files, "README.md is not in the hub sweep"
+    assert TEMPLATES / "skill_pm.md.j2" in files, "the skill template is not swept"
+    assert TEMPLATES / "agent_pm.md.j2" in files, "the pm agent template is not swept"
+    assert TEMPLATES / "config.yaml.j2" in files, "the config template is not swept"
+    assert len(files) > 25, f"only {len(files)} files in the hub sweep"
+    assert all(path.exists() for path in files)
+
+    assert CHANGELOG not in files, "CHANGELOG.md records the removal and is exempt"
+    assert DECISIONS not in files, "DECISIONS.md records the removal and is exempt"
+
+
+def test_no_page_describes_hub_mode():
+    """No doc, README line or template mentions hub mode or its removed surface.
+
+    Exempt: ``CHANGELOG.md`` and ``.project/DECISIONS.md`` (outside the swept
+    set — they record the removal), and any page whose preamble carries the
+    history marker.
+    """
+    offenders = []
+    for path in _hub_swept_files():
+        relative = path.relative_to(REPO_ROOT)
+        text = path.read_text(encoding="utf-8")
+        for number, line, reason in _hub_offenders(text):
+            offenders.append(f"  {relative}:{number}: {line.strip()}   [{reason}]")
+
+    assert not offenders, (
+        f"hub mode was removed in EPIC-PM-6 (ADR-004), but {len(offenders)} "
+        "line(s) still describe it:\n" + "\n".join(offenders) + "\n"
+        "A page that must name it as history needs the marker blockquote under "
+        "its H1; anything else reads as a description of a mode the package "
+        "does not have."
+    )
+
+
+def test_hub_sweep_rejects_an_unmarked_page():
+    """The marker exemption is a rule about the page, not a hole in the sweep."""
+    live = "# Setup\n\nRun `projectman add-project` to attach a repo in hub mode.\n"
+    assert [number for number, _, _ in _hub_offenders(live)] == [3]
+
+    marked = (
+        "# Setup\n\n"
+        "> **History (2026-09-08, EPIC-PM-6):** hub mode has been **removed**;\n"
+        "> this page is kept as the record of what was there.\n\n"
+        "Run `projectman add-project` to attach a repo in hub mode.\n"
+    )
+    assert list(_hub_offenders(marked)) == []
+
+    # A marker under a later heading describes that section, not the page above it.
+    late = (
+        "# Setup\n\n"
+        "Run `projectman add-project` to attach a repo in hub mode.\n\n"
+        "## History\n\n"
+        "> **History (2026-09-08, EPIC-PM-6):** hub mode has been **removed**.\n"
+    )
+    assert 3 in [number for number, _, _ in _hub_offenders(late)]
+
+    # The ID prefix is live surface (ADR-004, decision 2) and must not be caught.
+    keeps = (
+        "# IDs\n\n"
+        "Stories are `US-PREFIX-N`; run `projectman init --prefix APP` and\n"
+        "`--prefix=APP` sets `prefix: APP` in config.yaml.\n"
+    )
+    assert list(_hub_offenders(keeps)) == []
+
+    # …but a tool argument named `prefix` is not.
+    tool_arg = '# Tools\n\nCall `pm_next(prefix="API")` for the API store.\n'
+    assert [number for number, _, _ in _hub_offenders(tool_arg)] == [3]

@@ -5,8 +5,8 @@ US-PM-15 gates three tool families behind config flags. This file is the
 [`reference/mcp-tools.md`](../reference/mcp-tools.md) is a number and not an
 assumption.
 
-- Measured: **2026-09-06**
-- Commit basis: **0930a7bdc59b9b41daf4e98c0e2d18e4efedaa5f (working tree dirty)**
+- Measured: **2026-09-08**
+- Commit basis: **57bf7c2a4db8e7b66186db8f8e8efad65da53e8e (working tree dirty)**
 - Command: `python -m tools.usage_telemetry.tool_list_size --markdown` (run from the repo root)
 - Serialisation: `mcp.types.ListToolsResult.model_dump_json(by_alias=True, exclude_none=True)` — exactly what the MCP
   session writes as the `result` of a `tools/list` request, so this moves if
@@ -16,9 +16,9 @@ assumption.
 
 | configuration | tools | `tools/list` bytes |
 | --- | ---: | ---: |
-| all families enabled | 47 | 92,596 |
-| default (`maintenance`, `web` all off) | 42 | 88,385 |
-| **saved** | **5** | **4,211 (4.55%)** |
+| all families enabled | 47 | 88,699 |
+| default (`maintenance`, `web` all off) | 42 | 84,786 |
+| **saved** | **5** | **3,913 (4.41%)** |
 
 ## Per family
 
@@ -28,7 +28,7 @@ same bytes plus one framing comma per tool.
 
 | family | tools | schema B | payload B |
 | --- | ---: | ---: | ---: |
-| `maintenance` | 2 | 2,563 | 2,565 |
+| `maintenance` | 2 | 2,265 | 2,267 |
 | `web` | 3 | 1,643 | 1,646 |
 
 ## Keeping it honest
@@ -42,18 +42,18 @@ commit the regenerated file.
 ```json
 {
   "all_families": {
-    "bytes": 92596,
+    "bytes": 88699,
     "tools": 47
   },
   "command": "python -m tools.usage_telemetry.tool_list_size --markdown",
   "default": {
-    "bytes": 88385,
+    "bytes": 84786,
     "tools": 42
   },
   "families": {
     "maintenance": {
-      "payload_delta_bytes": 2565,
-      "schema_bytes": 2563,
+      "payload_delta_bytes": 2267,
+      "schema_bytes": 2265,
       "tools": 2
     },
     "web": {
@@ -63,8 +63,8 @@ commit the regenerated file.
     }
   },
   "reduction": {
-    "bytes": 4211,
-    "pct": 4.55,
+    "bytes": 3913,
+    "pct": 4.41,
     "tools": 5
   },
   "schema": "projectman.tool-list-size/1",

@@ -652,14 +652,11 @@ def format_attach_result(result: dict) -> str:
 #
 # ``migrate_to_worktree`` above turns an *existing* ``.project/`` into a
 # worktree branch, and ``attach_worktree`` mounts a branch that already exists.
-# A hub adding a brand-new subproject has neither: the submodule was just
-# cloned, so either ``origin/projectman`` came down with it (attach) or the
-# branch has to be conjured out of nothing (create, mount, scaffold, commit).
-# The two functions below are that third case, factored so that
-# ``hub.registry.add_project`` (US-PM-31-7) and ``migrate-hub`` (US-PM-31-8)
-# share one piece of git plumbing: ``create_store_branch`` takes a ``populate``
-# callback that fills the freshly mounted directory — a scaffolder for
-# add-project, a copy of the hub-side store for migrate-hub.
+# A repo that has neither — no ``.project/`` to move and no ``projectman``
+# branch to mount — is the third case: the branch has to be conjured out of
+# nothing (create, mount, scaffold, commit). ``create_store_branch`` below
+# does that, taking a ``populate`` callback that fills the freshly mounted
+# directory, and ``ensure_store_branch`` picks between attaching and creating.
 
 
 def create_store_branch(
@@ -955,3 +952,31 @@ def describe_store_state(state: dict) -> str:
     if state.get("branch") and not state.get("upstream"):
         bits.append("no upstream")
     return ", ".join(bits)
+
+
+def store_status_payload(root: Path) -> dict:
+    """Git state of this project's one store, wrapped for display.
+
+    The shape both ``pm_git_status`` and ``projectman git-status`` render:
+    :func:`store_git_state` plus a one-line ``description``, under
+    ``pm_store``, with a ``summary`` line beside it.
+
+    Never raises — an unreadable state degrades to the all-clean shape with
+    ``branch`` None, because a status call must not fail its caller.
+    """
+    try:
+        state = store_git_state(root)
+    except Exception:  # noqa: BLE001 — status must never fail the dashboard
+        state = {
+            "path": ".project", "worktree": False, "branch": None,
+            "detached": False, "head": None, "upstream": None,
+            "ahead": 0, "behind": 0, "dirty": False, "dirty_count": 0,
+        }
+    try:
+        state["description"] = describe_store_state(state)
+    except Exception:  # noqa: BLE001
+        state["description"] = ".project"
+    return {
+        "summary": f"PM store: {state['description']}",
+        "pm_store": state,
+    }

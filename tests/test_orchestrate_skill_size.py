@@ -11,8 +11,8 @@ because rendering is what the agent actually sees, and the tracked copy under
 skips ``refresh-skills`` is caught rather than silently shipped.
 
 The last test is a falsification guard: the pre-rewrite template, read straight
-out of git HEAD and pushed through the very same renderer, is asserted to be
-*rejected*.  A size check that never fires is not evidence, and this one is
+out of the pinned commit below and pushed through the very same renderer, is
+asserted to be *rejected*.  A size check that never fires is not evidence, and this one is
 shown to bite.
 """
 
@@ -28,6 +28,13 @@ MAX_CHARS = 9000
 
 TEMPLATE_NAME = "skill_pm_orchestrate.md.j2"
 TEMPLATE_REPO_PATH = f"src/projectman/templates/{TEMPLATE_NAME}"
+
+#: the last commit before the US-PM-25-6 rewrite, holding the 31,731-byte
+#: pre-rewrite template.  It is a SHA and not ``HEAD`` on purpose: since the
+#: rewrite landed, ``HEAD`` carries the ~9,000-byte shortened template, which
+#: is *inside* the budget and would make this falsification guard vacuous.
+#: This history is post-rewrite, so the SHA is stable.
+PRE_REWRITE_COMMIT = "1061084"
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 RENDERED_SKILLS = REPO_ROOT / ".claude" / "skills"
@@ -109,8 +116,8 @@ def test_rendered_skill_links_the_design_doc_exactly_once():
 def test_the_size_check_would_have_failed_on_the_pre_rewrite_template(tmp_path, monkeypatch):
     """Falsification guard: the old template, same renderer, must be rejected.
 
-    The template at git HEAD is the 31,731-byte pre-rewrite version.  It is
-    written into a temporary template dir and rendered through
+    The template at ``PRE_REWRITE_COMMIT`` is the 31,731-byte pre-rewrite
+    version.  It is written into a temporary template dir and rendered through
     ``_render_template`` itself (via a patched ``_template_dir``), so the guard
     exercises the production renderer rather than a lookalike.  If git is
     unavailable — a source tarball, a shallow CI checkout — the guard falls
@@ -120,7 +127,7 @@ def test_the_size_check_would_have_failed_on_the_pre_rewrite_template(tmp_path, 
     old_source = None
     try:
         old_source = subprocess.run(
-            ["git", "show", f"HEAD:{TEMPLATE_REPO_PATH}"],
+            ["git", "show", f"{PRE_REWRITE_COMMIT}:{TEMPLATE_REPO_PATH}"],
             cwd=REPO_ROOT,
             capture_output=True,
             text=True,
@@ -138,7 +145,8 @@ def test_the_size_check_would_have_failed_on_the_pre_rewrite_template(tmp_path, 
         # _render_template swallows render errors and returns a short stub; a
         # stub would make the guard pass for the wrong reason.
         assert not oversized.endswith("template not found\n"), (
-            f"the HEAD copy of {TEMPLATE_NAME} failed to render; guard is inconclusive"
+            f"the {PRE_REWRITE_COMMIT} copy of {TEMPLATE_NAME} failed to render; "
+            "guard is inconclusive"
         )
     else:  # pragma: no cover - only when git history is unavailable
         oversized = _render_orchestrate() + ("x" * MAX_CHARS)

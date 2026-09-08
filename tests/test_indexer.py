@@ -1,15 +1,6 @@
 """Tests for index generation."""
 
-import pytest
-
 from projectman.indexer import build_index, write_index
-from projectman.store import Store
-
-
-@pytest.fixture
-def hub_store(tmp_hub):
-    """Store backed by a hub project."""
-    return Store(tmp_hub)
 
 
 def test_build_empty_index(store):
@@ -138,16 +129,6 @@ def test_story_ac_and_task_counts_in_markdown(store):
             break
     else:
         raise AssertionError("US-TST-1 row not found")
-
-
-def test_hub_writes_readme_at_root(hub_store):
-    write_index(hub_store)
-    readme = (hub_store.root / "README.md").read_text()
-    assert "# test-hub" in readme
-    # Links should point into .project/
-    assert "[Epics](.project/INDEX-EPICS.md)" in readme
-    assert "[Stories](.project/INDEX-STORIES.md)" in readme
-    assert "[Tasks](.project/INDEX-TASKS.md)" in readme
 
 
 def test_epic_tags_column_in_markdown(store):
@@ -302,6 +283,6 @@ def test_task_depends_on_column_in_markdown(store):
             assert task_a.id in cells[7]
 
 
-def test_non_hub_does_not_write_root_readme(store):
+def test_write_index_does_not_write_root_readme(store):
     write_index(store)
     assert not (store.root / "README.md").exists()

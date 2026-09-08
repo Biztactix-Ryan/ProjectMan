@@ -22,14 +22,6 @@ class TestInit:
             assert Path(".project/stories").is_dir()
             assert Path(".project/tasks").is_dir()
 
-    def test_init_hub(self, runner, tmp_path):
-        with runner.isolated_filesystem(temp_dir=tmp_path):
-            result = runner.invoke(cli, ["init", "--name", "myhub", "--hub"])
-            assert result.exit_code == 0
-            assert Path("projects").is_dir()
-            assert Path(".project/roadmap").is_dir()
-            assert Path(".project/dashboards").is_dir()
-
     def test_init_already_exists(self, runner, tmp_path):
         with runner.isolated_filesystem(temp_dir=tmp_path):
             runner.invoke(cli, ["init", "--name", "proj"])

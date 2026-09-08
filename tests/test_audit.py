@@ -125,7 +125,9 @@ def _mixed_fixture(root):
         "US-TST-1", "Finished task", "Completed with no evidence recorded at all", points=2
     )
     store.create_task("US-TST-1", "Abandoned task", "This task was archived and abandoned")
-    store.update("US-TST-1-2", status="done")
+    # Run-stamped so done-without-evidence still fires on it: US-PM-43-6
+    # counts only completions that could have carried evidence.
+    store.update("US-TST-1-2", status="done", run_id="orch-test-1")
     store.update("US-TST-1", status="done", points=5)
 
     # Active story with nothing under it and no acceptance criteria.
@@ -199,8 +201,10 @@ EXPECTED_MIXED_REPORT = [
     "task — re-apply the criteria with pm_update to reconcile",
     "- [WARN] Story US-TST-4 has 1 test task(s) quoting an acceptance criterion "
     "that no longer exists",
-    "- [WARN] 1 done task(s) have no structured evidence on any run-log entry — "
-    "record files/tests/dod_met with the verdict",
+    "- [WARN] 1 done task(s) that could have carried evidence have none on any "
+    "run-log entry — record files/tests/dod_met with the verdict (counted only "
+    "where a run-log entry was written at or after this project's first "
+    "evidence, or the done transition carried a run_id)",
 ]
 
 

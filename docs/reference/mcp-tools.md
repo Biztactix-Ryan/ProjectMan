@@ -174,45 +174,6 @@ The successes are already durable, so re-sending them only repeats work — and
 for `pm_archive_many` it would be a second archive of an already-archived
 item.
 
-## Addressing a store
-
-No tool takes a `project` name. In a hub, a store is named by the **prefix**
-that already appears inside its IDs — the `API` in `US-API-3` — and there are
-only two ways a call says which store it means:
-
-1. **It has an ID.** The prefix inside the ID *is* the address.
-   `pm_get("US-API-3")`, `pm_update("US-WEB-1-2", status="done")` and
-   `pm_accept("US-API-3-1", note=…)` need nothing else, and a multi-ID call
-   may mix stores freely — `pm_get("US-API-1,US-WEB-1")` reads each item from
-   its own project. An ID whose prefix nobody in the hub claims is a coded
-   `not_found` listing the prefixes that do exist; a prefix that belongs to a
-   registered-but-unmounted project is a `not_found` carrying the attach hint.
-2. **It has no ID** — `pm_status`, `pm_board`, `pm_create_story`, … . These
-   take an optional `prefix`:
-   - **Omitted, on a read, status or git verb** → the hub's own `.project`.
-     It is not a fan-out: `pm_status()` in a hub reports the hub's own totals
-     with a `subprojects` list beside them, and `pm_status(prefix="API")`
-     reports API's; `pm_commit()` commits the hub's own store, and
-     `pm_commit(prefix="API")` commits API's, in API's own repo.
-   - **Omitted, on a verb that creates** (`pm_create_story`,
-     `pm_create_sprint`, `pm_auto_scope`) → a coded `invalid` error. A hub has
-     no default project to create in, and quietly picking one would file new
-     work where nobody is looking for it.
-   - **Given** → that project's store, resolved exactly as an ID's prefix is,
-     with the same two `not_found` failures.
-
-   `pm_create_epic` is the exception on both counts: it takes **no** `prefix`,
-   because an epic has no project to belong to. In a hub it always writes to
-   the hub's own store, and a subproject story reaches it through `epic_id`.
-
-Three verbs already answered a hub *as a whole* before any of this, and still
-do when the prefix is omitted: `pm_burndown` rolls the points up across every
-project, `pm_git_status` reports every subproject, and `pm_malformed` scans
-every quarantine. A prefix narrows each of them to one store.
-
-**Outside a hub none of this applies**: there is one store, `prefix` is
-ignored wherever it appears, and every response is what it always was.
-
 ## ID argument aliases
 
 Every tool that acts on an item accepts **two spellings of its ID**: the
@@ -272,9 +233,8 @@ Parameters that take both shapes:
 
 ## Query Tools
 
-### pm_status(prefix?)
+### pm_status()
 Get project status summary.
-- **prefix** (optional): In a hub, the prefix of the project whose store to use (`API`). Omit for the hub's own store. Ignored outside a hub. See [Addressing a store](#addressing-a-store).
 - **Returns**: Epic/story/task counts, points, completion percentage, status breakdown
 
 ### pm_get(id, include_log?, fields?)
@@ -292,13 +252,12 @@ Get every item of a type (or a specific ID list) with full data in a single call
 - **fields** (optional): Comma-separated key names to return, with exactly the semantics it has on `pm_get` — everything else is omitted, `id` is always kept, whitespace is stripped, and an unknown name is a hard error listing the valid names for that item type. Valid names are the item's own serialized keys, so a heterogeneous `ids` list must name keys every listed item has. **If both are given, `fields` wins** — explicit beats preset.
 - **Returns**: Items with frontmatter and body content. Much faster than calling `pm_get` for each item individually. Omitting both `brief` and `fields` leaves the response byte-identical to before they existed. The `ids` path honours both the same way; a missing ID is still an `{id, error}` entry, but a bad field name fails the whole call rather than hiding in one entry.
 
-### pm_docs(doc?, prefix?)
+### pm_docs(doc?)
 Read project documentation files.
 - **doc** (optional): Specific doc to read — `project`, `infrastructure`, `security`, `vision`, `architecture`, `decisions`
-- **prefix** (optional): In a hub, the prefix of the project whose store to use (`API`). Omit for the hub's own store. Ignored outside a hub. See [Addressing a store](#addressing-a-store).
 - **Returns**: Document content, or an expected negative `{outcome: expected_negative, status: not_created, message, doc, file}` when that document has not been created
 
-### pm_next(text?, append?, clear?, prefix?)
+### pm_next(text?, append?, clear?)
 Read, write or clear the short note the next session should see first — the
 one that carries "we decided to fix X by doing Y and Z" across a context
 clear. It is scratch text with one owner and a short life: plain markdown in
@@ -308,30 +267,26 @@ between machines.
 - **text** (optional): The note to save. Omit to read it, which is the common call.
 - **append** (optional, default `false`): Add `text` below the existing note under a `### <ISO date>` heading instead of replacing it. Requires `text`.
 - **clear** (optional, default `false`): Delete the note. Cannot be combined with `text`.
-- **prefix** (optional): In a hub, the prefix of the project whose store to use (`API`). Omit for the hub's own store. Ignored outside a hub. See [Addressing a store](#addressing-a-store).
 - **Returns**: `{note: <text>}`, or `{note: null, message: "no note saved"}` when there is none; `{cleared: true|false}` for `clear`
 - **Errors**: `text` together with `clear`; `append` without `text`
 - Each write and each clear logs one activity event (`item_type: note`, `item_id: NEXT`).
 
-### pm_active(prefix?, tag?, limit?, offset?, stale_after?)
+### pm_active(tag?, limit?, offset?, stale_after?)
 List active/in-progress items, flagging stale claims.
 - **tag** (optional): Filter items by tag
 - **limit** (optional, default `20`): Max items per list
 - **offset** (optional, default `0`): Starting index for pagination
 - **stale_after** (optional): Hours a claim may sit before it is flagged. Omit to use the project's `stale_claim_hours` (default `2`).
-- **prefix** (optional): In a hub, the prefix of the project whose store to use (`API`). Omit for the hub's own store. Ignored outside a hub. See [Addressing a store](#addressing-a-store).
 - **Returns**: Active stories and in-progress tasks with totals and `has_more` pagination flag, plus [claim staleness](#claim-staleness) — `claim_age` / `claimed_by_run` / `stale: true` on each in-progress task, a `stale_tasks` id list and the `stale_after_hours` in force
 
-### pm_search(query, prefix?, tag?)
+### pm_search(query, tag?)
 Search by keyword or semantic similarity.
 - **query**: Search string
 - **tag** (optional): Filter results by tag
-- **prefix** (optional): In a hub, the prefix of the project whose store to use (`API`). Omit for the hub's own store. Ignored outside a hub. See [Addressing a store](#addressing-a-store).
-- **Returns**: Ranked results with scores
+- **Returns**: `results` — ranked hits with scores — and `skipped`, the number of item files whose frontmatter would not parse. `skipped: 0` means the whole store was read; anything higher means the sweep was partial and one bad file was stepped over rather than aborting the search (`pm_malformed` names the files).
 
-### pm_board(prefix?, assignee?, tag?, limit?, stale_after?)
+### pm_board(assignee?, tag?, limit?, stale_after?)
 Get the task board grouped by workflow state.
-- **prefix** (optional): In a hub, the prefix of the project whose store to use (`API`). Omit for the hub's own store. Ignored outside a hub. See [Addressing a store](#addressing-a-store).
 - **assignee** (optional): Filter by assignee
 - **tag** (optional): Filter tasks by tag
 - **limit** (optional, default `10`): Max items per board group. Totals are always shown in the summary.
@@ -361,17 +316,15 @@ A task claimed before this metadata existed has neither `claim_age` nor
 A stale claim is an abandoned one. Release it — `pm_release(id, note="stale
 claim from a previous run")` — rather than waiting on it.
 
-### pm_burndown(prefix?)
+### pm_burndown()
 Get burndown data.
-- **prefix** (optional): In a hub, the prefix of the project whose store to use (`API`). Omit for the roll-up across every project — burndown's hub answer has always been the aggregate. Ignored outside a hub. See [Addressing a store](#addressing-a-store).
 - **Returns**: Total, completed, remaining points with completion percentage
 
-### pm_context(prefix?, limit?, max_doc_chars?)
-Get combined hub and project context.
-- **prefix** (optional): In a hub, the prefix of the project whose store to use (`API`). Omit for the hub's own store. Ignored outside a hub. See [Addressing a store](#addressing-a-store).
+### pm_context(limit?, max_doc_chars?)
+Get the project context an agent needs to start work.
 - **limit** (optional, default `20`): Max epics/stories to include
 - **max_doc_chars** (optional, default `4000`): Max characters per embedded doc (`0` = no limit); truncated docs point at `pm_docs` for the full text
-- **Returns**: Hub vision/architecture + project docs + active epics/stories (with totals)
+- **Returns**: The next-session note (when one is saved), the project docs, and active epics/stories (with totals)
 
 ### pm_epic(id, limit?, offset?)
 Get epic details with story and task rollup.
@@ -379,31 +332,26 @@ Get epic details with story and task rollup.
 - **limit** (optional, default `10`): Max stories to return per page
 - **offset** (optional, default `0`): Starting index for story pagination
 - **Returns**: Epic metadata, paginated linked stories/tasks, completion percentage (rollup always covers all stories), `has_more` and `next_offset` for pagination
-- **Hub epics roll up every store**: an epic in the hub's own store (`EPIC-HUB-1`) gathers linked stories from the hub *and* every attached subproject — one flattened list that `limit`/`offset` page through, with each story row tagged `project`. Its `rollup` gains `by_project` (`{name, prefix, stories, total_points, completed_points}` per contributing store, hub first then registration order) and, when a registered subproject's store is not mounted, a `not_attached` list of `{name, prefix, status, hint}` rows so a partial rollup says so instead of silently omitting a repo. A subproject epic, and every epic outside a hub, returns the shape above unchanged — no `project`, no `by_project`.
 
 ## Write Tools
 
-### pm_create_story(title, description, priority?, points?, epic_id?, acceptance_criteria?, tags?, depends_on?, prefix?)
+### pm_create_story(title, description, priority?, points?, epic_id?, acceptance_criteria?, tags?, depends_on?)
 Create a new user story.
 - **epic_id** (optional): Link story to an epic
 - **acceptance_criteria** (optional): List of acceptance criteria, one entry per criterion — e.g. `["Users can log in", "Error shown on invalid password"]`. Pass a JSON list, **not** a comma-joined string: criteria are natural language, so a comma inside one is punctuation and is never treated as a separator. A bare string is accepted and taken as exactly one criterion. Each criterion auto-generates a test task.
 - **tags** (optional): Tags — a list `["security", "mvp"]` or a comma-separated string `"security,mvp"` ([both shapes](#token-list-parameters))
 - **depends_on** (optional): Story or task IDs this story depends on — a list or a comma-separated string ([both shapes](#token-list-parameters))
-- **prefix** (optional): In a hub, the prefix of the project to create in (`API`) — **required** there, since a hub has no default project; omitting it is a coded `invalid` error. Ignored outside a hub. See [Addressing a store](#addressing-a-store).
 - **Returns**: Created story `id`/`title`/`status` plus any set fields, and `id`/`title` of auto-created test tasks
 
 ### pm_create_epic(title, description, priority?, target_date?, tags?)
 Create a new epic.
 - **tags** (optional): Tags — a list or a comma-separated string ([both shapes](#token-list-parameters))
-- **No `prefix`**: epics are hub-level. In a hub the epic is written to the hub's own `.project` and carries the hub's prefix (`EPIC-HUB-1`), so stories from any subproject can hang off it; outside a hub there is one store and nothing changed. See [Addressing a store](#addressing-a-store).
 - **Returns**: Created epic metadata
 
 A story links to an epic with `epic_id`, on `pm_create_story` or `pm_update`.
-The link is **checked before it is written**: the prefix inside the `epic_id`
-names the store the epic must live in — the hub's, or the story's own — and an
-epic that exists in neither is a coded `not_found`, not a dangling reference
-the audit finds weeks later. `pm_audit` on a subproject knows the hub's epic
-IDs, so an upward link is never reported as `orphaned-epic-reference`.
+The link is **checked before it is written**: an `epic_id` that names no epic
+in the store is a coded `not_found`, not a dangling reference the audit finds
+weeks later.
 
 ### pm_create_task(story_id, title, description, points?, tags?, depends_on?)
 Create a task under a story.
@@ -431,7 +379,7 @@ Update an epic, story, or task.
 - **note** (optional): Run-log note describing what was accomplished or blocked. Notes longer than 4096 characters are truncated server-side with a visible `...[truncated N chars]` marker rather than rejected, so the status/outcome write always lands. Defaults outcome to `info` if outcome is omitted.
 - **evidence** (optional): Structured proof for the run-log entry — an object with `files` (paths changed), `tests` (`{command, passed, summary?}` objects), `dod_met` and `dod_unmet`. **Lists go here, never in the note**; the note stays a one-line human summary. See [Structured evidence](#structured-evidence) below.
 - Passing `evidence` alone — with neither `outcome` nor `note` — still appends an entry (`outcome: info`, empty note).
-- **run_id** (optional): Opaque id of the orchestrator run making this edit, stamped on the activity-log event so [`pm_activity(run_id=...)`](#pm_activityitem_id-event_type-from_date-to_date-actor-run_id-limit-offset-prefix) returns it beside that run's claims and verdicts. Never written to frontmatter, and never a claim — use `pm_grab` for that. Omit on ordinary edits: they belong to no run.
+- **run_id** (optional): Opaque id of the orchestrator run making this edit, stamped on the activity-log event so [`pm_activity(run_id=...)`](#pm_activityitem_id-event_type-from_date-to_date-actor-run_id-limit-offset) returns it beside that run's claims and verdicts. Never written to frontmatter, and never a claim — use `pm_grab` for that. Omit on ordinary edits: they belong to no run.
 - Epic status values: `draft`, `active`, `done`, `archived`
 - Story status values: `backlog`, `ready`, `active`, `done`, `archived`
 - Task status values: `todo`, `in-progress`, `review`, `done`, `blocked`
@@ -580,21 +528,19 @@ middle answer between `pm_accept` and `pm_retry`.
 - Always writes `status: review` + `outcome: partial`, and clears the assignee. `partial` is the outcome the vocabulary keeps losing — ~90% of run-log entries say `success` — and this verb is how it gets said.
 - **Returns**: `reviewed:` with the full `task`, `from_status` and `from_assignee`, plus the `note_truncated` fields (see `pm_update`) when the note had to be truncated
 
-### pm_update_doc(doc, content, prefix?)
+### pm_update_doc(doc, content)
 Update a project documentation file.
 - **doc**: Document name — `project`, `infrastructure`, `security`, `vision`, `architecture`, `decisions`
 - **content**: New document content
-- **prefix** (optional): In a hub, the prefix of the project whose store to use (`API`). Omit for the hub's own store. Ignored outside a hub. See [Addressing a store](#addressing-a-store).
 
 ## Sprint Tools
 
-### pm_create_sprint(name, goal?, start_date?, end_date?, planned_stories?, prefix?)
+### pm_create_sprint(name, goal?, start_date?, end_date?, planned_stories?)
 Create a sprint with a name, goal, dates, and planned stories.
 - **name**: Sprint name (e.g. `Sprint 1 — Auth & Onboarding`)
 - **goal** (optional): Sprint goal summary
 - **start_date** / **end_date** (optional): Dates in `YYYY-MM-DD` format
 - **planned_stories** (optional): Story IDs — a list `["US-PRJ-1", "US-PRJ-2"]` or a comma-separated string `"US-PRJ-1,US-PRJ-2"` ([both shapes](#token-list-parameters))
-- **prefix** (optional): In a hub, the prefix of the project to create in (`API`) — **required** there, since a hub has no default project; omitting it is a coded `invalid` error. Ignored outside a hub. See [Addressing a store](#addressing-a-store).
 - **Returns**: Created sprint metadata, plus `dependency_warnings` if any planned story has unmet dependencies external to the sprint
 
 ### pm_get_sprint(sprint_id)
@@ -602,12 +548,11 @@ View sprint details with live progress per story.
 - **sprint_id**: Sprint ID (e.g. `SPRINT-PRJ-1`) (alias: `id`)
 - **Returns**: Sprint metadata plus per-story rollup (task counts, points completed vs. remaining)
 
-### pm_list_sprints(status?, prefix?, brief?, fields?)
+### pm_list_sprints(status?, brief?, fields?)
 List sprints, optionally filtered by status.
 - **status** (optional): Filter by `planning`, `active`, `completed`, or `cancelled`
 - **brief** (optional, default `false`): A fixed projection that drops the free-text. Keeps `id`, `name`, `status`, `start_date`, `end_date`, `planned_points`, `completed_points` and `planned_stories`, and omits `goal` — which on a long history is most of the payload by weight. `pm_list_sprints(status="completed", brief=True)` is the scan-the-history call.
 - **fields** (optional): Comma-separated key names to return, with the same semantics as on `pm_get` — everything else is omitted, `id` is always kept, and an unknown name is a hard error listing the valid sprint keys. **If both are given, `fields` wins** — explicit beats preset.
-- **prefix** (optional): In a hub, the prefix of the project whose store to use (`API`). Omit for the hub's own store. Ignored outside a hub. See [Addressing a store](#addressing-a-store).
 - **Returns**: `sprints` (with name, status, goal, and dates) and `count`. `count` is present in every mode, and omitting both `brief` and `fields` leaves the response byte-identical to before they existed.
 
 ### pm_update_sprint(sprint_id, name?, status?, goal?, start_date?, end_date?, planned_stories?, run_id?)
@@ -628,26 +573,23 @@ Get estimation context with calibration guidelines.
 Get scoping context for story decomposition.
 - **id**: Story ID to scope into tasks (alias: `story_id`)
 
-### pm_auto_scope(mode?, prefix?, limit?, offset?)
+### pm_auto_scope(mode?, limit?, offset?)
 Discover what needs scoping — returns codebase signals or undecomposed stories.
 - **mode** (optional): `"full"` for codebase scan (new projects) or `"incremental"` for scoping existing stories. Auto-detected if omitted.
-- **prefix** (optional): In a hub, the prefix of the project to create in (`API`) — **required** there, since a hub has no default project; omitting it is a coded `invalid` error. Ignored outside a hub. See [Addressing a store](#addressing-a-store).
 - **limit** (optional, default `5`): Max stories per batch in incremental mode
 - **offset** (optional, default `0`): Starting index for pagination in incremental mode
 - **Returns**: Full scan returns documentation, build files, source tree, and creation guidance. Incremental returns a paginated batch of undecomposed story IDs/titles with `has_more` and `next_offset` for pagination.
 
-### pm_audit(include_info?, prefix?, since?)
-Run project audit for drift detection. Covers stories, tasks, epics, documentation, hub docs, assignments, dependencies, malformed files, and completion evidence — the full check list with severities is in [cli.md](cli.md#projectman-audit).
-- Findings include `done-without-evidence` (warning): one aggregate finding listing every non-archived `done` task whose run log carries no entry with structured `evidence`. A done task with no run log at all qualifies; an `evidence` object with all lists empty does not (presence, never truthiness). It is a warning, not an error, so it never halts an orchestrator run — every task completed before evidence shipped trips it. Use `pm_run_log(id, has_evidence=false)` to see the evidence-less entries for one item.
+### pm_audit(include_info?, since?)
+Run project audit for drift detection. Covers stories, tasks, epics, documentation, assignments, dependencies, malformed files, and completion evidence — the full check list with severities is in [cli.md](cli.md#projectman-audit).
+- Findings include `done-without-evidence` (warning): one aggregate finding listing every non-archived `done` task that **could have carried evidence** and whose run log carries no entry with structured `evidence`. A completion could have carried evidence when its run log has an entry written at or after the first evidence-bearing entry anywhere in that project (the contract was in use by then), or when its transition to `done` carries a `run_id` (an orchestrator accepted it). Anything else is a pre-contract completion and is not counted: a task with no run log and no run-stamped completion has nothing for evidence to hang off, and a verdict written before the project had ever recorded evidence could not have carried any, so the warning could never be cleared without rewriting history. The line is the project's own first evidence, never a date — in a project that has never recorded any, no bare verdict counts but a run-stamped `done` still does. An `evidence` object with all lists empty does count as evidence (presence, never truthiness). It is a warning, not an error, so it never halts an orchestrator run. Use `pm_run_log(id, has_evidence=false)` to see the evidence-less entries for one item.
 - **include_info** (optional, default `false`): Include info-level findings in the response. By default only errors and warnings are returned, with omitted info findings summarized as a count. The full report is always written to `DRIFT.md`.
-- Every report starts with a `digest: <16 hex chars>` line, immediately after the `# Project Audit Report` title and before the `**Errors:** …` counts. It is a fixed-width fingerprint of everything the audit reads — item files, `config.yaml`, project and hub docs, `malformed/`, `logs/*.jsonl`, sprints, indexes — hashed by content, so two calls with no writes between them return the same digest and any change to audit inputs returns a different one. The same digest appears in the default response, the `include_info` response, and `DRIFT.md`. Audit output and caches (`DRIFT.md` itself, `embeddings.db`) are excluded, so an audit never invalidates its own answer. Keep the digest between polls to tell an unchanged project from a changed one without diffing reports.
+- Every report starts with a `digest: <16 hex chars>` line, immediately after the `# Project Audit Report` title and before the `**Errors:** …` counts. It is a fixed-width fingerprint of everything the audit reads — item files, `config.yaml`, project docs, `malformed/`, `logs/*.jsonl`, sprints, indexes — hashed by content, so two calls with no writes between them return the same digest and any change to audit inputs returns a different one. The same digest appears in the default response, the `include_info` response, and `DRIFT.md`. Audit output and caches (`DRIFT.md` itself, `embeddings.db`) are excluded, so an audit never invalidates its own answer. Keep the digest between polls to tell an unchanged project from a changed one without diffing reports.
 - **since** (optional): A digest from a previous `pm_audit` call. If it matches the current digest, the tool answers in under 100 bytes — `digest: <hex>`, `unchanged: true`, and `errors: N | warnings: M` from the last report — without running a single check and without rewriting `DRIFT.md`. If it differs, is absent, is stale, or is malformed, the full audit runs exactly as it otherwise would; an unusable `since` is never an error.
 - **Why `since` does not weaken the health check**: the digest is a content hash of everything the audit reads, so any state change that could produce a new finding necessarily changes the digest. A matching digest therefore means byte-identical inputs, which means identical findings — a new ERROR-level finding cannot hide behind a short-circuit. The hash is deliberately over-sensitive: an unrelated write costs one extra full report, whereas under-sensitivity would hide a real finding. Orchestrators should keep polling on their normal cadence and simply pass the last digest as `since`.
-- **prefix** (optional): In a hub, the prefix of the project whose store to use (`API`). Omit for the hub's own store. Ignored outside a hub. See [Addressing a store](#addressing-a-store).
 
-### pm_reindex(prefix?)
+### pm_reindex()
 Rebuild project index and embeddings.
-- **prefix** (optional): In a hub, the prefix of the project whose store to use (`API`). Omit for the hub's own store. Ignored outside a hub. See [Addressing a store](#addressing-a-store).
 
 ## Web Dashboard Tools
 
@@ -675,15 +617,14 @@ Check if the web server is running.
 
 ## Malformed File Tools
 
-### pm_malformed(prefix?)
+### pm_malformed()
 Get the next malformed file from quarantine.
-- **prefix** (optional): In a hub, the prefix of the project to scan (`API`). Omit to scan every store, hub included. Ignored outside a hub. See [Addressing a store](#addressing-a-store).
 - **Returns**: File content and metadata for the next malformed file, one at a time
 
-### pm_fix_malformed(filename, id, title, item_type, body?, status?, priority?, points?, story_id?, prefix?)
+### pm_fix_malformed(filename, id, title, item_type, body?, status?, priority?, points?, story_id?)
 > Break-glass — off the tool list unless `tools.maintenance: true`. CLI:
 > `projectman fix-malformed <filename> --id ID --title T --type story|task
-> [--body B] [--status S] [--priority P] [--points N] [--story-id SID] [--project NAME]`.
+> [--body B] [--status S] [--priority P] [--points N] [--story-id SID]`.
 
 Fix a malformed file by providing corrected metadata.
 - **filename**: Name of the malformed file
@@ -695,36 +636,31 @@ Fix a malformed file by providing corrected metadata.
 - **priority** (optional): Corrected priority (stories only)
 - **points** (optional): Corrected points
 - **story_id** (optional): Parent story ID (tasks only)
-- **prefix** (optional): In a hub, the prefix of the project whose store to use (`API`). Omit for the hub's own store. Ignored outside a hub. See [Addressing a store](#addressing-a-store).
 - **Returns**: Fixed file metadata
 
-### pm_restore(filename, prefix?)
+### pm_restore(filename)
 > Break-glass — off the tool list unless `tools.maintenance: true`. CLI:
-> `projectman restore <filename> [--project NAME]`.
+> `projectman restore <filename>`.
 
 Restore a malformed file back to its original location without fixes.
 - **filename**: Name of the malformed file
-- **prefix** (optional): In a hub, the prefix of the project whose store to use (`API`). Omit for the hub's own store. Ignored outside a hub. See [Addressing a store](#addressing-a-store).
 - **Returns**: Restored file path
 
 ## Git & Push Tools
 
-### pm_git_status(prefix?)
-Get the git state of every hub subproject's PM store, plus the hub's own store.
-- **prefix** (optional): In a hub, the prefix of the project to report on (`API`). Omit for every subproject — this verb's hub answer has always been the whole dashboard. Ignored outside a hub. See [Addressing a store](#addressing-a-store).
-- **Returns**: One row per registered project, read through the same worktree helpers `pm_commit` and `pm_push` use, so it reports the branch that actually owns that subproject's PM data: `name`, `prefix`, `attached`, `exists`, `branch` (the store branch — `projectman`), `checkout_branch` (the submodule's own code branch, a separate fact), `worktree`, `detached`, `upstream`, `dirty`, `dirty_count`, `ahead`, `behind`, `last_commit` (the store's last commit, i.e. the last PM change) and `issues`. Plus a `pm_store` entry (`path`, `worktree`, `branch`, `dirty`, `dirty_count`, `ahead`, `behind`, `upstream`, `description`) describing this root's own `.project/` — after [`migrate-worktree`](cli.md#projectman-migrate-worktree) that is the `projectman` branch, reported distinctly from `main`
-- A subproject whose store is not mounted is a **row**, not an error: `attached: false`, `status: not attached` and a `hint` naming the two commands that attach one ([`migrate-hub`](cli.md#projectman-migrate-hub) or [`add-project`](cli.md#projectman-add-project)). Deploy-branch alignment is not reported — a read-only rollup has no opinion about how a subproject deploys; [`projectman sync`](cli.md#projectman-sync) is what re-attaches a missing store
+### pm_git_status()
+Get the git state of this project's PM store — the branch that owns `.project/`.
+- **Returns**: A `summary` line and a `pm_store` entry (`path`, `worktree`, `branch`, `detached`, `head`, `upstream`, `ahead`, `behind`, `dirty`, `dirty_count`, `description`), read through the same worktree helpers `pm_commit` and `pm_push` use, so it reports the branch that actually owns the PM data — after [`migrate-worktree`](cli.md#projectman-migrate-worktree) that is `projectman`, reported distinctly from `main`
+- Read-only, and it never fails a dashboard: an unreadable git state degrades to the all-clean shape with `branch: null`
 
-### pm_commit(prefix?, message?)
-Commit one store's `.project/` changes.
-- **prefix** (optional): In a hub, the prefix of the project whose store to commit (`API`). Omit for the hub's own store. Ignored outside a hub. See [Addressing a store](#addressing-a-store).
+### pm_commit(message?)
+Commit this project's `.project/` changes.
 - **message** (optional): Commit message (auto-generated if omitted)
-- **Returns**: Commit hash, committed-file count and `on_branch` — the branch the commit landed on: the checked-out branch for a plain `.project/`, `projectman` when the store is a worktree, which is what a subproject store always is (the message is echoed only when auto-generated). Or an expected negative `{outcome: expected_negative, status: nothing_to_commit, message}` when there is nothing to commit
+- **Returns**: Commit hash, committed-file count and `on_branch` — the branch the commit landed on: the checked-out branch for a plain `.project/`, `projectman` when the store is a worktree (the message is echoed only when auto-generated). Or an expected negative `{outcome: expected_negative, status: nothing_to_commit, message}` when there is nothing to commit
 
-### pm_push(prefix?)
-Push one store's committed changes to remote.
-- **prefix** (optional): In a hub, the prefix of the project whose store to push (`API`). Omit for the hub's own store. Ignored outside a hub. See [Addressing a store](#addressing-a-store).
-- **Returns**: `pushed`, `branch`, `remote`, `worktree` and `store`. Only the branch that owns the named store is pushed — `projectman` for a worktree store (every subproject store, and a hub or project after `migrate-worktree`), the checked-out branch otherwise. A hub pushes nothing on a subproject's behalf: name the project and its own repo's branch is what moves. A detached store, a missing remote, or a git refusal is a `store` error; an unknown prefix is `not_found`
+### pm_push()
+Push this project's committed `.project/` changes to remote.
+- **Returns**: `pushed`, `branch`, `remote`, `worktree` and `store`. Only the branch that owns the store is pushed — `projectman` for a worktree store (a project after `migrate-worktree`), the checked-out branch otherwise. A detached store, a missing remote, or a git refusal is a `store` error
 
 ## Run Log
 
@@ -783,7 +719,7 @@ append a run-log entry: `pm_accept`, `pm_review`, `pm_retry`, `pm_park`,
 
 ## Activity Log
 
-### pm_activity(item_id?, event_type?, from_date?, to_date?, actor?, run_id?, limit?, offset?, prefix?)
+### pm_activity(item_id?, event_type?, from_date?, to_date?, actor?, run_id?, limit?, offset?)
 Query the activity log with filtering and pagination.
 - **item_id** (optional): Filter by item ID (alias: `id`)
 - **event_type** (optional): Filter by event type (`create`, `update`, `delete`, `archive`)
@@ -793,6 +729,5 @@ Query the activity log with filtering and pagination.
 - **run_id** (optional): Filter to the events **one orchestrator run** produced. `actor` is the same string for every run of every agent on a machine, so it is this — and only this — that answers "what did *this* run do". Everything a run needs for its final report is in the filtered slice: the claims it took (`pm_grab`), the claims it took *back* (`claimed_by_run: <old> → <this run>`), its releases, its verdicts (`pm_accept` / `pm_retry` / `pm_park` / `pm_review`), the **story closures those verdicts triggered** — `pm_accept` stamps the close with the run that caused it — and any `pm_update`, `pm_update_many` or `pm_update_sprint` the caller tagged with the same `run_id`. Ordinary untagged edits carry no run id and never match. This is how `/pm-orchestrate` Phase 4 rebuilds its report from the log instead of from memory, and how a restarted run reconstructs its predecessor's.
 - **limit** (optional, default `20`): Max entries to return
 - **offset** (optional, default `0`): Starting index for pagination
-- **prefix** (optional): In a hub, the prefix of the project whose store to use (`API`). Omit for the hub's own store. Ignored outside a hub. See [Addressing a store](#addressing-a-store).
 - **Returns**: `total`, `showing`, `has_more` and `entries` — formatted log entries, most recent first. Claim, release and verdict events additionally render `run <run_id>` after the actor, and carry the `claimed_at` / `claimed_by_run` before/after pair in their changes — `actor` alone cannot separate one orchestrator run from the next, so that is what a run reads to find the claims it left behind.
 - **`has_more`** is `true` when entries remain past this page. Page with `offset` until it is `false`: a report rebuilt from a silently truncated first page is a wrong report, which is precisely the failure the `run_id` filter exists to prevent.

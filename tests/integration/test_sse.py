@@ -248,7 +248,7 @@ class TestSseTransport:
         resp = sse_server.get("/api/search", params={"q": "auth"})
         assert resp.status_code == 200
         # Falls back to keyword search if embeddings unavailable
-        assert isinstance(resp.json(), list)
+        assert isinstance(resp.json()["results"], list)
 
     def test_api_create_epic(self, sse_server):
         """POST /api/epics creates an epic."""

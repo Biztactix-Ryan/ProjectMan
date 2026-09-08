@@ -1,6 +1,7 @@
 """Project configuration discovery and loading."""
 
 import os
+import sys
 from pathlib import Path
 from typing import Optional
 
@@ -46,9 +47,8 @@ def project_dir(root: Optional[Path] = None) -> Path:
 
 #: Parsed configs, keyed by the resolved absolute project root.  Each value
 #: is ``(stamp, config)`` where ``stamp`` is the ``(st_mtime_ns, st_size)`` of
-#: the ``config.yaml`` the config was parsed from.  A hub tool call such as
-#: ``git_status_all`` loads the same handful of configs once per subproject;
-#: without this every one of those is a fresh open + YAML parse.
+#: the ``config.yaml`` the config was parsed from.  Without this, every call
+#: that needs the config is a fresh open + YAML parse.
 _CONFIG_CACHE: dict[str, tuple[tuple[int, int], ProjectConfig]] = {}
 
 
@@ -78,12 +78,27 @@ def clear_config_cache(root: Optional[Path] = None) -> None:
         _CONFIG_CACHE.clear()
     else:
         _CONFIG_CACHE.pop(str(Path(root).resolve()), None)
-    # The hub store map is derived from ``config.projects`` (US-PM-31), so it
-    # is stale exactly when the config is.  Imported lazily: hub.stores reads
-    # this module.
-    from .hub.stores import invalidate as _invalidate_store_map
 
-    _invalidate_store_map(root)
+
+#: Keys older config.yaml files carry that no longer map to a field.  Hub
+#: mode is gone (EPIC-PM-6), but checkouts predating its removal still have
+#: these two lines on disk and must keep loading.
+LEGACY_CONFIG_KEYS = ("hub", "projects")
+
+
+def _drop_legacy_keys(data: dict, config_path: Path) -> dict:
+    """Strip retired keys from raw config data, warning once per load."""
+    if not isinstance(data, dict):
+        return data
+    stale = [key for key in LEGACY_CONFIG_KEYS if key in data]
+    if not stale:
+        return data
+    print(
+        f"projectman: ignoring retired config key(s) {', '.join(stale)} "
+        f"in {config_path} (hub mode was removed)",
+        file=sys.stderr,
+    )
+    return {key: value for key, value in data.items() if key not in stale}
 
 
 def load_config(root: Optional[Path] = None) -> ProjectConfig:
@@ -112,6 +127,7 @@ def load_config(root: Optional[Path] = None) -> ProjectConfig:
 
     with open(config_path) as f:
         data = yaml.safe_load(f)
+    data = _drop_legacy_keys(data, config_path)
     config = ProjectConfig(**data)
     if stamp is not None:
         _CONFIG_CACHE[str(root)] = (stamp, config)

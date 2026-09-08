@@ -1,5 +1,9 @@
 # Readiness Warnings: Check or Template?
 
+> **History (2026-09-08, EPIC-PM-6):** hub mode has been **removed**. The
+> `hub/registry.py` citations below describe code that no longer exists; they
+> are kept as the record of what was examined on 2026-07-29.
+
 **Task:** US-PM-4-5 · **Story:** US-PM-4 — Remove the always-on readiness warnings
 **Date:** 2026-07-29 · **Version:** v0.8.9
 **Status:** DECIDED — the **CHECK** is at fault. `US-PM-4-6` should delete the three

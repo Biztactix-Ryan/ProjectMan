@@ -540,3 +540,273 @@ def test_a_leaked_model_edit_is_healed_by_the_next_write(corpus):
     assert _snapshot(corpus) == _snapshot_from_disk(corpus), (
         "cache and disk disagree after a write over a leaked entry"
     )
+
+
+# ---------------------------------------------------------------------------
+# US-PRJ-39: the cached entries carry an ID index, so update / evict-on-archive
+# / by-ID reads are O(1).  The full consistency suite is US-PRJ-39-5; what is
+# pinned here is that the new structure is in place and stays in step with the
+# entries it indexes.
+# ---------------------------------------------------------------------------
+
+
+def test_cache_value_is_the_id_indexed_container(populated):
+    """A warm cache holds ``_CacheEntries``, whose index matches its entries."""
+    from projectman.store import _CacheEntries
+
+    populated.list_tasks()
+    key = populated._cache_key("tasks")
+    entries = _cache[key]
+    assert isinstance(entries, _CacheEntries)
+    assert entries.ids() == [m.id for m, _ in entries]
+    for meta, body in entries:
+        assert entries.lookup(meta.id) == (meta, body)
+    assert entries.lookup("US-NOPE-9-9") is None
+
+
+def test_update_replaces_the_indexed_entry_in_place(populated):
+    """``_cache_update_entry`` finds the ID through the index, order intact."""
+    populated.list_tasks()
+    key = populated._cache_key("tasks")
+    before = _cache[key].ids()
+    target = before[0]
+
+    populated.update(target, points=3)
+
+    entries = _cache[key]
+    assert entries.ids() == before, "an update reordered or dropped cache entries"
+    assert entries.ids() == [m.id for m, _ in entries], "index out of step"
+    meta, _ = entries.lookup(target)
+    assert meta.points == 3
+
+
+def test_archiving_a_story_evicts_it_from_the_index(populated):
+    """Evict-on-archive drops the ID from both the entries and the index."""
+    populated.list_stories()
+    key = populated._cache_key("stories")
+    target = _cache[key].ids()[0]
+
+    populated.archive(target)
+
+    entries = _cache[key]
+    assert target not in entries.ids()
+    assert entries.lookup(target) is None
+    assert entries.ids() == [m.id for m, _ in entries], "index out of step"
+    assert target not in [m.id for m in populated.list_stories()]
+
+
+def test_append_indexes_the_new_item(populated):
+    """A create against a warm cache indexes the appended entry."""
+    populated.list_stories()
+    key = populated._cache_key("stories")
+    story, _ = populated.create_story("Indexed", "Body")
+
+    entries = _cache[key]
+    assert entries.ids()[-1] == story.id
+    assert entries.lookup(story.id)[0].title == "Indexed"
+
+
+def test_invalidation_drops_the_index_with_the_entries(populated):
+    """Whole-key invalidation cannot leave a stale index behind."""
+    populated.list_tasks()
+    key = populated._cache_key("tasks")
+    populated._invalidate_cache("tasks")
+    assert key not in _cache
+
+
+# ---------------------------------------------------------------------------
+# US-PRJ-39-5 — the consistency proof.
+#
+# Two things have to hold for the ID index to be worth having:
+#
+# 1. it never drifts from the entries it indexes — same IDs, same order, after
+#    every create / update / archive / invalidate; and
+# 2. the by-ID paths actually *use* it.  A dict beside a list that everyone
+#    still scans is a slower list, so the second half of this section counts
+#    every walk of the container while a lookup, an update and an
+#    evict-on-archive run, and requires the count to stay at zero — including
+#    against a 500-item cache, where an O(n) scan would be the whole cost.
+# ---------------------------------------------------------------------------
+
+
+def _assert_index_agrees(entries, *, expected_ids=None):
+    """The index and the entries must name the same items in the same order."""
+    from projectman.store import _CacheEntries
+
+    assert isinstance(entries, _CacheEntries)
+    walked = list(entries)  # goes through __iter__, i.e. the entries themselves
+    walked_ids = [meta.id for meta, _ in walked]
+    assert entries.ids() == walked_ids, "index and entries disagree on ids or order"
+    assert len(entries) == len(walked_ids), "len() disagrees with the entries"
+    assert len(set(walked_ids)) == len(walked_ids), "an id is cached twice"
+    for meta, body in walked:
+        found = entries.lookup(meta.id)
+        assert found is not None, f"{meta.id} is in the entries but not the index"
+        assert found[0] is meta and found[1] == body, (
+            f"the index points {meta.id} at a different entry"
+        )
+    if expected_ids is not None:
+        assert walked_ids == list(expected_ids)
+    return walked_ids
+
+
+def test_index_agrees_with_entries_across_the_whole_lifecycle(populated):
+    """create → update → archive → invalidate: the index never drifts."""
+    populated.list_stories()  # warm the cache; create_* only appends to a warm one
+    key = populated._cache_key("stories")
+    baseline = _assert_index_agrees(_cache[key])
+
+    # --- create: appended at the end, indexed, nothing else moved ---------
+    created, _ = populated.create_story("Lifecycle", "Body")
+    after_create = _assert_index_agrees(_cache[key], expected_ids=[*baseline, created.id])
+
+    # --- update: replaced in place, order untouched -----------------------
+    populated.update(created.id, points=5)
+    _assert_index_agrees(_cache[key], expected_ids=after_create)
+    assert _cache[key].lookup(created.id)[0].points == 5
+
+    # --- update of a *middle* entry: still no reordering -------------------
+    middle = after_create[len(after_create) // 2]
+    populated.update(middle, title="Renamed in the middle")
+    _assert_index_agrees(_cache[key], expected_ids=after_create)
+    assert _cache[key].lookup(middle)[0].title == "Renamed in the middle"
+
+    # --- archive: evicted from both halves, the rest keeps its order ------
+    populated.archive(middle)
+    survivors = [i for i in after_create if i != middle]
+    _assert_index_agrees(_cache[key], expected_ids=survivors)
+    assert _cache[key].lookup(middle) is None
+
+    # --- invalidate: the index cannot outlive the entries ------------------
+    populated._invalidate_cache("stories")
+    assert key not in _cache, "invalidation left something behind under the key"
+
+    # --- and the rebuild from disk agrees with what the cache had ---------
+    live = populated.list_stories()
+    rebuilt = _assert_index_agrees(_cache[key])
+    assert sorted(rebuilt) == sorted(survivors), (
+        "the cache rebuilt from disk holds a different set than it did in memory"
+    )
+    assert rebuilt == [meta.id for meta in live], (
+        "list_stories and the cached entries disagree after a rebuild"
+    )
+
+
+@pytest.mark.parametrize("kind", ["epics", "stories", "tasks"])
+def test_index_agrees_for_every_cached_kind(populated, kind):
+    """The same create/update/invalidate agreement, per cached item type."""
+    warm = {"epics": populated.list_epics, "stories": populated.list_stories,
+            "tasks": populated.list_tasks}[kind]
+    warm()
+    key = populated._cache_key(kind)
+    baseline = _assert_index_agrees(_cache[key])
+    assert baseline, f"{kind} fixture cached nothing to check"
+
+    if kind == "epics":
+        new_id = populated.create_epic("Fresh", "Body").id
+    elif kind == "stories":
+        new_id = populated.create_story("Fresh", "Body")[0].id
+    else:
+        new_id = populated.create_task(
+            populated.list_stories()[0].id, "Fresh", "Body"
+        ).id
+    expected = [*baseline, new_id]
+    _assert_index_agrees(_cache[key], expected_ids=expected)
+
+    populated.update(new_id, title="Fresh, renamed")
+    _assert_index_agrees(_cache[key], expected_ids=expected)
+    assert _cache[key].lookup(new_id)[0].title == "Fresh, renamed"
+
+    populated._invalidate_cache(kind)
+    assert key not in _cache
+    warm()
+    assert sorted(_assert_index_agrees(_cache[key])) == sorted(expected)
+
+
+@pytest.fixture
+def scan_counter(monkeypatch):
+    """Count every walk of a ``_CacheEntries`` — the O(n) path we must not take.
+
+    The probe delegates to the real iterator rather than raising, so a scan is
+    reported as a count in the failure message instead of surfacing as some
+    unrelated error further down a call stack that swallows exceptions.
+    """
+    from projectman.store import _CacheEntries
+
+    real_iter = _CacheEntries.__iter__
+    scans: list[int] = []
+
+    def counting_iter(self):
+        scans.append(len(self))
+        return real_iter(self)
+
+    monkeypatch.setattr(_CacheEntries, "__iter__", counting_iter)
+    return scans
+
+
+def test_by_id_paths_never_scan_a_500_item_cache(store, scan_counter):
+    """Lookup, update and evict-on-archive are all O(1) on a 500-story cache."""
+    for n in range(500):
+        store.create_story(f"Bulk {n}", f"Body {n}")
+
+    # Warm from disk (the one legitimate scan) *before* the probe matters, then
+    # take the counter back to zero: only the by-ID paths below are under test.
+    ids = [meta.id for meta in store.list_stories()]
+    assert len(ids) == 500, "the 500 creates did not all land"
+    key = store._cache_key("stories")
+    target = ids[len(ids) // 2]
+    assert scan_counter, (
+        "the scan probe never fired, so a zero count below would prove nothing"
+    )
+    scan_counter.clear()
+
+    # --- read by ID --------------------------------------------------------
+    meta, body = store.get_story(target)
+    # IDs are handed out in creation order, so ``US-TST-<n>`` is the n-1'th
+    # create.  (The cached order is the filename sort the disk read produced,
+    # which is not creation order — hence deriving this from the ID.)
+    nth = int(target.rsplit("-", 1)[1]) - 1
+    assert meta.id == target and body == f"Body {nth}"
+    assert scan_counter == [], (
+        f"get_story walked the cached entries {len(scan_counter)}x instead of "
+        "using the index"
+    )
+
+    # --- update by ID ------------------------------------------------------
+    store.update(target, points=3)
+    assert scan_counter == [], (
+        f"the update walked the cached entries {len(scan_counter)}x"
+    )
+    assert _cache[key].lookup(target)[0].points == 3
+    assert _cache[key].ids() == ids, "the update reordered a 500-item cache"
+
+    # --- evict on archive --------------------------------------------------
+    store.archive(target)
+    assert scan_counter == [], (
+        f"evict-on-archive walked the cached entries {len(scan_counter)}x"
+    )
+    assert _cache[key].lookup(target) is None
+    assert _cache[key].ids() == [i for i in ids if i != target], (
+        "eviction disturbed the surviving entries"
+    )
+
+
+def test_task_and_epic_by_id_reads_never_scan(populated, scan_counter):
+    """The same no-scan guarantee on the other two caches."""
+    task_id = populated.list_tasks()[0].id
+    epic_id = populated.list_epics()[0].id
+    assert scan_counter, "the scan probe never fired; the assertions below are empty"
+    scan_counter.clear()
+
+    assert populated.get_task(task_id)[0].id == task_id
+    assert populated.get_epic(epic_id)[0].id == epic_id
+    assert scan_counter == [], "a by-ID read scanned the cache"
+
+    populated.update(task_id, points=2)
+    populated.update(epic_id, title="Renamed epic")
+    assert scan_counter == [], "an update scanned the cache"
+    assert _cache[populated._cache_key("tasks")].lookup(task_id)[0].points == 2
+    assert (
+        _cache[populated._cache_key("epics")].lookup(epic_id)[0].title
+        == "Renamed epic"
+    )

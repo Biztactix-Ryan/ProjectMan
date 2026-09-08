@@ -123,6 +123,29 @@ telemetry can count, not a new way to fail a write.
 > **A completion without evidence is a task with `status == done` whose run log contains no
 > entry whose `evidence` is not `None`.** A task with no run log at all qualifies.
 
+**Narrowed by US-PM-43-6 and US-PM-43-7.** Only completions that *could* have carried
+evidence are counted:
+
+1. the task's run log has an entry written **at or after the first evidence-bearing run-log
+   entry anywhere in this store** — by then the contract was demonstrably in use here, so
+   that verdict could have carried evidence and carried none; or
+2. its transition to `done` carries a `run_id` (an orchestrator accepted it under this
+   contract).
+
+Anything else is a pre-contract completion and is not counted — a done task with no run log
+and no run-stamped completion has nothing for evidence to hang off, and a verdict written
+before this store had ever recorded any could not have carried it. Either way the finding
+could only be cleared by rewriting history. On this repo the two limbs took the count from
+447 unfixable legacy completions, to 67, to zero, leaving the ones someone can still act on.
+
+**The line is what the store proves about itself, never a date.** The contract shipped on
+different days for different projects, and an imported history predates it entirely, so the
+store's own earliest evidence is the first moment anyone here demonstrably could have
+written some. A store with no evidence at all has never used the contract, so limb 1 counts
+nothing in it; limb 2 is unconditional, so the first orchestrator run that accepts a task
+without evidence is caught even there. `audit.py`'s `_first_evidence_timestamp` computes the
+line in one pass over `.project/logs/*.jsonl`, on demand.
+
 **Present-but-empty is evidence.** `Evidence()` with four empty lists explicitly says
 "nothing to show" — exactly the genuinely non-code task (docs, config decisions) that
 SKILL.md step 17 already carves out of the empty-diff rule. *Absent* evidence is the gap,

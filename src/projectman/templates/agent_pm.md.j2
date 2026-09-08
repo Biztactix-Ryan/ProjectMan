@@ -18,9 +18,9 @@ You are the PM agent for this project. You use the ProjectMan MCP server to mana
 ## The Pipeline: Vision → Epics → Stories → Tasks → Execution
 
 ```
-Hub VISION.md / ARCHITECTURE.md / DECISIONS.md
+VISION.md / ARCHITECTURE.md / DECISIONS.md
   ↓  system context flows down
-Project docs: PROJECT.md / INFRASTRUCTURE.md / SECURITY.md
+PROJECT.md / INFRASTRUCTURE.md / SECURITY.md
   ↓  gaps & goals become
 Epics (EPIC-PREFIX-N) — large structural initiatives
   ↓  decompose into
@@ -117,16 +117,16 @@ Tasks are only grabbable when they pass readiness checks:
 The board shows suitability hints (well-scoped, has-test-plan, quick-win, needs-design) to help devs self-select.
 Tasks with incomplete dependencies show up in the "not_ready" board section with their blockers listed.
 
-## Context Hierarchy (Hub → Project)
+## Context Hierarchy
 
-In hub mode, context flows downward:
-- **VISION.md** — System-wide product vision, principles, roadmap
+Context flows downward through the project's six documents:
+- **VISION.md** — Product vision, principles, roadmap
 - **ARCHITECTURE.md** — System architecture, service map, cross-cutting concerns
 - **DECISIONS.md** — Architectural decision log
 
-Each project then specializes with its own PROJECT.md, INFRASTRUCTURE.md, SECURITY.md.
+`PROJECT.md`, `INFRASTRUCTURE.md` and `SECURITY.md` then carry the concrete detail.
 
-- `pm_context(max_doc_chars=2000, limit=5)` → a bounded brief over those layers, for when you want the wider picture. `pm_grab` and `pm_get` already carry the item context you usually need, so this is a pointer rather than an opening call.
+- `pm_context(max_doc_chars=2000, limit=5)` → a bounded brief over those documents, for when you want the wider picture. `pm_grab` and `pm_get` already carry the item context you usually need, so this is a pointer rather than an opening call.
 
 ## Sprints
 
@@ -160,20 +160,6 @@ Sprints are the unit of orchestrated execution — `/pm-orchestrate` drives the 
    but it is break-glass: off the tool list unless `tools.maintenance: true`.)
 4. Repeat until "no malformed files"
 
-## Hub Mode
-
-- **The prefix in an ID names the store** — `pm_get("US-API-3")` finds the API
-  project on its own, and a multi-ID call may mix projects. No tool takes a
-  project name.
-- The ID-less verbs take an optional `prefix`: omitted on a read means the
-  hub's own store, omitted on a create (`pm_create_story`,
-  `pm_create_sprint`, `pm_auto_scope`) is an `invalid` error — pass
-  `prefix="API"`. Outside a hub it is ignored.
-- `pm_create_epic` takes no `prefix` — epics are hub-level, written to the hub
-  store; a subproject story links up to one with `epic_id`.
-- `pm_malformed` scans all subprojects automatically
-- Use `pm_context(prefix="API")` for one subproject's combined hub + project context
-
 ## Audit Checks
 
 `pm_audit` runs these; see `docs/reference/cli.md` for the table with
@@ -190,7 +176,6 @@ descriptions.
 - Done epic with open stories [ERROR]
 - Orphaned epic reference [WARNING]
 - Stale draft epic [INFO]
-- Missing/unfilled/stale hub docs [ERROR/WARNING/INFO]
 - Stale task assignment [WARNING]
 - Malformed files in quarantine [WARNING]
 - Dependency cycles (project-wide) [ERROR]

@@ -311,7 +311,8 @@ class TestStdioTransport:
         result = stdio_client.call_tool("pm_search", {"query": "auth"})
         # Should return results (falls back to keyword search if embeddings unavailable)
         data = yaml.safe_load(result)
-        assert isinstance(data, list)
+        assert isinstance(data["results"], list)
+        assert data["skipped"] == 0
 
     def test_pm_burndown(self, stdio_client):
         """pm_burndown tool returns burndown data over stdio."""

@@ -263,7 +263,9 @@ def test_pm_search(tmp_project):
     pm_create_story("Authentication system", "Login and signup flow")
     result = pm_search("auth")
     data = yaml.safe_load(result)
-    assert len(data) >= 1
+    assert len(data["results"]) >= 1
+    # A clean store: nothing was unreadable, so the sweep was complete.
+    assert data["skipped"] == 0
 
 
 def test_pm_search_tag_filter(tmp_project):
@@ -285,26 +287,42 @@ def test_pm_search_tag_filter(tmp_project):
     # Unfiltered: all items match "auth"
     result = pm_search("auth")
     data = yaml.safe_load(result)
-    assert len(data) >= 3  # at least both stories + tasks
+    assert len(data["results"]) >= 3  # at least both stories + tasks
 
     # Filtered by "api": only items tagged "api"
     result = pm_search("auth", tag="api")
     data = yaml.safe_load(result)
-    ids = {item["id"] for item in data}
+    ids = {item["id"] for item in data["results"]}
     assert "US-TST-1" in ids
     assert "US-TST-2" not in ids
 
     # Filtered by "web": only items tagged "web"
     result = pm_search("auth", tag="web")
     data = yaml.safe_load(result)
-    ids = {item["id"] for item in data}
+    ids = {item["id"] for item in data["results"]}
     assert "US-TST-2" in ids
     assert "US-TST-1" not in ids
 
     # Non-existent tag: empty results
     result = pm_search("auth", tag="nonexistent")
     data = yaml.safe_load(result)
-    assert data is None or len(data) == 0
+    assert not data["results"]
+    assert data["skipped"] == 0
+
+
+def test_pm_search_skips_a_malformed_file_and_reports_the_count(tmp_project):
+    """One broken item file costs that file, not the whole search (US-PM-40)."""
+    from projectman.server import pm_create_story, pm_search
+
+    pm_create_story("Authentication system", "Login and signup flow")
+    (tmp_project / ".project" / "stories" / "US-TST-99.md").write_text(
+        "---\n: bad\n---\n", encoding="utf-8"
+    )
+
+    data = yaml.safe_load(pm_search("auth"))
+
+    assert [item["id"] for item in data["results"]] == ["US-TST-1"]
+    assert data["skipped"] == 1
 
 
 # ─── pm_board tests ─────────────────────────────────────────────
@@ -974,7 +992,7 @@ def test_pm_search_tag_filter_batches_metadata(tmp_project, monkeypatch):
 
     # A query no keyword search could match: a non-empty result set proves the
     # stubbed embeddings branch ran rather than the keyword fallback.
-    data = yaml.safe_load(pm_search("zzqqxx", tag="api"))
+    data = yaml.safe_load(pm_search("zzqqxx", tag="api"))["results"]
 
     assert data, "the stubbed embeddings branch did not run"
     assert calls == [], f"pm_search called Store.get {len(calls)} times: {calls}"
@@ -1058,13 +1076,13 @@ def test_pm_search_tag_filter_lists_once_per_kind(tmp_project, monkeypatch):
     monkeypatch.setattr(Store, "list_tasks", spy_tasks)
     monkeypatch.setitem(sys.modules, "projectman.embeddings", fake)
 
-    data = yaml.safe_load(pm_search("zzqqxx", tag="api"))
+    data = yaml.safe_load(pm_search("zzqqxx", tag="api"))["results"]
     assert len(data) == 8, data
     assert counts == {"stories": 1, "tasks": 1}, counts
 
     # No tag: nothing is filtered, so neither listing is touched.
     counts["stories"] = counts["tasks"] = 0
-    data = yaml.safe_load(pm_search("zzqqxx"))
+    data = yaml.safe_load(pm_search("zzqqxx"))["results"]
     assert len(data) == 8, data
     assert counts == {"stories": 0, "tasks": 0}, counts
 
@@ -1570,45 +1588,20 @@ def test_cache_persists_across_mcp_tool_invocations(tmp_project):
     assert store_after_search is store_after_status
 
 
-def test_store_cache_same_prefix_returns_same_instance(tmp_project):
-    """The same prefix hands back the same cached Store, a different one a different Store."""
-    from projectman.config import load_config, save_config
-    from projectman.server import _store_cache, _store_for_prefix
-
-    # Convert tmp_project into a hub layout
-    hub_config = load_config(tmp_project)
-    hub_config.hub = True
-    hub_config.projects = []
-    save_config(hub_config, tmp_project)
-
-    # Register two subprojects
-    for name, prefix in [("alpha", "ALP"), ("beta", "BET")]:
-        pm_dir = tmp_project / "projects" / name / ".project"
-        pm_dir.mkdir(parents=True, exist_ok=True)
-        (pm_dir / "stories").mkdir(exist_ok=True)
-        (pm_dir / "tasks").mkdir(exist_ok=True)
-        (pm_dir / "epics").mkdir(exist_ok=True)
-        sub_conf = {"name": name, "prefix": prefix, "description": "",
-                    "hub": False, "next_story_id": 1, "next_epic_id": 1, "projects": []}
-        with open(pm_dir / "config.yaml", "w") as f:
-            yaml.dump(sub_conf, f)
-        hub_config = load_config(tmp_project)
-        hub_config.projects.append(name)
-        save_config(hub_config, tmp_project)
+def test_store_cache_holds_the_one_store_for_every_id(tmp_project):
+    """Every ID resolves to the one cached Store — there is nowhere else to go."""
+    from projectman.server import _store, _store_cache, _store_for_id
 
     _store_cache.clear()
 
-    # Same prefix twice → same instance (identity check)
-    store_a1 = _store_for_prefix("ALP")
-    store_a2 = _store_for_prefix("ALP")
-    assert store_a1 is store_a2
+    first = _store_for_id("US-TST-1")
+    assert first is _store_for_id("US-TST-1")
+    # A foreign prefix is not a different store; it is the same one.
+    assert _store_for_id("EPIC-OTHER-9") is first
+    assert first is _store()
 
-    # Different prefix → different instance
-    store_b = _store_for_prefix("BET")
-    assert store_b is not store_a1
-
-    # Cache should have exactly two entries
-    assert len(_store_cache) == 2
+    # One store directory, one entry.
+    assert len(_store_cache) == 1
 
 
 # ─── acceptance_criteria: list in, nothing split (US-PM-18) ─────────────

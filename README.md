@@ -10,7 +10,6 @@ Managing a growing number of projects with Claude Code leads to documentation dr
 - **MCP integration** — Claude Code queries your project via MCP tools
 - **Web dashboard** — visual kanban board, burndown charts, and project overview in your browser
 - **Minimal tokens** — status summaries keep context window usage low
-- **Hub mode** — manage multiple repos from one place via git submodules
 - **Task board** — see what's ready to work on and grab tasks in one step
 
 ## Quick Start
@@ -50,19 +49,18 @@ Running from a checkout? Reinstall from your local path after every pull — [Up
 - **Epics** — strategic initiatives that group related stories
 - **Web Dashboard** — visual kanban board, epic/story/task detail views, drag-drop status updates, search, and burndown charts
 - **Task Board & Grab** — `pm_board` shows ready tasks, `pm_grab` claims them with readiness validation
-- **Hub Context Docs** — VISION.md, ARCHITECTURE.md, DECISIONS.md for system-level context
+- **Context Docs** — VISION.md, ARCHITECTURE.md, DECISIONS.md for system-level context
 - **Fibonacci Estimation** — calibrated point system (1, 2, 3, 5, 8, 13)
 - **Sprint Planning** — guided workflow via `/pm-plan`
 - **Drift Detection** — `pm_audit` catches inconsistencies
 - **Semantic Search** — find items by meaning (optional, requires fastembed)
-- **Hub Mode** — multi-repo management via git submodules
 - **Tags** — free-form labels on stories, epics, and tasks; filterable in search, board, and active views
 - **Task Dependencies** — `depends_on` links between sibling tasks with cycle detection and topological ordering
 - **Activity Log** — append-only JSONL audit trail of every create, update, delete, and archive
 - **Run Log** — per-item history of work attempts, outcomes, and notes, recorded via `pm_update` and read with `pm_run_log`
 - **Sprint Tracking** — create sprints with goals, dates, and planned stories; live progress rollup via `pm_get_sprint`
-- **Auto-Commit & Push** — `pm_commit` and `pm_push` act on one store, named by its prefix; `projectman sync` pulls a hub and re-attaches missing stores
-- **Git Status Dashboard** — `pm_git_status` shows branch, alignment, dirty state, and ahead/behind across all submodules
+- **Auto-Commit & Push** — `pm_commit` and `pm_push` commit and push the PM store on its own branch
+- **Git Status Dashboard** — `pm_git_status` shows the store's branch, alignment, dirty state, and ahead/behind
 - **Burndown Tracking** — points completed vs remaining
 
 ## Architecture
@@ -71,7 +69,7 @@ Running from a checkout? Reinstall from your local path after every pull — [Up
 User → Claude Code Skills (/pm, /pm-status, /pm-plan, /pm-do, /pm-orchestrate, /pm-autoscope, /pm-cleanup)
          → PM Agent (.claude/agents/pm.md)
            → MCP Server (projectman serve, stdio)
-             → Store (.project/ markdown files; in a hub, projects/{name}/.project per subproject)
+             → Store (.project/ markdown files)
              → Embeddings (SQLite + fastembed)
              → Activity Log (JSONL append-only audit trail)
              → Web Dashboard (FastAPI + HTMX, launched via pm_web_start)
@@ -114,8 +112,6 @@ projectman upgrade --check
 - [Installation](docs/installation.md)
 - [Getting Started](docs/getting-started.md)
 - [User Guide](docs/user-guide/stories.md)
-- [Hub Mode](docs/hub-mode/setup.md)
-- [Hub Git Workflow](docs/hub-mode/git-workflow.md)
 - [Reference](docs/reference/cli.md)
 - [Orchestrator Design](docs/reference/orchestrate-design.md)
 

@@ -23,7 +23,7 @@ Call `pm_status`, then `pm_active`, then `pm_list_sprints(status="active")`. Sug
 - `get <id>` → `pm_get(id)` — epics, stories, tasks
 - `search <query>` → `pm_search(query)`
 - `board` → `pm_board` — available/in-progress/blocked work
-- `context [prefix]` → `pm_context(max_doc_chars=2000, limit=5)` — a bounded hub + project brief when you want one; `pm_grab` and `pm_get` already carry the item context you usually need
+- `context` → `pm_context(max_doc_chars=2000, limit=5)` — a bounded project brief when you want one; `pm_grab` and `pm_get` already carry the item context you usually need
 - `burndown` → `pm_burndown`
 - `deps [id]` → show what an item depends on and what depends on it (from `pm_get` `depends_on` fields; `pm_audit` for graph-wide checks)
 - `history <id>` / `runs <id>` → `pm_run_log(id)` — attempt history: which agents worked it, outcomes, failures
@@ -69,17 +69,14 @@ Examples:
 - `done <task-id> [note]` → `pm_done_next(task_id, outcome, note)` — complete a task, auto-close its story when this was its last open task, and claim the next ready task in one call. Prefer this over separate `pm_update` + `pm_grab` when working through tasks. `pm_update(status="done")` completes the task only — it does not close the story. Under `/pm-orchestrate` do not call it at all: the orchestrator's `pm_accept` is what closes the task and the story, and a worker-set `done` makes it answer `already_done`.
 
 ### Git Operations
-- `commit [prefix] [--message "..."]` → `pm_commit(prefix, message)` — commit one store's .project/ changes. In a hub, omit the prefix for the hub's own store
-- `push [prefix]` → `pm_push(prefix)` — push that one store's branch; a hub pushes nothing on a subproject's behalf
-
-### Hub Operations
-- `sync` → pull latest across all hub submodules, re-attach any missing store
+- `commit [--message "..."]` → `pm_commit(message)` — commit the project's .project/ changes
+- `push` → `pm_push` — push the branch that owns the store
+- `git status` → `pm_git_status` — the store's branch, dirty state, ahead/behind
+- `docs [vision|architecture|decisions|project|infrastructure|security]` → `pm_docs`
 
 Restore and malformed fixes are break-glass: they live in the CLI, and their
 MCP tools are registered only when `.project/config.yaml` sets
 `tools.maintenance: true`.
-- `git status` → `pm_git_status` — each subproject store's branch, dirty, ahead/behind
-- `docs [vision|architecture|decisions|project|infrastructure|security]` → `pm_docs`
 
 ### Natural Language
 Route intent, not keywords:
@@ -87,9 +84,9 @@ Route intent, not keywords:
 - "what's failing?" / "what went wrong?" → `pm_run_log` on recent items + `pm_activity`
 - "what depends on X?" / "what blocks X?" → dependency queries via `pm_get`
 - "what needs attention?" → `pm_git_status`, then suggest per issue:
-  - Store not attached → "Mount it with `projectman sync`"
-  - Behind remote → "Pull latest with `projectman sync`"
-  - Uncommitted store changes → "Commit with `pm_commit(prefix=...)`"
+  - Store not mounted → "Mount it with `projectman attach`"
+  - Behind remote → "Pull latest in `.project/` with `git pull`"
+  - Uncommitted store changes → "Commit with `pm_commit()`"
 
 ## Post-Action Chaining
 
@@ -99,29 +96,8 @@ After every action, suggest the logical next step:
 - Grabbed a task → "Execute it: `/pm-do <id>`"
 - Completed a task → `pm_done_next` already returns the next ready task — offer to continue with it
 - Sprint fully planned → "Run it: `/pm-orchestrate`"
-- All repos clean → "Ready for coordinated operations"
+- Store clean and pushed → "Nothing outstanding — `/pm board` for the next task"
 
 ## ID Conventions
 
 - **Epics**: `EPIC-PREFIX-N` · **Stories**: `US-PREFIX-N` · **Tasks**: `US-PREFIX-N-N`
-
-## Hub Mode
-
-No tool takes a project name — **the prefix in an ID names the store**. A call
-with an ID needs nothing else: `pm_get("US-API-3")`, `pm_update("US-WEB-1-2",
-status="done")`, and a multi-ID call may mix projects freely. An unknown prefix
-is a `not_found` that lists the prefixes that do exist.
-
-The ID-less verbs (`pm_status`, `pm_board`, `pm_active`, `pm_search`,
-`pm_context`, `pm_create_story`, …) take an optional `prefix` instead:
-
-- omitted on a **read** → the hub's own store (`pm_status()` reports hub totals
-  plus a `subprojects` list)
-- omitted on a **create** (`pm_create_story`, `pm_create_sprint`,
-  `pm_auto_scope`) → an `invalid` error; a hub has no default project to
-  create in, so say which one: `pm_create_story(..., prefix="API")`
-- `pm_create_epic` takes no `prefix`: epics are hub-level, so in a hub they
-  are always written to the hub store and carry its prefix
-- given → that project's store
-
-Outside a hub `prefix` is ignored entirely.

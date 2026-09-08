@@ -28,30 +28,6 @@
     └── US-PRJ-1-1.jsonl # Per-item run logs
 ```
 
-With `--hub`, also creates:
-```
-.project/
-├── VISION.md            # Hub vision and mission
-├── ARCHITECTURE.md      # System-wide architecture
-├── DECISIONS.md         # Cross-project decision log
-├── roadmap/
-└── dashboards/
-```
-
-Per-project PM data lives outside the hub's store, inside each subproject:
-
-```
-projects/
-└── {name}/              # git submodule checkout
-    └── .project/        # worktree of that submodule's `projectman` branch
-        ├── config.yaml
-        ├── stories/
-        ├── tasks/
-        └── epics/
-```
-
-So a task edit in one project is a commit on that project's repo, not on the hub. `projectman add-project` mounts the store; hubs built on the older layout — per-project data inside the hub's own `.project/` — are moved across once with `projectman migrate-hub` (see [Hub Mode Setup](../hub-mode/setup.md#migrating-an-older-hub)).
-
 ## config.yaml
 
 Project configuration. Created by `projectman init`.
@@ -60,14 +36,14 @@ Project configuration. Created by `projectman init`.
 name: my-project
 prefix: PRJ              # Uppercase letters, used for epic/story/task IDs
 description: ""
-hub: false               # true for hub mode
 auto_commit: false       # Auto-commit .project/ changes after writes
 deploy_branch: null      # Default branch for push operations
 next_story_id: 1         # Auto-incremented
 next_epic_id: 1          # Auto-incremented
 next_sprint_id: 1        # Auto-incremented
-projects: []             # Hub mode: list of registered project names
 stale_claim_hours: 2.0   # Age at which an in-progress claim is flagged stale
+activity_log_max_bytes:  # Optional — rotate activity.jsonl past this many bytes
+activity_log_max_days:   # Optional — rotate activity.jsonl past this many days
 tools:                   # Optional — which gated tool families agents see
   maintenance: false     # Break-glass repair/restore tools, off by default
   web: false             # Web dashboard tools, off by default
@@ -78,14 +54,14 @@ tools:                   # Optional — which gated tool families agents see
 | `name` | string | Project name |
 | `prefix` | string | Uppercase letters, used as ID prefix for epics, stories, and tasks (e.g. `PRJ` → `EPIC-PRJ-1`, `US-PRJ-1`, `US-PRJ-1-1`) |
 | `description` | string | Project description |
-| `hub` | bool | Whether this is a hub (multi-repo) project |
 | `auto_commit` | bool | Whether to auto-commit `.project/` changes after write operations |
 | `deploy_branch` | string\|null | Default branch for push operations |
 | `next_story_id` | int | Next story number to assign (auto-incremented) |
 | `next_epic_id` | int | Next epic number to assign (auto-incremented) |
 | `next_sprint_id` | int | Next sprint number to assign (auto-incremented) |
-| `projects` | list[str] | Hub mode: names of registered subprojects |
 | `stale_claim_hours` | float | How long an in-progress claim may sit before `pm_active` / `pm_board` flag it `stale: true` — a claim must *pass* this age, so exactly at the threshold is not yet stale. Default `2.0`. A task with no `claimed_at` is never stale regardless. Turn it *up* rather than to `0` to disable — `0` flags every live claim. A value that is not a non-negative finite number falls back to `2.0` rather than failing the config load |
+| `activity_log_max_bytes` | int\|null | Rotate `activity.jsonl` once it reaches this many bytes. Default `null` — no size bound, the log grows forever. See [Activity Log Rotation](#activity-log-rotation) |
+| `activity_log_max_days` | float\|null | Rotate `activity.jsonl` once its **oldest entry** is this many days old. Default `null` — no age bound. See [Activity Log Rotation](#activity-log-rotation) |
 | `tools.maintenance` | bool | Register the two break-glass tools (`pm_restore`, `pm_fix_malformed`). Default `false` |
 | `tools.web` | bool | Register the three `pm_web_*` tools. Default `false` |
 
@@ -111,10 +87,8 @@ tools:
   maintenance: true      # pm_restore / pm_fix_malformed
 ```
 
-Neither flag takes any inference from `hub` or anything else: both are a
-plain `false` until someone writes `true`. A hub is no likelier than a leaf
-repo to want the dashboard driven from an agent's tool list, and it breaks no
-more often.
+Neither flag takes any inference from anything else: both are a plain
+`false` until someone writes `true`.
 
 `tools.maintenance` is the odd one out in *why* it is hidden. The web family
 is hidden because nobody calls it; these two are hidden because they are
@@ -143,10 +117,8 @@ any reader that finds `index.yaml` older than the newest file under
 `epics/`, `stories/` or `tasks/` (`indexer.ensure_fresh`).
 
 **Decision (US-PM-29-6, 2026-09-06): generated.** A store scaffolded by
-`projectman init` — or a hub subproject created by `add-project` — writes a
-`.project/.gitignore` naming those five files, so git never carries them.
-The patterns are unanchored, so one file at the store root also covers the
-subproject stores under `projects/{name}/`.
+`projectman init` writes a `.project/.gitignore` naming those five files, so
+git never carries them.
 
 ### The churn numbers
 
@@ -192,14 +164,13 @@ echo as in the change itself. Three costs decided it:
    read path, so opening the dashboard after a write modifies tracked files.
    No amount of care at commit time fixes that while the files are tracked.
 
-Against that, tracking them buys a browsable board on the git remote. Hubs
-keep theirs: `INDEX.md`'s content is also written to the repo root as
-`README.md` in hub mode, and that file stays tracked. A fresh clone needs no
-migration step either — a missing `index.yaml` counts as stale, so the first
-read regenerates all five.
+Against that, tracking them buys a browsable board on the git remote — not
+enough to pay for the three costs above. A fresh clone needs no migration step
+either: a missing `index.yaml` counts as stale, so the first read regenerates
+all five.
 
 Commit messages ignore the five files, in old stores and new ones alike
-(`Store._generate_commit_message`, `hub.registry._generate_hub_commit_message`):
+(`Store._generate_commit_message`):
 one task edit reads `pm: update 1 task`, never `pm: update 1 task, config, 4 files`.
 
 ### Migrating an existing store
@@ -528,6 +499,55 @@ cannot be answered from it. A claim event also carries `claimed_at` and
 
 The log is never overwritten — new entries are always appended. Query it with `pm_activity`.
 
+### Activity Log Rotation
+
+By default `activity.jsonl` grows forever, which is fine for most projects and
+not for a long-lived one — this repo's log passed 300 KB in six weeks. Two
+optional `config.yaml` keys bound it:
+
+```yaml
+activity_log_max_bytes: 1048576   # rotate once the live file reaches 1 MB
+activity_log_max_days: 90         # rotate once its oldest entry is 90 days old
+```
+
+Set either, both, or neither. **Neither is the default**, and with neither set
+nothing rotates — an existing project behaves exactly as it did before the keys
+existed. A value that is not a positive finite number (a typo, `0`, a negative)
+is read as "no bound" rather than failing the config load.
+
+The bounds are checked on append, against the file already on disk:
+
+1. If the live `activity.jsonl` is at or past a bound, it is **renamed** to a
+   dated sibling `activity-YYYYMMDD-HHMMSS.jsonl` (UTC, the moment of rotation).
+   A rename, not a copy — atomic on one filesystem, so there is no instant at
+   which an entry lives in neither file.
+2. The entry being appended is then written to a fresh `activity.jsonl`.
+
+Because the check happens *before* the write, rotation can never drop the entry
+that triggered it. If the rename fails for any reason the entry is still
+appended to the live file: an oversized log is a smaller problem than a lost
+event. An empty log is never rotated.
+
+The **size** bound is the live file's bytes on disk. The **age** bound is
+measured from the log's *oldest entry's* `timestamp`, not the file's mtime —
+mtime is the last append, by which a busy log would look permanently young. If
+no entry in the file's first 100 lines carries a parseable timestamp, the file's
+mtime stands in.
+
+Readers see across rotations. `pm_activity`, the web dashboard's `/api/activity`
+and the migration commands all read the rotated siblings in name order (which is
+chronological, the timestamp being fixed-width) and then the live file, so
+`total` counts the whole history and paging back reaches events written before
+the last rotation. `pm_activity` reports `No activity log found` only when there
+is neither a live file nor a rotated sibling.
+
+Rotated siblings are ordinary files in `.project/`; nothing deletes them, so
+pruning old ones is a human decision. Only names matching the exact
+`activity-YYYYMMDD-HHMMSS.jsonl` pattern are treated as rotation output — an
+`activity-old.jsonl` you drop in yourself is ignored, by the reader and by
+`pm_reindex` alike (the indexers only scan `stories/`, `tasks/`, `epics/` and
+`sprints/`).
+
 ## Run Log Format (logs/{item_id}.jsonl)
 
 Each epic, story, or task can have a per-item run log — an append-only JSONL file at `.project/logs/{item_id}.jsonl` that records work attempts and their outcomes. Entries are created by passing `outcome` and/or `note` to `pm_update`.
@@ -565,7 +585,7 @@ digest: 4f1c8a9b2d7e0356
 ```
 
 The `digest:` line is a fixed-width (16 hex character) fingerprint of everything
-the audit reads, hashed by content: item files, `config.yaml`, project and hub
+the audit reads, hashed by content: item files, `config.yaml`, project
 docs, `malformed/`, `logs/*.jsonl`, sprints and indexes. It is stable across
 calls with no writes in between and changes whenever any audit input changes,
 so a poller can tell an unchanged project from a changed one without diffing
@@ -577,4 +597,4 @@ Severity levels:
 - **WARNING** — likely needs action (undecomposed stories, stale items, orphaned references, malformed files)
 - **INFO** — suggestions (thin descriptions, point mismatches, stale drafts, stale documentation)
 
-The audit covers stories, tasks, epics, documentation, hub docs, assignments, dependencies, malformed files, and completion evidence. The full check list with severities is in [cli.md](cli.md#projectman-audit).
+The audit covers stories, tasks, epics, documentation, assignments, dependencies, malformed files, and completion evidence. The full check list with severities is in [cli.md](cli.md#projectman-audit).

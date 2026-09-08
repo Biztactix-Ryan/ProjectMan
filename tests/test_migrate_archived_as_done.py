@@ -1714,18 +1714,50 @@ class TestTheDocstringMatchesTheCode:
 
     # -- claims about behaviour ---------------------------------------
 
-    def test_report_is_the_default_at_every_entry_point(self):
-        """The text's claim: report is the default at every entry point."""
+    def test_report_is_the_default_at_every_entry_point(self, store, monkeypatch):
+        """The text's claim: report is the default at every entry point.
+
+        The Python entry point is pinned by its signature.  The CLI one is
+        pinned two ways, neither of which reads ``Option.default`` directly:
+        click 8.1 stores ``False`` there for a boolean flag while click 8.2+
+        stores an ``UNSET`` sentinel and only resolves it to ``False`` inside
+        ``get_default``, so the raw attribute proves nothing portable.  What is
+        portable is the *effective* default click itself computes, and — the
+        claim that actually matters — what the command does when invoked with
+        no ``--apply``: it reports, and writes nothing.
+        """
+        import click
+
         from projectman.cli import cli
 
         assert (
             inspect.signature(migrate_archived_as_done).parameters["apply"].default
             is False
         )
-        apply_opt = next(
-            p for p in cli.commands["migrate-archived"].params if p.name == "apply_changes"
-        )
-        assert apply_opt.is_flag and apply_opt.default is False
+
+        command = cli.commands["migrate-archived"]
+        apply_opt = next(p for p in command.params if p.name == "apply_changes")
+        assert apply_opt.is_flag
+        with click.Context(command) as ctx:
+            assert not apply_opt.get_default(ctx), (
+                "the CLI's --apply flag no longer defaults to off"
+            )
+
+        # And behaviourally: no --apply reports the repairable task and leaves
+        # every byte of the store alone.
+        task_id = _dropped_archive_flag(store, _new_task(store, "Dropped"))
+        monkeypatch.chdir(store.project_dir.parent)
+        _cache.clear()
+        before = _snapshot(store.project_dir)
+
+        from click.testing import CliRunner
+
+        result = CliRunner().invoke(cli, ["migrate-archived"])
+
+        assert result.exit_code == 0, result.output
+        assert task_id in result.output, result.output
+        assert _snapshot(store.project_dir) == before
+        assert _task_meta(store, task_id).archived is False
 
     def test_store_archive_never_touches_status(self, store):
         """The text's claim about current archive semantics."""

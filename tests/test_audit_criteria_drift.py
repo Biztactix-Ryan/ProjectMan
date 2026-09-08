@@ -280,6 +280,79 @@ class TestNoFalsePositives:
         assert _drift_lines(tmp_project) == []
 
 
+class TestDoneStoriesAreNotNagged:
+    """US-PM-43-5: ``criteria-without-test-task`` skips done stories too.
+
+    The finding's only remedy is "re-apply the criteria with pm_update to
+    reconcile", which on a done story opens todo test tasks under finished
+    work.  Nothing is actionable there, so the warning can never be cleared
+    honestly — US-PM-1 and US-PM-2 carried it for weeks.  Backlog, ready and
+    active stories are unaffected.
+    """
+
+    def _drift(self, store, tmp_project, title):
+        """A story whose criteria were edited on disk without reconciling."""
+        meta, _ = store.create_story(
+            title, "A story body long enough", acceptance_criteria=["Alpha criterion"]
+        )
+        _set_criteria_on_disk(
+            tmp_project, meta.id, ["Alpha criterion", "Beta criterion"]
+        )
+        return meta.id
+
+    def _untested(self, tmp_project):
+        return [l for l in _drift_lines(tmp_project) if "no test task" in l]
+
+    def test_only_the_backlog_story_warns(self, store, tmp_project):
+        """Two stories, one drifted state, different statuses."""
+        done = self._drift(store, tmp_project, "Done story")
+        backlog = self._drift(store, tmp_project, "Backlog story")
+        clear_all_caches()
+        s = Store(tmp_project)
+        s.update(f"{done}-1", status="done")
+        s.update(done, status="done")
+
+        lines = self._untested(tmp_project)
+        assert len(lines) == 1, lines
+        assert backlog in lines[0]
+        assert done not in lines[0]
+
+    @pytest.mark.parametrize("status", ["backlog", "ready", "active"])
+    def test_live_statuses_still_warn(self, store, tmp_project, status):
+        story = self._drift(store, tmp_project, "S")
+        clear_all_caches()
+        Store(tmp_project).update(story, status=status)
+        lines = self._untested(tmp_project)
+        assert len(lines) == 1, lines
+        assert story in lines[0]
+
+    def test_marking_a_warned_story_done_silences_it(self, store, tmp_project):
+        story = self._drift(store, tmp_project, "S")
+        assert self._untested(tmp_project)
+        clear_all_caches()
+        s = Store(tmp_project)
+        s.update(f"{story}-1", status="done")
+        s.update(story, status="done")
+        assert self._untested(tmp_project) == []
+
+    def test_a_done_story_still_reports_a_stale_test_task(self, store, tmp_project):
+        """The sibling check is deliberately not skipped: a test task quoting
+        text that no longer exists is a wrong artifact whatever the status."""
+        meta, _ = store.create_story(
+            "S",
+            "A story body long enough",
+            acceptance_criteria=["Alpha criterion", "Beta criterion"],
+        )
+        clear_all_caches()
+        s = Store(tmp_project)
+        s.update(f"{meta.id}-1", status="done")
+        s.update(f"{meta.id}-2", status="done")
+        s.update(meta.id, status="done")
+        _set_criteria_on_disk(tmp_project, meta.id, ["Alpha criterion"])
+        lines = _drift_lines(tmp_project)
+        assert any(f"{meta.id} has 1 test task(s) quoting" in l for l in lines), lines
+
+
 class TestAuditAgreesWithTheReconciler:
     """Requirement 1: reuse the matcher, never reimplement it."""
 
@@ -613,8 +686,10 @@ class TestTheRealDataCase:
             "A story body long enough to pass the thin-description check easily",
             acceptance_criteria=[self.BLOB],
         )
-        # The story is done, exactly as US-PM-2 is: done stories must still be
-        # checked, or the real case would be invisible.
+        # The story is done, exactly as US-PM-2 is: done stories are still
+        # checked for stale test tasks, or the real case would be invisible.
+        # Since US-PM-43-5 they are no longer reported for untested criteria —
+        # see TestDoneStoriesAreNotNagged.
         store.update(meta.id, status="done")
         store.update(f"{meta.id}-1", status="done")
         _set_criteria_on_disk(tmp_project, meta.id, self.SPLIT)
@@ -625,12 +700,14 @@ class TestTheRealDataCase:
         _, body = Store(tmp_project).get_task(f"{drifted}-1")
         assert body == generate_test_task_body(drifted, self.BLOB)
 
-    def test_three_criteria_are_reported_as_untested(self, drifted, tmp_project):
+    def test_the_done_story_is_not_reported_as_untested(self, drifted, tmp_project):
+        """US-PM-43-5: three of its criteria have no test task, and that is fine.
+
+        The story is done; re-applying its criteria would open todo test tasks
+        under finished work.  Only the stale quote below is still reported.
+        """
         lines = _drift_lines(tmp_project)
-        assert any(
-            f"{drifted} has 3 acceptance criterion/criteria with no test task" in l
-            for l in lines
-        ), lines
+        assert not any("no test task" in l for l in lines), lines
 
     def test_the_surviving_task_is_reported_as_quoting_dead_text(
         self, drifted, tmp_project
@@ -645,7 +722,9 @@ class TestTheRealDataCase:
         assert "No issues found. Project is clean." not in report
         errors, warnings, _ = _counts(tmp_project)
         assert errors == 0
-        assert warnings >= 2
+        # One warning, not two: the dead quote is still reported, the untested
+        # criteria on a done story are not (US-PM-43-5).
+        assert warnings >= 1
 
     def test_reapplying_the_criteria_repairs_it(self, drifted, tmp_project):
         clear_all_caches()

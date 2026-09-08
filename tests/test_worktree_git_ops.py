@@ -7,9 +7,7 @@ branch from the directory they run in.  That is true only for commands run
 
 * ``Store.commit_project_changes`` ran ``git add .project`` at the root,
   which git refuses for the now-ignored worktree path;
-* ``Store.push_project_changes`` pushed the *root's* branch (main);
-* hub ``pm_commit`` ran ``git status .project/`` at the root, saw an ignored
-  path, and reported ``nothing_to_commit`` for every change.
+* ``Store.push_project_changes`` pushed the *root's* branch (main).
 
 These tests pin the corrected behaviour on real repos with real bare origins:
 commits land on the projectman branch and never touch main, pushes move only
@@ -30,8 +28,6 @@ import yaml
 from click.testing import CliRunner
 
 from projectman.cli import cli
-from projectman.hub import registry
-from projectman.hub.stores import store_path
 from projectman.store import NothingToCommit, Store, _cache
 from projectman.worktree import (
     IMPORT_COMMIT_MESSAGE,
@@ -40,6 +36,7 @@ from projectman.worktree import (
     migrate_to_worktree,
     push_branch,
     store_git_state,
+    store_status_payload,
     worktree_branch,
 )
 from test_migrate_worktree import add_origin, clone_of, git, init_repo, out
@@ -48,50 +45,32 @@ from test_migrate_worktree import add_origin, clone_of, git, init_repo, out
 # ─── Fixtures ─────────────────────────────────────────────────────────────
 
 
-def _config(name: str, prefix: str, hub: bool = False, projects=()) -> dict:
+def _config(name: str, prefix: str) -> dict:
     return {
         "name": name,
         "prefix": prefix,
         "description": "",
-        "hub": hub,
         "next_story_id": 1,
-        "projects": list(projects),
     }
 
 
-def write_store(root: Path, *, hub: bool = False, projects=()) -> Path:
-    """A minimal but loadable PM store under ``root/.project``.
-
-    Subproject stores go where US-PM-31 puts them — inside the subproject's
-    own checkout at ``projects/{name}/.project`` — so the checkout has to
-    exist already (``git submodule add`` first, then this).
-    """
+def write_store(root: Path) -> Path:
+    """A minimal but loadable PM store under ``root/.project``."""
     pm = root / ".project"
     (pm / "stories").mkdir(parents=True)
     (pm / "tasks").mkdir()
-    (pm / "config.yaml").write_text(yaml.safe_dump(_config("demo", "DEMO", hub, projects)))
+    (pm / "config.yaml").write_text(yaml.safe_dump(_config("demo", "DEMO")))
     (pm / "PROJECT.md").write_text("# Demo\n")
-    for name in projects:
-        sub = store_path(root, name)
-        (sub / "stories").mkdir(parents=True)
-        (sub / "tasks").mkdir()
-        (sub / "config.yaml").write_text(yaml.safe_dump(_config(name, name.upper())))
-        (sub / "PROJECT.md").write_text(f"# {name}\n")
     # Since US-PM-29 the five index files are derived and pm_commit rebuilds
     # them immediately before staging.  A scaffolded store has them on disk
     # and gitignored (US-PM-29-6), so these fixtures do too — otherwise the
     # rebuild would stage five files behind every commit and "a clean store
-    # is nothing to commit" could never hold.  Each store owns its own
-    # .gitignore now that the subproject stores live in their own repos.
+    # is nothing to commit" could never hold.
     from projectman.indexer import write_index, write_store_gitignore
     from projectman.store import Store
 
     write_index(Store(root))
     write_store_gitignore(pm)
-    for name in projects:
-        sub = store_path(root, name)
-        write_index(Store(root, project_dir=sub))
-        write_store_gitignore(sub)
     return pm
 
 
@@ -121,9 +100,8 @@ def gitlinks(repo: Path, ref: str = "HEAD") -> list[str]:
     ]
 
 
-def touch_story(root: Path, name: str = "US-DEMO-1", sub: str | None = None) -> Path:
-    base = store_path(root, sub) if sub else root / ".project"
-    path = base / "stories" / f"{name}.md"
+def touch_story(root: Path, name: str = "US-DEMO-1") -> Path:
+    path = root / ".project" / "stories" / f"{name}.md"
     path.write_text(f"---\nid: {name}\ntitle: A story\nstatus: backlog\n---\n\nBody.\n")
     return path
 
@@ -142,7 +120,7 @@ def runner():
 
 @pytest.fixture
 def plain(tmp_path):
-    """A non-hub repo with a bare origin whose ``.project/`` is still tracked on main."""
+    """A repo with a bare origin whose ``.project/`` is still tracked on main."""
     root = init_repo(tmp_path / "plain")
     write_store(root)
     (root / "README.md").write_text("# demo\n")
@@ -161,68 +139,6 @@ def mounted(plain):
     git("push", "origin", "main", cwd=plain)
     assert worktree_branch(plain, plain / ".project") == "projectman"
     return plain
-
-
-@pytest.fixture
-def hub(tmp_path):
-    """A hub repo with one real submodule (``projects/api``) and a bare origin.
-
-    The submodule is the whole point of the hub-mode checks: a worktree-mounted
-    store must not add a second gitlink, and PM commits must leave the
-    submodule pointer exactly where it was.
-    """
-    api_origin = tmp_path / "api.git"
-    git("init", "--bare", "-b", "main", str(api_origin), cwd=tmp_path)
-    api_src = init_repo(tmp_path / "api-src")
-    (api_src / "app.py").write_text("print('api')\n")
-    git("add", "-A", cwd=api_src)
-    git("commit", "-m", "api init", cwd=api_src)
-    git("remote", "add", "origin", str(api_origin), cwd=api_src)
-    git("push", "origin", "main", cwd=api_src)
-
-    root = init_repo(tmp_path / "hub")
-    (root / "README.md").write_text("# hub\n")
-    git(
-        "-c", "protocol.file.allow=always",
-        "submodule", "add", str(api_origin), "projects/api", cwd=root,
-    )
-    sub = root / "projects" / "api"
-    git("config", "user.email", "test@test.com", cwd=sub)
-    git("config", "user.name", "Test", cwd=sub)
-    # The subproject store lives inside the submodule checkout (US-PM-31), so
-    # it can only be written once that checkout exists.
-    write_store(root, hub=True, projects=["api"])
-    # The subproject store is committed in the submodule that owns it, so an
-    # unmounted hub starts from a clean subproject store the way a real one
-    # does; the hub commit below just records the moved pointer.
-    git("add", "-A", cwd=sub)
-    git("commit", "-m", "api pm store", cwd=sub)
-    git("add", "-A", cwd=root)
-    git("commit", "-m", "hub init", cwd=root)
-    add_origin(root, tmp_path, name="hub-origin.git")
-    return root
-
-
-@pytest.fixture
-def hub_mounted(hub):
-    """Both stores mounted as worktrees of their own repo's projectman branch.
-
-    The hub's own ``.project`` and — since US-PM-31 — the subproject's store
-    at ``projects/api/.project``, which is a worktree of the *submodule's*
-    ``projectman`` branch.  That is what makes the subproject store
-    ``attached`` in the store map, and what keeps PM commits off the
-    submodule's main branch.
-    """
-    sub_result = migrate_to_worktree(hub / "projects" / "api")
-    assert sub_result["pushed"], sub_result
-    git("push", "origin", "main", cwd=hub / "projects" / "api")
-    git("add", "-A", cwd=hub)
-    git("commit", "-m", "mount api store", cwd=hub)
-
-    result = migrate_to_worktree(hub)
-    assert result["pushed"], result
-    git("push", "origin", "main", cwd=hub)
-    return hub
 
 
 # ─── store_git_state ──────────────────────────────────────────────────────
@@ -373,10 +289,10 @@ class TestPushBranch:
         assert ls_remote(plain, "refs/heads/projectman") == head(plain / ".project")
 
 
-# ─── Non-hub: Store.commit_project_changes / push_project_changes ─────────
+# ─── Store.commit_project_changes / push_project_changes ─────────────────
 
 
-class TestNonHubCommit:
+class TestCommit:
     """US-PM-21 criterion: pm_commit lands commits on the projectman branch
     without dirtying main."""
 
@@ -445,7 +361,7 @@ class TestNonHubCommit:
         assert f"stories/{story.id}.md" in tree_paths(mounted / ".project", "HEAD")
 
 
-class TestNonHubCommitPlainDirectoryUnchanged:
+class TestCommitPlainDirectoryUnchanged:
     """The fix must not change the un-migrated shape at all."""
 
     def test_the_commit_lands_on_main_with_root_relative_paths(self, plain):
@@ -463,7 +379,7 @@ class TestNonHubCommitPlainDirectoryUnchanged:
         assert porcelain(plain) == "?? src.py"
 
 
-class TestNonHubPush:
+class TestPush:
     """US-PM-21 criterion: pm_push pushes only the projectman branch."""
 
     def test_pushes_the_projectman_branch_and_nothing_else(self, mounted):
@@ -528,160 +444,6 @@ class TestNonHubPush:
         assert out("rev-parse", "projectman", cwd=rel_origin) == commit
 
 
-# ─── Hub mode: registry.pm_commit / pm_push ───────────────────────────────
-
-
-def store_of(root: Path, sub: str | None = None) -> Path:
-    """The store directory pm_commit / pm_push act on (US-PM-35-7)."""
-    return store_path(root, sub) if sub else root / ".project"
-
-
-class TestHubCommit:
-    """The hub route used to run ``git status .project/`` at the hub root,
-    which is silent for an ignored worktree — every commit was a no-op."""
-
-    def test_the_hub_store_lands_on_the_projectman_branch(self, hub_mounted):
-        main_before = head(hub_mounted)
-        touch_story(hub_mounted, "US-DEMO-1")
-        touch_story(hub_mounted, "US-API-1", sub="api")
-
-        result = registry.pm_commit(store_of(hub_mounted))
-
-        assert result.get("nothing_to_commit") is None
-        assert result["on_branch"] == "projectman"
-        assert result["commit_hash"] == head(hub_mounted / ".project")
-        # One store, one commit.  Paths are store-relative for a worktree.
-        assert result["files_committed"] == ["stories/US-DEMO-1.md"]
-        assert head(hub_mounted) == main_before
-        # The subproject store is a different repo entirely now (US-PM-31),
-        # so its story is not even visible from the hub store.
-        assert porcelain(hub_mounted / ".project") == ""
-        assert porcelain(hub_mounted / "projects" / "api" / ".project") == (
-            "?? stories/US-API-1.md"
-        )
-
-    def test_a_subproject_store_commits_only_that_subproject(self, hub_mounted):
-        touch_story(hub_mounted, "US-DEMO-1")
-        touch_story(hub_mounted, "US-API-1", sub="api")
-        result = registry.pm_commit(store_of(hub_mounted, "api"))
-        assert result["files_committed"] == ["stories/US-API-1.md"]
-        assert result["message"] == "pm: update US-API-1"
-        assert result["on_branch"] == "projectman"
-        assert result["commit_hash"] == head(
-            hub_mounted / "projects" / "api" / ".project"
-        )
-
-    def test_a_subproject_with_nothing_of_its_own_is_the_expected_negative(self, hub_mounted):
-        touch_story(hub_mounted, "US-DEMO-1")
-        assert registry.pm_commit(store_of(hub_mounted, "api")) == {
-            "nothing_to_commit": True
-        }
-
-    def test_a_clean_store_is_nothing_to_commit(self, hub_mounted):
-        assert registry.pm_commit(store_of(hub_mounted)) == {"nothing_to_commit": True}
-
-    def test_the_auto_message_names_ids_from_store_relative_paths(self, hub_mounted):
-        touch_story(hub_mounted, "US-DEMO-7")
-        result = registry.pm_commit(store_of(hub_mounted))
-        assert result["message"] == "pm: update US-DEMO-7"
-
-    def test_a_plain_hub_store_still_reports_root_relative_paths(self, hub):
-        touch_story(hub, "US-DEMO-1")
-        result = registry.pm_commit(store_of(hub))
-        assert result["on_branch"] == "main"
-        assert result["files_committed"] == [".project/stories/US-DEMO-1.md"]
-        assert result["message"] == "pm: update US-DEMO-1"
-
-    def test_an_unmounted_subproject_store_commits_in_its_own_checkout(self, hub):
-        touch_story(hub, "US-DEMO-1")
-        touch_story(hub, "US-API-1", sub="api")
-        assert registry.pm_commit(store_of(hub))["files_committed"] == [
-            ".project/stories/US-DEMO-1.md"
-        ]
-        # An unmounted subproject store still commits — into the repo that
-        # owns the checkout it sits in, which here is the submodule.
-        assert registry.pm_commit(store_of(hub, "api"))["files_committed"] == [
-            ".project/stories/US-API-1.md"
-        ]
-
-
-class TestHubNoSubmoduleNoise:
-    """US-PM-21 criterion: hub mode introduces no submodule-pointer noise in
-    the parent repo (US-PM-21-8)."""
-
-    def test_the_store_is_never_a_gitlink_on_main(self, hub_mounted):
-        touch_story(hub_mounted, "US-DEMO-1")
-        registry.pm_commit(store_of(hub_mounted))
-        assert gitlinks(hub_mounted, "main") == ["projects/api"]
-
-    def test_pm_commits_leave_the_submodule_pointer_and_main_untouched(self, hub_mounted):
-        pointer_before = out("rev-parse", "HEAD:projects/api", cwd=hub_mounted)
-        main_before = head(hub_mounted)
-        touch_story(hub_mounted, "US-API-1", sub="api")
-        registry.pm_commit(store_of(hub_mounted, "api"))
-        assert out("rev-parse", "HEAD:projects/api", cwd=hub_mounted) == pointer_before
-        assert head(hub_mounted) == main_before
-        assert porcelain(hub_mounted) == ""
-        # A leading space (not "+" or "-") means the checkout matches the pointer.
-        assert git("submodule", "status", cwd=hub_mounted).stdout.startswith(" ")
-
-    def test_subproject_pm_writes_do_not_dirty_the_submodule_itself(self, hub_mounted):
-        touch_story(hub_mounted, "US-API-1", sub="api")
-        registry.pm_commit(store_of(hub_mounted, "api"))
-        assert porcelain(hub_mounted / "projects" / "api") == ""
-
-    def test_migration_itself_added_no_gitlink(self, hub_mounted):
-        assert gitlinks(hub_mounted, "main") == ["projects/api"]
-        assert ".gitignore" in tree_paths(hub_mounted, "main")
-
-
-class TestHubPush:
-    """One store, one branch: the hub pushes nothing on anyone's behalf."""
-
-    def test_the_hub_store_pushes_its_projectman_branch(self, hub_mounted):
-        touch_story(hub_mounted, "US-DEMO-1")
-        commit = registry.pm_commit(store_of(hub_mounted))["commit_hash"]
-
-        result = registry.pm_push(store_of(hub_mounted))
-
-        assert result["pushed"] is True, result
-        assert result["branch"] == "projectman"
-        assert result["worktree"] is True
-        assert ls_remote(hub_mounted, "refs/heads/projectman") == commit
-
-    def test_a_plain_hub_store_pushes_the_checked_out_branch(self, hub):
-        touch_story(hub, "US-DEMO-1")
-        registry.pm_commit(store_of(hub))
-        result = registry.pm_push(store_of(hub))
-        assert result["pushed"] is True, result
-        assert result["branch"] == "main"
-        assert result["worktree"] is False
-        assert ls_remote(hub, "refs/heads/main") == head(hub)
-
-    def test_a_detached_store_is_refused(self, hub_mounted):
-        from projectman.errors import StoreError
-
-        git("checkout", "--detach", cwd=hub_mounted / ".project")
-        with pytest.raises(StoreError, match="detached") as exc:
-            registry.pm_push(store_of(hub_mounted))
-        assert exc.value.code == "store"
-
-    def test_a_git_refusal_is_reported_with_its_stderr(self, hub_mounted):
-        from projectman.errors import StoreError
-
-        git("remote", "set-url", "origin", str(hub_mounted / "nowhere.git"), cwd=hub_mounted)
-        with pytest.raises(StoreError, match="Push failed") as exc:
-            registry.pm_push(store_of(hub_mounted))
-        assert exc.value.code == "store"
-
-    def test_a_store_with_no_remote_is_refused(self, hub_mounted):
-        from projectman.errors import StoreError
-
-        git("remote", "remove", "origin", cwd=hub_mounted)
-        with pytest.raises(StoreError, match="not configured"):
-            registry.pm_push(store_of(hub_mounted))
-
-
 # ─── Status dashboard ─────────────────────────────────────────────────────
 
 
@@ -689,14 +451,14 @@ class TestGitStatusReportsTheStoreDistinctly:
     """US-PM-21 criterion: pm_git_status reports the .project worktree state
     distinctly from main."""
 
-    def test_non_hub_reports_the_store_branch(self, mounted):
-        data = registry.git_status_all(root=mounted)
+    def test_a_mounted_store_reports_its_own_branch(self, mounted):
+        data = store_status_payload(mounted)
         store = data["pm_store"]
         assert store["worktree"] is True
         assert store["branch"] == "projectman"
         assert store["upstream"] == "origin/projectman"
         assert "projectman (worktree), clean" in data["summary"]
-        assert "Not a hub" in data["summary"]
+        assert data["summary"].startswith("PM store: ")
 
     def test_store_dirty_and_ahead_are_separate_from_main(self, mounted):
         # Main: one unpushed commit, clean tree.  Store: one dirty file.
@@ -705,7 +467,7 @@ class TestGitStatusReportsTheStoreDistinctly:
         git("commit", "-m", "code", cwd=mounted)
         touch_story(mounted)
 
-        store = registry.git_status_all(root=mounted)["pm_store"]
+        store = store_status_payload(mounted)["pm_store"]
 
         assert store["dirty"] is True and store["dirty_count"] == 1
         assert store["ahead"] == 0  # main's unpushed commit is not the store's
@@ -714,67 +476,31 @@ class TestGitStatusReportsTheStoreDistinctly:
     def test_store_ahead_after_commit_before_push(self, mounted):
         touch_story(mounted)
         Store(mounted).commit_project_changes()
-        store = registry.git_status_all(root=mounted)["pm_store"]
+        store = store_status_payload(mounted)["pm_store"]
         assert store["ahead"] == 1
         assert "1 ahead" in store["description"]
 
-    def test_hub_output_keeps_projects_and_adds_the_store(self, hub_mounted):
-        data = registry.git_status_all(root=hub_mounted)
-        assert data["total"] == 1
-        assert data["projects"][0]["name"] == "api"
-        # The row is the subproject's *store*, which US-PM-35-8 reads through
-        # the same worktree helper: `projectman`, with `main` — the submodule's
-        # code checkout — kept as a separate column.
-        assert data["projects"][0]["branch"] == "projectman"
-        assert data["projects"][0]["checkout_branch"] == "main"
-        assert data["projects"][0]["attached"] is True
-        assert data["pm_store"]["branch"] == "projectman"
-        assert data["pm_store"]["worktree"] is True
-        assert "All 1 projects clean." in data["summary"]
-        assert "PM store: .project on projectman (worktree), clean" in data["summary"]
-
-    def test_a_plain_hub_store_reads_as_a_plain_directory_on_main(self, hub):
-        store = registry.git_status_all(root=hub)["pm_store"]
+    def test_a_plain_store_reads_as_a_plain_directory_on_main(self, plain):
+        store = store_status_payload(plain)["pm_store"]
         assert store["worktree"] is False
         assert store["branch"] == "main"
         assert "(plain directory)" in store["description"]
 
-    def test_an_empty_hub_still_carries_the_store(self, tmp_path):
-        root = init_repo(tmp_path / "empty-hub")
-        write_store(root, hub=True)
-        git("add", "-A", cwd=root)
-        git("commit", "-m", "init", cwd=root)
-        data = registry.git_status_all(root=root)
-        assert data["total"] == 0
-        assert data["pm_store"]["branch"] == "main"
-        assert "No projects registered. PM store:" in data["summary"]
+    def test_the_payload_carries_only_the_one_store(self, mounted):
+        """Hub mode is gone: no project list, no aggregate ok/issues keys."""
+        data = store_status_payload(mounted)
+        assert set(data) == {"summary", "pm_store"}
 
-    def test_the_store_line_never_fails_the_dashboard(self, hub_mounted, monkeypatch):
+    def test_the_store_line_never_fails_the_dashboard(self, mounted, monkeypatch):
         import projectman.worktree as wt
 
         def boom(*a, **k):
             raise OSError("no git")
 
         monkeypatch.setattr(wt, "store_git_state", boom)
-        data = registry.git_status_all(root=hub_mounted)
+        data = store_status_payload(mounted)
         assert data["pm_store"]["branch"] is None
         assert data["pm_store"]["description"]
-
-    def test_format_git_status_prints_the_store_line(self, hub_mounted):
-        text = registry.format_git_status(registry.git_status_all(root=hub_mounted))
-        lines = text.splitlines()
-        assert lines[0] == "Hub Git Status (1 projects)"
-        assert lines[1] == "  PM store: .project on projectman (worktree), clean"
-        assert any(line.strip().startswith("api") for line in lines)
-
-    def test_format_git_status_without_a_store_entry_is_unchanged(self):
-        text = registry.format_git_status({
-            "projects": [{"name": "api", "branch": "main", "dirty": False, "dirty_count": 0,
-                          "ahead": 0, "behind": 0, "issues": [], "exists": True}],
-            "total": 1, "issues": 0, "ok": True, "summary": "All 1 projects clean.",
-        })
-        assert "PM store" not in text
-        assert text.splitlines()[0] == "Hub Git Status (1 projects)"
 
 
 # ─── CLI and MCP surfaces ─────────────────────────────────────────────────
@@ -797,12 +523,6 @@ class TestCli:
         assert "Branch: projectman" in result.output
         assert "stories/US-DEMO-1.md" in result.output
 
-    def test_hub_commit_names_the_branch(self, runner, hub_mounted):
-        touch_story(hub_mounted, "US-DEMO-1")
-        result = _in(hub_mounted, lambda: runner.invoke(cli, ["commit"]))
-        assert result.exit_code == 0, result.output
-        assert "Branch: projectman" in result.output
-
     def test_push_names_the_branch(self, runner, mounted):
         touch_story(mounted)
         Store(mounted).commit_project_changes()
@@ -810,24 +530,20 @@ class TestCli:
         assert result.exit_code == 0, result.output
         assert "Pushed projectman to origin" in result.output
 
-    def test_hub_push_names_the_store_branch(self, runner, hub_mounted):
-        touch_story(hub_mounted, "US-DEMO-1")
-        registry.pm_commit(store_of(hub_mounted))
-        result = _in(hub_mounted, lambda: runner.invoke(cli, ["push"]))
-        assert result.exit_code == 0, result.output
-        assert "Pushed projectman to origin" in result.output
-
-    def test_git_status_json_carries_the_store(self, runner, hub_mounted):
-        result = _in(hub_mounted, lambda: runner.invoke(cli, ["git-status", "--json"]))
+    def test_git_status_json_carries_the_store(self, runner, mounted):
+        result = _in(mounted, lambda: runner.invoke(cli, ["git-status", "--json"]))
         assert result.exit_code == 0, result.output
         data = json.loads(result.output)
+        assert set(data) == {"summary", "pm_store"}
         assert data["pm_store"]["branch"] == "projectman"
         assert data["pm_store"]["worktree"] is True
 
-    def test_git_status_table_shows_the_store_line(self, runner, hub_mounted):
-        result = _in(hub_mounted, lambda: runner.invoke(cli, ["git-status"]))
+    def test_git_status_table_shows_the_store_line(self, runner, mounted):
+        result = _in(mounted, lambda: runner.invoke(cli, ["git-status"]))
         assert result.exit_code == 0, result.output
         assert "PM store: .project on projectman (worktree), clean" in result.output
+        assert "branch" in result.output and "projectman" in result.output
+        assert "mount" in result.output and "worktree" in result.output
 
 
 class TestMcpTools:
@@ -863,22 +579,6 @@ class TestMcpTools:
         assert data["pushed"]["branch"] == "projectman"
         assert ls_remote(mounted, "refs/heads/projectman") == head(mounted / ".project")
         assert ls_remote(mounted, "refs/heads/main") != head(mounted)
-
-    def test_pm_git_status_reports_the_store(self, hub_mounted, monkeypatch):
-        from projectman.server import pm_git_status
-
-        monkeypatch.chdir(hub_mounted)
-        data = yaml.safe_load(pm_git_status())
-        assert data["pm_store"]["branch"] == "projectman"
-        assert data["projects"][0]["name"] == "api"
-
-    def test_pm_git_status_for_a_single_project_keeps_the_store(self, hub_mounted, monkeypatch):
-        from projectman.server import pm_git_status
-
-        monkeypatch.chdir(hub_mounted)
-        data = yaml.safe_load(pm_git_status(prefix="API"))
-        assert data["total"] == 1
-        assert data["pm_store"]["worktree"] is True
 
 
 # ─── Coverage of the remaining worktree.py branches ───────────────────────

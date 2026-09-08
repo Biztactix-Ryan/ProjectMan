@@ -10,15 +10,8 @@ from mcp.server.fastmcp.exceptions import ToolError
 from mcp.types import ToolAnnotations
 
 from .config import enabled_tool_families, find_project_root, load_config
-from .errors import ConflictError, NotFoundError, ValidationError, wire_code_for
+from .errors import NotFoundError, ValidationError, wire_code_for
 from .event_bus import EventBus, NoOpEventBus
-from .hub.stores import (
-    attach_hint,
-    hub_store_dir,
-    hub_stores,
-    not_attached_row,
-    subproject_status,
-)
 from .indexer import build_index, write_index
 from .models import EPIC_ID, SPRINT_ID, STORY_ID, TASK_ID, Evidence, ProjectIndex
 from .store import (
@@ -53,15 +46,20 @@ def _emit(event_type: str, data: dict) -> None:
 _store_cache: dict[Path, Store] = {}
 
 
+def _project_dir(root: Optional[Path] = None) -> Path:
+    """The one store directory this server serves: ``{root}/.project``."""
+    return Path(root if root is not None else find_project_root()) / ".project"
+
+
 def _store() -> Store:
     """The store you are standing in: ``{root}/.project``.
 
-    In a hub that is the hub's own store, not a subproject's — a subproject is
-    reached by its prefix (:func:`_store_for_id`, :func:`_store_for_prefix`),
-    never by a project name passed down from a tool argument (US-PM-34).
+    There is exactly one, for the life of the process — every tool acts on it
+    and nothing routes anywhere else (US-PM-44).  Cached by store directory in
+    ``_store_cache`` so repeated calls hand back the same object.
     """
     root = find_project_root()
-    default_dir = hub_store_dir(root)
+    default_dir = _project_dir(root)
     if default_dir not in _store_cache:
         _store_cache[default_dir] = Store(root)
     return _store_cache[default_dir]
@@ -99,119 +97,35 @@ def _prefix_of(item_id: object) -> str:
     return text.split("-")[1]
 
 
-def _prefix_map(root: Path) -> dict[str, dict]:
-    """Prefix -> store entry for every store reachable from a hub *root*.
-
-    Entries are the ``hub_stores`` shape (``name``/``prefix``/``path``/
-    ``attached``) plus the hub's own store, which is ``{root}/.project`` with
-    the prefix from its own config.yaml.  Keys are uppercased so the lookup
-    matches an ID's (always uppercase) prefix even if a config.yaml wrote its
-    prefix in another case.
-
-    Raises:
-        errors.ConflictError: two stores claim the same prefix.  Naming both
-            is the only useful thing to do — silently picking one would route
-            writes into whichever store happened to be registered first.
-    """
-    config = load_config(root)
-    entries: list[dict] = []
-    if config.prefix:
-        entries.append(
-            {
-                "name": config.name,
-                "prefix": config.prefix,
-                "path": hub_store_dir(root),
-                "attached": True,
-                "hub": True,
-            }
-        )
-    for entry in hub_stores(root):
-        if entry.get("prefix"):
-            entries.append(dict(entry, hub=False))
-
-    by_prefix: dict[str, dict] = {}
-    for entry in entries:
-        key = str(entry["prefix"]).upper()
-        clash = by_prefix.get(key)
-        if clash is not None:
-            raise ConflictError(
-                f"prefix '{entry['prefix']}' is claimed by two projects in "
-                f"this hub: '{clash['name']}' and '{entry['name']}' — give one "
-                f"of them a different prefix in its .project/config.yaml"
-            )
-        by_prefix[key] = entry
-    return by_prefix
-
-
 def _store_for_id(item_id: str) -> Store:
-    """The Store that owns *item_id*, chosen by the prefix inside the ID.
+    """The Store that owns *item_id*.
 
-    This is the replacement for the old ``_store(project)``'s optional project
-    name (US-PM-34): the ID already says which project it belongs to, so
-    nothing has to be told twice.
-
-    * Outside a hub there is exactly one store, and it is returned whatever
-      the prefix is — a single-project install has never checked the prefix
-      against its config and must not start (US-PM-34-5 pins that).
-    * In a hub the prefix is looked up in the store map from US-PM-31, with
-      the hub's own ``{root}/.project`` included under its own prefix.
-
-    The Store comes from ``_store_cache`` keyed by store directory, so the
-    object returned here is the *same* object ``_store()`` would return for
-    the equivalent project name.
+    There is one store, so the answer is always :func:`_store`.  The ID is
+    still validated for shape first: a malformed ID is a caller error and must
+    be named as one rather than silently reaching the store and coming back as
+    "not found".  The prefix inside a well-formed ID is not checked against the
+    project's own — a single-project install has never done that and must not
+    start (US-PM-34-5, US-PM-44); an ID whose prefix this store does not use
+    simply has no file, and the store reports that as a coded ``not_found``.
 
     Raises:
         errors.ValidationError (``invalid``): the ID is malformed.
-        errors.NotFoundError (``not_found``): no store in this hub claims the
-            prefix (the message lists the known ones, sorted), or the store
-            that claims it is registered but not mounted (the message carries
-            ``stores.attach_hint``).  An unattached store is never opened —
-            constructing a Store on a missing directory is exactly the failure
-            US-PM-31-9 removed from the read paths.
-        errors.ConflictError (``conflict``): two projects claim the prefix.
     """
-    prefix = _prefix_of(item_id)
-    root = find_project_root()
-    if not load_config(root).hub:
-        return _store()
-
-    by_prefix = _prefix_map(root)
-    entry = by_prefix.get(prefix.upper())
-    if entry is None:
-        known = ", ".join(sorted(str(e["prefix"]) for e in by_prefix.values()))
-        raise NotFoundError(
-            f"no project in this hub uses the prefix '{prefix}' (from "
-            f"'{item_id}') — known prefixes: {known or 'none'}"
-        )
-    if not entry["attached"]:
-        raise NotFoundError(
-            f"prefix '{prefix}' (from '{item_id}') belongs to project "
-            f"'{entry['name']}', but {attach_hint(entry['name'])}"
-        )
-
-    return _store_from_entry(root, entry)
+    _prefix_of(item_id)
+    return _store()
 
 
 def _validate_epic_link(epic_id: str) -> None:
     """Refuse a story→epic link whose epic does not exist (US-PM-36).
 
-    Epics live at hub level only, so a subproject story's ``epic_id`` may name
-    an epic in the hub's own store *or* one in the story's own store — the
-    prefix inside the ID says which, exactly as it does for every other ID
-    (US-PM-34).  The link is therefore checked by resolving that prefix with
-    :func:`_store_for_id` and reading the epic out of the store it names.
-
-    Outside a hub there is one store and this is simply "does the epic exist",
-    which is the check that was silently missing before.
+    There is one store, so this is simply "does the epic exist" — the check
+    that was silently missing before.
 
     Raises:
         errors.ValidationError (``invalid``): the ID is not epic-shaped, or is
             malformed.
         errors.NotFoundError (``not_found``): no epic with that ID exists in
-            the store its prefix names.  The message says where it looked —
-            the hub store and the story's own store are the two legitimate
-            homes for an epic a story may link to.
-        errors.ConflictError (``conflict``): two projects claim the prefix.
+            this project's store.
     """
     if not EPIC_ID.match(epic_id or ""):
         raise ValidationError(
@@ -223,36 +137,11 @@ def _validate_epic_link(epic_id: str) -> None:
     try:
         store.get_epic(epic_id)
     except FileNotFoundError as missing:
-        config = load_config(find_project_root())
-        if config.hub:
-            where = (
-                f"looked in the store its prefix names "
-                f"('{store.config.name}'); a story's epic_id must name an "
-                f"epic in the hub store (prefix '{config.prefix}') or in the "
-                f"story's own store"
-            )
-        else:
-            where = f"looked in this project's store ('{store.config.name}')"
         raise NotFoundError(
-            f"no epic '{epic_id}' exists — {where}. Create it with "
-            f"pm_create_epic, or link the story to an epic that exists"
+            f"no epic '{epic_id}' exists — looked in this project's store "
+            f"('{store.config.name}'). Create it with pm_create_epic, or link "
+            f"the story to an epic that exists"
         ) from missing
-
-
-def _store_from_entry(root: Path, entry: dict) -> Store:
-    """The cached Store for one :func:`_prefix_map` entry.
-
-    Keyed by store directory, so the hub's own entry hands back the very same
-    object ``_store()`` returns rather than a second Store over the same files.
-    """
-    store_dir = Path(entry["path"])
-    if store_dir not in _store_cache:
-        _store_cache[store_dir] = (
-            Store(root)
-            if entry.get("hub")
-            else Store(root, project_dir=store_dir)
-        )
-    return _store_cache[store_dir]
 
 
 def _stores_for_ids(ids) -> list[tuple[Store, list[str]]]:
@@ -279,113 +168,6 @@ def _stores_for_ids(ids) -> list[tuple[Store, list[str]]]:
         else:
             groups[position][1].append(item_id)
     return groups
-
-
-def _hub_entry_for_prefix(
-    prefix: Optional[str],
-    *,
-    for_create: bool = False,
-    verb: str = "this tool",
-) -> Optional[dict]:
-    """The hub store entry a bare ``prefix`` argument names, or ``None``.
-
-    The ID-less half of US-PM-34: verbs with no ID to route by
-    (:func:`pm_status`, :func:`pm_board`, :func:`pm_create_story`, ...) take an
-    optional ``prefix`` instead of the old project *name*, so a hub is
-    addressed the same way everywhere — by the prefix that appears inside its
-    IDs.
-
-    ``None`` means "the store you are standing in", which is either of two
-    things:
-
-    * Not a hub.  The prefix is ignored outright and the single store is used,
-      so single-project behaviour is byte-for-byte what it was — US-PM-34-5
-      pins that, including a prefix passed by a confused caller.
-    * A hub with no prefix given, on a read.  That reads the hub's own
-      ``.project``; it is not a fan-out over the subprojects.
-
-    Args:
-        prefix: The project prefix, any case, or None/"" for the default.
-        for_create: True for verbs that make new items.  A hub has no default
-            project to create in, so an omitted prefix is refused rather than
-            resolved — silently filing a new story under the hub would put it
-            where nobody is looking for it.
-        verb: Tool name, used only in the ``for_create`` error message.
-
-    Raises:
-        errors.ValidationError (``invalid``): *for_create* in a hub with no
-            prefix.
-        errors.NotFoundError (``not_found``): no store claims the prefix (the
-            message lists the known ones, sorted), or the store that claims it
-            is registered but not mounted (the message carries
-            ``stores.attach_hint``).  Same two failures, same wording shape,
-            as :func:`_store_for_id` — one prefix vocabulary, one error.
-        errors.ConflictError (``conflict``): two projects claim the prefix.
-    """
-    root = find_project_root()
-    if not load_config(root).hub:
-        return None
-
-    by_prefix = _prefix_map(root)
-    known = ", ".join(sorted(str(e["prefix"]) for e in by_prefix.values()))
-
-    if not prefix:
-        if for_create:
-            raise ValidationError(
-                f"{verb} needs a prefix in this hub — there is no default "
-                f"project to create in. Pass prefix='<PREFIX>' to say which "
-                f"project the new item belongs to (known prefixes: "
-                f"{known or 'none'})"
-            )
-        return None
-
-    entry = by_prefix.get(str(prefix).upper())
-    if entry is None:
-        raise NotFoundError(
-            f"no project in this hub uses the prefix '{prefix}' — known "
-            f"prefixes: {known or 'none'}"
-        )
-    if not entry["attached"]:
-        raise NotFoundError(
-            f"prefix '{prefix}' belongs to project '{entry['name']}', but "
-            f"{attach_hint(entry['name'])}"
-        )
-    return entry
-
-
-def _store_for_prefix(
-    prefix: Optional[str] = None,
-    *,
-    for_create: bool = False,
-    verb: str = "this tool",
-) -> Store:
-    """The Store an ID-less verb should act on, given its ``prefix``.
-
-    See :func:`_hub_entry_for_prefix` for what an omitted prefix means and
-    which errors are raised.
-    """
-    entry = _hub_entry_for_prefix(prefix, for_create=for_create, verb=verb)
-    if entry is None:
-        return _store()
-    return _store_from_entry(find_project_root(), entry)
-
-
-def _project_dir_for_prefix(
-    prefix: Optional[str] = None,
-    *,
-    for_create: bool = False,
-    verb: str = "this tool",
-) -> Path:
-    """The ``.project`` directory an ID-less verb should read, by ``prefix``.
-
-    The :func:`_store_for_prefix` answer for the handful of verbs that work on
-    files inside the store directory (docs, the activity log, the malformed
-    quarantine) rather than through the Store API.
-    """
-    entry = _hub_entry_for_prefix(prefix, for_create=for_create, verb=verb)
-    if entry is None:
-        return hub_store_dir(find_project_root())
-    return Path(entry["path"])
 
 
 def _note_truncation_fields(store: Store, note: Optional[str]) -> dict:
@@ -1018,18 +800,10 @@ def _as_csv(value: Union[str, list[str], None]) -> Optional[str]:
     title="Project Status",
     annotations=ToolAnnotations(title="Project Status", readOnlyHint=True),
 )
-def pm_status(prefix: Optional[str] = None) -> str:
-    """Get project status summary: story/task counts, points, completion percentage.
-
-    In a hub with no prefix, the hub's own totals come back with a
-    `subprojects` list — one row per registered project with its `attached`
-    state, and a `hint` on any whose store is not mounted yet.
-
-    Args:
-        prefix: Project prefix (hub mode only, e.g. "API")
-    """
+def pm_status() -> str:
+    """Get project status summary: story/task counts, points, completion percentage."""
     try:
-        store = _store_for_prefix(prefix)
+        store = _store()
         index = build_index(store)
         pct = 0
         if index.total_points > 0:
@@ -1053,16 +827,6 @@ def pm_status(prefix: Optional[str] = None) -> str:
             "completion": f"{pct}%",
             "by_status": {k: len(v) for k, v in status_groups.items()},
         }
-
-        # Hub view: name the subprojects and say which of them are actually
-        # readable.  Deliberately only when no prefix was given, so the
-        # single-project response shape is byte-for-byte what it was
-        # (US-PM-31-9).  It is a map read, not a Store open, so an unattached
-        # subproject is a row here rather than an exception.
-        if not prefix:
-            root = find_project_root()
-            if load_config(root).hub:
-                result["subprojects"] = subproject_status(root)
 
         return _yaml_dump(result)
     except Exception as e:
@@ -1214,7 +978,7 @@ def pm_batch_get(
         if not type:
             raise ToolError("provide ids or type")
         # No IDs to route by: the type sweep reads the store of the tree
-        # the server is running in (US-PM-34-8 gives it a `prefix`).
+        # the server is running in.
         items = _store().list_all(type)
         kind = {"epics": "epic", "stories": "story", "tasks": "task"}.get(
             type, "item"
@@ -1228,15 +992,14 @@ def pm_batch_get(
     title="Read Documentation",
     annotations=ToolAnnotations(title="Read Documentation", readOnlyHint=True),
 )
-def pm_docs(doc: Optional[str] = None, prefix: Optional[str] = None) -> str:
+def pm_docs(doc: Optional[str] = None) -> str:
     """Read project documentation files.
 
     Args:
         doc: Specific doc to read: "project", "infrastructure", "security", "vision", "architecture", or "decisions". Omit for a summary of all.
-        prefix: Project prefix (hub mode only, e.g. "API")
     """
     try:
-        proj_dir = _project_dir_for_prefix(prefix)
+        proj_dir = _project_dir()
 
         doc_map = {
             "project": "PROJECT.md",
@@ -1309,17 +1072,15 @@ def pm_docs(doc: Optional[str] = None, prefix: Optional[str] = None) -> str:
 def pm_update_doc(
     doc: str,
     content: str,
-    prefix: Optional[str] = None,
 ) -> str:
     """Update a project documentation file.
 
     Args:
         doc: Which doc to update: "project", "infrastructure", "security", "vision", "architecture", or "decisions"
         content: The full new content for the document
-        prefix: Project prefix (hub mode only, e.g. "API")
     """
     try:
-        proj_dir = _project_dir_for_prefix(prefix)
+        proj_dir = _project_dir()
 
         doc_map = {
             "project": "PROJECT.md",
@@ -1353,7 +1114,6 @@ def pm_next(
     text: Optional[str] = None,
     append: bool = False,
     clear: bool = False,
-    prefix: Optional[str] = None,
 ) -> str:
     """Read, write or clear the short note the next session should see first.
 
@@ -1377,7 +1137,6 @@ def pm_next(
         text: The note to save. Omit to read the note, which is the common call.
         append: Add `text` below the existing note under a dated heading instead of replacing it. Requires `text`.
         clear: Delete the note. Cannot be combined with `text`.
-        prefix: Project prefix (hub mode only, e.g. "API")
     """
     try:
         if text is not None and clear:
@@ -1385,7 +1144,7 @@ def pm_next(
         if append and text is None:
             raise ToolError("append needs text to append — pass text, or omit append")
 
-        store = _store_for_prefix(prefix)
+        store = _store()
 
         if clear:
             return _yaml_dump({"cleared": store.clear_next()})
@@ -1437,7 +1196,6 @@ def _annotate_claim(entry: dict, meta, max_age_seconds: float) -> dict:
     annotations=ToolAnnotations(title="Active Work", readOnlyHint=True),
 )
 def pm_active(
-    prefix: Optional[str] = None,
     tag: Optional[str] = None,
     limit: int = 20,
     offset: int = 0,
@@ -1452,14 +1210,13 @@ def pm_active(
     before claim metadata existed has no `claim_age` and is never stale.
 
     Args:
-        prefix: Project prefix (hub mode only, e.g. "API")
         tag: Filter to show only items (or their parent stories) with this tag
         limit: Max items per list (default 20)
         offset: Starting index for pagination (default 0)
         stale_after: Hours a claim may sit before it is flagged `stale: true`. Omit to use the project's `stale_claim_hours` config key (default 2).
     """
     try:
-        store = _store_for_prefix(prefix)
+        store = _store()
         # One listing per call: list_stories() already excludes archived
         # stories and filters on status.value, so deriving the active subset
         # in memory is identical to list_stories(status="active") -- and the
@@ -1516,18 +1273,20 @@ def pm_active(
     title="Search Items",
     annotations=ToolAnnotations(title="Search Items", readOnlyHint=True),
 )
-def pm_search(
-    query: str, prefix: Optional[str] = None, tag: Optional[str] = None
-) -> str:
+def pm_search(query: str, tag: Optional[str] = None) -> str:
     """Search stories and tasks by keyword or semantic similarity.
 
     Args:
         query: Search query string
-        prefix: Project prefix (hub mode only, e.g. "API")
         tag: Optional tag to filter results (only items with this tag are returned)
     """
+    # Returns a mapping: ``results`` (the ranked hits) and ``skipped`` -- the
+    # number of item files whose frontmatter would not parse, 0 when the whole
+    # store was read.  Deliberately *not* in the docstring: every byte of a
+    # docstring ships in the tool-list payload, which is capped
+    # (tests/test_tool_list_size.py).  See docs/reference/mcp-tools.md.
     try:
-        proj_dir = _project_dir_for_prefix(prefix)
+        proj_dir = _project_dir()
 
         # Try embeddings first, fall back to keyword
         try:
@@ -1543,7 +1302,7 @@ def pm_search(
                     # so the old construction looked under .project/.project
                     # and every lookup raised -- the tag filter silently
                     # dropped every hit.
-                    store = _store_for_prefix(prefix)
+                    store = _store()
                     # The embedding index only ever holds stories and tasks
                     # (see EmbeddingStore.reindex_all), so two batch listings
                     # cover every possible result id -- no store.get per hit.
@@ -1555,33 +1314,44 @@ def pm_search(
                     }
                     results = [r for r in results if tag in tags_by_id.get(r.id, ())]
                 return _yaml_dump(
-                    [
-                        {
-                            "id": r.id,
-                            "title": r.title,
-                            "type": r.type,
-                            "score": round(r.score, 3),
-                        }
-                        for r in results
-                    ]
+                    {
+                        "results": [
+                            {
+                                "id": r.id,
+                                "title": r.title,
+                                "type": r.type,
+                                "score": round(r.score, 3),
+                            }
+                            for r in results
+                        ],
+                        # The embedding index is read as one file: there are no
+                        # per-item parses to skip.
+                        "skipped": 0,
+                    }
                 )
         except (ImportError, Exception):
             pass
 
-        from .search import keyword_search
+        from .search import keyword_search_with_skipped
 
-        results = keyword_search(query, proj_dir, tag=tag)
+        outcome = keyword_search_with_skipped(query, proj_dir, tag=tag)
         return _yaml_dump(
-            [
-                {
-                    "id": r.id,
-                    "title": r.title,
-                    "type": r.type,
-                    "score": r.score,
-                    "snippet": r.snippet,
-                }
-                for r in results
-            ]
+            {
+                "results": [
+                    {
+                        "id": r.id,
+                        "title": r.title,
+                        "type": r.type,
+                        "score": r.score,
+                        "snippet": r.snippet,
+                    }
+                    for r in outcome.results
+                ],
+                # Item files whose frontmatter would not parse. 0 on a healthy
+                # store; higher means the sweep was partial (pm_malformed
+                # names the files).
+                "skipped": outcome.skipped,
+            }
         )
     except Exception as e:
         raise _failed(e) from e
@@ -1601,7 +1371,6 @@ _BOARD_NOTE = (
     annotations=ToolAnnotations(title="Task Board", readOnlyHint=True),
 )
 def pm_board(
-    prefix: Optional[str] = None,
     assignee: Optional[str] = None,
     tag: Optional[str] = None,
     limit: int = 10,
@@ -1619,7 +1388,6 @@ def pm_board(
     readiness — no points, thin description, or incomplete dependencies.
 
     Args:
-        prefix: Project prefix (hub mode only, e.g. "API")
         assignee: Filter to show only tasks for this assignee
         tag: Filter to show only tasks (or their parent stories) with this tag
         limit: Max items per board group (default 10). Totals are always shown.
@@ -1629,7 +1397,7 @@ def pm_board(
         from .readiness import check_readiness, compute_hints
         from .deps import topological_sort
 
-        store = _store_for_prefix(prefix)
+        store = _store()
         # Archived tasks are abandoned, not workable.  Archival used to write
         # "done", which dropped them off the board as a side effect; now that
         # they keep their real status the exclusion has to be explicit.
@@ -1809,27 +1577,10 @@ def pm_board(
     title="Burndown Data",
     annotations=ToolAnnotations(title="Burndown Data", readOnlyHint=True),
 )
-def pm_burndown(prefix: Optional[str] = None) -> str:
-    """Get burndown data: total vs completed points.
-
-    Args:
-        prefix: Project prefix (hub mode only, e.g. "API")
-    """
+def pm_burndown() -> str:
+    """Get burndown data: total vs completed points."""
     try:
-        root = find_project_root()
-        config = load_config(root)
-
-        # Hub mode: aggregate across projects
-        if config.hub and not prefix:
-            try:
-                from .hub.rollup import rollup
-
-                data = rollup(root)
-                return _yaml_dump(data)
-            except (ImportError, Exception):
-                pass
-
-        store = _store_for_prefix(prefix)
+        store = _store()
         index = build_index(store)
 
         remaining = index.total_points - index.completed_points
@@ -1863,7 +1614,6 @@ def pm_create_story(
     acceptance_criteria: Optional[Union[str, list[str]]] = None,
     tags: Optional[Union[str, list[str]]] = None,
     depends_on: Optional[Union[str, list[str]]] = None,
-    prefix: Optional[str] = None,
 ) -> str:
     """Create a new user story.
 
@@ -1876,10 +1626,9 @@ def pm_create_story(
         acceptance_criteria: List of acceptance criteria, one entry per criterion (e.g. ["Users can log in", "Error shown on invalid password"]). Pass a JSON list, never a comma-joined string: criteria are natural language and a comma inside one is punctuation, not a separator. A bare string is accepted and taken as exactly one criterion. Each criterion auto-generates a test task.
         tags: Tags — a list (["security", "mvp"]) or a comma-separated string ("security,mvp"); both mean the same thing.
         depends_on: Dependency IDs (stories or tasks this story depends on) — a list (["US-PRJ-1", "US-PRJ-2"]) or a comma-separated string ("US-PRJ-1,US-PRJ-2"); both mean the same thing.
-        prefix: Project prefix - required in a hub (e.g. "API")
     """
     try:
-        store = _store_for_prefix(prefix, for_create=True, verb="pm_create_story")
+        store = _store()
         if epic_id:
             # Before the story is written, not after: a link that cannot
             # resolve must not leave a half-linked story behind (US-PM-36).
@@ -1935,8 +1684,6 @@ def pm_create_epic(
 ) -> str:
     """Create a new epic for grouping related stories.
 
-    No prefix: in a hub, epics live in the hub store and carry its prefix.
-
     Args:
         title: Epic title (short strategic name)
         description: Epic description (vision, success criteria, scope)
@@ -1945,9 +1692,6 @@ def pm_create_epic(
         tags: Tags — a list (["security", "mvp"]) or a comma-separated string ("security,mvp"); both mean the same thing.
     """
     try:
-        # No prefix, and no _store_for_prefix: epics are hub-level (US-PM-36).
-        # `_store()` is the hub's own .project in a hub and the only store
-        # outside one, which is exactly the rule in both modes.
         store = _store()
         tag_list = _as_list(tags) if tags else None
         meta = store.create_epic(title, description, priority, target_date, tag_list)
@@ -1969,8 +1713,6 @@ def pm_epic(
 ) -> str:
     """Get epic details with rollup of linked stories and tasks.
 
-    A hub epic rolls up every store, grouped by project.
-
     Args:
         id: Epic ID (e.g. EPIC-PRJ-1) (alias: epic_id)
         limit: Max stories to return (default 10)
@@ -1982,53 +1724,24 @@ def pm_epic(
         store = _store_for_id(id)
         meta, body = store.get_epic(id)
 
-        # An epic in the hub's own store is a cross-project initiative
-        # (US-PM-36), so its rollup reads every store in the map — hub first,
-        # then each attached subproject in registration order.  A subproject
-        # epic, and any epic outside a hub, rolls up its own store alone and
-        # answers in exactly the shape it always did.
-        root = find_project_root()
-        hub_wide = bool(load_config(root).hub) and (
-            Path(store.project_dir) == hub_store_dir(root)
-        )
-
-        sources: list[tuple[Optional[dict], Store]] = []
-        not_attached: list[dict] = []
-        if hub_wide:
-            for entry in _prefix_map(root).values():
-                if entry["attached"]:
-                    sources.append((entry, _store_from_entry(root, entry)))
-                else:
-                    # Named with its hint rather than silently dropped: a
-                    # rollup missing a whole repo must say so (US-PM-31-9).
-                    not_attached.append(not_attached_row(entry))
-        else:
-            sources.append((None, store))
-
         # Find linked stories — compute rollup from ALL, paginate the detail
-        # list.  Flattened across stores in source order, so limit/offset page
-        # through one sequence rather than per-project pages.
-        linked_stories: list[tuple[Optional[dict], object, list]] = []
-        for entry, source in sources:
-            # One pass over every task, partitioned locally: asking the store
-            # once per story turned an epic view into N+1 scans of the same
-            # cached list.  The partition is stable, so each bucket keeps the
-            # order the per-story call returned.
-            tasks_by_story: dict[str, list] = {}
-            for task in source.list_tasks():
-                tasks_by_story.setdefault(task.story_id, []).append(task)
-            for story in source.list_stories():
-                if story.epic_id == id:
-                    linked_stories.append(
-                        (entry, story, tasks_by_story.get(story.id, []))
-                    )
+        # list.  One pass over every task, partitioned locally: asking the
+        # store once per story turned an epic view into N+1 scans of the same
+        # cached list.  The partition is stable, so each bucket keeps the
+        # order the per-story call returned.
+        linked_stories: list[tuple[object, list]] = []
+        tasks_by_story: dict[str, list] = {}
+        for task in store.list_tasks():
+            tasks_by_story.setdefault(task.story_id, []).append(task)
+        for story in store.list_stories():
+            if story.epic_id == id:
+                linked_stories.append((story, tasks_by_story.get(story.id, [])))
 
         story_data = []
         total_points = 0
         completed_points = 0
-        by_project: dict[str, dict] = {}
 
-        for i, (entry, story, tasks) in enumerate(linked_stories):
+        for i, (story, tasks) in enumerate(linked_stories):
             # Archived tasks are abandoned work: they leave the numerator and
             # the denominator alike, so the rollup neither claims them as
             # delivered nor keeps demanding them.
@@ -2039,21 +1752,6 @@ def pm_epic(
             )
             total_points += story_points
             completed_points += done_points
-
-            if entry is not None:
-                group = by_project.setdefault(
-                    entry["name"],
-                    {
-                        "name": entry["name"],
-                        "prefix": entry["prefix"],
-                        "stories": 0,
-                        "total_points": 0,
-                        "completed_points": 0,
-                    },
-                )
-                group["stories"] += 1
-                group["total_points"] += story_points
-                group["completed_points"] += done_points
 
             # Only include full detail for the current page
             if offset <= i < offset + limit:
@@ -2075,8 +1773,6 @@ def pm_epic(
                     "task_points": story_points,
                     "done_points": done_points,
                 }
-                if entry is not None:
-                    row["project"] = entry["name"]
                 story_data.append(row)
 
         total_stories = len(linked_stories)
@@ -2088,11 +1784,6 @@ def pm_epic(
             "completed_points": completed_points,
             "completion": f"{round(completed_points / max(total_points, 1) * 100)}%",
         }
-        if hub_wide:
-            rollup["by_project"] = list(by_project.values())
-            if not_attached:
-                rollup["not_attached"] = not_attached
-
         result = {
             "epic": meta.model_dump(mode="json"),
             "body": body,
@@ -2114,29 +1805,25 @@ def pm_epic(
     annotations=ToolAnnotations(title="Project Context", readOnlyHint=True),
 )
 def pm_context(
-    prefix: Optional[str] = None,
     limit: int = 20,
     max_doc_chars: int = 4000,
 ) -> str:
-    """Get combined hub + project context for an agent starting work.
+    """Get the project context for an agent starting work.
 
-    Returns hub-level vision/architecture (if hub mode) plus project-specific
-    docs, active epics, and active stories. Docs are truncated to max_doc_chars
-    each — use pm_docs(doc=...) to read a full document.
+    Returns this project's docs, active epics, and active stories. Docs are
+    truncated to max_doc_chars each — use pm_docs(doc=...) to read a full
+    document.
 
     When the previous session left a next-session note (pm_next), it comes
     back first under `next_time`, untruncated; the key is absent when there
     is no note.
 
     Args:
-        prefix: Project prefix (hub mode only, e.g. "API")
         limit: Max epics/stories to include (default 20)
         max_doc_chars: Max characters per embedded doc (default 4000; 0 = no limit)
     """
     try:
-        hub_root = find_project_root()
-        hub_config = load_config(hub_root)
-        store = _store_for_prefix(prefix)
+        store = _store()
         proj_dir = store.project_dir
 
         def _doc_text(path, doc_key: str) -> str:
@@ -2159,17 +1846,6 @@ def pm_context(
         next_note = store.read_next()
         if next_note:
             result["next_time"] = next_note
-
-        # Hub-level context (if hub mode)
-        if hub_config.hub:
-            hub_dir = hub_root / ".project"
-            for doc_key, filename in [
-                ("vision", "VISION.md"),
-                ("architecture", "ARCHITECTURE.md"),
-            ]:
-                path = hub_dir / filename
-                if path.exists():
-                    result[f"hub_{doc_key}"] = _doc_text(path, doc_key)
 
         # Project-level context
         project_docs = {}
@@ -3967,7 +3643,6 @@ def pm_scope(
 )
 def pm_audit(
     include_info: bool = False,
-    prefix: Optional[str] = None,
     since: Optional[str] = None,
 ) -> str:
     """Run project audit — checks for drift, inconsistencies, stale items.
@@ -3991,27 +3666,12 @@ def pm_audit(
 
     Args:
         include_info: Include info-level findings in the response (default false)
-        prefix: Project prefix (hub mode only, e.g. "API")
         since: Digest from a previous pm_audit; short-circuits if unchanged
     """
     try:
         from .audit import run_audit
 
         root = find_project_root()
-        # A prefix naming the hub's own store lands on the same directory as
-        # no prefix at all, so only a subproject needs the explicit override.
-        entry = _hub_entry_for_prefix(prefix)
-        if entry is not None and not entry.get("hub"):
-            # Epics are hub-level (US-PM-36), so a subproject story linking up
-            # to one is correct, not orphaned.  Hand the check the hub's epic
-            # IDs rather than teaching the audit about hubs.
-            return run_audit(
-                root,
-                project_dir=Path(entry["path"]),
-                include_info=include_info,
-                since=since,
-                known_epic_ids={e.id for e in _store().list_epics()},
-            )
         return run_audit(root, include_info=include_info, since=since)
     except Exception as e:
         raise _failed(e) from e
@@ -4021,13 +3681,10 @@ def pm_audit(
     title="Next Malformed File",
     annotations=ToolAnnotations(title="Next Malformed File", readOnlyHint=True),
 )
-def pm_malformed(prefix: Optional[str] = None) -> str:
+def pm_malformed() -> str:
     """Get the next malformed file to fix. Returns one file at a time with its full
     content. Call pm_fix_malformed to fix it (which removes it from the queue),
     then call pm_malformed again to get the next one. Repeat until done.
-
-    Args:
-        prefix: Project prefix (hub mode only). Omit to scan all.
     """
     try:
         import frontmatter
@@ -4035,28 +3692,11 @@ def pm_malformed(prefix: Optional[str] = None) -> str:
         root = find_project_root()
         config = load_config(root)
 
-        # Collect all malformed files across projects
         all_files = []  # list of (project_name, path)
         dirs_to_scan = []
-        entry = _hub_entry_for_prefix(prefix) if prefix else None
-        if prefix:
-            proj_dir = Path(entry["path"]) if entry else hub_store_dir(root)
-            malformed_dir = proj_dir / "malformed"
-            if malformed_dir.exists():
-                label = entry["name"] if entry else config.name
-                dirs_to_scan.append((label, malformed_dir))
-        elif config.hub:
-            hub_mal = root / ".project" / "malformed"
-            if hub_mal.exists() and any(hub_mal.iterdir()):
-                dirs_to_scan.append(("hub", hub_mal))
-            for entry in hub_stores(root):
-                mal = entry["path"] / "malformed"
-                if mal.exists() and any(mal.iterdir()):
-                    dirs_to_scan.append((entry["name"], mal))
-        else:
-            malformed_dir = root / ".project" / "malformed"
-            if malformed_dir.exists():
-                dirs_to_scan.append((config.name, malformed_dir))
+        malformed_dir = _project_dir(root) / "malformed"
+        if malformed_dir.exists():
+            dirs_to_scan.append((config.name, malformed_dir))
 
         for proj_name, mal_dir in dirs_to_scan:
             for path in sorted(mal_dir.glob("*.md")):
@@ -4102,7 +3742,6 @@ def pm_fix_malformed(
     priority: Optional[str] = None,
     points: Optional[int] = None,
     story_id: Optional[str] = None,
-    prefix: Optional[str] = None,
 ) -> str:
     """Fix a malformed file by rewriting it with valid frontmatter, then restore it.
 
@@ -4116,14 +3755,13 @@ def pm_fix_malformed(
         priority: Priority for stories (must/should/could/wont)
         points: Story points
         story_id: Parent story ID (required for tasks)
-        prefix: Project prefix (hub mode only, e.g. "API")
     """
     try:
         import frontmatter as fm
         from datetime import date
         from .models import StoryFrontmatter, TaskFrontmatter
 
-        proj_dir = _project_dir_for_prefix(prefix)
+        proj_dir = _project_dir()
         malformed_dir = proj_dir / "malformed"
         source = malformed_dir / filename
 
@@ -4198,18 +3836,17 @@ def pm_fix_malformed(
         title="Restore File", readOnlyHint=False, destructiveHint=True
     ),
 )
-def pm_restore(filename: str, prefix: Optional[str] = None) -> str:
+def pm_restore(filename: str) -> str:
     """Restore a fixed file from the malformed quarantine back to stories/ or tasks/.
 
     Args:
         filename: The filename to restore (e.g. PRJ-1.md)
-        prefix: Project prefix (hub mode only, e.g. "API")
     """
     try:
         import frontmatter as fm
         from .models import StoryFrontmatter, TaskFrontmatter
 
-        proj_dir = _project_dir_for_prefix(prefix)
+        proj_dir = _project_dir()
         malformed_dir = proj_dir / "malformed"
         source = malformed_dir / filename
 
@@ -4255,14 +3892,10 @@ def pm_restore(filename: str, prefix: Optional[str] = None) -> str:
         title="Rebuild Index", readOnlyHint=False, destructiveHint=False
     ),
 )
-def pm_reindex(prefix: Optional[str] = None) -> str:
-    """Rebuild the project index and optionally reindex embeddings.
-
-    Args:
-        prefix: Project prefix (hub mode only, e.g. "API")
-    """
+def pm_reindex() -> str:
+    """Rebuild the project index and optionally reindex embeddings."""
     try:
-        store = _store_for_prefix(prefix)
+        store = _store()
         write_index(store)
 
         # Try to reindex embeddings too
@@ -4284,7 +3917,6 @@ def pm_reindex(prefix: Optional[str] = None) -> str:
 )
 def pm_auto_scope(
     mode: Optional[str] = None,
-    prefix: Optional[str] = None,
     limit: int = 5,
     offset: int = 0,
 ) -> str:
@@ -4295,14 +3927,13 @@ def pm_auto_scope(
 
     Args:
         mode: Force mode: "full" (codebase scan for new projects) or "incremental" (scope existing stories). Auto-detected if omitted.
-        prefix: Project prefix - required in a hub (e.g. "API")
         limit: Max stories per batch in incremental mode (default 5)
         offset: Starting index for pagination in incremental mode (default 0)
     """
     try:
         from .scoper import auto_scope
 
-        store = _store_for_prefix(prefix, for_create=True, verb="pm_auto_scope")
+        store = _store()
         return auto_scope(store, mode=mode, limit=limit, offset=offset)
     except Exception as e:
         raise _failed(e) from e
@@ -4311,50 +3942,37 @@ def pm_auto_scope(
 # ─── Git Tools ───────────────────────────────────────────────────
 
 
+def _pm_store_payload(root: Path) -> dict:
+    """The ``pm_git_status`` answer: git state of this project's one store.
+
+    Keys mirror :func:`projectman.worktree.store_git_state` plus a one-line
+    ``description``, wrapped in the top-level shape the dashboard reads.
+    Never raises: an unreadable state degrades to the all-clean shape with
+    ``branch`` None, because a status call must not fail the dashboard.
+    """
+    from .worktree import store_status_payload
+
+    return store_status_payload(root)
+
+
 @mcp.tool(
     title="Git Status Dashboard",
     annotations=ToolAnnotations(title="Git Status Dashboard", readOnlyHint=True),
 )
-def pm_git_status(prefix: Optional[str] = None) -> str:
-    """Show each hub subproject's PM store — branch, dirty, ahead/behind.
+def pm_git_status() -> str:
+    """Show this project's PM store — branch, dirty, ahead/behind.
 
-    Read-only rollup: a row per store, plus its checked-out code branch.
-    A subproject with no store mounted is a row saying so, not an error.
-
-    Args:
-        prefix: Project prefix to check one subproject instead of all
+    Read-only: the state of the branch that owns ``.project/`` (``projectman``
+    for a worktree store, the checked-out branch otherwise).
     """
     try:
-        from .hub.registry import git_status_all
-
-        root = find_project_root()
-        data = git_status_all(root=root)
-
-        entry = _hub_entry_for_prefix(prefix)
-        if entry is not None:
-            # Filter to the one subproject the prefix names
-            name = entry["name"]
-            matched = [p for p in data.get("projects", []) if p["name"] == name]
-            if not matched:
-                raise ToolError(f"project '{name}' not found in hub status")
-            return _yaml_dump(
-                {
-                    "projects": matched,
-                    "total": 1,
-                    "issues": 1 if matched[0].get("issues") else 0,
-                    "ok": not matched[0].get("issues"),
-                    "summary": f"Status for {name}",
-                    "pm_store": data.get("pm_store"),
-                }
-            )
-
-        return _yaml_dump(data)
+        return _yaml_dump(_pm_store_payload(find_project_root()))
     except Exception as e:
         raise _failed(e) from e
 
 
 def _nothing_to_commit() -> str:
-    """The one ``pm_commit`` expected negative, shared by both commit routes.
+    """The one ``pm_commit`` expected negative.
 
     Idempotent no-op: the caller asked for ``.project/`` to be committed and it
     already is, so there is nothing to fix and nothing to retry.  Raising here
@@ -4371,43 +3989,31 @@ def _nothing_to_commit() -> str:
     ),
 )
 def pm_commit(
-    prefix: Optional[str] = None,
     message: Optional[str] = None,
 ) -> str:
     """Commit .project/ changes with an auto-generated message.
 
-    Stages and commits one store, in that store's own directory, so the
-    commit lands on the branch owning it ("projectman" for a worktree store).
+    Stages and commits this project's store, in the store's own directory, so
+    the commit lands on the branch owning it ("projectman" for a worktree
+    store).
     If no message is provided, one is generated from the changed files
     (e.g. "pm: update US-PRJ-5, US-PRJ-3-1").
 
     Args:
-        prefix: In a hub, the project to commit ("API"). Omit for the hub's own store. Ignored outside a hub.
         message: Optional commit message (auto-generated if omitted)
     """
     try:
         root = find_project_root()
-        config = load_config(root)
 
         # The five index files are derived, not rewritten on every mutation
         # (US-PM-29).  This is one of the three rebuild points, and it sits
         # immediately before staging so the commit carries an index that
-        # matches the item files it commits.  The hub route rebuilds inside
-        # ``hub.registry.pm_commit``, for the one store it is committing.
-        if config.hub:
-            from .hub.registry import pm_commit as _hub_commit
-
-            entry = _hub_entry_for_prefix(prefix, verb="pm_commit")
-            store_dir = entry["path"] if entry else hub_store_dir(root)
-            result = _hub_commit(store_dir, message=message)
-        else:
-            # Non-hub: the prefix is ignored (single project)
-            store = Store(root)
-            write_index(store)
-            result = store.commit_project_changes(message=message)
-            # Normalize key name to match hub format
-            if "files_changed" in result:
-                result["files_committed"] = result.pop("files_changed")
+        # matches the item files it commits.
+        store = Store(root)
+        write_index(store)
+        result = store.commit_project_changes(message=message)
+        if "files_changed" in result:
+            result["files_committed"] = result.pop("files_changed")
 
         if isinstance(result, dict) and result.get("nothing_to_commit"):
             return _nothing_to_commit()
@@ -4421,10 +4027,9 @@ def pm_commit(
                 result.pop("message", None)
         return _yaml_dump({"committed": result})
     except NothingToCommit:
-        # The non-hub route reports this by raising rather than by returning a
-        # dict, so it has to be intercepted here — *before* the handlers below,
-        # which US-PM-2-3 converts into real errors.  Both routes produce the
-        # identical expected-negative response.
+        # The store reports this by raising rather than by returning a dict,
+        # so it has to be intercepted here — *before* the handlers below,
+        # which US-PM-2-3 converts into real errors.
         return _nothing_to_commit()
     except (RuntimeError, ValueError, FileNotFoundError) as e:
         raise _failed(e) from e
@@ -4438,32 +4043,17 @@ def pm_commit(
         title="Push PM Changes", readOnlyHint=False, destructiveHint=True
     ),
 )
-def pm_push(
-    prefix: Optional[str] = None,
-) -> str:
+def pm_push() -> str:
     """Push committed .project/ changes to the remote.
 
-    Pushes the branch that owns one store — "projectman" for a worktree
-    store, the checked-out branch otherwise — and nothing else.
-
-    Args:
-        prefix: In a hub, the project to push ("API"). Omit for the hub's own store. Ignored outside a hub.
+    Pushes the branch that owns this project's store — "projectman" for a
+    worktree store, the checked-out branch otherwise — and nothing else.
     """
     try:
         root = find_project_root()
-        config = load_config(root)
-
-        if config.hub:
-            from .hub.registry import pm_push as _hub_push
-
-            entry = _hub_entry_for_prefix(prefix, verb="pm_push")
-            store_dir = entry["path"] if entry else hub_store_dir(root)
-            return _yaml_dump({"pushed": _hub_push(store_dir)})
-        else:
-            # Non-hub: the prefix is ignored (single project)
-            store = Store(root)
-            result = store.push_project_changes()
-            return _yaml_dump({"pushed": result})
+        store = Store(root)
+        result = store.push_project_changes()
+        return _yaml_dump({"pushed": result})
     except RuntimeError as e:
         raise _failed(e) from e
     except Exception as e:
@@ -4485,7 +4075,6 @@ def pm_create_sprint(
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
     planned_stories: Optional[Union[str, list[str]]] = None,
-    prefix: Optional[str] = None,
 ) -> str:
     """Create a sprint with a name, goal, dates, and planned stories.
 
@@ -4495,12 +4084,11 @@ def pm_create_sprint(
         start_date: Optional start date (YYYY-MM-DD)
         end_date: Optional end date (YYYY-MM-DD)
         planned_stories: Story IDs — a list (["US-PRJ-1", "US-PRJ-2"]) or a comma-separated string ("US-PRJ-1,US-PRJ-2"); both mean the same thing.
-        prefix: Project prefix - required in a hub (e.g. "API")
 
     Returns dependency warnings if planned stories have unmet external dependencies.
     """
     try:
-        store = _store_for_prefix(prefix, for_create=True, verb="pm_create_sprint")
+        store = _store()
         story_list = _as_list(planned_stories) or []
 
         # Check for dependency issues
@@ -4644,7 +4232,6 @@ def pm_get_sprint(
 )
 def pm_list_sprints(
     status: Optional[str] = None,
-    prefix: Optional[str] = None,
     brief: bool = False,
     fields: Optional[str] = None,
 ) -> str:
@@ -4659,12 +4246,11 @@ def pm_list_sprints(
 
     Args:
         status: Optional filter: planning, active, completed, cancelled
-        prefix: Project prefix (hub mode only, e.g. "API")
         brief: Drop the free-text (default false). Keeps id, name, status, start_date, end_date, planned_points, completed_points and planned_stories, and omits goal. Use it to scan a sprint history: pm_list_sprints(status="completed", brief=True).
         fields: Comma-separated key names to return, e.g. "status,completed_points" — everything else is omitted and `id` is always kept, exactly as on pm_get. An unknown name is an error listing the valid ones. If both are given, `fields` wins — explicit beats preset. Omit both for the full sprints; `count` is always present and the default is unchanged.
     """
     try:
-        store = _store_for_prefix(prefix)
+        store = _store()
         names = _field_names(fields)
         sprints = [s.model_dump(mode="json") for s in store.list_sprints(status=status)]
         if names is not None:
@@ -4949,7 +4535,6 @@ def pm_activity(
     run_id: Optional[str] = None,
     limit: int = 20,
     offset: int = 0,
-    prefix: Optional[str] = None,
     id: Optional[str] = None,
 ) -> str:
     """Query the activity log for project mutations.
@@ -4963,35 +4548,36 @@ def pm_activity(
         run_id: Filter to the events one orchestrator run produced — claims, releases, verdicts, the story closures they triggered, and anything tagged with the same id via `pm_update`/`pm_update_many`/`pm_update_sprint`. This is how a run builds its final report (and a restarted run its predecessor's) from the log rather than from memory: `actor` is the same string for every run on a machine, so only this separates one run from the next. Paginate with `offset` while the response reports `has_more: true`.
         limit: Max entries to return (default 20)
         offset: Starting index for pagination (default 0)
-        prefix: Project prefix (hub mode only, e.g. "API")
         id: Alias for item_id — either spelling works; passing both with different values is an error
 
     Response: `total` (matching entries), `showing`, `has_more` (true when more
     remain past this page — page with `offset`), and `entries`.
     """
-    import json
     from datetime import datetime
+
+    from .activity_log import log_paths, read_log_entries
 
     try:
         # Optional filter, so "neither" means "no filter" rather than an error.
         item_id = _resolve_id("item_id", item_id, required=False, id=id)
-        pm_dir = _project_dir_for_prefix(prefix)
-        log_path = pm_dir / "activity.jsonl"
+        pm_dir = _project_dir()
+        # Rotated siblings oldest-first, then the live activity.jsonl
+        # (US-PRJ-52-10).  Rotation is a housekeeping detail of where the
+        # bytes live, not a fact about the project's history, so a caller
+        # sees the same events either side of one.  An empty list is the
+        # only "no log" there is: a project whose live file was just
+        # rotated away still has history to report.
+        paths = log_paths(pm_dir)
 
-        if not log_path.exists():
+        if not paths:
             return _yaml_dump(
                 {"entries": [], "total": 0, "message": "No activity log found"}
             )
 
-        # Parse all entries
-        entries = []
-        for line in log_path.read_text().splitlines():
-            line = line.strip()
-            if line:
-                try:
-                    entries.append(json.loads(line))
-                except json.JSONDecodeError:
-                    continue
+        # Parse all entries — oldest first, the order they were appended in,
+        # because the date filters and `total` below count the whole log and
+        # only the page at the end is turned newest-first.
+        entries = read_log_entries(paths)
 
         # Apply filters
         if item_id:
