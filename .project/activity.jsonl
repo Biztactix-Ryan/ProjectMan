@@ -1636,3 +1636,4 @@
 {"event_type":"update","item_id":"US-PM-42","item_type":"story","changes":{"status":{"before":"active","after":"done"}},"timestamp":"2026-09-08T04:30:33.476541Z","actor":"Farhan Rich","source":"cli","run_id":"orch-2026-09-08-8293"}
 {"event_type":"update","item_id":"SPRINT-PM-14","item_type":"sprint","changes":{"status":{"before":"active","after":"completed"}},"timestamp":"2026-09-08T04:30:49.775575Z","actor":"Farhan Rich","source":"cli","run_id":"orch-2026-09-08-8293"}
 {"event_type":"update","item_id":"NEXT","item_type":"note","changes":{"mode":"replace"},"timestamp":"2026-09-08T04:31:24.754904Z","actor":"Farhan Rich","source":"cli","run_id":null}
+{"event_type":"update","item_id":"EPIC-PM-6","item_type":"epic","changes":{"status":{"before":"active","after":"done"}},"timestamp":"2026-09-08T05:13:48.849891Z","actor":"Farhan Rich","source":"cli","run_id":null}
