@@ -1,9 +1,8 @@
 Sprint 16 "Isolated Workers, Two Lanes" (SPRINT-PM-16) COMPLETED 2026-09-09 by run orch-2026-09-09-d6ad: 16/16 pts, 20/20 tasks accepted, US-PM-51 and US-PM-53 closed, EPIC-PM-7 stories all done except nothing — check whether the epic should be closed (US-PM-48..53 all done). 15 dispatches (13 workers, 2 in-place continuations), 2 retries (US-PM-51-6 heading guard; US-PM-53-7 size cap), 1 park then unpark (US-PM-53-7, user raised MAX_CHARS to 10000), 0 recoveries. Final full suite: 5606 passed, 0 failed, 18 skipped (tests/integration still env-blocked).
 
-Sprints 15 and 16 were committed on 2026-09-09 as 0.10.0 (code commit, then a `pm:` commit for `.project`), tagged v0.10.0 locally. NOT pushed yet.
+Sprints 15 and 16 were committed on 2026-09-09 as 0.10.0 (code commit, then a `pm:` commit for `.project`), tagged v0.10.0, pushed to origin.
 
 Next time:
-1. `git push && git push --tags` if the 0.10.0 commits look right.
 2. pipx reinstall (`pipx install --force "/mnt/repos/ProjectMan[all]"`) then `projectman refresh-skills --keep-local` and restart — until then ~/.claude holds the stage-only orchestrate skill and the MCP server lacks lane_compatible_with, long_task_risk, duration_history.
 3. The NEXT /pm-orchestrate run follows ADR-005: run branch orch/<run-id> + run worktree, per-task worktrees on orch/<run-id>/<task-id>, workers commit code on their branch, merges on accept, --lanes 2 available. It requires a clean tree outside .project at Phase 0, so commit first.
 4. Skill size: MAX_CHARS is 10000 and the orchestrate render is at 9995 — any further wording needs compression or another cap decision.
