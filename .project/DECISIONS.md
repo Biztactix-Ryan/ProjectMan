@@ -4,6 +4,99 @@ Architectural decision record for ProjectMan. Newest first. Each entry: context,
 
 ---
 
+<a id="adr-005"></a>
+
+## ADR-005: Each orchestrated task runs in its own worktree and commits on its own branch (2026-09-09)
+
+**Status:** Accepted — revises the *stage-only model* recorded in
+[`docs/reference/orchestrate-design.md`](../docs/reference/orchestrate-design.md), whose
+"no commits, no pushes, no branches, no worktrees" rule this supersedes on its isolation and
+commit halves; the no-push half is kept and restated below. [ADR-004](#adr-004) stays in
+force — ProjectMan is still a single-project tool, and nothing here adds a second store, a
+second repo or a registry. Decided 2026-09-09, carried out in EPIC-PM-7 (US-PM-51).
+
+**Context.** The stage-only model chose one shared checkout because sequential dispatch plus
+"no commits" meant nothing needed separating: exactly one worker was editing exactly one
+tree at a time. Two things have since made that the weak part of the loop.
+
+- **The boundary between two tasks was a guess.** With one tree, the orchestrator told this
+  worker's edits from the ones already there with a pre-task `git status --short` snapshot
+  and an md5 list of the files the task was forbidden to touch. Both are heuristics over a
+  shared mutable directory, and both cost orchestrator context on every dispatch (measured
+  2026-09-09: validation was the largest single bucket of the 7–9k tokens a task added).
+- **It is the thing blocking parallel lanes.** The store has had compare-and-swap claiming
+  since ADR-001's successors; what stopped a second worker was never the claim, it was that
+  two agents editing one unbranched checkout cannot be separated afterwards. The Agent tool
+  already offers `isolation: worktree`, so the isolation the model said did not exist is
+  available for the asking.
+
+**Decision.** Each orchestrated task runs in its own git worktree and commits on its own
+branch.
+
+1. **A worktree and a branch per task.** Every dispatch gets its own worktree on branch
+   `orch/<run-id>/<task-id>`, cut from the run branch.
+2. **The run branch is cut from `HEAD` at pre-flight.** `orch/<run-id>` is the run's trunk;
+   task branches start from it and are merged back onto it.
+3. **The worker commits its own code, on its own branch, and only code.** The commit is the
+   worker's last act and its report names the branch. The `.project` store is never part of
+   it.
+4. **The orchestrator merges accepted branches onto the run branch.** Fast-forward where it
+   can, a merge commit where it cannot. A branch is merged when — and only when —
+   `pm_accept` takes the task.
+5. **Nothing is pushed.** No `git push`, no `pm_push`, by the orchestrator or by a worker.
+   Every branch this run creates is local.
+6. **The `.project` store is never committed by a run.** No `pm_commit`. Store state is left
+   for the human, exactly as before.
+7. **The worker safety rules survive unchanged inside the worktree.** No `git checkout`,
+   `git restore`, `git stash`, `git reset` or `git clean`; no `pm_create_*` or Store write
+   outside a `tmp_path` fixture; tracked files are edited directly.
+
+**Alternatives rejected.**
+
+- *Keep the shared tree with snapshots and md5 lists.* Rejected: it is the status quo whose
+  cost is stated above. A snapshot proves something changed, never who changed it, and it
+  can only ever be checked after the damage.
+- *One branch for the whole run, no per-task branch.* Rejected: it isolates the run from the
+  user's tree but not the tasks from each other, which is the separation the story is for. A
+  rejected task could not then be dropped without unpicking commits around it.
+- *Push the task branches.* Rejected: a run that pushes makes a bad sprint expensive again —
+  the failure mode the stage-only model was built to avoid. Publishing is the user's call,
+  taken after reading the run branch.
+- *Commit the `.project` store on the run branch too.* Rejected: the store is a worktree of
+  the `projectman` branch (ADR-001), on its own history and its own cadence; folding it into
+  a code branch would put backlog churn in a code merge and make a declined run also a lost
+  run record.
+- *Let each worker branch from `HEAD` instead of the run branch.* Rejected: a dependent task
+  would then start without its dependency's work and re-implement or conflict with it. The
+  merge point is what makes the ordering meaningful.
+
+**Consequences and known edges.**
+
+- **The run's product is a run branch to review and merge, not a diff to read.** The user
+  reviews `orch/<run-id>` — per-task commits, with their branch names — and merges, rebases
+  or deletes it. `git diff` against the working tree is no longer the artefact; the branch
+  is. A rejected sprint costs one branch deletion.
+- **A worker starts from the run branch and cannot see unmerged work.** Isolation cuts both
+  ways: a task whose dependency has not yet been accepted and merged would begin from a tree
+  without it. Dependent tasks therefore wait for the merge, and the accept-then-merge step
+  is ordering-critical rather than bookkeeping.
+- **The worktree carries no `.project`, so all store access is via the MCP tools.** The store
+  is gitignored on the code branch, so it is simply absent from a fresh worktree. Workers
+  read and write the backlog through `pm_grab`, `pm_update` and friends, which act on the
+  primary checkout's store — no worker ever opens `.project` files by path.
+- **A parked task leaves its branch behind for a human.** Parking does not merge and does not
+  delete: the branch stays as the record of the attempt, named for the task and the run, for
+  someone to read, salvage or drop. The final report lists branches merged, unmerged and
+  abandoned so the leftovers are discoverable.
+- **Worktrees are a resource with a lifetime.** They are created per task and removed when
+  the run ends; a crashed run leaves worktrees and branches whose names carry the run id,
+  which is what makes them identifiable afterwards.
+- **Sequential dispatch is unchanged by this ADR.** It removes the obstacle to lanes; it does
+  not open them. Parallelism is a later decision that has to answer how two lanes share one
+  merge point.
+
+---
+
 <a id="adr-004"></a>
 
 ## ADR-004: Hub mode is removed — ProjectMan is a single-project tool (2026-09-08)

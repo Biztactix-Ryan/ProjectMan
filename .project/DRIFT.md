@@ -1,8 +1,8 @@
 # Project Audit Report
 
-digest: eb1296ec614d62c5
+digest: 803358af722338fe
 
-**Errors:** 0 | **Warnings:** 3 | **Info:** 94
+**Errors:** 0 | **Warnings:** 0 | **Info:** 100
 
 - [INFO] Story US-PM-1 has 2pts but tasks sum to 5pts
 - [INFO] Story US-PM-10 has 5pts but tasks sum to 11pts
@@ -45,7 +45,13 @@ digest: eb1296ec614d62c5
 - [INFO] Story US-PM-45 has 3pts but tasks sum to 7pts
 - [INFO] Story US-PM-46 has 5pts but tasks sum to 9pts
 - [INFO] Story US-PM-47 has 3pts but tasks sum to 6pts
+- [INFO] Story US-PM-48 has 8pts but tasks sum to 13pts
+- [INFO] Story US-PM-49 has 5pts but tasks sum to 12pts
 - [INFO] Story US-PM-5 has 5pts but tasks sum to 16pts
+- [INFO] Story US-PM-50 has 5pts but tasks sum to 16pts
+- [INFO] Story US-PM-51 has 8pts but tasks sum to 18pts
+- [INFO] Story US-PM-52 has 3pts but tasks sum to 9pts
+- [INFO] Story US-PM-53 has 8pts but tasks sum to 16pts
 - [INFO] Story US-PM-6 has 3pts but tasks sum to 11pts
 - [INFO] Story US-PM-7 has 8pts but tasks sum to 14pts
 - [INFO] Story US-PM-8 has 8pts but tasks sum to 14pts
@@ -98,6 +104,3 @@ digest: eb1296ec614d62c5
 - [INFO] Story US-PRJ-7 has 8pts but tasks sum to 28pts
 - [INFO] Story US-PRJ-8 has 5pts but tasks sum to 21pts
 - [INFO] Story US-PM-22 has a thin description (13 chars)
-- [WARN] Story US-PM-1 has 4 acceptance criterion/criteria with no test task — re-apply the criteria with pm_update to reconcile
-- [WARN] Story US-PM-2 has 4 acceptance criterion/criteria with no test task — re-apply the criteria with pm_update to reconcile
-- [WARN] 447 done task(s) have no structured evidence on any run-log entry — record files/tests/dod_met with the verdict

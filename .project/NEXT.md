@@ -1,13 +1,10 @@
-Sprint 14 "Remove the Hub, Ship 0.9" (SPRINT-PM-14) completed 2026-09-08 by run orch-2026-09-08-8293: 21/21 points, 35/35 tasks accepted, 5 stories closed (US-PM-44, US-PM-45, US-PM-46, US-PM-47, US-PM-42). Hub mode is gone; ADR-004 supersedes ADR-003; CHANGELOG has [0.9.0] - 2026-09-08. Final suite: 5015 passed, 18 skipped, 0 failed (tests/integration still env-blocked).
+Sprint 16 "Isolated Workers, Two Lanes" (SPRINT-PM-16) COMPLETED 2026-09-09 by run orch-2026-09-09-d6ad: 16/16 pts, 20/20 tasks accepted, US-PM-51 and US-PM-53 closed, EPIC-PM-7 stories all done except nothing — check whether the epic should be closed (US-PM-48..53 all done). 15 dispatches (13 workers, 2 in-place continuations), 2 retries (US-PM-51-6 heading guard; US-PM-53-7 size cap), 1 park then unpark (US-PM-53-7, user raised MAX_CHARS to 10000), 0 recoveries. Final full suite: 5606 passed, 0 failed, 18 skipped (tests/integration still env-blocked).
 
-Release 0.9.0 is fully shipped as of 2026-09-08: code committed (8f1a03e) and tagged v0.9.0 on origin, .project committed (b496801), pipx reinstalled at 0.9.0, `refresh-skills --keep-local` run, EPIC-PM-6 closed (4/4 stories, 31/31 pts).
+Sprints 15 and 16 were committed on 2026-09-09 as 0.10.0 (code commit, then a `pm:` commit for `.project`), tagged v0.10.0 locally. NOT pushed yet.
 
 Next time:
-
-1. No active sprint. Before planning Sprint 15: US-PRJ-60 (pm_tags/pm_rename_tag/pm_export) and US-PM-22 (API auth stub) still need a product call; the story-with-archived-todo-tasks auto-close bug is the only new candidate; EPIC-PRJ-6 is the other epic still active.
-
-2. Candidate small story from the hub removal: single-store pm_context no longer returns VISION/ARCHITECTURE at all (they were only ever emitted from a hub root as hub_vision/hub_architecture). If pm_context should surface the project's own VISION.md/ARCHITECTURE.md, scope it.
-
-3. This repo's .project/config.yaml still carries hub: false / projects: []. The next PM write through save_config drops them silently; that diff is expected and harmless.
-
-4. Known env-blocked: tests/integration (mcp 2.x in .venv). Runner: uv run --extra dev --with "mcp[cli]<2" --with fastapi --with httpx --with numpy python -m pytest tests -q -p no:cacheprovider --ignore=tests/integration.
+1. `git push && git push --tags` if the 0.10.0 commits look right.
+2. pipx reinstall (`pipx install --force "/mnt/repos/ProjectMan[all]"`) then `projectman refresh-skills --keep-local` and restart — until then ~/.claude holds the stage-only orchestrate skill and the MCP server lacks lane_compatible_with, long_task_risk, duration_history.
+3. The NEXT /pm-orchestrate run follows ADR-005: run branch orch/<run-id> + run worktree, per-task worktrees on orch/<run-id>/<task-id>, workers commit code on their branch, merges on accept, --lanes 2 available. It requires a clean tree outside .project at Phase 0, so commit first.
+4. Skill size: MAX_CHARS is 10000 and the orchestrate render is at 9995 — any further wording needs compression or another cap decision.
+5. Backlog: US-PRJ-60 (tag tools) and US-PM-22 (API auth stub) still need a product call; EPIC-PM-7 can close once you confirm its success criteria (context growth per task under 5k — measure with `projectman orch-cost orch-2026-09-09-d6ad` after the reinstall).
