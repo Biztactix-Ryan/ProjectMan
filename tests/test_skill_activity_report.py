@@ -30,6 +30,15 @@ Two halves, pinned here together because neither is worth anything alone:
   carrying the run id.  A skill telling the orchestrator to derive "stories
   closed" from a query that never returns a story closure would be a report
   rebuilt from nothing.
+
+US-PM-51-10 added the third half.  Under ADR-005 the run's product is a set of
+branches, so step 23 grew a branch listing — the run branch, the task branches
+merged into it, the unmerged ones still holding parked or review work, and the
+abandoned ones a release left behind — classified from the same log step 22
+queries rather than from branch names.  Stop Conditions then own the cleanup:
+a merged task's worktree and branch go, a parked or review task's stay, the run
+worktree goes last, and the report ends with the one line the user runs to merge
+the run branch.
 """
 
 import inspect
@@ -42,6 +51,7 @@ import yaml
 
 from projectman.store import Store
 from tests.test_orchestrate_skill_size import design_section
+from tests.test_skill_audit_digest import _stop_conditions
 from tests.test_skill_guidance_tools import _step
 from tests.test_skill_verdict_verbs import DOCS, _outside_fences, _text
 
@@ -243,6 +253,159 @@ def test_the_design_doc_says_why_the_log_does_not_replace_the_diff():
     assert "activity log" in lowered and "never what changed in the repository" in lowered, (
         "the doc no longer says the log cannot supply what the diff supplies:\n"
         f"{section}"
+    )
+
+
+# ═══ step 23 — the run's branches, and their cleanup (51-10) ════
+#
+# ADR-005 made every task a branch in ``orch/<run-id>/*``, so "what did this
+# run leave behind" is a question about refs rather than about the working
+# tree.  Step 23 answers it, and Stop Conditions disposes of what it listed:
+# a listing that never leads to a ``git worktree remove`` leaks a checkout per
+# accepted task, and a cleanup that ran before the listing would delete the
+# evidence the report is made of.
+
+#: the namespace the run's task branches live in, spelled out or by shorthand
+BRANCH_LIST = re.compile(r"git branch --list '(?:orch/<this run>|<rb>)/\*'")
+
+#: how a merged branch is told from an unmerged one — by git, not by name
+MERGED_QUERY = re.compile(r"git branch --merged\s+`?<rb>`?")
+
+#: the cleanup verbs, one for the checkout and one for the ref
+WORKTREE_REMOVE = re.compile(r"git worktree remove")
+BRANCH_DELETE = re.compile(r"git branch -d")
+
+#: the single line the user runs afterwards, from their own branch
+MERGE_INSTRUCTION = re.compile(r"git merge --no-ff\s+`?(?:<rb>|orch/<this run>)`?")
+
+#: Phase 0's shorthand for the run branch and the run worktree
+RUN_BRANCH = "<rb>"
+RUN_WORKTREE = "<rw>"
+
+
+def _stop_block(path) -> str:
+    """The Stop Conditions block of one document."""
+    return _stop_conditions(_text(path))
+
+
+@pytest.mark.parametrize("path", DOCS)
+def test_step_23_lists_the_run_branch_and_its_task_branches(path):
+    """The report names the trunk and enumerates the branches cut from it."""
+    step = _step(_text(path), DIFF_STEP)
+    assert RUN_BRANCH in step, (
+        "step 23 never names the run branch, so the report does not say what "
+        f"the run's product is:\n\n{step}"
+    )
+    assert BRANCH_LIST.search(step), (
+        "step 23 does not enumerate the run's task branches with "
+        f"git branch --list:\n\n{step}"
+    )
+
+
+@pytest.mark.parametrize("path", DOCS)
+@pytest.mark.parametrize("state", ("merged", "unmerged", "abandoned"))
+def test_step_23_separates_merged_unmerged_and_abandoned_branches(path, state):
+    """Three outcomes, three names: leaving one out hides a leftover branch."""
+    step = _step(_text(path), DIFF_STEP).lower()
+    assert state in step, (
+        f"step 23 does not report {state!r} branches, so that class of "
+        f"leftover is invisible:\n\n{step}"
+    )
+
+
+@pytest.mark.parametrize("path", DOCS)
+def test_step_23_says_what_the_unmerged_and_abandoned_branches_hold(path):
+    """Unmerged is parked or review work; abandoned is a released task."""
+    step = _step(_text(path), DIFF_STEP).lower()
+    assert "parked" in step and "review" in step, (
+        f"step 23 does not say the unmerged branches hold parked or review "
+        f"work:\n\n{step}"
+    )
+    assert "released" in step, (
+        f"step 23 does not say an abandoned branch is a released task:\n\n{step}"
+    )
+
+
+@pytest.mark.parametrize("path", DOCS)
+def test_step_23_tells_merged_from_unmerged_with_git_rather_than_by_name(path):
+    """``git branch --merged <rb>`` is the fact; a branch name is a guess."""
+    step = _step(_text(path), DIFF_STEP)
+    assert MERGED_QUERY.search(step), (
+        "step 23 has no git branch --merged query, so 'merged' would be "
+        f"asserted rather than checked:\n\n{step}"
+    )
+
+
+@pytest.mark.parametrize("path", DOCS)
+def test_step_23_cross_checks_the_branches_against_the_activity_log(path):
+    """Parked, review and released are store facts, not ref facts.
+
+    ``git`` can say whether a branch is merged; only the log can say whether
+    the task behind an unmerged branch was parked, sent to review or released.
+    """
+    text = _text(path)
+    step = _step(text, DIFF_STEP)
+    assert re.search(r"\b22\b", step) and "log" in step.lower(), (
+        "step 23 does not classify the unmerged branches from step 22's "
+        f"activity-log entries:\n\n{step}"
+    )
+    assert any(
+        "run_id=" in args for args in ACTIVITY_CALL.findall(_step(text, REPORT_STEP))
+    ), "the step 23 cross-check points at a step 22 that queries no run log"
+
+
+@pytest.mark.parametrize("path", DOCS)
+def test_stop_conditions_remove_the_worktree_and_branch_of_a_merged_task(path):
+    """An accepted task's work is on the run branch; its checkout is litter."""
+    block = _stop_block(path)
+    assert "merged" in block.lower(), (
+        f"Stop Conditions never mentions the merged tasks:\n\n{block}"
+    )
+    assert WORKTREE_REMOVE.search(block), (
+        "Stop Conditions never removes a worktree, so every accepted task "
+        f"leaks a checkout:\n\n{block}"
+    )
+    assert BRANCH_DELETE.search(block), (
+        "Stop Conditions never deletes a merged task branch, so the "
+        f"namespace fills up run after run:\n\n{block}"
+    )
+
+
+@pytest.mark.parametrize("path", DOCS)
+def test_stop_conditions_keep_a_parked_or_review_tasks_worktree_and_branch(path):
+    """ADR-005: a parked task's branch is the record of the attempt."""
+    block = _stop_block(path).lower()
+    assert "parked" in block and "review" in block, (
+        f"Stop Conditions does not distinguish the parked/review tasks from "
+        f"the merged ones:\n\n{block}"
+    )
+    assert "keep" in block, (
+        "Stop Conditions does not say the parked/review worktrees and "
+        f"branches are kept, so a cleanup would take them too:\n\n{block}"
+    )
+
+
+@pytest.mark.parametrize("path", DOCS)
+def test_stop_conditions_remove_the_run_worktree_after_the_branches_are_listed(path):
+    """Order matters: the listing is read from the tree the cleanup removes."""
+    block = _stop_block(path)
+    assert RUN_WORKTREE in block, (
+        f"Stop Conditions never removes the run worktree:\n\n{block}"
+    )
+    lowered = block.lower()
+    assert "last" in lowered and re.search(r"\b23\b", block), (
+        "Stop Conditions does not put the run worktree's removal after step "
+        f"23's branch listing:\n\n{block}"
+    )
+
+
+@pytest.mark.parametrize("path", DOCS)
+def test_stop_conditions_print_the_one_line_merge_instruction(path):
+    """The run ends by handing the user the one command that lands it."""
+    block = _stop_block(path)
+    assert MERGE_INSTRUCTION.search(block), (
+        "Stop Conditions prints no merge line for the run branch, so the "
+        f"run's product has no documented way onto the user's branch:\n\n{block}"
     )
 
 

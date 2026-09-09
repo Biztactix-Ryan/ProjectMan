@@ -74,7 +74,7 @@ ESTIMATING_DOCS = ["pm", "pm-plan", "pm-autoscope", "agent-pm"]
 
 #: templates deliberately outside the interactive set, with the reason
 OUT_OF_SCOPE = {
-    "skill_pm_orchestrate.md.j2": "keeps its run-scoped mandates (asserted below)",
+    "skill_pm_orchestrate.md.j2": "run-scoped, not interactive (asserted below)",
     "skill_pm_status.md.j2": "read-only reporting: writes no points",
     "skill_pm_cleanup.md.j2": "archiving: writes no points",
     "skill_pm_next.md.j2": "scratch note read/write: not a backlog item, writes no points",
@@ -124,10 +124,10 @@ PRE_US_PM_26_MANDATES = [
     "each size band you are proposing rather than on every item",
 ]
 
-#: the orchestrator's once-per-run bounded context rule, verbatim
-ORCHESTRATE_BOUNDED_CONTEXT = (
-    "`pm_context(max_doc_chars=2000, limit=5)` **once per run**"
-)
+#: ``pm_context(...)`` with its argument list captured — the orchestrator's
+#: once-per-run bounded fetch was dropped by US-PM-49-6, so what is pinned on
+#: the orchestrate document now is its absence
+PM_CONTEXT_CALL = re.compile(r"\bpm_context\(([^)]*)\)")
 
 ORCHESTRATE_DOCS = [
     pytest.param(TEMPLATES / "skill_pm_orchestrate.md.j2", id="orchestrate-template"),
@@ -199,12 +199,19 @@ def test_interactive_template_and_rendered_copy_stay_identical(name):
 
 
 @pytest.mark.parametrize("path", ORCHESTRATE_DOCS)
-def test_orchestrate_keeps_its_once_per_run_bounded_context(path):
-    """AC: the orchestrate skill still mandates the bounded, once-per-run context."""
-    text = _text(path)
-    assert ORCHESTRATE_BOUNDED_CONTEXT in text, (
-        f"{path.name}: lost the once-per-run bounded pm_context rule "
-        f"({ORCHESTRATE_BOUNDED_CONTEXT!r})"
+def test_orchestrate_no_longer_fetches_a_per_run_context_at_all(path):
+    """US-PM-49-6 supersedes US-PM-26's once-per-run pin for the orchestrator.
+
+    The fetch was worth its cost only while US-PM-13-5's excerpt was pasted
+    into every worker prompt; US-PM-49-7 removed the paste, so US-PM-49-6
+    removed the read.  What this module actually guards — that a relaxation
+    sweep over the *interactive* documents never reaches the orchestrator's
+    run-scoped rules — is unchanged and is pinned by the two tests below.
+    """
+    calls = PM_CONTEXT_CALL.findall(_text(path))
+    assert not calls, (
+        f"{path.name}: still calls pm_context{calls} — the per-run brief was "
+        "dropped by US-PM-49-6 once no worker prompt carried its excerpt"
     )
 
 

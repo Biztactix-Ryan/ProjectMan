@@ -34,9 +34,13 @@ A sprint is the unit of orchestrated work: `/pm-orchestrate` drives the *active*
 ## Phase 4 — Persist and activate
 
 8. `pm_create_sprint` with name, goal, start/end dates, and the planned story IDs.
-9. Set it active (`pm_update_sprint(id, status="active")`) unless the user wants to start later.
-10. Summarize: sprint ID, goal, stories with points vs. velocity, dependency order, and flagged risks (cross-sprint dependencies, unestimated leftovers).
-11. Suggest the natural next step: "Run it with `/pm-orchestrate`" or "grab the first task with `/pm-do <id>`".
+9. Long-task check — `pm_get_sprint(id)` and read `long_task_risk` before activating. A task that runs past the hour outlives the orchestrator's prompt cache (one-hour TTL), so the next dispatch pays a full prefix rewrite.
+   - Every entry carries `id`, `points`, `p50`, `p90` and `max_task_minutes`. List them: "US-PRJ-12-3 (3 pts) — band p90 88 min, ceiling 60 min".
+   - Offer to re-scope each flagged task into smaller tasks with `pm_scope(story_id)` before activating; the user can also accept the risk and go as planned.
+   - An empty list means nothing is flagged (or the history is too thin to judge) — say so and move on.
+10. Set it active (`pm_update_sprint(id, status="active")`) unless the user wants to start later.
+11. Summarize: sprint ID, goal, stories with points vs. velocity, dependency order, and flagged risks (long-task risks, cross-sprint dependencies, unestimated leftovers).
+12. Suggest the natural next step: "Run it with `/pm-orchestrate`" or "grab the first task with `/pm-do <id>`".
 
 ## Cross-Story Dependency Planning
 

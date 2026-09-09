@@ -7,13 +7,25 @@ Acceptance criteria pinned here:
   sentence in them may make calling it the opening move of a session.
 * "The orchestrate skill still mandates the once-per-run bounded ``pm_context``
   and refuses unestimated sprint content by directing to ``/pm-plan``" — the
-  two run-scoped rules that pay for themselves under an orchestrator are not
-  collateral damage of the interactive relaxation.
+  run-scoped rules that pay for themselves under an orchestrator are not
+  collateral damage of the interactive relaxation.  The ``/pm-plan`` refusal is
+  pinned unchanged; the fetch half was **superseded by US-PM-49-6**, which
+  removed it from the orchestrator once US-PM-49-7 had removed the excerpt it
+  fed, so the assertion here is inverted rather than dropped — the boundary the
+  criterion drew is still pinned, it just now runs the other way.
+
+The same boundary covers the other run-scoped block US-PM-48 added: the
+**Validator Prompt Template** and its bounded JSON verdict.  Its clauses are
+pinned in ``tests/test_orchestrate_validator_prompt.py`` and its size budget in
+``tests/test_orchestrate_skill_size.py``; both are imported below rather than
+restated, so what is asserted here is only that a relaxation sweep never
+reaches them.
 
 Why the fetch was mandatory in the first place, and why that stopped being
 right.  ``pm_context`` earns its cost when one call is amortised across a whole
-sprint of worker dispatches: ``/pm-orchestrate`` fetches it once, bounded, and
-pastes the excerpt into every worker prompt.  Interactively there is nothing to
+sprint of worker dispatches: ``/pm-orchestrate`` fetched it once, bounded, and
+pasted the excerpt into every worker prompt (until US-PM-49-7 dropped the paste
+and US-PM-49-6 the fetch).  Interactively there was never anything to
 amortise — a session that answers "what should I work on?" pays a hub-wide
 document read for an answer ``pm_board`` already holds, and ``pm_grab`` and
 ``pm_get`` carry the item context on their own.  The telemetry bears that out:
@@ -46,6 +58,11 @@ import re
 
 import pytest
 
+from tests.test_orchestrate_skill_size import MAX_CHARS, _within_limit
+from tests.test_orchestrate_validator_prompt import (
+    REQUIRED_KEYS as VALIDATOR_KEYS,
+    _validator_fence,
+)
 from tests.test_skill_release_instructions import (
     REPO_ROOT,
     RENDERED_SKILLS,
@@ -92,7 +109,10 @@ POINTING_DOCS = ["pm", "agent-pm"]
 
 #: templates deliberately outside the interactive set, with the reason
 OUT_OF_SCOPE = {
-    "skill_pm_orchestrate.md.j2": "keeps its once-per-run fetch (asserted below)",
+    "skill_pm_orchestrate.md.j2": (
+        "run-scoped, not interactive; its once-per-run fetch was dropped "
+        "outright by US-PM-49-6 (asserted below)"
+    ),
 }
 
 #: ``pm_context(...)``, with its argument list captured
@@ -143,7 +163,6 @@ PRE_US_PM_26_CONTEXT_MANDATES = [
 ]
 
 #: the orchestrator's run-scoped rules, verbatim as they read today
-ORCHESTRATE_BOUNDED_CONTEXT = "`pm_context(max_doc_chars=2000, limit=5)` **once per run**"
 ORCHESTRATE_PLAN_REFUSAL = "**No scoping or planning** (→ `/pm-plan`)"
 
 ORCHESTRATE_DOCS = [
@@ -231,11 +250,21 @@ def test_interactive_template_and_rendered_copy_stay_identical(name):
 
 
 @pytest.mark.parametrize("path", ORCHESTRATE_DOCS)
-def test_orchestrate_keeps_its_once_per_run_bounded_context(path):
-    """AC: the orchestrate skill still mandates the bounded, once-per-run fetch."""
-    assert ORCHESTRATE_BOUNDED_CONTEXT in _text(path), (
-        f"{path.name}: lost the once-per-run bounded pm_context rule "
-        f"({ORCHESTRATE_BOUNDED_CONTEXT!r})"
+def test_orchestrate_no_longer_fetches_a_per_run_context_at_all(path):
+    """US-PM-49-6 supersedes US-PM-26's once-per-run pin for the orchestrator.
+
+    US-PM-26 kept the fetch because one bounded read was amortised across every
+    worker prompt of the run.  US-PM-49-7 removed the excerpt from those
+    prompts, which removed the amortisation and left a read nothing downstream
+    consumed — so the fetch itself went with US-PM-49-6.  The relaxation this
+    module is about is unaffected: the tool is still reachable, and the
+    documents that point at it must still bound the call
+    (``test_pointing_docs_still_name_pm_context_with_its_bounds``).
+    """
+    calls = PM_CONTEXT_CALL.findall(_text(path))
+    assert not calls, (
+        f"{path.name}: still calls pm_context{calls} — the per-run brief was "
+        "dropped by US-PM-49-6 once no worker prompt carried its excerpt"
     )
 
 
@@ -250,6 +279,41 @@ def test_orchestrate_still_refuses_unscoped_work_by_directing_to_pm_plan(path):
     assert ORCHESTRATE_PLAN_REFUSAL in _text(path), (
         f"{path.name}: lost the refusal that sends unscoped/unestimated content "
         f"to /pm-plan ({ORCHESTRATE_PLAN_REFUSAL!r})"
+    )
+
+
+@pytest.mark.parametrize("path", ORCHESTRATE_DOCS)
+def test_orchestrate_keeps_the_validator_prompt_and_its_json_verdict(path):
+    """The validator block survives, in both the template and the rendered copy.
+
+    US-PM-48 moved the status/diff/DoD checks into a validator subagent, and
+    the whole saving depends on the *answer* being a bounded JSON object.  The
+    helper and the key list come from
+    ``tests/test_orchestrate_validator_prompt.py``, which owns the clause-level
+    checks; the point here is that a document-wide edit cannot delete the block
+    from one of the two documents and still pass.
+    """
+    fence = _validator_fence(_text(path))
+    missing = [key for key in VALIDATOR_KEYS if f'"{key}"' not in fence]
+    assert not missing, (
+        f"{path.name}: the validator prompt's JSON verdict no longer names "
+        f"{missing} — the orchestrator has nothing to map onto a verb"
+    )
+
+
+@pytest.mark.parametrize("path", ORCHESTRATE_DOCS)
+def test_orchestrate_documents_stay_within_the_size_budget(path):
+    """Both documents, not just the render, stay under the character budget.
+
+    ``tests/test_orchestrate_skill_size.py`` pins the *rendered* text; the
+    validator block was added with single-digit headroom, so the template file
+    is pinned here too — an edit that lands only in the template is caught
+    before it is ever rendered.
+    """
+    text = _text(path)
+    assert _within_limit(text), (
+        f"{path.name} is {len(text)} characters, {len(text) - MAX_CHARS} over "
+        f"the {MAX_CHARS}-character budget"
     )
 
 

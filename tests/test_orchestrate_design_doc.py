@@ -22,7 +22,7 @@ Sibling modules already pin the parts this one deliberately does not repeat:
 ``tests/test_orchestrate_skill_size.py`` owns the 9,000-character budget and
 the link count, and ``tests/test_skill_resume_path.py`` and friends re-target
 individual rationale assertions at the design doc.  What is only checked here
-is the doc as a *whole*: that it has all eleven sections, that the resume
+is the doc as a *whole*: that it has all thirteen sections, that the resume
 protocol and the failure-mode log say what they are supposed to say, that the
 migration actually moved rather than deleted, and that the "Template sections
 absorbed" map accounts for every ``## `` heading the old template had.
@@ -52,15 +52,26 @@ CURRENT_TEMPLATE = REPO_ROOT / TEMPLATE_REPO_PATH
 #: so the SHA is stable.
 PRE_REWRITE_COMMIT = "1061084"
 
-#: every ``## `` section US-PM-25-5 wrote, in document order.  The list is the
-#: doc's table of contents, so a section quietly dropped in a later edit fails
-#: here rather than being noticed by the next reader who cannot find it.
+#: every ``## `` section the doc carries, in document order — the eleven
+#: US-PM-25-5 wrote plus *The validator subagent* (US-PM-48-7) and *Lanes*
+#: (US-PM-53-9).  The list is the doc's table of contents, so a section quietly
+#: dropped in a later edit fails here rather than being noticed by the next
+#: reader who cannot find it.
 SECTIONS = [
-    "Stage-only model",
+    # US-PM-51-6 renamed *Stage-only model* to *Isolation model* when ADR-005
+    # replaced the one-shared-checkout choice with a worktree and a branch per
+    # task; the section still opens the doc and still carries the four
+    # constraints, so the guard is retargeted rather than dropped.
+    "Isolation model",
+    # US-PM-53-9 put *Lanes* directly after *Isolation model*: two-lane dispatch
+    # is a refinement of the isolation the section above establishes, and it is
+    # read in that order — what a lane may not share, then what a run id is.
+    "Lanes",
     "Run identity",
     "Pre-flight and claim classification",
     "Dispatch and the worker prompt",
     "Validation and verdicts",
+    "The validator subagent",
     "Health checks",
     "Resume protocol",
     "Final report from the activity log",
@@ -113,7 +124,7 @@ def _template() -> str:
     return _norm(CURRENT_TEMPLATE.read_text(encoding="utf-8"))
 
 
-# ─── 1. the doc exists, and has all eleven sections ──────────────
+# ─── 1. the doc exists, and has all thirteen sections ────────────
 
 
 def test_design_doc_exists():

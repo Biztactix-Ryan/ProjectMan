@@ -47,6 +47,8 @@ activity_log_max_days:   # Optional — rotate activity.jsonl past this many day
 tools:                   # Optional — which gated tool families agents see
   maintenance: false     # Break-glass repair/restore tools, off by default
   web: false             # Web dashboard tools, off by default
+orchestrate:             # Optional — knobs for orchestrated runs
+  max_task_minutes: 60   # Ceiling on a single task's expected runtime
 ```
 
 | Field | Type | Description |
@@ -64,6 +66,7 @@ tools:                   # Optional — which gated tool families agents see
 | `activity_log_max_days` | float\|null | Rotate `activity.jsonl` once its **oldest entry** is this many days old. Default `null` — no age bound. See [Activity Log Rotation](#activity-log-rotation) |
 | `tools.maintenance` | bool | Register the two break-glass tools (`pm_restore`, `pm_fix_malformed`). Default `false` |
 | `tools.web` | bool | Register the three `pm_web_*` tools. Default `false` |
+| `orchestrate.max_task_minutes` | float | Longest a single task should be expected to run, in minutes. Planning tools flag a points band whose measured p90 duration sits above this as `long_task_risk`, because a worker that overruns the one-hour prompt-cache window costs the next dispatch a full prefix rewrite. Default `60`. Turn it *up* rather than to `0` to disable — `0` flags every band. A value that is not a non-negative finite number falls back to `60` rather than failing the config load |
 
 ### tools — gated tool families
 

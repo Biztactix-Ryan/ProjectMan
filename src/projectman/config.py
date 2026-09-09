@@ -7,7 +7,7 @@ from typing import Optional
 
 import yaml
 
-from .models import ProjectConfig
+from .models import DEFAULT_MAX_TASK_MINUTES, ProjectConfig
 
 
 def find_project_root(start: Optional[Path] = None) -> Path:
@@ -160,6 +160,25 @@ def enabled_tool_families(config: Optional[ProjectConfig]) -> dict[str, bool]:
         "maintenance": bool(flags.maintenance),
         "web": bool(flags.web),
     }
+
+
+def max_task_minutes(config: Optional[ProjectConfig]) -> float:
+    """Resolve this project's ceiling on a single task's runtime, in minutes.
+
+    Reads ``orchestrate.max_task_minutes`` (default 60 — the prompt-cache
+    window a worker must not overrun).  Written as an accessor for the same
+    reason ``enabled_tool_families`` is one: callers should not reach through
+    the nested section themselves, and ``config=None`` (no project found)
+    must answer the default rather than raise.  Malformed values never get
+    this far — ``OrchestrateConfig`` already folds them back to the default
+    at load time.
+
+    Consumed by the planning tools that flag ``long_task_risk``
+    (US-PM-50-9/10); nothing else reads it.
+    """
+    if config is None:
+        return DEFAULT_MAX_TASK_MINUTES
+    return float(config.orchestrate.max_task_minutes)
 
 
 def save_config(config: ProjectConfig, root: Optional[Path] = None) -> None:

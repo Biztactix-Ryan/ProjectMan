@@ -1,4 +1,7 @@
-"""Field projection on `pm_get` and `pm_grab` (US-PM-10-6).
+"""Field projection on `pm_get`, `pm_grab` and `pm_board`.
+
+(US-PM-10-6 for the first two; US-PM-49-5 added `pm_board`, which projects
+every board row through the same helpers — see the section near the end.)
 
 `pm_grab` and `pm_get` are ~50% of all context returned on ~25% of calls, and
 the single worst case is a *verification* read: `pm-orchestrate` re-reads a
@@ -331,6 +334,116 @@ def test_pm_grab_not_ready_negative_is_returned_unprojected(seeded, tmp_project)
     assert data["blockers"], "blockers are the recovery path and must survive"
 
 
+# ═══ pm_board projection (US-PM-49-5) ═══════════════════════════
+#
+# The board is a *listing of rows*, and the rows do not share a shape: only
+# `available` carries `hints`, only `not_ready` carries `blockers`, only a
+# claimed row carries `claim_age` / `claimed_by_run` / `stale`.  So the valid
+# names are the fixed union (`BOARD_ROW_FIELDS`), not one row's keys, and the
+# counts around the rows are never projected.
+
+
+def test_pm_board_default_is_byte_identical(seeded):
+    from projectman.server import pm_board
+
+    assert pm_board() == pm_board(brief=False, fields=None)
+
+
+def test_pm_board_fields_returns_those_keys_plus_id(seeded):
+    from projectman.server import pm_board
+
+    board = yaml.safe_load(pm_board(fields="title,points"))["board"]
+    assert board["available"]
+    for group, rows in board.items():
+        for row in rows:
+            assert set(row) == {"id", "title", "points"}, group
+
+
+def test_pm_board_projection_keeps_id_even_when_unnamed(seeded):
+    from projectman.server import pm_board
+
+    rows = yaml.safe_load(pm_board(fields="points"))["board"]["available"]
+    assert rows
+    for row in rows:
+        assert set(row) == {"id", "points"}
+
+
+def test_pm_board_projection_strips_whitespace_and_tolerates_duplicates(seeded):
+    from projectman.server import pm_board
+
+    assert pm_board(fields=" title , title ,points") == pm_board(
+        fields="title,points"
+    )
+
+
+def test_pm_board_projects_a_key_only_some_groups_carry(seeded):
+    """`hints` is an available-row key; elsewhere the row is just its id.
+
+    Not an error: the name is valid for the board, and a group whose rows
+    never had it has nothing to hand back.
+    """
+    from projectman.server import pm_board
+
+    board = yaml.safe_load(pm_board(fields="hints"))["board"]
+    assert board["available"] and board["not_ready"]
+    for row in board["available"]:
+        assert set(row) == {"id", "hints"}
+    for row in board["not_ready"]:
+        assert set(row) == {"id"}
+
+
+def test_pm_board_projection_leaves_the_counts_and_the_note_alone(seeded):
+    from projectman.server import pm_board
+
+    full = yaml.safe_load(pm_board())
+    projected = yaml.safe_load(pm_board(fields="title"))
+    assert projected["summary"] == full["summary"]
+    assert projected["stale_tasks"] == full["stale_tasks"]
+    assert projected["note"] == full["note"]
+    assert projected["limit"] == full["limit"]
+
+
+def test_pm_board_unknown_field_raises_and_lists_the_valid_names(seeded):
+    from projectman.server import pm_board
+
+    with pytest.raises(ToolError) as excinfo:
+        pm_board(fields="titles")
+    message = str(excinfo.value)
+    assert "titles" in message
+    assert "pm_board" in message
+    for valid in ("title", "story", "hints", "blockers", "claimed_by_run"):
+        assert valid in message, valid
+
+
+def test_an_unknown_board_field_fails_on_an_empty_board_too(tmp_project):
+    """The one case a per-row check would miss — and the dangerous one.
+
+    With nothing on the board there is no row to validate the name against, so
+    a typo would come back as an empty board: indistinguishable from a real
+    one, and exactly the silent failure the loud error exists to prevent.
+    """
+    from projectman.server import pm_board
+
+    assert yaml.safe_load(pm_board())["summary"]["available"] == 0
+    with pytest.raises(ToolError) as excinfo:
+        pm_board(fields="nope")
+    assert "nope" in str(excinfo.value)
+
+
+def test_pm_board_projection_over_the_wire(seeded):
+    is_error, text = _call_over_the_wire("pm_board", {"fields": "title"})
+    assert not is_error, text
+    for rows in yaml.safe_load(text)["board"].values():
+        for row in rows:
+            assert set(row) == {"id", "title"}
+
+
+def test_an_unknown_board_field_over_the_wire_is_an_error(seeded):
+    is_error, text = _call_over_the_wire("pm_board", {"fields": "titles"})
+    assert is_error, text
+    assert "unknown field" in text
+
+
 # ═══ Unknown names fail loudly ══════════════════════════════════
 
 
@@ -406,11 +519,11 @@ def test_unknown_field_is_a_hard_error_over_the_wire(seeded):
     assert "nope" in body
 
 
-def test_fields_is_optional_in_both_published_schemas():
+def test_fields_is_optional_in_every_published_schema():
     from projectman.server import mcp as mcp_server
 
     tools = {t.name: t for t in anyio.run(mcp_server.list_tools)}
-    for name in ("pm_get", "pm_grab"):
+    for name in ("pm_get", "pm_grab", "pm_board"):
         schema = tools[name].inputSchema
         assert "fields" in schema["properties"], name
         assert "fields" not in schema.get("required", []), name

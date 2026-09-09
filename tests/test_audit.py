@@ -2,9 +2,16 @@
 
 import frontmatter
 import pytest
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 
-from projectman.audit import _check_documentation, run_audit
+from projectman.activity_log import append_log_entry
+from projectman.audit import (
+    _check_documentation,
+    check_long_task_risk,
+    compute_state_digest,
+    run_audit,
+)
+from projectman.models import LogEntry
 from projectman.store import Store, clear_all_caches
 
 
@@ -368,3 +375,169 @@ def test_check_documentation_boundary_is_strictly_over_30_days(tmp_path):
     )
 
     assert _check_documentation(tmp_path, _DOC_FILES, date.today() + timedelta(days=30)) == []
+
+
+# ── US-PM-50-10: long-task risk on the active sprint ─────────────────────
+#
+#     > pm_audit warns when an active sprint contains a task flagged as
+#     > long_task_risk
+#
+# The history is seeded exactly the way ``tests/test_long_task_risk.py``
+# seeds it — real Store writes into a tmp_path project, transitions appended
+# through ``LogEntry`` + ``append_log_entry`` — so what these assert against
+# is the record shape production writes.  Two-pointers run 4/8/15/30/90
+# minutes, so that band's p90 (90) is over the 60-minute default ceiling and
+# its median is 15; one-pointers peak at 20 and are never flagged.
+
+_RISK_RUN = "orch-2026-09-09-385a"
+_RISK_BASE = datetime(2026, 9, 9, 9, 0, 0, tzinfo=timezone.utc)
+
+#: (task, minutes from base to the grab, minutes the task ran).
+_RISK_TRANSITIONS = [
+    ("US-TST-1-1", 0, 10),
+    ("US-TST-1-1", 60, 20),
+    ("US-TST-1-1", 120, 15),
+    ("US-TST-1-2", 180, 4),
+    ("US-TST-1-2", 240, 8),
+    ("US-TST-1-2", 300, 15),
+    ("US-TST-1-2", 360, 30),
+    ("US-TST-1-2", 420, 90),
+]
+
+
+def _append_risk_entry(store, item_id, minute, changes):
+    append_log_entry(
+        store.project_dir / "activity.jsonl",
+        LogEntry(
+            event_type="update",
+            item_id=item_id,
+            item_type="task",
+            changes=changes,
+            timestamp=_RISK_BASE + timedelta(minutes=minute),
+            actor="claude",
+            source="cli",
+            run_id=_RISK_RUN,
+        ),
+    )
+
+
+def _write_risk_history(store, transitions=_RISK_TRANSITIONS):
+    """A grab/done pair per transition, in chronological order."""
+    for item_id, start, ran in transitions:
+        _append_risk_entry(
+            store,
+            item_id,
+            start,
+            {
+                "assignee": {"before": None, "after": "claude"},
+                "status": {"before": "todo", "after": "in-progress"},
+            },
+        )
+        _append_risk_entry(
+            store,
+            item_id,
+            start + ran,
+            {"status": {"before": "in-progress", "after": "done"}},
+        )
+
+
+@pytest.fixture
+def risk_store(tmp_project):
+    """A story of a 1pt and a 2pt task, planned into a sprint.
+
+    The sprint is left in ``planning`` — each test moves it where it needs it,
+    so the status is never incidental to what is being asserted.
+    """
+    store = Store(tmp_project)
+    store.create_story("Story", "A story to hang tasks off")
+    store.create_task("US-TST-1", "One pointer", "A task small enough to finish", points=1)
+    store.create_task("US-TST-1", "Two pointer", "A task that historically runs long", points=2)
+    store.create_sprint("Sprint 1", planned_stories=["US-TST-1"])
+    return store
+
+
+def _risk_lines(report: str) -> list[str]:
+    return [line for line in report.splitlines() if "max_task_minutes ceiling" in line]
+
+
+def test_active_sprint_with_a_long_task_gets_a_warning_with_the_band_numbers(
+    risk_store, tmp_project
+):
+    _write_risk_history(risk_store)
+    risk_store.update_sprint("SPRINT-TST-1", status="active")
+    clear_all_caches()
+
+    report = run_audit(tmp_project)
+
+    lines = _risk_lines(report)
+    assert lines == [
+        "- [WARN] Task US-TST-1-2 (2pt) in active sprint SPRINT-TST-1 is in a band "
+        "that runs 15 min median, 90 min p90 — over the 60 min max_task_minutes "
+        "ceiling; split it or expect a prompt-cache miss"
+    ]
+
+
+def test_the_long_task_warning_is_a_warning_and_never_an_error(risk_store, tmp_project):
+    """/pm-orchestrate halts on any error, and large tasks must not halt it."""
+    _write_risk_history(risk_store)
+    risk_store.update_sprint("SPRINT-TST-1", status="active")
+    clear_all_caches()
+
+    findings = check_long_task_risk(Store(tmp_project))
+
+    assert [f["severity"] for f in findings] == ["warning"]
+    assert [f["check"] for f in findings] == ["long-task-risk"]
+    assert [f["items"] for f in findings] == [["US-TST-1-2"]]
+    assert "[ERROR]" not in run_audit(tmp_project)
+
+
+def test_a_band_under_the_ceiling_is_not_flagged(risk_store, tmp_project):
+    """One-pointers run 10/15/20 — nothing there is worth splitting."""
+    _write_risk_history(risk_store)
+    risk_store.update_sprint("SPRINT-TST-1", status="active")
+    clear_all_caches()
+
+    report = run_audit(tmp_project)
+
+    assert "US-TST-1-1" not in "\n".join(_risk_lines(report))
+
+
+def test_no_history_means_no_long_task_warning(risk_store, tmp_project):
+    """An empty log is not evidence that anything runs long."""
+    risk_store.update_sprint("SPRINT-TST-1", status="active")
+    clear_all_caches()
+
+    assert _risk_lines(run_audit(tmp_project)) == []
+
+
+def test_a_planning_sprint_is_not_warned_about(risk_store, tmp_project):
+    """A sprint still being shaped is pm-plan's problem, not the audit's."""
+    _write_risk_history(risk_store)
+    clear_all_caches()
+
+    assert _risk_lines(run_audit(tmp_project)) == []
+
+
+def test_a_completed_sprint_is_not_warned_about(risk_store, tmp_project):
+    """Nothing in a finished sprint can be re-scoped."""
+    _write_risk_history(risk_store)
+    risk_store.update_sprint("SPRINT-TST-1", status="completed")
+    clear_all_caches()
+
+    assert _risk_lines(run_audit(tmp_project)) == []
+
+
+def test_appending_an_orchestrated_transition_changes_the_digest(risk_store, tmp_project):
+    """`since=` must not short-circuit past a finding the log just created.
+
+    The warning is computed from activity.jsonl and config.yaml, so both have
+    to be inside the digest's hashed inputs — the whole-tree walk covers them,
+    and this pins that they are never moved to a skip list as "just a log".
+    """
+    risk_store.update_sprint("SPRINT-TST-1", status="active")
+    clear_all_caches()
+    before = compute_state_digest(tmp_project)
+
+    _write_risk_history(risk_store)
+
+    assert compute_state_digest(tmp_project) != before

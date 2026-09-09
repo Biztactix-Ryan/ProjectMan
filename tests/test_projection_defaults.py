@@ -1,4 +1,4 @@
-"""The *default* shape of the four projectable read tools (US-PM-10-4).
+"""The *default* shape of the projectable read tools (US-PM-10-4).
 
 US-PM-10 added `fields` to `pm_get`/`pm_grab` (US-PM-10-6) and `brief`/`fields`
 to `pm_batch_get`/`pm_list_sprints` (US-PM-10-7).  Its acceptance criterion —
@@ -27,7 +27,10 @@ it is baked into ``pm_get_task_include_log.yaml`` on purpose.
 Two structural pins go with the goldens: the projection parameters must stay
 *trailing* and optional, so no future reorder can silently shift a positional
 caller onto them; and passing them explicitly at their defaults must equal
-omitting them.
+omitting them.  Those two pins also cover `pm_board`, which grew the same
+`brief`/`fields` pair in US-PM-49-5; its default output has no golden — the
+board renders wall-clock claim ages — and is pinned by the byte-identity and
+frame cases in ``tests/test_brief_mode.py`` instead.
 
 To regenerate the goldens after an *intended* contract change::
 
@@ -343,6 +346,15 @@ EXPECTED_SIGNATURES = {
         ("fields",),
     ),
     "pm_list_sprints": (("status",), ("brief", "fields")),
+    # US-PM-49-5 put the same two parameters on the board.  `stale_after`
+    # stays a leading parameter for the same reason `run_id` does above: it
+    # changes what the board *computes*, not how the response is narrowed.
+    # US-PM-53-6's `lane_compatible_with` joins them: it decides *which* rows
+    # the board computes, so it is a leading parameter, not a projection.
+    "pm_board": (
+        ("assignee", "tag", "limit", "stale_after", "lane_compatible_with"),
+        ("brief", "fields"),
+    ),
 }
 
 PROJECTION_DEFAULTS = {"fields": None, "brief": False}

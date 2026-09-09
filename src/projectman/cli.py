@@ -767,6 +767,108 @@ def git_status_cmd(as_json):
         click.echo(f"  {label.ljust(width)}  {value}")
 
 
+def _thousands(value) -> str:
+    """A token count with thousands separators, or ``-`` when unmeasured."""
+    if value is None:
+        return "-"
+    if isinstance(value, int) and not isinstance(value, bool):
+        return f"{value:,}"
+    return f"{value:,.1f}"
+
+
+@cli.command("orch-cost")
+@click.argument("run_id")
+@click.option(
+    "--transcripts",
+    "transcripts",
+    default=None,
+    type=click.Path(file_okay=False),
+    help="Directory of session transcripts to search (default: ~/.claude/projects)",
+)
+@click.option("--json", "as_json", is_flag=True, help="Output raw JSON (for scripts)")
+def orch_cost(run_id, transcripts, as_json):
+    """Report what an orchestrator run cost in context.
+
+    Finds the session transcript(s) mentioning RUN_ID and prints the growth
+    that run put on the orchestrator's prompt: per dispatch and per accepted
+    task, the API calls a dispatch costs, the bytes each tool returned, how
+    long workers were waited on, and every full cache miss with the idle gap
+    that caused it.
+    """
+    from projectman.orch_cost import analyze, find_transcripts
+
+    matches = find_transcripts(run_id, root=transcripts)
+    if not matches:
+        root = transcripts or "~/.claude/projects"
+        click.echo(
+            f"No transcript under {root} contains run id {run_id}", err=True
+        )
+        raise SystemExit(1)
+
+    reports = [dict(path=str(path), **analyze(path, run_id)) for path in matches]
+
+    if as_json:
+        payload = reports[0] if len(reports) == 1 else reports
+        click.echo(json.dumps(payload, indent=2, default=str))
+        return
+
+    for index, report in enumerate(reports):
+        if index:
+            click.echo("")
+        click.echo(report["path"])
+        rows = [
+            ("dispatches", str(report["dispatches"])),
+            ("accepts", str(report["accepts"])),
+            ("calls", str(report["calls"])),
+            ("base", _thousands(report["base"])),
+            ("peak", _thousands(report["peak"])),
+            ("growth", _thousands(report["growth"])),
+            ("growth per dispatch", _thousands(report["per_dispatch"])),
+            ("growth per accepted task", _thousands(report["per_task"])),
+            ("calls per dispatch", _thousands(report["calls_per_dispatch"])),
+            ("output tokens per call", _thousands(report["output_per_call"])),
+        ]
+        width = max(len(label) for label, _ in rows)
+        for label, value in rows:
+            click.echo(f"  {label.ljust(width)}  {value}")
+
+        click.echo("")
+        click.echo("  tool result bytes")
+        tool_bytes = report["tool_bytes"]
+        if tool_bytes:
+            # analyze() already orders largest first; sort again so the
+            # printed table is correct whatever a caller hands us.
+            ordered = sorted(tool_bytes.items(), key=lambda item: (-item[1], item[0]))
+            name_width = max(len(name) for name, _ in ordered)
+            for name, size in ordered:
+                click.echo(f"    {name.ljust(name_width)}  {size:,}")
+        else:
+            click.echo("    (none)")
+
+        waits = report["waits"]
+        click.echo("")
+        click.echo(
+            "  worker waits (minutes)  "
+            f"p50 {_thousands(waits['p50'])}  "
+            f"p90 {_thousands(waits['p90'])}  "
+            f"max {_thousands(waits['max'])}  "
+            f"(n={waits['n']})"
+        )
+
+        click.echo("")
+        click.echo("  full cache misses")
+        if report["misses"]:
+            for miss in report["misses"]:
+                gap = miss["gap_min"]
+                gap_text = "-" if gap is None else f"{gap:,.1f}"
+                click.echo(
+                    f"    {miss['at'] or '-'}  gap {gap_text} min  "
+                    f"{_thousands(miss['tokens'])} tokens"
+                )
+        else:
+            click.echo("    (none)")
+
+
 @cli.command()
 @click.option("--port", default=8000, help="Port to listen on")
 @click.option("--host", default="127.0.0.1", help="Host to bind to")

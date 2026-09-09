@@ -225,3 +225,129 @@ def incomplete_story_dependencies(
         for dep in story.depends_on
         if dep in status_map and status_map[dep] != "done" and dep not in archived
     ]
+
+
+def _story_of(task_id: str, task_map: dict[str, TaskFrontmatter]) -> str | None:
+    """Story id owning *task_id*, or ``None`` when the id is not a known task."""
+    task = task_map.get(task_id)
+    return task.story_id if task is not None else None
+
+
+def _stories_connected(
+    left: str,
+    right: str,
+    task_map: dict[str, TaskFrontmatter],
+    story_map: dict[str, StoryFrontmatter],
+) -> bool:
+    """True when a depends_on path joins two stories, in either direction.
+
+    The story graph is walked **undirected** and transitively: A depends_on B
+    and B depends_on C connects A to C, and it does not matter which end holds
+    the edge — two tasks whose stories are ordered relative to each other must
+    not run in parallel lanes regardless of which one comes first.
+
+    A story's ``depends_on`` may name a task rather than a story (the same
+    latitude :func:`incomplete_story_dependencies` already honours); such an
+    edge is resolved to the story that owns the task, so a dependency expressed
+    at task granularity still connects the two stories.
+    """
+    if left == right:
+        return True
+
+    adjacency: dict[str, set[str]] = defaultdict(set)
+    for story in story_map.values():
+        for dep in story.depends_on:
+            target = dep if dep in story_map else _story_of(dep, task_map)
+            if target is None or target == story.id:
+                continue
+            adjacency[story.id].add(target)
+            adjacency[target].add(story.id)
+
+    seen = {left}
+    queue: deque[str] = deque([left])
+    while queue:
+        node = queue.popleft()
+        for neighbour in adjacency[node]:
+            if neighbour == right:
+                return True
+            if neighbour not in seen:
+                seen.add(neighbour)
+                queue.append(neighbour)
+    return False
+
+
+def lane_compatible(
+    store,
+    in_flight_id: str,
+    candidate_id: str,
+    *,
+    tasks: list[TaskFrontmatter] | None = None,
+    stories: list[StoryFrontmatter] | None = None,
+) -> bool:
+    """Can *candidate_id* run in a second lane beside in-flight *in_flight_id*?
+
+    Two tasks are lane-compatible when nothing in the store orders one against
+    the other.  Four rules, all of them read from the store rather than
+    remembered:
+
+    1. **Same story** — tasks of one story share a subject and usually a file
+       set, and their intra-story order is exactly what ``topological_sort``
+       exists to preserve.  Never compatible.
+    2. **Task depends on task** — in either direction.
+    3. **Task depends on the other's story** — a task's ``depends_on`` may name
+       a story (see :func:`incomplete_task_dependencies`), and depending on the
+       whole story includes the task in flight.
+    4. **Stories connected by depends_on** — any path, either direction,
+       transitively (see :func:`_stories_connected`).
+
+    Anything else is compatible.  Note the ordering rules are structural, not
+    temporal: whether the dependency is already *done* is irrelevant here,
+    because the two lanes' edit sets are what must not overlap.
+
+    Args:
+        store: Store to read tasks and stories from. May be ``None`` when both
+            *tasks* and *stories* are supplied.
+        in_flight_id: Id of the task already claimed in the other lane.
+        candidate_id: Id of the task being considered for this lane.
+        tasks: Pre-read task list, to avoid a store read per candidate when
+            filtering a whole board. Defaults to ``store.list_tasks()``.
+        stories: Pre-read story list. Defaults to ``store.list_stories()``.
+
+    Raises:
+        ValidationError: Either id is not a task in the store. The message
+            names the id, since the caller's mistake is almost always a story
+            id or a typo rather than a missing task.
+    """
+    all_tasks = list(store.list_tasks()) if tasks is None else list(tasks)
+    all_stories = list(store.list_stories()) if stories is None else list(stories)
+
+    task_map = {t.id: t for t in all_tasks}
+    if in_flight_id not in task_map:
+        raise ValidationError(f"Unknown in-flight task: {in_flight_id}")
+    if candidate_id not in task_map:
+        raise ValidationError(f"Unknown candidate task: {candidate_id}")
+
+    in_flight = task_map[in_flight_id]
+    candidate = task_map[candidate_id]
+
+    # Rule 1 — one story, one lane. Also covers a task compared with itself.
+    if in_flight.story_id == candidate.story_id:
+        return False
+
+    # Rules 2 and 3 — a direct edge either way, at task or story granularity.
+    if in_flight.depends_on and (
+        candidate_id in in_flight.depends_on
+        or candidate.story_id in in_flight.depends_on
+    ):
+        return False
+    if candidate.depends_on and (
+        in_flight_id in candidate.depends_on
+        or in_flight.story_id in candidate.depends_on
+    ):
+        return False
+
+    # Rule 4 — the stories themselves are ordered, however indirectly.
+    story_map = {s.id: s for s in all_stories}
+    return not _stories_connected(
+        in_flight.story_id, candidate.story_id, task_map, story_map
+    )

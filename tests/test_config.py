@@ -3,8 +3,15 @@
 import pytest
 from pathlib import Path
 
-from projectman.config import find_project_root, load_config, save_config, project_dir
-from projectman.models import ProjectConfig
+from projectman.config import (
+    clear_config_cache,
+    find_project_root,
+    load_config,
+    max_task_minutes,
+    project_dir,
+    save_config,
+)
+from projectman.models import DEFAULT_MAX_TASK_MINUTES, ProjectConfig
 
 
 def test_find_project_root(tmp_project):
@@ -437,3 +444,60 @@ def test_project_config_has_no_hub_or_projects_field():
     fields = set(ProjectConfig.model_fields)
     assert "hub" not in fields
     assert "projects" not in fields
+
+
+# --- orchestrate.max_task_minutes (US-PM-50-7) ------------------------------
+# The ceiling planning tools compare a points band's p90 duration against.
+# This task adds the key only; US-PM-50-9/10 are what read it.
+
+
+def test_max_task_minutes_defaults_to_sixty(tmp_project):
+    """A config.yaml with no `orchestrate:` section answers the default."""
+    config = load_config(tmp_project)
+    assert config.orchestrate.max_task_minutes == 60
+    assert max_task_minutes(config) == 60
+
+
+def test_max_task_minutes_override_is_read(tmp_project):
+    """An `orchestrate.max_task_minutes` in config.yaml wins over the default."""
+    import yaml as yaml_module
+
+    config_path = tmp_project / ".project" / "config.yaml"
+    data = yaml_module.safe_load(config_path.read_text())
+    data["orchestrate"] = {"max_task_minutes": 25}
+    config_path.write_text(yaml_module.dump(data))
+    clear_config_cache(tmp_project)
+
+    config = load_config(tmp_project)
+    assert config.orchestrate.max_task_minutes == 25
+    assert max_task_minutes(config) == 25
+
+
+def test_max_task_minutes_survives_a_round_trip(tmp_project):
+    """save_config writes the section back; reloading reads the same value."""
+    config = load_config(tmp_project)
+    config.orchestrate.max_task_minutes = 90
+    save_config(config, tmp_project)
+    assert load_config(tmp_project).orchestrate.max_task_minutes == 90
+
+
+@pytest.mark.parametrize("junk", ["soon", None, float("nan"), float("inf"), -5, [60]])
+def test_junk_max_task_minutes_falls_back_to_the_default(junk):
+    """A typo in an optional knob must not fail the whole config load."""
+    config = ProjectConfig(name="t", prefix="TST", orchestrate={"max_task_minutes": junk})
+    assert config.orchestrate.max_task_minutes == DEFAULT_MAX_TASK_MINUTES
+
+
+def test_max_task_minutes_keeps_usable_values():
+    """Strings that parse, and zero, are kept — only nonsense falls back."""
+    assert ProjectConfig(
+        name="t", prefix="TST", orchestrate={"max_task_minutes": "20.5"}
+    ).orchestrate.max_task_minutes == 20.5
+    assert ProjectConfig(
+        name="t", prefix="TST", orchestrate={"max_task_minutes": 0}
+    ).orchestrate.max_task_minutes == 0.0
+
+
+def test_max_task_minutes_accessor_answers_without_a_project():
+    """No project found means the documented default, not an AttributeError."""
+    assert max_task_minutes(None) == DEFAULT_MAX_TASK_MINUTES

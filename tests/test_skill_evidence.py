@@ -1,9 +1,12 @@
 """US-PM-9-4 — the orchestrator skill must record evidence structurally.
 
-Story US-PM-9's diagnosis: ``pm-orchestrate`` steps 17–18 already make the
-orchestrator produce exactly three lists — files changed, test commands with
-their results, DoD criteria met vs unmet — and step 19 then told it to flatten
-all three into the prose ``note``.  That is why note lengths clustered at the
+Story US-PM-9's diagnosis: ``pm-orchestrate`` steps 17–18 already produce
+exactly three lists — files changed, test commands with their results, DoD
+criteria met vs unmet — and step 19 then told the orchestrator to flatten
+all three into the prose ``note``.  (Since US-PM-48 those steps *delegate* the
+gathering to a validator subagent, which answers with a bounded JSON verdict;
+step 19 transcribes that object.  What has to hold either way is that the three
+lists are named where the verdict can reach them.)  That is why note lengths clustered at the
 1024-char ceiling (Study B p90 1,067; Study A median 925 / p95 1,349), and why
 "done with no evidence" was silent rather than detectable.
 
@@ -24,8 +27,8 @@ What is asserted, per ``docs/reference/evidence-contract.md`` §6 and §8:
 * **negatively**, nothing in step 19 or the orchestrator's own flow tells it to
   put the lists *inside* the note — every ``note="..."`` argument in step 19 is
   a short placeholder, not an evidence dump;
-* steps 17–18 still say to collect the three lists (without them step 19 has
-  nothing to transcribe);
+* steps 17–18 still name the three lists the validator is asked for (without
+  them step 19 has nothing to transcribe);
 * the Operating Model names ``has_evidence`` and ``done-without-evidence``.
 
 Helpers are imported from ``test_skill_verdict_verbs`` rather than copied, so
@@ -33,7 +36,9 @@ the step-19 slice and the fence stripping stay defined in exactly one place.
 As there, the fenced **Worker Prompt Template** is the deliberate exception to
 the flow assertions — workers self-report via ``pm_update`` — so the flow checks
 strip fences and ``test_worker_prompt_fence_still_self_reports_via_pm_update``
-keeps that strip non-vacuous.
+keeps that strip non-vacuous.  US-PM-48 added a second fence, the **Validator
+Prompt Template**, so the two worker-prompt assertions below name the worker
+fence specifically rather than searching every fenced block.
 
 Render byte-identity is *not* re-asserted here: ``test_skill_verdict_verbs.py``
 already owns ``test_rendered_orchestrate_skill_is_byte_identical_to_its_template``
@@ -47,9 +52,9 @@ import re
 import pytest
 
 from tests.test_orchestrate_skill_size import design_section
+from tests.test_skill_guidance_tools import _worker_fence
 from tests.test_skill_verdict_verbs import (
     DOCS,
-    _fences,
     _outside_fences,
     _step_19,
     _text,
@@ -88,11 +93,17 @@ def _bullet(text: str, label: str) -> str:
 
 
 def _steps_17_18(text: str) -> str:
-    """The validation-gathering block: from the ``17.`` line up to ``19.``."""
+    """The Validation block: from the ``17.`` line up to ``19.``.
+
+    Since US-PM-48 these steps dispatch a validator subagent rather than
+    running the status/diff/DoD checks inline; the dispatch itself is pinned by
+    ``tests/test_orchestrate_validator_dispatch.py``.  All this slice is used
+    for here is that the three evidence lists are still named.
+    """
     lines = text.splitlines()
     starts = [n for n, line in enumerate(lines) if line.startswith("17.")]
     ends = [n for n, line in enumerate(lines) if line.startswith("19.")]
-    assert starts, "no line starting with '17.' — the diff-check step vanished"
+    assert starts, "no line starting with '17.' — the validation step vanished"
     assert ends, "no line starting with '19.' — cannot bound steps 17–18"
     start = starts[0]
     end = next(n for n in ends if n > start)
@@ -243,11 +254,14 @@ def test_orchestrator_flow_never_instructs_putting_evidence_in_the_note(path):
 @pytest.mark.parametrize("path", DOCS)
 @pytest.mark.parametrize("term", ["files", "test", "DoD"])
 def test_steps_17_18_say_to_collect_the_three_lists(path, term):
-    """Step 19 is a transcription only if 17–18 produced something to transcribe."""
+    """Step 19 is a transcription only if 17–18 produced something to transcribe.
+
+    The producing is the validator's job now; naming the list is still 17–18's.
+    """
     block = _steps_17_18(_text(path))
     assert term.lower() in block.lower(), (
         f"{path.name}: steps 17–18 never mention {term!r}, so the {term} list "
-        "step 19 records is never gathered"
+        "step 19 records is never gathered — nothing asks the validator for it"
     )
 
 
@@ -268,7 +282,7 @@ def test_the_design_doc_names_the_audit_finding_evidence_answers():
     without it, nothing connects the evidence fields to the audit warning they
     exist to clear.
     """
-    section = design_section("## Stage-only model")
+    section = design_section("## Isolation model")
     assert "done-without-evidence" in section, (
         "the design doc's evidence paragraph no longer names the pm_audit "
         f"finding evidence answers:\n{section}"
@@ -283,8 +297,11 @@ def test_the_design_doc_names_the_audit_finding_evidence_answers():
     "pattern",
     [
         r"files changed",
-        r"pass/fail|pass or fail|passed/failed",
-        r"DoD (?:items )?met (?:and|vs\.?|versus) unmet",
+        # US-PM-49-7 fixed the shape as `command -> pass|fail (n passed)`, so the
+        # alternation bar is now one of the spellings that satisfies the ask.
+        r"pass/fail|pass\|fail|pass or fail|passed/failed",
+        # ... and split the two DoD lists into their own fields, in order.
+        r"DoD (?:items )?met[ ;,]+(?:and |vs\.? |versus |DoD )?unmet",
     ],
 )
 def test_worker_prompt_fence_asks_for_the_three_lists(path, pattern):
@@ -293,7 +310,7 @@ def test_worker_prompt_fence_asks_for_the_three_lists(path, pattern):
     Whitespace is normalised first: the worker prompt is hard-wrapped inside its
     fence, so a required phrase may straddle a line break.
     """
-    fenced = re.sub(r"\s+", " ", "\n".join(_fences(_text(path))))
+    fenced = re.sub(r"\s+", " ", _worker_fence(_text(path)))
     assert re.search(pattern, fenced, re.IGNORECASE), (
         f"{path.name}: the worker prompt never asks for {pattern!r}, so step 19 "
         "has nothing to transcribe"
@@ -308,8 +325,12 @@ def test_worker_prompt_fence_still_self_reports_via_pm_update(path):
     verb.  If the fenced worker prompt ever stops mentioning ``pm_update``, the
     fence stripping has stopped excluding anything and the negative flow test
     would be passing for the wrong reason.
+
+    Scoped to the *worker* fence: since US-PM-48 the skill carries a second
+    fenced block, the Validator Prompt Template, and a document-wide search
+    would let that one keep this guard green after the worker prompt changed.
     """
-    assert "pm_update" in "\n".join(_fences(_text(path))), (
-        f"{path.name}: no fenced block mentions pm_update — the worker prompt "
-        "changed, so the fence-stripping in this module needs re-checking"
+    assert "pm_update" in _worker_fence(_text(path)), (
+        f"{path.name}: the worker prompt fence no longer mentions pm_update — "
+        "it changed, so the fence-stripping in this module needs re-checking"
     )

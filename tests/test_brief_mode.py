@@ -1,4 +1,8 @@
-"""Brief mode on `pm_batch_get` and `pm_list_sprints` (US-PM-10-7).
+"""Brief mode on `pm_batch_get`, `pm_list_sprints` and `pm_board`.
+
+(US-PM-10-7 for the first two; US-PM-49-5 added the third, on the same two
+parameters and the same shared helpers — the board is the orchestrator's
+per-run pre-flight read and grows a row per task.)
 
 These are the two list-*everything* calls: `pm_batch_get(type="stories")` was
 measured at 37,593 chars and `pm_list_sprints(status="completed")` at 27,079,
@@ -28,7 +32,12 @@ import pytest
 import yaml
 from mcp.server.fastmcp.exceptions import ToolError
 
-from projectman.server import BRIEF_ITEM_FIELDS, BRIEF_SPRINT_FIELDS
+from projectman.server import (
+    BOARD_ROW_FIELDS,
+    BRIEF_BOARD_FIELDS,
+    BRIEF_ITEM_FIELDS,
+    BRIEF_SPRINT_FIELDS,
+)
 
 READY_BODY = (
     "## Implementation\n\nDo the thing properly.\n\n"
@@ -331,7 +340,183 @@ def test_an_unknown_sprint_field_is_an_error_naming_valid_keys(seeded):
     assert "planned_points" in message
 
 
+# ═══ brief and fields on pm_board (US-PM-49-5) ══════════════════
+
+
+def test_board_default_is_byte_identical(seeded):
+    from projectman.server import pm_board
+
+    assert pm_board() == pm_board(brief=False, fields=None)
+
+
+@pytest.mark.parametrize("empty", ["", "   ", ",", " , , "])
+def test_an_empty_fields_string_means_no_board_projection(seeded, empty):
+    from projectman.server import pm_board
+
+    assert pm_board(fields=empty) == pm_board()
+
+
+def test_the_default_board_still_carries_the_row_free_text(seeded):
+    """The saving must come from `brief`, not from a quietly slimmed default."""
+    from projectman.server import pm_board
+
+    board = yaml.safe_load(pm_board())["board"]
+    assert board["available"] and board["not_ready"]
+    assert all(row["story"] for row in board["available"])
+    assert any(row["hints"] for row in board["available"])
+    assert all(row["blockers"] for row in board["not_ready"])
+
+
+def test_brief_drops_the_free_text_from_every_board_row(seeded):
+    from projectman.server import pm_board
+
+    board = yaml.safe_load(pm_board(brief=True))["board"]
+    assert board["available"] and board["not_ready"]
+    for group, rows in board.items():
+        for row in rows:
+            # Intersection, as everywhere: a row keeps the brief keys it has.
+            assert set(row) <= set(BRIEF_BOARD_FIELDS), group
+            for dropped in ("story", "hints", "blockers"):
+                assert dropped not in row, (group, dropped)
+
+
+def test_brief_keeps_every_row_and_every_value_the_full_board_shows(seeded):
+    """The listing is the same listing — brief only narrows each row."""
+    from projectman.server import pm_board
+
+    full = yaml.safe_load(pm_board())["board"]
+    brief = yaml.safe_load(pm_board(brief=True))["board"]
+
+    assert list(brief) == list(full)
+    for group, rows in brief.items():
+        assert [r["id"] for r in rows] == [r["id"] for r in full[group]]
+        for row, full_row in zip(rows, full[group]):
+            assert row["title"] == full_row["title"]
+            assert "points" in row
+            for key, value in row.items():
+                assert value == full_row[key], (group, key)
+
+
+def test_brief_keeps_the_claim_metadata_on_an_in_progress_row(seeded):
+    """Who holds it, since when and under which run — what a restart reads for."""
+    from projectman.server import pm_board, pm_grab
+
+    pm_grab("US-TST-1-3", run_id="run-brief")
+
+    rows = yaml.safe_load(pm_board(brief=True))["board"]["in_progress"]
+    assert [r["id"] for r in rows] == ["US-TST-1-3"]
+    row = rows[0]
+    assert row["assignee"] == "claude"
+    assert row["claimed_by_run"] == "run-brief"
+    assert row["claim_age"] >= 0
+    assert "story" not in row
+
+
+def test_brief_keeps_the_stale_flag_and_the_stale_ids(seeded):
+    from projectman.server import pm_board, pm_grab
+
+    pm_grab("US-TST-1-3", run_id="run-stale")
+
+    payload = yaml.safe_load(pm_board(brief=True, stale_after=0))
+    assert payload["stale_tasks"] == ["US-TST-1-3"]
+    assert payload["board"]["in_progress"][0]["stale"] is True
+
+
+def test_the_board_frame_survives_every_mode(seeded):
+    """Totals, stale ids and the note are the frame; projection narrows rows."""
+    from projectman.server import pm_board
+
+    full = yaml.safe_load(pm_board())
+    for kwargs in ({"brief": True}, {"fields": "title"}):
+        payload = yaml.safe_load(pm_board(**kwargs))
+        assert payload["summary"] == full["summary"], kwargs
+        assert payload["stale_tasks"] == full["stale_tasks"], kwargs
+        assert payload["stale_after_hours"] == full["stale_after_hours"], kwargs
+        assert payload["limit"] == full["limit"], kwargs
+        assert payload["note"] == full["note"], kwargs
+        assert list(payload["board"]) == list(full["board"]), kwargs
+
+
+def test_fields_on_pm_board_returns_those_keys_plus_id(seeded):
+    from projectman.server import pm_board
+
+    board = yaml.safe_load(pm_board(fields="title,points"))["board"]
+    assert board["available"]
+    for group, rows in board.items():
+        for row in rows:
+            assert set(row) == {"id", "title", "points"}, group
+
+
+def test_fields_beats_brief_on_pm_board(seeded):
+    from projectman.server import pm_board
+
+    rows = yaml.safe_load(pm_board(brief=True, fields="story"))["board"]["available"]
+    assert rows
+    for row in rows:
+        assert set(row) == {"id", "story"}
+        assert row["story"]
+
+
+def test_brief_board_is_a_fraction_of_the_full_board(realistic):
+    """Measured, not asserted by construction — as everywhere in this file."""
+    from projectman.server import pm_board
+
+    full = len(pm_board())
+    brief = len(pm_board(brief=True))
+    ratio = brief / full
+    assert ratio <= 0.6, (
+        f"pm_board(brief=True) is {brief} chars vs {full} full — "
+        f"ratio {ratio:.1%}, wanted <= 60%"
+    )
+
+
 # ═══ Over the wire ══════════════════════════════════════════════
+
+
+def test_brief_and_fields_are_declared_on_the_board_schema():
+    from projectman.server import mcp as mcp_server
+
+    tools = {tool.name: tool for tool in anyio.run(mcp_server.list_tools)}
+    properties = tools["pm_board"].inputSchema["properties"]
+    assert "brief" in properties
+    assert "fields" in properties
+    assert not tools["pm_board"].inputSchema.get("required")
+
+
+def test_brief_and_fields_over_the_wire_on_pm_board(seeded):
+    is_error, text = _call_over_the_wire("pm_board", {"brief": True})
+    assert not is_error, text
+    assert "hints" not in text
+    assert "blockers" not in text
+
+    is_error, text = _call_over_the_wire("pm_board", {"fields": "title"})
+    assert not is_error, text
+    for rows in yaml.safe_load(text)["board"].values():
+        for row in rows:
+            assert set(row) == {"id", "title"}
+
+
+def test_the_two_board_presets_agree_about_what_a_row_can_carry(seeded):
+    """Every brief key a row really has is also a valid `fields` name.
+
+    `status` and `depends_on` are the exception, deliberately: the preset
+    names them so a row that ever carries them keeps them, but no board row
+    does today, so they are *not* offered as `fields` names — an explicit
+    `fields="status"` would project every row down to its id, which is the
+    silent-empty-projection failure the loud error exists to prevent.
+    """
+    from projectman.server import pm_board
+
+    aspirational = {"status", "depends_on"}
+    for name in BRIEF_BOARD_FIELDS:
+        if name in aspirational:
+            continue
+        assert name in BOARD_ROW_FIELDS, name
+
+    board = yaml.safe_load(pm_board(brief=True))["board"]
+    for rows in board.values():
+        for row in rows:
+            assert not aspirational & set(row)
 
 
 def test_brief_and_fields_are_declared_on_both_tool_schemas():
@@ -459,7 +644,9 @@ def _declared_types(schema_property: dict) -> set:
     return {schema_property.get("type")}
 
 
-@pytest.mark.parametrize("tool_name", ["pm_batch_get", "pm_list_sprints"])
+@pytest.mark.parametrize(
+    "tool_name", ["pm_batch_get", "pm_list_sprints", "pm_board"]
+)
 def test_the_published_schema_types_brief_and_fields_as_documented(tool_name):
     """Presence is not the contract — a caller reads the types and defaults.
 

@@ -5,11 +5,20 @@ from typing import Optional
 
 import yaml
 
+from .durations import duration_history_block
 from .store import Store
 
 
 def scope(store: Store, story_id: str) -> str:
-    """Return story content + existing tasks + decomposition guidance."""
+    """Return story content + existing tasks + decomposition guidance.
+
+    The guidance's "one session" rule is a rule of thumb; the
+    ``duration_history`` block beside it is this project's measurement of it
+    — per-points p50/p90/max/n of real grab-to-done stretches, plus the
+    ``max_task_minutes`` ceiling — so a decomposition can be sized against
+    what its own tasks have cost.  See
+    :func:`projectman.durations.duration_history_block`.
+    """
     meta, body = store.get_story(story_id)
     existing_tasks = store.list_tasks(story_id=story_id)
 
@@ -38,6 +47,7 @@ def scope(store: Store, story_id: str) -> str:
         "existing_tasks": [t.model_dump(mode="json") for t in existing_tasks],
         "task_count": len(existing_tasks),
         "decomposition_guidance": guidance,
+        "duration_history": duration_history_block(store),
     }
 
     return yaml.dump(result, default_flow_style=False, sort_keys=False, allow_unicode=True, width=10000)

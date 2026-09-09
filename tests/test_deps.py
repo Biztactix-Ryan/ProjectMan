@@ -12,6 +12,7 @@ from projectman.deps import (
     incomplete_dependencies,
     incomplete_story_dependencies,
     incomplete_task_dependencies,
+    lane_compatible,
     topological_sort,
 )
 from projectman.models import StoryFrontmatter, TaskFrontmatter, TaskStatus
@@ -513,3 +514,142 @@ class TestIncompleteStoryDependencies:
         # S3's direct dependency is S2
         result = incomplete_story_dependencies(stories[2], [], stories)
         assert result == ["US-TST-2"]
+
+
+# ── lane_compatible (US-PM-53-6) ──────────────────────────────────────
+
+
+class _FakeStore:
+    """The two list calls ``lane_compatible`` makes, and nothing else.
+
+    A real ``Store`` would need a project on disk to answer them; the function
+    reads tasks and stories and reasons about their ``depends_on`` fields, so
+    the frontmatter helpers above are the whole input it has.
+    """
+
+    def __init__(
+        self,
+        tasks: list[TaskFrontmatter],
+        stories: list[StoryFrontmatter],
+    ) -> None:
+        self._tasks = tasks
+        self._stories = stories
+
+    def list_tasks(self) -> list[TaskFrontmatter]:
+        return list(self._tasks)
+
+    def list_stories(self) -> list[StoryFrontmatter]:
+        return list(self._stories)
+
+
+def _lane_store() -> _FakeStore:
+    """Four stories, one task each, with no dependency between any of them.
+
+    Each test below adds exactly the one edge (or shared story) whose rule it
+    is checking, so a failure names the rule that broke.
+    """
+    tasks = [
+        _task("US-TST-1-1", story_id="US-TST-1"),
+        _task("US-TST-2-1", story_id="US-TST-2"),
+        _task("US-TST-3-1", story_id="US-TST-3"),
+        _task("US-TST-4-1", story_id="US-TST-4"),
+    ]
+    stories = [_story(f"US-TST-{n}", status="active") for n in (1, 2, 3, 4)]
+    return _FakeStore(tasks, stories)
+
+
+class TestLaneCompatible:
+    def test_independent_tasks_are_compatible(self):
+        """The case the whole feature exists for: two unrelated stories."""
+        store = _lane_store()
+        assert lane_compatible(store, "US-TST-1-1", "US-TST-2-1") is True
+        # Symmetric — the answer cannot depend on which lane asks.
+        assert lane_compatible(store, "US-TST-2-1", "US-TST-1-1") is True
+
+    def test_same_story_is_never_compatible(self):
+        store = _lane_store()
+        store._tasks.append(_task("US-TST-1-2", story_id="US-TST-1"))
+        assert lane_compatible(store, "US-TST-1-1", "US-TST-1-2") is False
+
+    def test_a_task_compared_with_itself_is_not_compatible(self):
+        store = _lane_store()
+        assert lane_compatible(store, "US-TST-1-1", "US-TST-1-1") is False
+
+    def test_candidate_depends_on_the_in_flight_task(self):
+        store = _lane_store()
+        store._tasks[1] = _task(
+            "US-TST-2-1", story_id="US-TST-2", depends_on=["US-TST-1-1"]
+        )
+        assert lane_compatible(store, "US-TST-1-1", "US-TST-2-1") is False
+
+    def test_in_flight_task_depends_on_the_candidate(self):
+        """The other direction of the same edge — order does not rescue it."""
+        store = _lane_store()
+        store._tasks[0] = _task(
+            "US-TST-1-1", story_id="US-TST-1", depends_on=["US-TST-2-1"]
+        )
+        assert lane_compatible(store, "US-TST-1-1", "US-TST-2-1") is False
+
+    def test_candidate_depends_on_the_in_flight_task_s_story(self):
+        """`depends_on` may name a story, and that includes the task in it."""
+        store = _lane_store()
+        store._tasks[1] = _task_depending_on_a_story(
+            "US-TST-2-1", ["US-TST-1"], story_id="US-TST-2"
+        )
+        assert lane_compatible(store, "US-TST-1-1", "US-TST-2-1") is False
+
+    def test_in_flight_task_depends_on_the_candidate_s_story(self):
+        store = _lane_store()
+        store._tasks[0] = _task_depending_on_a_story(
+            "US-TST-1-1", ["US-TST-2"], story_id="US-TST-1"
+        )
+        assert lane_compatible(store, "US-TST-1-1", "US-TST-2-1") is False
+
+    def test_stories_joined_by_a_direct_depends_on(self):
+        store = _lane_store()
+        store._stories[1] = _story("US-TST-2", status="active", depends_on=["US-TST-1"])
+        assert lane_compatible(store, "US-TST-1-1", "US-TST-2-1") is False
+        # And in the other direction: the edge orders the two either way.
+        assert lane_compatible(store, "US-TST-2-1", "US-TST-1-1") is False
+
+    def test_stories_joined_transitively(self):
+        """S1 <- S3 <- S2: no direct edge, still one dependency path."""
+        store = _lane_store()
+        store._stories[2] = _story("US-TST-3", status="active", depends_on=["US-TST-1"])
+        store._stories[1] = _story("US-TST-2", status="active", depends_on=["US-TST-3"])
+        assert lane_compatible(store, "US-TST-1-1", "US-TST-2-1") is False
+        # US-TST-4 is off the path and stays compatible with all of them.
+        assert lane_compatible(store, "US-TST-1-1", "US-TST-4-1") is True
+
+    def test_a_story_dependency_named_at_task_granularity_still_connects(self):
+        """A story may depend on a *task*; the owning story is what counts."""
+        store = _lane_store()
+        store._stories[1] = _story(
+            "US-TST-2", status="active", depends_on=["US-TST-1-1"]
+        )
+        assert lane_compatible(store, "US-TST-1-1", "US-TST-2-1") is False
+
+    def test_unknown_in_flight_id_is_an_error_naming_it(self):
+        store = _lane_store()
+        with pytest.raises(ValueError) as exc:
+            lane_compatible(store, "US-TST-9-9", "US-TST-1-1")
+        assert "US-TST-9-9" in str(exc.value)
+
+    def test_unknown_candidate_id_is_an_error_naming_it(self):
+        store = _lane_store()
+        with pytest.raises(ValueError) as exc:
+            lane_compatible(store, "US-TST-1-1", "US-TST-9-9")
+        assert "US-TST-9-9" in str(exc.value)
+
+    def test_preloaded_lists_are_used_instead_of_the_store(self):
+        """The board hands its own read down rather than re-reading per row."""
+        store = _lane_store()
+        tasks = store.list_tasks()
+        stories = store.list_stories()
+        stories[1] = _story("US-TST-2", status="active", depends_on=["US-TST-1"])
+        assert (
+            lane_compatible(
+                None, "US-TST-1-1", "US-TST-2-1", tasks=tasks, stories=stories
+            )
+            is False
+        )

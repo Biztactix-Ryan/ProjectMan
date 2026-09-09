@@ -7,3 +7,7 @@ deploy_branch: "{{ deploy_branch }}"
 {% endif -%}
 next_story_id: 1
 next_epic_id: 1
+
+# Optional -- orchestrated-run knobs.  Uncomment to change a default.
+# orchestrate:
+#   max_task_minutes: 60   # Flag tasks whose points band typically runs longer (minutes)

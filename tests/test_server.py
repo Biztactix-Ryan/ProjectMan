@@ -430,6 +430,93 @@ def test_pm_board_tag_filter(tmp_project):
     assert data["summary"]["available"] == 0
 
 
+def _lane_board(tmp_project):
+    """Three stories: one holding the in-flight task, one independent, one downstream.
+
+    US-TST-1 owns the task that is in flight (and a second, ready one).
+    US-TST-2 is unrelated to everything. US-TST-3 depends on US-TST-1, so its
+    tasks are ordered against the lane in flight even though nothing at task
+    level says so.
+    """
+    from projectman.server import pm_create_story, pm_create_task, pm_update
+
+    pm_create_story("In flight story", "Description")
+    pm_update("US-TST-1", status="active")
+    pm_create_story("Independent story", "Description")
+    pm_update("US-TST-2", status="active")
+    pm_create_story("Downstream story", "Description", depends_on="US-TST-1")
+    pm_update("US-TST-3", status="active")
+
+    pm_create_task("US-TST-1", "In flight task", READY_TASK_BODY, points=2)
+    pm_update("US-TST-1-1", status="in-progress", assignee="claude")
+    pm_create_task("US-TST-1", "Sibling task", READY_TASK_BODY, points=2)
+    pm_create_task("US-TST-2", "Independent task", READY_TASK_BODY, points=3)
+    pm_create_task("US-TST-3", "Downstream task", READY_TASK_BODY, points=1)
+
+
+def test_pm_board_lane_compatible_with_filters_available(tmp_project):
+    """US-PM-53-6 — the second lane only sees work independent of the first.
+
+    Both exclusions the store can prove are exercised: the sibling shares the
+    in-flight task's story, and the downstream task's story depends on it.
+    """
+    from projectman.server import pm_board
+
+    _lane_board(tmp_project)
+
+    unfiltered = yaml.safe_load(pm_board())
+    assert unfiltered["summary"]["available"] == 3
+    assert "lane_excluded" not in unfiltered, (
+        "the default board must be unchanged by the lane filter"
+    )
+
+    filtered = yaml.safe_load(pm_board(lane_compatible_with="US-TST-1-1"))
+    assert [row["id"] for row in filtered["board"]["available"]] == ["US-TST-2-1"]
+    assert filtered["summary"]["available"] == 1
+    assert filtered["lane_excluded"] == 2
+
+
+def test_pm_board_lane_excluded_counts_beyond_the_limit(tmp_project):
+    """The count is of every hidden task, not just the ones inside `limit`."""
+    from projectman.server import pm_board
+
+    _lane_board(tmp_project)
+
+    filtered = yaml.safe_load(pm_board(lane_compatible_with="US-TST-1-1", limit=1))
+    assert filtered["lane_excluded"] == 2
+    assert [row["id"] for row in filtered["board"]["available"]] == ["US-TST-2-1"]
+
+
+def test_pm_board_lane_compatible_with_unknown_id_is_an_error(tmp_project):
+    """A typo must not read as "no compatible work left"."""
+    from mcp.server.fastmcp.exceptions import ToolError
+    from projectman.server import pm_board
+
+    _lane_board(tmp_project)
+
+    with pytest.raises(ToolError) as excinfo:
+        pm_board(lane_compatible_with="US-TST-9-9")
+    assert "US-TST-9-9" in str(excinfo.value)
+
+
+def test_pm_board_lane_filter_composes_with_the_projections(tmp_project):
+    """`brief` and `fields` narrow the rows; the lane filter chooses them."""
+    from projectman.server import pm_board
+
+    _lane_board(tmp_project)
+
+    brief = yaml.safe_load(pm_board(lane_compatible_with="US-TST-1-1", brief=True))
+    assert [row["id"] for row in brief["board"]["available"]] == ["US-TST-2-1"]
+    assert brief["lane_excluded"] == 2
+    assert "story" not in brief["board"]["available"][0]
+
+    projected = yaml.safe_load(
+        pm_board(lane_compatible_with="US-TST-1-1", fields="points")
+    )
+    assert projected["board"]["available"] == [{"id": "US-TST-2-1", "points": 3}]
+    assert projected["lane_excluded"] == 2
+
+
 def test_pm_board_note_distinguishes_blocked_from_not_ready(tmp_project):
     """The board explains its two confusable groups, on every call.
 

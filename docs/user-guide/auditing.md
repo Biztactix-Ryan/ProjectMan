@@ -34,6 +34,7 @@ for convenience.
 | 16 | Missing implementation tasks | Warning | Story has only test tasks and no implementation tasks |
 | 17 | Acceptance-criteria / test-task drift | Warning | A criterion has no test task, or a test task names a criterion the story no longer has |
 | 18 | Completion carrying no evidence | Warning | Task marked done with no run-log entry or evidence recorded |
+| 19 | Long-task risk in the active sprint | Warning | Open task of an active sprint whose points band has a p90 duration over `orchestrate.max_task_minutes` |
 
 ## Severity Levels
 

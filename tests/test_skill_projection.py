@@ -173,9 +173,10 @@ def test_step_16_still_makes_the_read_and_says_it_is_deliberate(path):
 def test_no_orchestrator_task_read_is_unprojected(path):
     """Every ``pm_get(task_id`` in the orchestrator's own flow carries fields=.
 
-    Scoped to ``task_id`` on purpose rather than "all pm_get": step 5's
-    ``pm_get(story_id)`` is *correctly* unprojected — see the test below — so a
-    blanket rule would be wrong, not merely stricter.
+    Scoped to ``task_id`` on purpose rather than "all pm_get": the rule this
+    module enforces is that a read names what it needs, not that ``pm_get`` is
+    banned — and the plan phase's story read is a ``pm_batch_get`` with its own
+    field set, pinned separately below.
     """
     for args in PM_GET_CALL.findall(_outside_worker_prompt(_text(path))):
         if "task_id" not in args:
@@ -186,25 +187,95 @@ def test_no_orchestrator_task_read_is_unprojected(path):
         )
 
 
-@pytest.mark.parametrize("path", DOCS)
-def test_the_plan_building_story_read_is_deliberately_unprojected(path):
-    """Step 5 reads whole stories, and should.
+#: ``pm_batch_get(`` with its argument list captured
+PM_BATCH_GET_CALL = re.compile(r"\bpm_batch_get\(([^)]*)\)")
 
-    Projection is not a blanket good.  Step 5 builds the run plan out of task
-    bodies and DoD checklists, so it genuinely needs the full item; asserting it
-    stays unprojected keeps the rule above honest (a rule that never spares
-    anything is indistinguishable from "ban pm_get") and stops a later
-    over-eager sweep from projecting away the plan's inputs.
+#: what plan step 5 must still be able to read out of each story: the bodies
+#: and criteria the plan is built from, plus the wiring it orders by
+PLAN_FIELDS = {"acceptance_criteria", "body", "depends_on", "points", "status"}
+
+
+def _plan_read(text: str) -> str:
+    """The argument list of step 5's one batched story read."""
+    calls = [
+        args
+        for args in PM_BATCH_GET_CALL.findall(_outside_worker_prompt(text))
+        if "ids=" in args
+    ]
+    assert len(calls) == 1, (
+        f"expected exactly one pm_batch_get(ids=...) plan read, found {calls} — "
+        "step 5 reads the sprint's stories in a single call"
+    )
+    return calls[0]
+
+
+@pytest.mark.parametrize("path", DOCS)
+def test_the_plan_building_story_read_is_one_projected_batch_call(path):
+    """Step 5 reads the sprint's stories once, and names the keys it needs.
+
+    Until US-PM-49-6 this asserted the opposite: an unprojected ``pm_get`` per
+    story, on the grounds that the plan needs whole items.  Two things moved.
+    The read is now *one* call rather than one per story, and `fields=` can name
+    everything the plan actually consumes — so the projection is no longer a
+    trade against the plan's inputs, it is the same inputs without the created/
+    updated/tag freight and without a round trip per story.
     """
+    args = _plan_read(_text(path))
+    match = FIELDS_LITERAL.search(args)
+    assert match, (
+        f"step 5's plan read is unprojected: pm_batch_get({args}) — name the "
+        "fields the plan needs"
+    )
+    projected = {n.strip() for n in match.group(1).split(",") if n.strip()}
+    assert PLAN_FIELDS <= projected, (
+        f"step 5 projects {sorted(projected)}, missing "
+        f"{sorted(PLAN_FIELDS - projected)} — the plan is built from those"
+    )
+
+
+@pytest.mark.parametrize("path", DOCS)
+def test_no_per_story_pm_get_survives_in_the_plan_phase(path):
+    """The per-story read it replaced may not creep back beside the batch call."""
     story_reads = [
         args
         for args in PM_GET_CALL.findall(_outside_worker_prompt(_text(path)))
         if "story_id" in args
     ]
-    assert story_reads, "step 5's pm_get(story_id) plan read has vanished"
-    assert not any(FIELDS_LITERAL.search(args) for args in story_reads), (
-        "the plan-building story read grew a fields= projection; it needs the "
-        f"full item (bodies and DoD checklists): {story_reads}"
+    assert not story_reads, (
+        f"pm_get({story_reads}) is back — the sprint's stories are read in one "
+        "projected pm_batch_get, not one call per story"
+    )
+
+
+def test_the_plan_reads_projection_is_one_the_server_accepts(tmp_project, monkeypatch):
+    """Feed step 5's own ``fields=`` string to ``pm_batch_get`` itself.
+
+    Same loop as the step 16 test below: a story key the server rejects would
+    turn the whole plan phase into an error, and ``fields`` on a story is a
+    different key set from ``fields`` on a task.
+    """
+    monkeypatch.chdir(tmp_project)
+    from projectman.server import _store_cache, pm_batch_get
+    from projectman.store import Store, clear_all_caches
+
+    clear_all_caches()
+    _store_cache.clear()
+    store = Store(tmp_project)
+    story, _ = store.create_story(
+        "Plan-phase story",
+        "As a planner I want the sprint's stories in one call.",
+        acceptance_criteria=["The plan reads every story once"],
+    )
+    clear_all_caches()
+    _store_cache.clear()
+
+    literal = FIELDS_LITERAL.search(_plan_read(_text(ORCHESTRATE_SKILL))).group(1)
+    names = {n.strip() for n in literal.split(",") if n.strip()}
+    items = yaml.safe_load(pm_batch_get(ids=story.id, fields=literal))
+
+    assert set(items[0]) == names | {"id"}, (
+        f"pm_batch_get(ids=..., fields={literal!r}) returned {sorted(items[0])} — "
+        "step 5 instructs a projection the server does not serve as written"
     )
 
 

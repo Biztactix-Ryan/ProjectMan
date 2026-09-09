@@ -10,6 +10,7 @@ from mcp.server.fastmcp.exceptions import ToolError
 from mcp.types import ToolAnnotations
 
 from .config import enabled_tool_families, find_project_root, load_config
+from .durations import long_task_risk
 from .errors import NotFoundError, ValidationError, wire_code_for
 from .event_bus import EventBus, NoOpEventBus
 from .indexer import build_index, write_index
@@ -635,6 +636,44 @@ BRIEF_SPRINT_FIELDS = (
     "planned_points",
     "completed_points",
     "planned_stories",
+)
+
+#: The keys a ``pm_board`` row can carry, across every group (US-PM-49-5).
+#: The groups do not share a shape — only `available` has ``hints``, only
+#: `not_ready` has ``blockers``, only the claimed rows have ``claim_age`` /
+#: ``claimed_by_run`` / ``stale`` — so the valid names for ``fields`` are this
+#: fixed union rather than one row's keys.  Otherwise a name would be valid or
+#: unknown depending on which tasks happened to be on the board.
+BOARD_ROW_FIELDS = (
+    "id",
+    "title",
+    "points",
+    "assignee",
+    "story",
+    "hints",
+    "blockers",
+    "claim_age",
+    "claimed_by_run",
+    "stale",
+)
+
+#: The fixed ``brief=True`` projection for board rows (US-PM-49-5): identity,
+#: state, size, wiring and the claim metadata an orchestrator restarts on.
+#: The dropped keys are exactly the free text — the ``story`` label, the
+#: readiness ``blockers`` and the suitability ``hints`` — which is where the
+#: bytes are on a board of any size.  ``status`` and ``depends_on`` are named
+#: because a row that carries them must keep them; like every ``_brief_item``
+#: preset this is intersected with the row, never demanded of it.
+BRIEF_BOARD_FIELDS = (
+    "id",
+    "title",
+    "status",
+    "assignee",
+    "points",
+    "depends_on",
+    "claimed_by_run",
+    "claim_age",
+    "stale",
 )
 
 
@@ -1375,6 +1414,9 @@ def pm_board(
     tag: Optional[str] = None,
     limit: int = 10,
     stale_after: Optional[float] = None,
+    lane_compatible_with: Optional[str] = None,
+    brief: bool = False,
+    fields: Optional[str] = None,
 ) -> str:
     """Show the task board — available tasks grouped by status and readiness.
 
@@ -1387,15 +1429,31 @@ def pm_board(
     set on the task (external blocker), `not_ready` is derived each build from
     readiness — no points, thin description, or incomplete dependencies.
 
+    The board grows a row per task, each carrying a story label and its
+    readiness blockers or suitability hints. When you are scanning rather than
+    reading — a pre-flight asking what is claimed and what is free —
+    `pm_board(brief=True)` returns identity, state, size and claim metadata
+    only. `fields` gives the same per-key control as `pm_get` when the preset
+    is not the cut you want; the counts around the rows never change.
+
     Args:
         assignee: Filter to show only tasks for this assignee
         tag: Filter to show only tasks (or their parent stories) with this tag
         limit: Max items per board group (default 10). Totals are always shown.
-        stale_after: Hours a claim may sit before it is flagged `stale: true`. Omit to use the project's `stale_claim_hours` config key (default 2).
+        lane_compatible_with: Id of a task in flight in another lane. Keeps in `available` only the tasks safe to run beside it: a different story, no depends_on between the two tasks or on each other's story, and their stories unconnected by depends_on either way. Adds `lane_excluded: <n>`, the ready tasks hidden. An unknown id is an error.
+        brief: Drop the free text from every row (default false). Keeps whichever of id, title, status, assignee, points, depends_on, claimed_by_run, claim_age and stale the row has, and omits the story label, the blockers and the hints. Use it to scan the board: pm_board(brief=True).
+        fields: Comma-separated key names to return per row, e.g. "title,points" — everything else is omitted and `id` is always kept, exactly as on pm_get. Valid names are the board row keys: id, title, points, assignee, story, hints, blockers, claim_age, claimed_by_run, stale. An unknown name is an error listing the valid ones. If both are given, `fields` wins — explicit beats preset. Either way the counts, `stale_tasks` and the note stay; only the rows narrow. Omit both for the full board; the default is unchanged.
     """
     try:
         from .readiness import check_readiness, compute_hints
         from .deps import topological_sort
+
+        names = _field_names(fields)
+        if names is not None:
+            # Up front, not per row: an empty board has no row to validate
+            # against, and a typo that quietly returned nothing but the counts
+            # would look exactly like a board with nothing on it.
+            _reject_unknown_fields(names, list(BOARD_ROW_FIELDS), "pm_board")
 
         store = _store()
         # Archived tasks are abandoned, not workable.  Archival used to write
@@ -1539,6 +1597,30 @@ def pm_board(
         for t in available:
             del t["_sort"]
 
+        # Second-lane filter (US-PM-53-6).  Applied after the sort and before
+        # `limit`, so the rows that survive are the same first-N the caller
+        # would have picked from — and so `lane_excluded` counts every ready
+        # task that was hidden, not just the ones inside the window.  The
+        # already-read task and story lists are handed down: a store read per
+        # candidate would make the board O(n^2) again.
+        lane_excluded = 0
+        if lane_compatible_with is not None:
+            from .deps import lane_compatible
+
+            kept = [
+                row
+                for row in available
+                if lane_compatible(
+                    store,
+                    lane_compatible_with,
+                    row["id"],
+                    tasks=every_task,
+                    stories=all_stories,
+                )
+            ]
+            lane_excluded = len(available) - len(kept)
+            available = kept
+
         result = {
             "board": {
                 "available": available[:limit],
@@ -1568,6 +1650,31 @@ def pm_board(
             # can rely on it being there (US-PRJ-31-4).
             "note": _BOARD_NOTE,
         }
+        # Only when the filter ran: the default response stays byte-identical
+        # to what it was before lanes existed, and a caller who sees the key
+        # knows the board in front of it is the filtered one.
+        if lane_compatible_with is not None:
+            result["lane_excluded"] = lane_excluded
+        # After the board is built, not during: `stale_tasks` is derived from
+        # the untruncated `in_progress` rows and would be empty if `stale` had
+        # already been projected away.  The counts and the note are never
+        # projected — they are the board's frame, not a row.
+        if names is not None:
+            # Explicit beats preset: `fields` wins over `brief`.
+            result["board"] = {
+                group: [
+                    _project_item(
+                        row, names, "pm_board", extra_valid=BOARD_ROW_FIELDS
+                    )
+                    for row in rows
+                ]
+                for group, rows in result["board"].items()
+            }
+        elif brief:
+            result["board"] = {
+                group: [_brief_item(row, BRIEF_BOARD_FIELDS) for row in rows]
+                for group, rows in result["board"].items()
+            }
         return _yaml_dump(result)
     except Exception as e:
         raise _failed(e) from e
@@ -3599,6 +3706,12 @@ def pm_estimate(
 ) -> str:
     """Get estimation context for a story or task — returns content + calibration guidelines.
 
+    Also returns `duration_history`: this project's measured grab-to-done
+    minutes per points value (`p50`/`p90`/`max`/`n`) and its
+    `max_task_minutes` ceiling, so a size can be checked against what that
+    size has actually cost here. A `note` replaces the comparison while
+    fewer than three tasks have been measured.
+
     Args:
         id: Story or task ID to estimate (alias: task_id)
         task_id: Alias for id — either spelling works; passing both with different values is an error
@@ -3622,6 +3735,10 @@ def pm_scope(
     story_id: Optional[str] = None,
 ) -> str:
     """Get scoping context for a story — returns story + existing tasks + decomposition guidance.
+
+    Also returns `duration_history` — the same measured minutes-per-points
+    history and `max_task_minutes` ceiling `pm_estimate` returns — so tasks
+    can be sized to finish inside the ceiling rather than by feel.
 
     Args:
         id: Story ID to scope into tasks (alias: story_id)
@@ -4142,6 +4259,12 @@ def pm_get_sprint(
 
     Shows each planned story's status, task completion ratio, and dependency status.
 
+    Also returns `long_task_risk`: the sprint's open tasks whose points band
+    has historically run past `orchestrate.max_task_minutes` (default 60),
+    each with the band's p50 and p90 minutes. Split those before activating —
+    a task that outlives the orchestrator's cache window costs a full prefix
+    rewrite. Empty when nothing is flagged, or when the history is too thin.
+
     Args:
         sprint_id: Sprint ID (e.g. SPRINT-PRJ-1) (alias: id)
         id: Alias for sprint_id — either spelling works; passing both with different values is an error
@@ -4220,6 +4343,9 @@ def pm_get_sprint(
                 {"story_id": s["story_id"], "waiting_on": s["blocked_by_in_sprint"]}
                 for s in blocked_stories
             ]
+        # Always present, even empty: a planner reading the sprint should be
+        # able to tell "nothing is flagged" from "this view does not check".
+        result["long_task_risk"] = long_task_risk(store, meta)
         result["body"] = body
         return _yaml_dump(result)
     except Exception as e:

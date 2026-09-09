@@ -11,6 +11,7 @@ import yaml
 
 from .activity_log import log_paths, read_log_entries
 from .deps import build_combined_dep_graph, detect_cycle
+from .durations import long_task_risk
 from .models import RunLogEntry
 from .store import Store
 
@@ -47,10 +48,14 @@ from .store import Store
 #
 # activity.jsonl (and its rotated siblings) is deliberately NOT excluded: as
 # of US-PM-43-6 Check 17 reads it to decide which completions could have
-# carried evidence, so a run-stamped `done` written into it must move the
-# digest or `since=` would hide the finding it produces.  The whole-tree walk
-# already covers it; the rule is written down here so nobody adds it to the
-# skip lists as "just a log".
+# carried evidence, and as of US-PM-50-10 Check 18 reads it for the
+# grab-to-done durations behind the long-task-risk warning, so a run-stamped
+# transition written into it must move the digest or `since=` would hide the
+# finding it produces.  The whole-tree walk already covers it; the rule is
+# written down here so nobody adds it to the skip lists as "just a log".
+# config.yaml is covered by the same walk, and Check 18 depends on it too —
+# `orchestrate.max_task_minutes` is the ceiling the bands are compared with,
+# so raising it must be able to clear the warning on the next audit.
 DIGEST_LENGTH = 16
 DIGEST_LINE_PREFIX = "digest: "
 
@@ -469,6 +474,57 @@ def _check_documentation(
     return findings
 
 
+# ── Check 18's rule: long-task risk in the sprint that is running ─────────
+#
+# US-PM-50 measured this project's own grab-to-done durations and found the
+# tail, not the median, is what breaks an orchestrator run: every prompt-cache
+# miss in a long run sat right after a worker wait over the one-hour TTL.
+# ``durations.long_task_risk`` is the shared judgement — a task is flagged when
+# its points band has a p90 above ``orchestrate.max_task_minutes`` and the band
+# has enough samples to be a percentile at all — and pm_get_sprint already
+# reports it to a planner.  The audit is the second surface: a sprint that was
+# activated without splitting those tasks should say so, once per task, every
+# time anyone looks.
+#
+# SEVERITY: warning, never error, for the same reason as Checks 16 and 17 —
+# /pm-orchestrate halts on any error-level finding, and "the tasks you are
+# about to run are large" must not be the thing that stops the run that would
+# have worked through them.  It is advice for the next planning pass.
+#
+# Only sprints whose status is ``active`` are considered.  A planning sprint is
+# still being shaped (that is pm-plan's check, US-PM-50-11, before it
+# activates), and a completed one cannot be re-scoped.
+def check_long_task_risk(store: Store) -> list[dict]:
+    """Warn for each open task of an active sprint whose band runs long.
+
+    One finding per flagged task, carrying the band numbers the reader needs
+    to judge it — the median and p90 of that points band, and the ceiling they
+    are measured against — so the message stands on its own without a second
+    call to pm_get_sprint.
+
+    A project with no active sprint, no duration history, or no band over the
+    ceiling produces nothing; this check never raises on log content, because
+    everything it reads goes through :mod:`projectman.durations`, which treats
+    the activity log as history no reader may repair.
+    """
+    findings: list[dict] = []
+    for sprint in store.list_sprints(status="active"):
+        for entry in long_task_risk(store, sprint):
+            findings.append({
+                "severity": "warning",
+                "check": "long-task-risk",
+                "message": (
+                    f"Task {entry['id']} ({entry['points']}pt) in active sprint "
+                    f"{sprint.id} is in a band that runs "
+                    f"{entry['p50']:g} min median, {entry['p90']:g} min p90 — over the "
+                    f"{entry['max_task_minutes']:g} min max_task_minutes ceiling; "
+                    "split it or expect a prompt-cache miss"
+                ),
+                "items": [entry["id"]],
+            })
+    return findings
+
+
 def run_audit(
     root: Path,
     include_info: bool = True,
@@ -857,6 +913,10 @@ def run_audit(
     # error, for the same reason as Check 16 — see the docstring on
     # check_completions_without_evidence.
     findings.extend(check_completions_without_evidence(store, tasks_done_live))
+
+    # Check 18: Tasks in the active sprint whose size band usually overruns
+    # the orchestrator's prompt cache (US-PM-50-10).
+    findings.extend(check_long_task_risk(store))
 
     # Generate report
     error_count = sum(1 for f in findings if f["severity"] == "error")

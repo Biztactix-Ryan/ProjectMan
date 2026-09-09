@@ -215,6 +215,73 @@ the one-line `description`.
 An unreadable store degrades to the all-clean shape with `branch: null` rather
 than failing — a status call must never be the thing that breaks.
 
+## projectman orch-cost
+
+Report what an orchestrator run cost in **context**, read from the Claude Code
+session transcript that recorded it.
+
+An orchestrated run's real price is not points or minutes, it is the prompt the
+orchestrator carries: every dispatch, tool result and cache miss grows it, and
+when it grows past the window the run stops. This command measures that the
+same way every time, instead of by whichever scratchpad script was to hand.
+
+```bash
+# Search ~/.claude/projects for the transcript naming this run
+projectman orch-cost orch-2026-09-09-385a
+
+# Point at a transcript directory, and emit JSON for a script
+projectman orch-cost orch-2026-09-09-385a --transcripts ~/.claude/projects --json
+```
+
+**Options:**
+
+| Option | Description |
+|--------|-------------|
+| `--transcripts DIR` | Directory of session transcripts to search (default: `~/.claude/projects`) |
+| `--json` | Output raw JSON — the analysis dict, or a list of them when several transcripts match |
+
+The run id is the argument because it is already stamped into the
+orchestrator's own prompts and tool calls, so the file containing the string is
+the file that recorded the run — no session-to-run index is needed. Every
+matching transcript gets its own section; when none contains the run id the
+command says so on stderr and exits non-zero.
+
+**What each section reports:**
+
+| Section | What it is |
+|---------|------------|
+| `dispatches` / `accepts` / `calls` | Worker launches (`Agent` tool uses), task acceptances (`pm_accept` / `pm_done_next`), and API calls — deduped by message id, because the harness writes one record per content block sharing one `usage` |
+| `base` / `peak` / `growth` | Context at the run's first call, the largest seen, and the difference. Context is `input_tokens + cache_read_input_tokens + cache_creation_input_tokens` |
+| `growth per dispatch` / `growth per accepted task` | The two numbers the orchestrator epic's success criteria are stated in |
+| `calls per dispatch` / `output tokens per call` | How much model traffic a single worker launch costs |
+| `tool result bytes` | Bytes of `tool_result` content by tool name, largest first — which tool is actually filling the window |
+| `worker waits (minutes)` | p50, p90, max and `n` from an `Agent` launch to the task notification that answered it |
+| `full cache misses` | Every call whose fresh tokens (`cache_creation + input`) exceeded half the context — the prefix cache was gone and the whole prompt was re-sent — with the idle gap in minutes before it |
+
+**An example of what to expect** (measured 2026-09-09 across several real
+sessions, recorded in `EPIC-PM-7`; these are illustrative baselines, not
+thresholds the command enforces):
+
+- Context growth per accepted task: **7-9k tokens** on ProjectMan sprint runs, on both models measured. A larger codebase (Kura) ran **16-28k**, which is what produced 535k- and 603k-token sessions.
+- Calls per dispatch rose from 4 to about 7 as validation steps were added; output per call stayed flat at roughly 1.1k.
+- Peak equals the final context in every session — nothing ever leaves the window, so cost per call grows linearly and total cost roughly quadratically with dispatches.
+- Every full cache miss lined up with a **worker wait longer than the one-hour cache TTL** (three per long run, each re-sending 200-450k tokens). Worker waits were p50 8-11 min / max 25 on ProjectMan, p50 21-36 / p90 60-105 / max 165 elsewhere.
+
+A transcript is somebody else's append-only output, so nothing here repairs or
+refuses it: malformed lines, records without usage, unparseable timestamps and
+unmatched tool results are skipped rather than raised over.
+
+**The reference transcript shape** is the `baseline_transcript` fixture at the
+foot of `tests/test_orch_cost.py`. Real `~/.claude` transcripts are private,
+huge and different every day, so that fixture stands in for one: a single
+synthetic `.jsonl` carrying duplicated assistant records sharing a message id,
+two `Agent` dispatches answered by `<task-notification>` records 8 and 70
+minutes later, a full cache miss after a known idle gap, and `pm_grab` /
+`pm_get` / `pm_accept` results of known byte sizes. Two tests read the whole
+report off it — one from a single `analyze()` call, one through
+`projectman orch-cost <run-id> --transcripts <dir>` in both text and `--json`
+form. Extend that fixture, not a new one, when the report grows a section.
+
 ## projectman migrate-archived
 
 Repair tasks the activity log says were archived but whose files are not flagged archived.
@@ -441,5 +508,6 @@ projectman audit
 | 16 | Missing implementation tasks | WARNING | Story has only test tasks and no implementation tasks — needs scoping |
 | 17 | Acceptance-criteria / test-task drift | WARNING | A criterion has no test task, or a test task names a criterion the story no longer has |
 | 18 | Completion carrying no evidence | WARNING | Task marked done with no run-log entry or evidence recorded |
+| 19 | Long-task risk in the active sprint | WARNING | An open task of an active sprint is in a points band whose p90 grab-to-done duration exceeds `orchestrate.max_task_minutes` |
 
 Output is written to `.project/DRIFT.md` and printed to stdout.

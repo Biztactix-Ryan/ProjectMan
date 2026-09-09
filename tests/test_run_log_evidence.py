@@ -6,10 +6,11 @@ rule:
     The note says what happened; the evidence says what proves it.  Prose is
     never the container for a list.
 
-`pm-orchestrate` steps 17-19 already make the orchestrator collect three
-structured things — which files changed, which test commands ran and passed,
-which DoD criteria are evidenced — and today it flattens them into prose,
-which is why note lengths cluster at the cap.  They become a bounded
+`pm-orchestrate` steps 17-19 already gather three structured things — which
+files changed, which test commands ran and passed, which DoD criteria are
+evidenced (since US-PM-48 a validator subagent runs the checks and returns
+them as JSON; the orchestrator transcribes it) — and today they are flattened
+into prose, which is why note lengths cluster at the cap.  They become a bounded
 `evidence` object *alongside* an unchanged, still-required `note`.
 
 So the properties under test here are structural:

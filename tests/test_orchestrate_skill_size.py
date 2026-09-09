@@ -1,9 +1,12 @@
 """US-PM-25-1 — the pm-orchestrate skill must stay small enough to be read.
 
-Story US-PM-25's acceptance criterion is a number: the rendered pm-orchestrate
-skill is at most 9000 characters.  The skill is loaded into an orchestrating
-agent's context on every dispatch, so its length is a per-run tax; before
-US-PM-25-6 the template was 31,731 bytes of mostly rationale.
+Story US-PM-25's acceptance criterion was a number: the rendered pm-orchestrate
+skill was pinned at 9000 characters by US-PM-25, and raised to 10000 by
+US-PM-53 (two-lane dispatch) on 2026-09-09 by user decision, because the
+isolation model (US-PM-51) and the lanes did not fit in 9 KB.  The skill is
+loaded into an orchestrating agent's context on every dispatch, so its length
+is a per-run tax; before US-PM-25-6 the template was 31,731 bytes of mostly
+rationale.
 
 The size is pinned here on the *rendered* text rather than the template file,
 because rendering is what the agent actually sees, and the tracked copy under
@@ -24,7 +27,10 @@ import pytest
 import projectman
 from projectman.cli import _render_template
 
-MAX_CHARS = 9000
+# Pinned at 9000 by US-PM-25; raised to 10000 by US-PM-53 (two-lane dispatch)
+# on 2026-09-09 by user decision, because the isolation model (US-PM-51) and
+# the lanes did not fit in 9 KB.
+MAX_CHARS = 10000
 
 TEMPLATE_NAME = "skill_pm_orchestrate.md.j2"
 TEMPLATE_REPO_PATH = f"src/projectman/templates/{TEMPLATE_NAME}"
@@ -78,7 +84,7 @@ def _render_orchestrate() -> str:
 
 
 def test_rendered_orchestrate_skill_is_within_the_size_budget():
-    """At most 9000 characters — the story's acceptance criterion, verbatim."""
+    """At most ``MAX_CHARS``: 9000 by US-PM-25, 10000 since US-PM-53."""
     rendered = _render_orchestrate()
     assert _within_limit(rendered), (
         f"rendered {TEMPLATE_NAME} is {len(rendered)} characters, "

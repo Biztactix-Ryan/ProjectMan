@@ -285,13 +285,16 @@ Search by keyword or semantic similarity.
 - **tag** (optional): Filter results by tag
 - **Returns**: `results` — ranked hits with scores — and `skipped`, the number of item files whose frontmatter would not parse. `skipped: 0` means the whole store was read; anything higher means the sweep was partial and one bad file was stepped over rather than aborting the search (`pm_malformed` names the files).
 
-### pm_board(assignee?, tag?, limit?, stale_after?)
+### pm_board(assignee?, tag?, limit?, stale_after?, lane_compatible_with?, brief?, fields?)
 Get the task board grouped by workflow state.
 - **assignee** (optional): Filter by assignee
 - **tag** (optional): Filter tasks by tag
 - **limit** (optional, default `10`): Max items per board group. Totals are always shown in the summary.
 - **stale_after** (optional): Hours a claim may sit before it is flagged. Omit to use the project's `stale_claim_hours` (default `2`).
-- **Returns**: Tasks grouped by `available`, `not_ready`, `in_progress`, `in_review`, `blocked` with readiness checks, suitability hints, and per-group totals. `in_progress` entries carry [claim staleness](#claim-staleness); `stale_tasks` (ids, untruncated by `limit`) and `stale_after_hours` sit beside `summary`, which keeps its five-group count shape.
+- **lane_compatible_with** (optional): Id of a task already in flight in another lane. Keeps in `available` only the tasks that can run beside it — not from the same story, neither depending on the other or on the other's story (a task's `depends_on` may name either), and their stories not connected by `depends_on` in either direction, transitively. The response then carries `lane_excluded: <n>`, the number of ready tasks the filter hid, so a short board is never mistaken for an empty backlog; the count covers every hidden task, not just the ones inside `limit`. An id that is not a task in the store is a hard error naming it. Omitted, nothing is filtered and the response has no `lane_excluded` key. See [two-lane dispatch](orchestrate-design.md).
+- **brief** (optional, default `false`): A fixed projection that drops the free text from every row. Keeps whichever of `id`, `title`, `status`, `assignee`, `points`, `depends_on`, `claimed_by_run`, `claim_age`, `stale` the row has, and omits the story label, the readiness `blockers` and the suitability `hints`. `pm_board(brief=True)` is the pre-flight scan — the board grows a row per task, and the free text is where the bytes are. Keys a row does not have are simply absent, never an error.
+- **fields** (optional): Comma-separated key names to return per row, with the same semantics as on `pm_get` — everything else is omitted, `id` is always kept, and an unknown name is a hard error listing the valid ones. Valid names are the fixed union of board row keys (`id`, `title`, `points`, `assignee`, `story`, `hints`, `blockers`, `claim_age`, `claimed_by_run`, `stale`) rather than one row's keys, because the groups do not share a shape; the error fires even on an empty board, where there is no row to check against. **If both are given, `fields` wins** — explicit beats preset.
+- **Returns**: Tasks grouped by `available`, `not_ready`, `in_progress`, `in_review`, `blocked` with readiness checks, suitability hints, and per-group totals. `in_progress` entries carry [claim staleness](#claim-staleness); `stale_tasks` (ids, untruncated by `limit`) and `stale_after_hours` sit beside `summary`, which keeps its five-group count shape. `brief` and `fields` narrow the rows only — `summary`, `stale_tasks`, `stale_after_hours`, `limit` and the note are present in every mode, and omitting both leaves the response byte-identical to before they existed.
 
 ### Claim staleness
 
@@ -546,7 +549,20 @@ Create a sprint with a name, goal, dates, and planned stories.
 ### pm_get_sprint(sprint_id)
 View sprint details with live progress per story.
 - **sprint_id**: Sprint ID (e.g. `SPRINT-PRJ-1`) (alias: `id`)
-- **Returns**: Sprint metadata plus per-story rollup (task counts, points completed vs. remaining)
+- **Returns**: Sprint metadata plus per-story rollup (task counts, points completed vs. remaining) and `long_task_risk`.
+
+#### long_task_risk
+The sprint's open tasks whose points band has historically run past the project's ceiling — split those before activating, because a worker that outlives the orchestrator's one-hour prompt-cache window makes the next dispatch pay a full prefix rewrite.
+
+```yaml
+long_task_risk:
+- {id: US-PRJ-12-3, points: 3, p50: 41.5, p90: 88.0, max_task_minutes: 60.0}
+```
+
+- A task is listed when the `p90` of its points band — measured exactly as [`duration_history`](#duration_history) measures it — is above `orchestrate.max_task_minutes`. `p90` rather than the median: the median says what a typical task of that size costs, and the tail is what actually breaks a run. `max_task_minutes` rides on each entry so a reader never has to fetch the config to see what was exceeded.
+- Only **open** tasks of the planned stories are considered: a `done` task cannot be re-scoped and an archived one is not owed.
+- Bands with fewer than three measured tasks are skipped, and a task with no points estimate has no band. A `p90` drawn from one or two samples is just the slower of them.
+- The key is **always present** — an empty list means nothing is flagged (or the history is still too thin), which is different from a view that does not check.
 
 ### pm_list_sprints(status?, brief?, fields?)
 List sprints, optionally filtered by status.
@@ -568,10 +584,29 @@ Update sprint fields (status, stories, dates, etc.).
 ### pm_estimate(id)
 Get estimation context with calibration guidelines.
 - **id**: Story or task ID to estimate (alias: `task_id`)
+- **Returns**: the item, its body and `current_points`, `estimation_guidance` (fibonacci scale, the 1/2/3/5/8/13 calibration bands, this project's historical average points) and [`duration_history`](#duration_history).
 
 ### pm_scope(id)
 Get scoping context for story decomposition.
 - **id**: Story ID to scope into tasks (alias: `story_id`)
+- **Returns**: the story, its body, `existing_tasks`, `task_count`, `decomposition_guidance` and [`duration_history`](#duration_history).
+
+#### duration_history
+Both tools report the same block: what work has actually *taken* in this project, next to the guidance that says what it should. The calibration bands are a rule of thumb ("3 — ~1 hour"); this is the measurement, so a sizer can tell a 3 that runs an hour here from a 3 that runs three.
+
+```yaml
+duration_history:
+  by_points:
+    1: {p50: 12.0, p90: 19.0, max: 19.0, n: 4}
+    3: {p50: 41.5, p90: 88.0, max: 88.0, n: 6}
+  n: 10
+  max_task_minutes: 60.0
+```
+
+- **by_points**: one entry per points value, ordered ascending — nearest-rank `p50`/`p90`, the observed `max`, and `n`, all in minutes rounded to one decimal. A band's numbers are grab-to-done stretches read out of `activity.jsonl`: the minutes between an orchestrated run moving a task to `in-progress` and the same run moving it to `done` or `review`. Only `orch-`-stamped transitions count — a human who claims on Friday and closes on Monday did not take three days — and archived tasks are included, since finished-and-tidied work is most of what is measurable. A re-grab restarts the clock, so the sample is the attempt that finished.
+- **n**: total measured stretches across all bands, so "no history" (`0`) is distinguishable from "thin history" without summing.
+- **max_task_minutes**: the project's ceiling on one task's runtime, from `orchestrate.max_task_minutes` in `.project/config.yaml` (default `60` — the prompt-cache window a worker must not overrun). Reported here so a band's `p90` can be read against it without a second call.
+- **note** (only when `n` < 3): the history is too thin to flag long tasks, size by the calibration bands instead. Present rather than a silent empty block, so a small project's one-sample `p90` is not mistaken for a threshold.
 
 ### pm_auto_scope(mode?, limit?, offset?)
 Discover what needs scoping — returns codebase signals or undecomposed stories.

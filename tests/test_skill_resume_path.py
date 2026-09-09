@@ -267,11 +267,11 @@ def test_the_design_doc_decides_the_split_for_every_state():
 
 @pytest.mark.parametrize("path", DOCS)
 def test_an_adopted_task_is_dispatched_as_a_retry(path):
-    """A dead worker may have left partial edits; the tree is validated first.
+    """A dead worker may have left partial edits; the branch is validated first.
 
-    The snapshot itself is step 14's ``git status --short``, which runs before
-    *each* dispatch and so covers an adopted one — pinned in
-    ``tests/test_skill_activity_report.py`` and not restated here.  What this
+    Since ADR-005 the leftovers live on the task's own branch and in its
+    worktree rather than in one shared checkout, so what the adopted dispatch
+    reads first is that pair — pinned on the design doc below.  What this
     checks is that the adopted dispatch is a retry carrying the warning.
     """
     text = _text(path)
@@ -289,12 +289,13 @@ def test_an_adopted_task_is_dispatched_as_a_retry(path):
 
 
 def test_the_design_doc_explains_why_an_adopted_task_is_a_retry():
-    """Partial edits, an unvalidated attempt, and a snapshot before dispatch."""
+    """Partial edits, an unvalidated attempt, and the branch read before dispatch."""
     section = _flat(_design_resume())
     assert "retry" in section and "never as fresh work" in section, section
-    assert "snapshotted first" in section, (
-        "validation can only separate this worker's edits from the dead "
-        f"worker's leftovers if the tree is snapshotted first:\n{section}"
+    assert "branch and worktree are read first" in section, (
+        "ADR-005 put the dead worker's leftovers on its own branch, in its own "
+        "worktree: the resumed dispatch can only separate them from this "
+        f"worker's edits if that pair is read first:\n{section}"
     )
     assert "first* failure" in section or "first failure" in section, (
         "the doc no longer says a failure on an adopted task is a first "
@@ -877,7 +878,7 @@ def test_mint_versus_reuse_is_decided_once_and_contradicted_nowhere(path):
     )
 
     # No place may say to reuse the resumed *id*: every such mention is a
-    # refusal.  Reuse of anything else — the pre-flight context excerpt, say —
+    # refusal.  Reuse of anything else — the pre-flight tree snapshot, say —
     # is not this rule's business, so windows without an id are skipped.
     for window in _sentence_windows(text, r"[Rr]eus\w*"):
         if not re.search(r"\bid\b|run id", window):

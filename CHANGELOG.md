@@ -5,6 +5,73 @@ All notable changes to ProjectMan are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-09-09
+
+Changes landed 2026-09-09 in Sprints 15 and 16 (EPIC-PM-7, orchestrator
+context cost). Measured on 2026-09-08, one orchestrated task added 7-9k tokens
+to the orchestrator's prompt here and 16-28k on a larger codebase, and every
+full prompt-cache miss lined up with a worker that ran past the one-hour cache
+window. This release attacks both.
+
+### Added
+
+- **ADR-005: worktree isolation.** Each orchestrated task now runs in its own
+  git worktree on branch `orch/<run-id>/<task-id>`, cut from a run branch
+  `orch/<run-id>` that pre-flight creates from `HEAD`. The worker commits its
+  own code on its branch; the orchestrator merges it onto the run branch when
+  `pm_accept` takes the task, and at no other time. Nothing is pushed and the
+  `.project` store is never committed by a run. This supersedes the stage-only
+  model's "no branches, no worktrees, no commits" rule; the no-push half stays.
+- **`--lanes 2` on `/pm-orchestrate`.** The orchestrator can keep two
+  independent tasks in flight, validating and merging whichever worker returns
+  first while the other still runs. `--lanes 1` remains the default and is the
+  old loop exactly.
+- **`pm_board(lane_compatible_with=<task-id>)`.** Filters `available` down to
+  tasks that can run beside one already in flight: not the same story, no
+  dependency between them or their stories, transitively. The response carries
+  `lane_excluded: <n>` so a short board is never mistaken for an empty backlog.
+- **Validator subagent.** The orchestrator still owns the verdict, but the
+  checks that produce it now run inside a subagent whose context is discarded
+  the moment it answers a bounded JSON report (about 1,500 characters) that
+  doubles as the `evidence` argument. With two lanes it is told which files
+  belong to the other lane. Worker reports are capped the same way.
+- **`projectman orch-cost <run-id>`.** Reads the Claude Code session transcript
+  that recorded a run and reports context base, peak and growth, growth per
+  dispatch and per accepted task, tool-result bytes by tool, worker-wait
+  percentiles, and every full cache miss with the idle gap that preceded it.
+  `--transcripts DIR` and `--json` are available.
+- **`duration_history` on `pm_estimate` and `pm_scope`.** Grab-to-done minutes
+  per points band (p50, p90, max, n), read from `activity.jsonl` and counting
+  only `orch-`-stamped transitions, so a sizer can tell a 3 that runs an hour
+  here from a 3 that runs three.
+- **`long_task_risk` on `pm_get_sprint`, and audit check `long-task-risk`.**
+  Open tasks in a band whose p90 exceeds `orchestrate.max_task_minutes` are
+  listed so `/pm-plan` can ask to split them before activating. The audit
+  finding is warning-level so it never halts a run.
+- **`orchestrate.max_task_minutes`** in `.project/config.yaml` (default 60,
+  the prompt-cache window a worker must not overrun).
+- **`brief=` and `fields=` on `pm_board`.** `brief=True` drops the story
+  label, readiness blockers and suitability hints from every row; `fields=`
+  names the row keys to keep, with the same semantics as `pm_get`.
+
+### Changed
+
+- The orchestrator's own traffic is slimmer: every pre-flight read is
+  projected (`pm_list_sprints(status="active", brief=True)`,
+  `pm_board(brief=True)`), worker prompts and reports carry less free text,
+  and validation moved out of the orchestrator's context entirely.
+- The rendered skill size cap is 10000 characters (was 9000). The orchestrate
+  skill renders at 9995.
+- `docs/reference/orchestrate-design.md` documents the isolation model, the
+  validator subagent, lanes and the dependency barrier between them.
+
+### Upgrading
+
+After `pipx install --force "/mnt/repos/ProjectMan[all]"`, run
+`projectman refresh-skills --keep-local` and restart the session. Until then
+the installed orchestrate skill is the stage-only one and the MCP server has
+no `lane_compatible_with`, `long_task_risk` or `duration_history`.
+
 ## [0.9.2] - 2026-09-08
 
 Version bump only, no code changes. `pipx upgrade` replaces an install only
@@ -521,7 +588,8 @@ The 0.8.0 link points at its own release commit, having no predecessor here.
 0.9.0 onward is tagged `vX.Y.Z`.
 -->
 
-[Unreleased]: https://github.com/Biztactix-Ryan/ProjectMan/compare/v0.9.2...main
+[Unreleased]: https://github.com/Biztactix-Ryan/ProjectMan/compare/v0.10.0...main
+[0.10.0]: https://github.com/Biztactix-Ryan/ProjectMan/compare/v0.9.2...v0.10.0
 [0.9.2]: https://github.com/Biztactix-Ryan/ProjectMan/compare/v0.9.1...v0.9.2
 [0.9.1]: https://github.com/Biztactix-Ryan/ProjectMan/compare/v0.9.0...v0.9.1
 [0.9.0]: https://github.com/Biztactix-Ryan/ProjectMan/compare/657efba...v0.9.0

@@ -13,8 +13,12 @@ own.  This module pins the instruction sites.
 The module is organised by acceptance criterion so the sibling tasks can add
 their sections here without re-deriving helpers:
 
-* ``pm_context (US-PM-13-1)`` — the worker prompt template includes project
-  architecture context;
+* ``pm_context (US-PM-13-1, narrowed by US-PM-49-7, dropped from the
+  orchestrator by US-PM-49-6)`` — the worker prompt no longer carries an inline
+  excerpt of the project brief and the orchestrator no longer fetches one per
+  run; the worker's route to the docs is pinned on ``/pm-do`` instead, and the
+  bound the tool must be called with is pinned on the docs that still point
+  at it;
 * ``pm_estimate (US-PM-13-2)`` — the scoping and estimation workflows consult it
   *before* writing points;
 * ``every guidance tool has a named step (US-PM-13-3)`` — the criterion stated
@@ -55,7 +59,6 @@ from tests.test_skill_release_instructions import (
 from tests.test_skill_verdict_verbs import (
     DOCS,
     _fences,
-    _outside_fences,
     _schemas,
     _text,
 )
@@ -100,11 +103,22 @@ def _worker_fence(text: str) -> str:
 #
 # AC: "The worker prompt template includes project architecture context."
 # Delivered by US-PM-13-5: pre-flight step 4b fetches a bounded pm_context once
-# per run, and the worker prompt fence carries the excerpt in a "Project
+# per run, and the worker prompt fence carried the excerpt in a "Project
 # context" section plus a rule letting the worker fetch more itself.
-
-#: the pre-flight step that owns the fetch
-CONTEXT_STEP = "4b."
+#
+# US-PM-49-7 narrowed it: the paste into every worker prompt went — measured
+# across the Kura runs the excerpt was most of a 6.2 KB prompt, re-sent per
+# dispatch, while pm_grab already returns the task and story context the worker
+# acts on.  So the assertions below are inverted for the fence and re-aimed at
+# /pm-do, which is where a worker that does need the docs is told to get them.
+#
+# US-PM-49-6 finished the narrowing and SUPERSEDES US-PM-26's once-per-run pin:
+# with no excerpt to amortise across dispatches, the per-run fetch was a read
+# the orchestrator paid for and then used for nothing, so pre-flight step 4b is
+# gone from the run entirely.  The bound the story argued for is not abandoned,
+# it moved: it is asserted below on the documents that still point at the tool
+# (`/pm` and the pm agent), and the payload honesty test still runs the very
+# call they instruct.
 
 #: ``pm_context(...)`` with its argument list captured
 PM_CONTEXT_CALL = re.compile(r"\bpm_context\(([^)]*)\)")
@@ -112,39 +126,66 @@ PM_CONTEXT_CALL = re.compile(r"\bpm_context\(([^)]*)\)")
 #: ``max_doc_chars=<int>`` as written in the skill
 MAX_DOC_CHARS_ARG = re.compile(r"\bmax_doc_chars\s*=\s*(\d+)")
 
-#: the server default for ``max_doc_chars`` — the skill must ask for *less*
+#: the server default for ``max_doc_chars`` — a doc must ask for *less*
 SERVER_DEFAULT_MAX_DOC_CHARS = 4000
 
-#: kwargs the skill names on its pm_context calls; each must be a real parameter
+#: kwargs the skills name on their pm_context calls; each must be a real parameter
 NAMED_KWARGS = ["max_doc_chars", "limit"]
 
+#: the skill a dispatched worker is told to run, template and rendered copy —
+#: since US-PM-49-7 this, not the prompt, is where the worker's route to the
+#: project docs lives
+PM_DO_DOCS = [
+    TEMPLATES / "skill_pm_do.md.j2",
+    RENDERED_SKILLS / "pm-do" / "SKILL.md",
+]
+
+#: the documents that still point at the tool, template and rendered copy —
+#: since US-PM-49-6 the orchestrator is not one of them
+POINTER_DOCS = [
+    TEMPLATES / "skill_pm.md.j2",
+    RENDERED_SKILLS / "pm" / "SKILL.md",
+    TEMPLATES / "agent_pm.md.j2",
+    REPO_ROOT / ".claude" / "agents" / "pm.md",
+]
+
 
 @pytest.mark.parametrize("path", DOCS)
-def test_preflight_step_calls_pm_context_outside_the_worker_fence(path):
-    """The orchestrator's own flow — not just the pasted worker prompt — fetches it."""
-    flow = _outside_fences(_text(path))
-    assert PM_CONTEXT_CALL.search(flow), (
-        f"{path.name}: the orchestrator flow never calls pm_context()"
+def test_the_orchestrator_run_no_longer_fetches_a_per_run_pm_context(path):
+    """US-PM-49-6's AC: the fetch is gone from the orchestrator's flow and prompt.
+
+    Inverted from US-PM-13-5 and US-PM-26 on purpose, and this is the whole
+    change: once US-PM-49-7 stopped pasting the excerpt into worker prompts,
+    nothing downstream read what step 4b fetched, so a bounded ~10k-char read
+    per run bought the orchestrator nothing.  The route to the docs for anyone
+    who *does* need them is asserted on ``/pm-do`` and ``POINTER_DOCS`` below,
+    so this is a removal from one document, not a deletion of the guidance.
+    """
+    text = _text(path)
+    calls = PM_CONTEXT_CALL.findall(text)
+    assert not calls, (
+        f"{path.name}: the orchestrator still calls pm_context{calls} — the "
+        "per-run brief was dropped by US-PM-49-6; nothing in the run reads it"
     )
-    block = _step(flow, CONTEXT_STEP)
-    assert PM_CONTEXT_CALL.search(block), (
-        f"{path.name}: step {CONTEXT_STEP} does not call pm_context():\n{block}"
+    assert not any(line.startswith("4b.") for line in text.splitlines()), (
+        f"{path.name}: pre-flight step 4b is back — it owned the dropped fetch"
     )
 
 
-@pytest.mark.parametrize("path", DOCS)
-def test_preflight_pm_context_call_is_bounded(path):
+@pytest.mark.parametrize("path", POINTER_DOCS)
+def test_the_docs_that_still_point_at_pm_context_bound_it(path):
     """``max_doc_chars=`` is present and asks for less than the server default.
 
-    The whole reason the step is safe to run once per sprint is the bound: an
-    unbounded ``pm_context`` returned 48,588 chars in one study.
+    The bound is what makes the pointer safe to follow: an unbounded
+    ``pm_context`` returned 48,588 chars in one study.  It was pinned on the
+    orchestrator's step 4b until US-PM-49-6 dropped that step; the rule itself
+    is unchanged and is pinned here, where the calls now live.
     """
-    block = _step(_outside_fences(_text(path)), CONTEXT_STEP)
-    calls = PM_CONTEXT_CALL.findall(block)
-    assert calls, f"{path.name}: no pm_context() call in step {CONTEXT_STEP}"
+    calls = PM_CONTEXT_CALL.findall(_text(path))
+    assert calls, f"{path.name}: no pm_context() call to bound"
     bounds = [MAX_DOC_CHARS_ARG.search(args) for args in calls]
     assert all(bounds), (
-        f"{path.name}: step {CONTEXT_STEP} calls pm_context without max_doc_chars=: {calls}"
+        f"{path.name}: calls pm_context without max_doc_chars=: {calls}"
     )
     for match in bounds:
         value = int(match.group(1))
@@ -155,37 +196,35 @@ def test_preflight_pm_context_call_is_bounded(path):
 
 
 @pytest.mark.parametrize("path", DOCS)
-def test_preflight_says_the_context_is_fetched_once_and_reused(path):
-    """Per-worker re-fetching is the cost this step exists to avoid."""
-    block = _step(_outside_fences(_text(path)), CONTEXT_STEP)
-    assert "once" in block.lower(), (
-        f"{path.name}: step {CONTEXT_STEP} never says the fetch happens once:\n{block}"
-    )
-    assert re.search(r"\breus", block, re.IGNORECASE), (
-        f"{path.name}: step {CONTEXT_STEP} never says the excerpt is reused:\n{block}"
-    )
+def test_worker_prompt_fence_carries_no_project_context_excerpt(path):
+    """US-PM-49's AC: the prompt is ids, criteria, DoD and the rules — nothing else.
 
-
-@pytest.mark.parametrize("path", DOCS)
-def test_worker_prompt_fence_carries_a_project_context_section(path):
-    """The AC's literal claim: the worker prompt template includes architecture."""
+    Inverted from US-PM-13-5's assertion on purpose: the excerpt was a per-run
+    read charged per dispatch, and ``pm_grab`` already returns the task and
+    story context a worker acts on.
+    """
     fence = _worker_fence(_text(path))
-    assert "Project context" in fence, (
-        f"{path.name}: the worker prompt has no 'Project context' section"
+    assert "Project context" not in fence, (
+        f"{path.name}: the worker prompt still pastes a 'Project context' section"
     )
-    assert re.search(r"architecture", fence, re.IGNORECASE), (
-        f"{path.name}: the worker prompt's context section never names architecture"
+    assert not PM_CONTEXT_CALL.search(fence), (
+        f"{path.name}: the worker prompt still names pm_context() — the excerpt "
+        "and the call that widens it both belong outside the fence now"
     )
 
 
-@pytest.mark.parametrize("path", DOCS)
-def test_worker_prompt_fence_lets_the_worker_widen_the_excerpt(path):
-    """A bounded excerpt is only safe if the worker is told how to read more."""
-    fence = _worker_fence(_text(path))
-    lines = [line for line in fence.splitlines() if "pm_context(" in line]
-    assert lines, f"{path.name}: the worker prompt never names pm_context()"
-    assert any(MAX_DOC_CHARS_ARG.search(line) or "max_doc_chars=" in line for line in lines), (
-        f"{path.name}: the worker's pm_context rule omits max_doc_chars=: {lines}"
+@pytest.mark.parametrize("path", PM_DO_DOCS)
+def test_the_worker_still_has_a_named_step_for_project_docs(path):
+    """Dropping the excerpt may not leave the worker with no route to the docs.
+
+    The prompt tells the worker to run ``/pm-do``; that skill is where the
+    guidance-tool call has to be named, or US-PM-13's diagnosis (a guidance tool
+    with no step that calls it goes uncalled) comes straight back.
+    """
+    text = path.read_text(encoding="utf-8")
+    assert re.search(r"pm_docs\(|pm_context\(", text), (
+        f"{path.name}: no step names pm_docs() or pm_context(), so a worker that "
+        "needs the project docs has nowhere to be told to read them"
     )
 
 
@@ -203,12 +242,12 @@ def test_kwargs_named_in_the_skill_are_real_pm_context_parameters(kwarg):
 
 
 def test_bounded_pm_context_payload_is_actually_small(tmp_project, monkeypatch):
-    """The honesty check: run the call the skill instructs, on oversized docs.
+    """The honesty check: run the call the skills instruct, on oversized docs.
 
     Every assertion above is about text.  This one runs
-    ``pm_context(max_doc_chars=2000, limit=5)`` against 20,000-char project
-    docs and shows the return really is a bounded excerpt — otherwise step 4b
-    would be pasting tens of thousands of chars into every worker prompt.
+    ``pm_context(max_doc_chars=2000, limit=5)`` — the call ``POINTER_DOCS``
+    name — against 20,000-char project docs and shows the return really is a
+    bounded excerpt, not a pointer at tens of thousands of chars.
     """
     monkeypatch.chdir(tmp_project)
     from projectman.server import _store_cache, pm_context
@@ -227,7 +266,7 @@ def test_bounded_pm_context_payload_is_actually_small(tmp_project, monkeypatch):
 
     assert len(payload) < 12_000, (
         f"pm_context(max_doc_chars=2000, limit=5) returned {len(payload)} chars — "
-        "step 4b's bounded-excerpt claim does not hold"
+        "the bounded-excerpt claim the pointing docs make does not hold"
     )
 
     embedded = yaml.safe_load(payload)["project_docs"]
@@ -239,8 +278,8 @@ def test_bounded_pm_context_payload_is_actually_small(tmp_project, monkeypatch):
 
 
 @pytest.mark.parametrize("path", DOCS)
-def test_inserting_step_4b_did_not_renumber_the_verdict_steps(path):
-    """US-PM-13-5 inserted ``4b`` rather than renumbering.
+def test_removing_step_4b_did_not_renumber_the_verdict_steps(path):
+    """US-PM-13-5 inserted ``4b`` rather than renumbering; US-PM-49-6 removed it.
 
     ``test_skill_verdict_verbs._step_19`` and everything built on it slice the
     verdict step by the literal line prefixes ``19.`` and ``20.``.  Pin that
@@ -902,7 +941,7 @@ WORKER_SAFETY_RULES = [
     "Never run git checkout, git restore, git stash, or git reset",
     "Never call pm_create_* or any Store write outside a tmp_path-isolated fixture",
     "Edit tracked files directly with the Edit tool; do not stage code through scratchpad files",
-    "they must end byte-identical — the orchestrator checks md5s",
+    "they must end byte-identical — the branch diff shows it",
     "must never run the new command against the real repo",
 ]
 

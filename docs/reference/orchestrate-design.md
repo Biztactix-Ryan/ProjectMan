@@ -25,31 +25,49 @@ Where a rule is already fixed by a contract document, this file links rather tha
 
 ---
 
-## Stage-only model
+## Isolation model
 
-Three constraints hold the loop together, and each is a correctness requirement rather than
-a preference.
+Four constraints hold the loop together, and each is a correctness requirement rather than
+a preference. The first two were revised on 2026-09-09 by
+[ADR-005](../../.project/DECISIONS.md), which replaced the original *stage-only* choice —
+one shared checkout with neither branches nor worktree isolation — with a worktree and a
+branch per task. That ADR is the record of the trade and its consequences; what follows is
+the short form.
 
-**Sequential, one worker at a time.** Parallel workers would need atomic task claiming
+**One worker at a time, or two.** Parallel workers would need atomic task claiming
 across processes. The store has compare-and-swap claiming (see the claim/release contract),
-but the orchestrator's loop also mutates the working tree, and two workers editing one
-unbranched checkout cannot be separated afterwards. Until worker isolation exists, adding
-concurrency trades a whole class of recoverable failures for an unrecoverable one.
+and ADR-005 removed the other half of the obstacle — two workers no longer edit one
+unbranched checkout. What was left was ordering: a dependent task has to start from a run
+branch that already carries its dependency's merge, so lanes were a design problem about the
+merge point rather than a flag to flip. `US-PM-53` answered it, and the answer is the next
+section: at most two lanes, one claim each, merged in acceptance order. One lane is still the
+default.
 
-**Stage-only: no commits, no pushes, no branches, no worktrees.** Neither the orchestrator
-nor a worker runs `git commit`, `git push`, `pm_commit`, or `pm_push`. The run's product is
-a working tree the user reads and commits. This is what makes a bad run cheap: a rejected
-sprint is a `git diff` the user declines, not a history to unwind. It is also why workers
-must never run `git checkout`, `restore`, `stash`, `reset` or `clean` — see *Known failure
-modes*. No worktree isolation follows from the same choice: sequential plus stage-only
-means there is exactly one tree, and the pre-task `git status --short` snapshot is what
-separates this worker's edits from the ones already there.
+**A worktree and a branch per task: commits, but no pushes.** Each dispatch runs in its own
+git worktree on `orch/<run-id>/<task-id>`, cut from the run branch `orch/<run-id>`, which is
+itself cut from `HEAD` at pre-flight. The worker commits its code there — code only, never
+`.project` — and the orchestrator merges that branch onto the run branch when, and only
+when, it accepts the task. Nothing is pushed and the store is never committed by a run: no
+`git push`, no `pm_push`, no `pm_commit`. The run's product is a run branch the user reads
+and merges. This is what keeps a bad run cheap: a rejected sprint is a branch the user
+deletes, not a history to unwind and not a pushed remote to revert. It also makes two tasks'
+edits physically separable — the branch diff *is* the boundary, where the shared-tree model
+had a pre-task `git status --short` snapshot and an md5 list standing in for one. Isolation
+does not relax the worker safety rules: inside a worktree as outside it, a worker never runs
+`git checkout`, `restore`, `stash`, `reset` or `clean` — see *Known failure modes*. And
+because `.project` is gitignored on the code branch, a fresh worktree simply does not have
+it: every store read and write goes through the MCP tools against the primary checkout.
+Cleanup is part of the model rather than housekeeping: once the final report has listed the
+run's branches — merged, unmerged and abandoned — the run removes the worktree and branch of
+every merged task, leaves a parked or review task's pair standing for whoever reads it, and
+removes the run worktree last.
 
 **Failures park, they do not halt.** A task failing validation twice is left in `review`
 with a run-log record and the loop moves to the next ready task. A run that stops on the
 first bad task converts one broken task into an idle sprint; a run that parks converts it
-into one line of the final report. Only systemic problems stop the loop — see the skill's
-Stop Conditions.
+into one line of the final report. A parked task keeps its branch, unmerged, as the record
+of the attempt for a human to read or salvage. Only systemic problems stop the loop — see
+the skill's Stop Conditions.
 
 **Every attempt is logged, structurally.** The verdict verbs append a run-log entry as part
 of the same call that sets the status, and none of them can be called without a note, so a
@@ -58,10 +76,94 @@ prose so it stays queryable: `pm_run_log(id, has_evidence=true)` returns only at
 proved something, and `pm_audit` raises `done-without-evidence` as a **warning** when a task
 is done with nothing on its log. Failures stay visible to sessions that were not there.
 
+## Lanes
+
+`--lanes 2` lets the orchestrator keep two tasks in flight at once — lane A and lane B, one
+claim each — so that it validates and merges the lane whose worker returned first while the
+other worker is still running. The flag defaults to 1, and at 1 none of what follows applies.
+Everything else is the same loop: the same pick, the same dispatch, the same verdict verbs,
+and the same accept-then-merge ordering described under *Isolation model*.
+
+**Lane compatibility is a store fact, not a judgment.** Two tasks may be in flight together
+only when nothing in the store orders one against the other. Four rules, all of them read
+rather than remembered (`lane_compatible` in `src/projectman/deps.py`, reached from the skill
+as `pm_board(lane_compatible_with=<the task in flight>)`):
+
+1. **Different stories.** Tasks of one story share a subject and usually a file set, and
+   their intra-story order is exactly what the topological sort exists to preserve.
+2. **Neither task depends on the other**, in either direction.
+3. **Neither task depends on the other's story.** A task's `depends_on` may name a story, and
+   depending on the whole story includes the task in flight.
+4. **The two stories are not connected by `depends_on`** — any path, either direction,
+   transitively.
+
+Anything else is compatible. The rules are structural rather than temporal: whether the
+dependency is already `done` is irrelevant here, because what must not overlap is the two
+lanes' *edit sets*, and a task written against another story's work is as entangled with it
+after that work lands as before. The orchestrator never settles this from its memory of what
+two tasks touch — that is precisely the heuristic ADR-005 took out of the isolation model,
+and re-deriving it in the scheduler would reinstate it one layer up. A board narrowed by the
+filter reports `lane_excluded: <n>`, so a short list of candidates is never misread as an
+empty backlog.
+
+**Why two lanes, and not three.** The orchestrator is a single context, and validation is the
+part of the loop that runs *in* it: step 17's validator is dispatched in the foreground, so
+exactly one validation happens at a time however many workers are out. A third lane therefore
+buys no extra validation throughput. What it does buy is a third branch cut from the run
+branch before the first merge — conflicts grow with the number of concurrent branches, not
+with the number of lanes — and a third set of in-flight bookkeeping, which claim, which
+branch, which worker has returned, held in the context that projections and the validator
+subagent exist to protect. The wait it would be spending that on is already covered: measured
+worker waits are p50 8-11 minutes on this project and p50 21-36 minutes on a larger one (the
+run-metrics table in [`cli.md`](cli.md)), and one overlapping lane covers a wait of that size,
+because a lane's validation and merge fit comfortably inside the other lane's dispatch. Two
+is the number at which the orchestrator stops idling; three is the number at which it starts
+merging.
+
+**Merge order is acceptance order, never dispatch order.** A branch reaches the run branch
+when `pm_accept` takes its task and at no other time (*Isolation model*), and with two lanes
+those two orders come apart: lane B's branch was cut from the run branch before lane A's merge
+landed on it, so B's merge can conflict with work B never saw. That is expected rather than
+exceptional, and it needs no new failure path — it is routed through the one already written
+for a conflicting merge: abort the merge, `pm_retry` with the conflicting paths in
+`evidence.files` and a note to rebase onto the run branch, then park on a second conflict. A
+conflict retry keeps its lane and its task branch and is not a fresh dispatch, so it cannot
+silently spend `--max`: that budget bounds how much *new* work a run starts, and a rebase of
+work already done is not new work.
+
+**The dependency barrier.** The second lane never dispatches a task whose dependency is still
+in flight. Compatibility rules 2 to 4 bar it before the pick is made, which is the earliest
+point at which it can be barred: a dependent task dispatched beside its dependency would start
+from a run branch that does not yet carry the dependency's merge — the consequence ADR-005
+records — and would then either re-implement it or collide with it. When the filter leaves
+nothing available, that is an answer rather than an error: lane B idles until lane A is
+accepted, and the final report says which lane idled.
+
+**The validator is told which files are not its business.** Two lanes are two worktrees, so
+the diffs never mix; but the forbidden-file check is a judgment about *scope*, and the other
+lane's task is legitimately editing files this task must not. So the validator prompt names
+the other in-flight task, whose files are out of scope for this verdict, and a diff that
+reaches into them is a retry, not a park — the worker overstepped its task, it did not damage
+another one. Nothing else about the validator changes; see *The validator subagent* for what
+it is handed and why its report is bounded and JSON-shaped.
+
+**One lane is the default, and it is the old loop exactly.** `--lanes 1` claims one task,
+dispatches it, validates it, merges it, and picks the next — no second claim, no compatibility
+filter, and no other-lane line in the validator prompt. Lanes are opt-in because the second
+lane is paid for in the orchestrator's context and in merge conflicts, and a sprint short
+enough not to notice the waits should not pay it.
+
 ## Run identity
 
 One opaque id per run, `orch-<YYYY-MM-DD>-<4 random hex>`, minted before pre-flight and
 spent on every call that takes or clears a claim.
+
+**Where the model flags sit.** The skill's `## Flags` section explains only `--resume`;
+`--orchestrator-model` and `--executor-model` survive in the front-matter `args` line alone.
+`--executor-model` is the one that acts — it names the model each worker and validator is
+dispatched with — while `--orchestrator-model` is advisory: the model driving the loop is
+whichever session invoked the skill, so the flag records an intent the skill itself cannot
+enforce.
 
 **The `orch-` prefix is load-bearing.** Pre-flight's claim classification reads it to tell
 an orchestrator's claim from a human's, and no other signal in the store distinguishes them.
@@ -88,9 +190,13 @@ adopted claim — which preserves both slices and still connects them.
 
 ## Pre-flight and claim classification
 
-**The sprint read is deliberately unprojected.** `pm_list_sprints(status="active")` returns
-one or two sprints, and `brief=True` would drop the goal the pre-flight summary wants. This
-is the one read where projection saves nothing worth having.
+**Every pre-flight read is projected.** `pm_list_sprints(status="active", brief=True)` and
+`pm_board(brief=True)` return identity, state and the three fields step 3 classifies from —
+`claimed_by_run`, `claim_age`, `stale` — while dropping the sprint goal, the story labels,
+the readiness blockers and the hints, none of which the loop acts on. Unprojected, that pair
+measured 6.6 KB and 13 KB on the Kura runs, charged at pre-flight to the one context that has
+to survive the whole sprint. Projection is what stops the run's fixed overhead scaling with
+the size of the board.
 
 **Classify claims from the data, never from a guess.** Every in-progress task carries
 `claimed_by_run`, `claim_age`, and `stale: true` once the age passes `stale_claim_hours`
@@ -114,37 +220,72 @@ The branches and their reasons:
 run <old>")` exists so the next reader sees the takeover, and so the final report finds it
 in this run's own slice rather than having to remember it.
 
-**Why the tree is snapshotted before anything runs.** `git status --short` at pre-flight is
-the baseline that lets the final report separate orchestrator-caused changes from the local
-edits that were already there. Without it, a dirty starting tree is indistinguishable from
-worker output. Sprint 7 extended this to a `tar` + md5 snapshot before *each* dispatch — see
-*Known failure modes*.
+**Why pre-flight looks at the working tree at all.** Under ADR-005 the run branch is cut
+from `HEAD`, so `git status --short` at pre-flight is a *gate*: anything dirty outside
+`.project/` stops the run and is reported as a list, because a branch cut from a dirty
+`HEAD` bakes edits nobody attributed to a task into every task branch beneath it. What the
+final report needs afterwards is not a snapshot but a diff — `git diff --stat HEAD...<run
+branch>` — and what separates one task's work from another's is that task's own branch. The
+`tar` + md5 snapshot Sprint 7 took before *each* dispatch is history; see *Known failure
+modes*.
 
-**Why project context is fetched once, bounded.** `pm_context(max_doc_chars=2000, limit=5)`
-is called once per run and the same excerpt is pasted into every worker prompt, retries
-included. The bounds are the whole point: five docs at 2,000 chars each holds the return
-near 10k. An unbounded `pm_context` returned **48,588 characters** in one study — a cost
-that would otherwise be paid once per worker, per retry, for context each worker mostly does
-not read. The active epic and story lists are dropped because `pm_grab` already hands each
-worker its own story context.
+**Why a very dirty tree is still warned about.** Past the Phase 0 gate the modified list is
+`.project/` churn, which every dispatch adds to and step 23 walks in the report. On the Kura
+runs a 1,050-entry tree made that walk 55 KB — paid for a condition one commit would have
+cleared. Past **200** entries Phase 1 therefore says so and names the fix, commit or clean
+first, instead of paying it silently. It is a warning and not a stop because store churn is
+legitimate and the run may still be the right thing to do; `--auto` continues, and the
+condition is carried into the Phase 4 report so the next run's operator sees it.
+
+**Why memory files and transcripts are never read during a run.** The orchestrator reads
+store tools and the files a verdict genuinely needs, and nothing else — no memory file under
+`~/.claude`, no session transcript. Such files are read whole, because they have no
+projection to ask for (15 KB and 7 KB in one measured run), and what they hold is a previous
+session's recollection: unversioned, unattributable, and superseded by the store, which is
+where this run's facts already live. Anything in them that matters has to be re-verified
+against `pm_activity` anyway, so the read buys a page of context and no additional
+certainty.
+
+**Why the per-run project context fetch was dropped.** Until `US-PM-49` the pre-flight
+called `pm_context(max_doc_chars=2000, limit=5)` once per run and pasted the same excerpt
+into every worker prompt, retries included. The bounds were the whole point: five docs at
+2,000 chars each holds the return near 10k, where an unbounded `pm_context` returned
+**48,588 characters** in one study. What the measurement missed is that the excerpt was
+context each worker mostly did not read: on the Kura runs it was most of a 6.2 KB prompt,
+re-sent per dispatch, while `pm_grab` already hands each worker its own task and story
+context. So the paste went first, and with nothing left to amortise the fetch went with it —
+the orchestrator makes no `pm_context` call at all now, and a worker that does need the
+project docs is routed to them by `/pm-do`, where the bound is still stated.
 
 ## Dispatch and the worker prompt
 
-**Why the plan read is unprojected.** The plan is built out of task bodies and their DoD
-checklists, so this is one of the few calls that genuinely needs the full item.
+**Why the plan read is one projected batch.** The plan is built out of story bodies,
+acceptance criteria and the dependency and point wiring, so step 5 asks for exactly those
+and nothing else: a single `pm_batch_get(ids=<sprint story ids>, fields="title,status,points,depends_on,acceptance_criteria,body")`
+in place of an unprojected `pm_get` per story. Batching turns one round trip per story into
+one for the sprint, and the field list leaves behind the run logs and history a full item
+carries and the plan never opens — 16 KB of it on the Kura runs.
 
 **Why a worker prompt is self-contained.** A worker has no prior context and no memory of
-the run. Every fact it needs — task, story, acceptance criteria, DoD, the bounded project
-context excerpt, the run id — is inlined, because a worker that has to rediscover its
-context spends its budget on discovery and produces less implementation.
+the run. Every fact it needs and nothing more — task, story, acceptance criteria,
+DoD, the run id and the safety rules — is inlined, because a worker that has to rediscover
+its context spends its budget on discovery and produces less implementation. Project docs
+are not among those facts: they are the same bytes every dispatch, and `pm_grab` plus
+`/pm-do` already route a worker that needs them.
 
 **Why the run id is pasted into the prompt.** The worker's own `pm_grab` then claims under
 the same run id rather than an anonymous per-process id, so the claim is attributable and
 recoverable if the run dies mid-task.
 
-**Why the worker reports three lists, not prose.** The orchestrator transcribes them
-straight into structured `evidence` (files, tests, DoD met/unmet). Prose has to be re-parsed
-and loses exactly the structure the evidence contract asks for.
+**Why the worker's report has a fixed shape and a cap.** It is five ordered parts — files
+changed as paths only, tests as `command -> pass|fail (n passed)`, DoD met, DoD unmet,
+blockers — in at most about **1,500 characters**, with no code and no log output. The shape
+is the reason: the first four parts transcribe straight into structured `evidence` (files,
+tests, DoD met/unmet), where prose has to be re-parsed and loses exactly the structure the
+evidence contract asks for. The cap is the other half of it. Worker reports averaged 5.6 KB
+on the Kura runs, mostly pasted diffs and test output that the validator re-derives from the
+tree anyway; unbounded, each dispatch leaves a page of duplicated evidence resident in the
+one context that has to last the sprint.
 
 **Why the worker is told its report will be independently verified.** A worker's self-report
 is a claim, not a result. The stated verification is what makes "I ran the tests" cheaper to
@@ -156,7 +297,10 @@ eyes, and the context it spends implementing is context it no longer has for the
 
 ## Validation and verdicts
 
-The governing rule: *the orchestrator's own judgment, never the worker's word.*
+The governing rule: *the orchestrator's own judgment, never the worker's word.* The
+judgment is the orchestrator's; since `US-PM-48` the *checking* that feeds it is delegated
+to a validator subagent — see *The validator subagent* for why that is not a weakening of
+the rule.
 
 **The status read is deliberate and must never be removed.** `pm_get(task_id,
 fields="status,assignee")` is trust-but-verify, and projection makes it nearly free — tens
@@ -166,16 +310,19 @@ touched the task while the worker ran.
 
 **Why the diff is read, not counted.** A `done` task with an empty diff is a failure unless
 the task is genuinely non-code. File counts do not answer "do the changed files plausibly
-match the task scope?" — only reading them does.
+match the task scope?" — only reading them does. The validator does the reading and reports
+what it found; a file count would have been cheap to pass back and would have proved
+nothing.
 
-**Why tests are run by the orchestrator.** "Tests pass" from the party being validated is
+**Why tests are re-run rather than believed.** "Tests pass" from the party being validated is
 the claim under test. Re-running is the only check that does not depend on the worker's
-honesty or its definition of passing.
+honesty or its definition of passing. The re-run happens inside the validator subagent, which
+changes where the output lands, not whether the claim is checked.
 
 **Why the three lists are collected while validating.** Files changed, test commands with
-results, and DoD criteria met versus unmet are gathered during steps 17–18 so the verdict is
-a transcription rather than a recollection. Recollection is where evidence quietly stops
-matching what happened.
+results, and DoD criteria met versus unmet are gathered by the validator as it checks, and
+come back in its report, so the verdict is a transcription rather than a recollection.
+Recollection is where evidence quietly stops matching what happened.
 
 **Why a verb per verdict.** Status and outcome are fixed by the verb itself, so there is no
 way to record a park with a success outcome or reach `done` without `success`; the required
@@ -197,8 +344,60 @@ completion still landed, and the loop falls back to the plan.
 **Why retry carries the failing test entries forward.** The next attempt inherits the exact
 commands that failed, so a retry worker starts from evidence instead of from a summary.
 
-**Why a park continues the loop.** See *Stage-only model*: parking is what keeps one bad
+**Why a park continues the loop.** See *Isolation model*: parking is what keeps one bad
 task from costing the sprint.
+
+## The validator subagent
+
+Steps 16–19 of the skill split validation in two. The orchestrator still owns the verdict —
+it reads the task's status itself and it alone calls the verb — but the checks that produce
+that verdict run inside a subagent whose context is discarded the moment it answers.
+
+**Independence is unchanged: the validator is not the worker.** Trust-but-verify is a rule
+about *who* checks, and it is untouched. The agent that wrote the code is still never the
+agent whose word is taken for it. The validator is spawned fresh, with no memory of the
+implementation and no stake in it, and is handed the task id, the run id, the DoD list, the
+run and task branch names, and the worktree path and commit sha the worker reported — facts
+about the *task*, not the worker's account of what it did. The worker's report goes along as a claim to be tested, in
+exactly the role it had before. What `US-PM-48` moved is where the checking happens, not
+whose assertion is under test.
+
+**Why it now runs in a discarded context.** Measured 2026-09-09, per-task orchestrator
+context growth ran 7–9k tokens in this project and 16–28k in a larger one, and the largest
+visible bucket was validation itself: full test-runner output and the `git diff --stat` and
+`git diff --name-only` listings of the task's branch.
+Every byte of it is read once, to settle one question, and is never consulted again — but in
+a single-context loop it stays resident for the rest of the sprint, competing with the plan,
+the run's own record and the final report the orchestrator still has to write. A subagent's
+window is thrown away when it returns, so that bucket is paid once and freed, and what
+survives into the orchestrator is the conclusion rather than the working. This is why the
+skill says the orchestrator must **never** run the tests or the branch diff itself: a
+step 17 that "just checks quickly" reinstates the entire cost the split removed, and does it
+invisibly, because the loop still looks correct.
+
+**Why the report is bounded and JSON-shaped.** The validator answers with one JSON object of
+about 1,500 characters at most — `verdict`, `files`, `tests`, `dod_met`, `dod_unmet`, `note`.
+*Bounded*, because an unbounded report re-imports the very output that was moved out; a
+validator free to paste its evidence back would undo the saving it exists to make, and the
+cap is what makes the subagent's cost predictable per task rather than proportional to how
+noisy the test suite is. *JSON-shaped*, because the object **is** the verdict call: `verdict`
+picks the verb, `note` becomes the note, and the remaining fields map straight onto the
+`evidence` argument of `pm_accept` / `pm_retry` / `pm_park` / `pm_review`. That keeps step 19
+a transcription with no parsing step — the same property *Validation and verdicts* asks of
+the three lists — and it keeps the caps in [`evidence-contract.md`](evidence-contract.md)
+enforced by the store rather than by whichever agent remembered them. Prose would have to be
+re-read and re-shaped by the one context the split was protecting.
+
+**What a malformed verdict does.** A validator that returns nothing, returns prose, or
+returns JSON with no usable `verdict` has said nothing about the task. Reading that as an
+accept trusts an agent that did not answer; reading it as a task failure blames the worker
+for the validator's silence. So it is neither: a missing or malformed verdict counts as **one
+validation failure**. The validator is re-run once, and if the second attempt also comes back
+without a verdict the task is parked with the fixed note `validator returned no verdict`.
+Parking names the true state — the task is unjudged, not failed — and it keeps the loop
+moving, per *Isolation model*. The note is fixed wording on purpose: a validator that is
+systematically malforming its answers then shows up in the run log as one greppable pattern
+instead of a scatter of unrelated parks.
 
 ## Health checks
 
@@ -245,9 +444,11 @@ paged on `has_more`, is everything that run did. Each task it names is then sort
   claim is the race the whole scheme exists to prevent.
 
 **R3 — an adopted task is dispatched as a retry, never as fresh work.** Its worker may have
-died with half-written files in the tree, and the store records nothing about how far it
-got. So the tree is snapshotted first, and the prompt carries the `<on resume: ...>` line
-telling the worker to validate the working-tree state before editing. A failure on an
+died with half-written files in its worktree, and the store records nothing about how far
+it got. So the adopted task's branch and worktree are read first — its last commit on
+`orch/<run-id>/<task-id>` and the status of the checkout that branch was left in — and the
+prompt carries the `<on resume: ...>` line telling the worker to validate that state before
+editing. A failure on an
 adopted task is a *first* failure — retry once, then park — because the dead run's attempt
 was never validated and so was never a failure on the record.
 
@@ -307,8 +508,9 @@ ran `git checkout src/projectman/server.py` to undo a mutation it had made for a
 file also held three earlier tasks' uncommitted implementation, which the checkout discarded.
 Recovery meant replaying the edits out of session transcripts.
 → **Rule: a worker never runs `git checkout`, `git restore`, `git stash`, `git reset`, or
-`git clean`.** Undo a temporary edit with the same edit tool that made it. The stage-only
-model means the working tree is the only copy of every earlier task's work.
+`git clean`.** Undo a temporary edit with the same edit tool that made it. The rule did not
+relax when tasks moved into their own worktrees under ADR-005: until the worker commits its
+branch, its worktree is still the only copy of that task's work.
 
 **2026-08-22 (Sprint 6) — a throwaway diagnostic wrote to the real store.** A worker's
 scratch script called `pm_create_story` outside a `tmp_path` fixture and left a stray story
@@ -327,12 +529,16 @@ happen.
 **2026-09-01 (Sprint 7) — the md5 check that caught nothing.** Mutation-testing workers were
 told the source files they mutate must end byte-identical, and the orchestrator verified
 md5s after each dispatch. It caught nothing, because every worker complied. The check was
-still not the safeguard: a `tar` + md5 snapshot taken *before* each dispatch was, because it
-turns recovery from a transcript replay into a `tar x`.
-→ **Rules: a task that mutation-tests source files must leave them byte-identical, the
-orchestrator verifies md5s, and it snapshots the tree before each dispatch.** Verification
-tells you something broke; the snapshot is what fixes it. A related rule from the same
-sprint: a task touching git plumbing must not run the new command against the real repo.
+still not the safeguard: the `tar` + md5 snapshot taken *before* each dispatch — the
+`snap.sh` habit — was, because it turned recovery from a transcript replay into a `tar x`.
+→ **Rule, as ADR-005 revised it: a task that mutation-tests source files must still leave
+them byte-identical, but the snapshot and the md5 list are gone.** Each task edits its own
+worktree on its own branch, so `git diff --stat <run branch>...<task branch>` is what it
+changed and `git diff --name-only` is the list the forbidden-file check is judged from — a
+boundary rather than a heuristic, checked before the branch is merged rather than after the
+damage. Recovery is the unmerged branch, not a tarball, so `snap.sh` has no job left. A
+related rule from the same sprint: a task touching git plumbing must not run the new command
+against the real repo.
 
 **2026-09-05 — a worker's self-set `done` swallowed the evidence.** When a worker sets its
 own task to `done`, the orchestrator's `pm_accept` short-circuits on the expected negative
@@ -350,14 +556,19 @@ The figures the skill's instructions depend on, with their sources.
 
 | Number | What it is | Why it is that number |
 |---|---|---|
-| **48,588 chars** | An unbounded `pm_context` return, measured in one study | The reason project context is fetched once per run at `max_doc_chars=2000, limit=5`, which holds the return near 10k |
-| **2,000 / 5** | `max_doc_chars` / `limit` for the pre-flight `pm_context` | Five docs × 2,000 chars ≈ 10k, small enough to paste into every worker prompt |
+| **48,588 chars** | An unbounded `pm_context` return, measured in one study | Why every documented `pm_context` call is bounded at `max_doc_chars=2000, limit=5`, which holds the return near 10k |
+| **2,000 / 5** | `max_doc_chars` / `limit` on the `pm_context` calls that remain | Five docs × 2,000 chars ≈ 10k. `US-PM-49` removed the orchestrator's own call; the bound is pinned where the pointers live — `/pm`, the pm agent and `/pm-do` |
+| **200 entries** | The `git status --short` size past which Phase 1 warns | Steps 14 and 23 re-walk that list every dispatch (55 KB per dispatch on a 1,050-entry tree), so beyond it the fix — commit or clean — is worth naming |
 | **200 chars** | The skill's note-length guidance for a verdict | A human one-line summary; the lists belong in `evidence`. Distinct from the store's hard cap |
 | **4,096 chars** | `store.RUN_LOG_NOTE_LIMIT` | The server-side truncation point — notes are clamped, never rejected, so a verdict never fails on note length |
 | **16 hex** | The `digest:` line in an audit report | The token passed back as `pm_audit(since=…)`; a match short-circuits to `unchanged: true` and no checks run |
 | **every 3 accepted tasks** | Health-check cadence | Frequent enough to catch mid-run drift, cheap because `since=` makes an unchanged answer a few bytes |
+| **2 lanes** | The most `--lanes` offers; the default is 1 | One validation runs at a time whatever the lane count, so a third lane adds concurrent branches to merge and in-flight bookkeeping without adding throughput; the waits it would cover — p50 8-11 min here, p50 21-36 min on a larger project — are already covered by one overlap. See *Lanes* |
+| **7–9k / 16–28k tokens** | Per-task orchestrator context growth, measured 2026-09-09 in this project and in a larger one | The measurement behind *The validator subagent*: validation output was the largest visible bucket, so it was moved into a context that is discarded |
+| **~1,500 chars** | The cap on the worker's report back to the orchestrator | Reports averaged 5.6 KB unbounded, mostly output the validator re-derives from the tree; the fixed five-part shape transcribes into `evidence` |
+| **~1,500 chars** | The cap on the validator's JSON report | Bounded so the report cannot re-import the output the split removed; the object doubles as the `evidence` argument |
 | **2 hours** | `stale_claim_hours` default (`pm_active(stale_after=…)` overrides per call) | The point past which an `orch-` claim is treated as recoverable rather than live |
-| **limit=100 + `has_more`** | Activity-log paging in resume and the final report | The report must hold *every* event in the run's slice; a single unpaged page is a silently truncated report |
+| **`offset` + `has_more`** | Activity-log paging in resume and the final report | The report must hold *every* event in the run's slice; a single unpaged page is a silently truncated report |
 | **40 / 10 / 20 / 160** | `evidence` caps: files, tests, dod items, chars per string | Set and justified in [`evidence-contract.md`](evidence-contract.md); clamped rather than rejected |
 | **512 vs 387** | grab-then-update pairs versus `pm_done_next` calls in the usage data | The measurement behind `pm_accept` absorbing complete-plus-next; see [`verdict-verbs-contract.md`](verdict-verbs-contract.md) |
 | **31,731 → under 9,000 bytes** | The skill template before and after `US-PM-25` | Roughly 14k of the original is the rationale this document now holds; the rest is tightening |
@@ -378,18 +589,18 @@ instruction, measured by classifying each paragraph.
 |---|---|---|---|---|
 | Title + preamble | 8–11 | 326 | ~0 | — (instruction; stays) |
 | `## Flags` | 12–21 | 1,053 | ~230 | *Run identity* (advisory-model note, lineage note on `--resume`) |
-| `## Operating Model` | 22–28 | 1,215 | ~900 | *Stage-only model* (all four bullets' reasoning, incl. the run-log/evidence paragraph) |
+| `## Operating Model` | 22–28 | 1,215 | ~900 | *Isolation model* (all four bullets' reasoning, incl. the run-log/evidence paragraph) |
 | `## Phase 0 — Model Selection and Run Identity` | 29–47 | 1,841 | ~500 | *Run identity* (big-model/cheap-model split, coarse-tier mapping, advisory-orchestrator argument) |
 | `### Run id — mint it here, spend it everywhere` | 48–57 | 1,645 | ~950 | *Run identity* (prefix is load-bearing, random tail, why every call carries it, why the report is built from it, fresh id on resume) |
-| `## Phase 1 — Pre-flight` | 58–71 | 4,020 | ~1,620 | *Pre-flight and claim classification* (unprojected sprint read, the three claim branches and their reasons, the no-prompt argument, the tree snapshot, the 48,588-char `pm_context` study) |
-| `## Phase 2 — Build the Execution Plan` | 72–80 | 785 | ~210 | *Dispatch and the worker prompt* (why the plan read is unprojected; out-of-sprint blockers) |
+| `## Phase 1 — Pre-flight` | 58–71 | 4,020 | ~1,620 | *Pre-flight and claim classification* (the projected sprint and board reads, the three claim branches and their reasons, the no-prompt argument, the tree snapshot and its dirty-tree warning, the no-memory-reads rule, the 48,588-char `pm_context` study) |
+| `## Phase 2 — Build the Execution Plan` | 72–80 | 785 | ~210 | *Dispatch and the worker prompt* (why the plan read is one projected batch; out-of-sprint blockers) |
 | `## Phase 3 — Execution Loop` | 81–90 | 1,471 | ~380 | *Dispatch and the worker prompt* (pre-claimed `next`, idempotent re-claim, foreground + no-worktree reasoning) |
-| `### Validation — your own judgment, not the worker's word` | 91–119 | 5,702 | ~2,100 | *Validation and verdicts* + *Health checks*; verb semantics link to `verdict-verbs-contract.md`, evidence shape to `evidence-contract.md` |
+| `### Validation — your own judgment, not the worker's word` | 91–119 | 5,702 | ~2,100 | *Validation and verdicts* + *The validator subagent* + *Health checks*; verb semantics link to `verdict-verbs-contract.md`, evidence shape to `evidence-contract.md` |
 | `## Phase 4 — Final Report` | 120–137 | 3,812 | ~1,400 | *Final report from the activity log* (log-over-memory, why park/review and retry/release need a second read, why points are re-read, why the diff stays) |
 | `## Resume — Picking Up an Interrupted Run` | 138–161 | 5,337 | ~4,300 | *Resume protocol* (R1–R5 in full, plus "when not to resume") |
-| `## Worker Prompt Template` | 162–206 | 2,233 | ~350 | *Dispatch and the worker prompt* (self-containment, pasted run id, three-lists-not-prose, independent verification) |
+| `## Worker Prompt Template` | 162–206 | 2,233 | ~350 | *Dispatch and the worker prompt* (self-containment, pasted run id, the capped fixed-shape report, independent verification) |
 | `## Stop Conditions` | 207–216 | 847 | ~190 | *Health checks* (why `unchanged: true` is never a stop) and *Resume protocol* (live-run race) |
-| `## What This Skill Does NOT Do` | 217–224 | 714 | ~250 | *Stage-only model* (sequential, no commits) and *Validation and verdicts* (never implement) |
+| `## What This Skill Does NOT Do` | 217–224 | 714 | ~250 | *Isolation model* (sequential, no push) and *Validation and verdicts* (never implement) |
 | **Total** | 8–225 | **31,731** | **~13,400** | |
 
 Rationale with no home in the template — the Sprint 5/6/7 and 2026-09-05 incidents that

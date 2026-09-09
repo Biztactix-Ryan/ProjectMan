@@ -34,6 +34,14 @@ SPRINT_ID = re.compile(rf"^SPRINT-{PREFIX}-\d+$")
 #: drift apart.
 DEFAULT_STALE_CLAIM_HOURS = 2.0
 
+#: Default ceiling on how long one task should take, in minutes (US-PM-50-7).
+#: Sixty is the orchestrator's prompt-cache TTL: a worker that runs past it
+#: costs the run a full prefix rewrite on the next dispatch, so a points band
+#: whose p90 sits above this is worth splitting before the sprint starts.
+#: Named once so the field default and the malformed-value fallback cannot
+#: drift apart.
+DEFAULT_MAX_TASK_MINUTES = 60.0
+
 
 class StoryStatus(str, Enum):
     backlog = "backlog"
@@ -295,6 +303,49 @@ class ToolFlags(BaseModel):
     web: bool = False
 
 
+class OrchestrateConfig(BaseModel):
+    """Knobs for orchestrated runs — the `orchestrate:` section of config.yaml.
+
+    A nested section rather than a flat key, for the same reason `tools:`
+    is one: these tune the orchestrator loop rather than describe the
+    project, and grouping them keeps a dotted name (`orchestrate.max_task_minutes`)
+    readable in docs and skills.  Absent from config.yaml, the section
+    defaults whole, so no existing project needs an edit.
+    """
+
+    #: Longest a single task should be expected to run, in minutes
+    #: (US-PM-50).  Planning tools flag a points band whose measured p90
+    #: duration sits above this as `long_task_risk`, because a worker that
+    #: overruns the one-hour prompt-cache window makes the next dispatch pay
+    #: a full prefix rewrite.  A float so a fast pool can say `20.5`; set it
+    #: high rather than to 0 to disable -- 0 would flag every band.
+    max_task_minutes: float = DEFAULT_MAX_TASK_MINUTES
+
+    @field_validator("max_task_minutes", mode="before")
+    @classmethod
+    def tolerate_a_junk_ceiling(cls, v: object) -> float:
+        """A malformed `max_task_minutes` falls back to the default.
+
+        Same reasoning as `stale_claim_hours`: this key only tunes an
+        *annotation* on planning tools, and `load_config` builds this model
+        once for the store, so raising on a typo would take every tool in
+        the server down.  Rejected and replaced: anything `float()` refuses,
+        NaN/infinity (nothing could ever exceed an infinite ceiling, and NaN
+        compares false against everything, so both silently disable the
+        check), and a negative value (which would flag every band).  Zero is
+        *kept* -- aggressive, but a meaningful "flag everything" setting.
+        """
+        if v is None:
+            return DEFAULT_MAX_TASK_MINUTES
+        try:
+            parsed = float(v)  # type: ignore[arg-type]
+        except (TypeError, ValueError):
+            return DEFAULT_MAX_TASK_MINUTES
+        if not math.isfinite(parsed) or parsed < 0:
+            return DEFAULT_MAX_TASK_MINUTES
+        return parsed
+
+
 class ProjectConfig(BaseModel):
     name: str
     prefix: str = "PRJ"
@@ -306,6 +357,9 @@ class ProjectConfig(BaseModel):
     next_epic_id: int = 1
     next_sprint_id: int = 1
     tools: ToolFlags = Field(default_factory=ToolFlags)
+    #: Orchestrated-run knobs (US-PM-50).  Nested like `tools:`; defaults
+    #: whole when the section is absent from config.yaml.
+    orchestrate: OrchestrateConfig = Field(default_factory=OrchestrateConfig)
     #: How long a claim may sit untouched before `pm_active` / `pm_board`
     #: flag it `stale: true` (US-PM-14-5).  Two hours is roughly four times
     #: the longest single task in the corpus, so a task still being worked

@@ -1,10 +1,14 @@
 """Tests for estimation support."""
 
+import json
+from datetime import datetime, timedelta, timezone
+
 import pytest
 import yaml
 from projectman.store import Store
 from projectman.estimator import estimate
 from projectman.errors import NotFoundError
+from projectman.scoper import scope
 
 
 def test_estimate_story(tmp_project):
@@ -207,3 +211,166 @@ def test_estimate_accepts_a_story_id(tmp_project):
     assert "story_id" not in data["item"]
     assert data["current_points"] == 5
     assert data["body"].strip() == "Story body here"
+
+
+# ─── duration_history beside the guidance (US-PM-50-8) ─────────────
+#
+# ``pm_estimate`` and ``pm_scope`` are where sizing decisions are made, so
+# both carry the project's measured grab-to-done history next to the advice
+# they already gave.  The activity log is written by hand here for the same
+# reason ``test_duration_history.py`` writes it by hand: these tests are
+# about what the two tools *report*, not about the store's write path.
+
+_BASE = datetime(2026, 9, 9, 10, 0, 0, tzinfo=timezone.utc)
+
+
+def _event(item_id, after, minute):
+    """One orchestrated status transition, ``minute`` minutes after _BASE."""
+    return json.dumps(
+        {
+            "event_type": "update",
+            "item_id": item_id,
+            "item_type": "task",
+            "changes": {"status": {"before": None, "after": after}},
+            "timestamp": (_BASE + timedelta(minutes=minute))
+            .isoformat()
+            .replace("+00:00", "Z"),
+            "run_id": "orch-2026-09-09-1",
+            "actor": "tester",
+            "source": "cli",
+        }
+    )
+
+
+def _seed_durations(store, stretches):
+    """Give ``store`` one measurable stretch per ``(task_id, minutes)`` pair."""
+    lines = []
+    for offset, (task_id, minutes) in enumerate(stretches):
+        start = offset * 1000
+        lines.append(_event(task_id, "in-progress", start))
+        lines.append(_event(task_id, "done", start + minutes))
+    (store.project_dir / "activity.jsonl").write_text("\n".join(lines) + "\n")
+
+
+@pytest.fixture
+def three_pointers(tmp_project):
+    """A store whose three 3-point tasks took 10, 20 and 90 minutes."""
+    store = Store(tmp_project)
+    store.create_story("Story", "A story to hang tasks off")
+    for n in range(3):
+        store.create_task("US-TST-1", f"Task {n}", "d", points=3)
+    _seed_durations(
+        store,
+        [("US-TST-1-1", 10), ("US-TST-1-2", 20), ("US-TST-1-3", 90)],
+    )
+    return store
+
+
+@pytest.mark.parametrize("render", [estimate, scope])
+def test_both_tools_carry_a_duration_history_block(three_pointers, render):
+    """pm_estimate and pm_scope both report the block beside their guidance."""
+    data = yaml.safe_load(render(three_pointers, "US-TST-1"))
+
+    history = data["duration_history"]
+    assert set(history) == {"by_points", "n", "max_task_minutes"}
+    assert history["n"] == 3
+    assert history["by_points"][3] == {"p50": 20.0, "p90": 90.0, "max": 90.0, "n": 3}
+
+
+@pytest.mark.parametrize("render", [estimate, scope])
+def test_the_block_sits_beside_the_existing_guidance(three_pointers, render):
+    """Adding it displaces nothing: the old keys are all still there."""
+    data = yaml.safe_load(render(three_pointers, "US-TST-1"))
+
+    assert "duration_history" in data
+    if render is estimate:
+        assert "fibonacci_scale" in data["estimation_guidance"]
+    else:
+        assert "rules" in data["decomposition_guidance"]
+
+
+@pytest.mark.parametrize("render", [estimate, scope])
+def test_bands_are_reported_per_points_value(tmp_project, render):
+    """Two point values, two bands — each with its own p50/p90/n."""
+    store = Store(tmp_project)
+    store.create_story("Story", "Mixed sizes")
+    store.create_task("US-TST-1", "Small", "d", points=1)  # -1
+    store.create_task("US-TST-1", "Small too", "d", points=1)  # -2
+    store.create_task("US-TST-1", "Big", "d", points=5)  # -3
+    _seed_durations(
+        store,
+        [("US-TST-1-1", 5), ("US-TST-1-2", 15), ("US-TST-1-3", 120)],
+    )
+
+    bands = yaml.safe_load(render(store, "US-TST-1"))["duration_history"]["by_points"]
+
+    assert set(bands) == {1, 5}
+    assert bands[1] == {"p50": 5.0, "p90": 15.0, "max": 15.0, "n": 2}
+    assert bands[5] == {"p50": 120.0, "p90": 120.0, "max": 120.0, "n": 1}
+
+
+@pytest.mark.parametrize("render", [estimate, scope])
+def test_the_threshold_defaults_to_sixty_minutes(three_pointers, render):
+    """With nothing configured, the reported ceiling is the default hour."""
+    data = yaml.safe_load(render(three_pointers, "US-TST-1"))
+
+    assert data["duration_history"]["max_task_minutes"] == 60
+
+
+@pytest.mark.parametrize("render", [estimate, scope])
+def test_the_threshold_reflects_config(tmp_project, render):
+    """`orchestrate.max_task_minutes` in config.yaml is what comes back."""
+    config_path = tmp_project / ".project" / "config.yaml"
+    config = yaml.safe_load(config_path.read_text())
+    config["orchestrate"] = {"max_task_minutes": 25}
+    config_path.write_text(yaml.dump(config))
+
+    store = Store(tmp_project)
+    store.create_story("Story", "Desc")
+
+    data = yaml.safe_load(render(store, "US-TST-1"))
+
+    assert data["duration_history"]["max_task_minutes"] == 25
+
+
+@pytest.mark.parametrize("render", [estimate, scope])
+def test_a_thin_history_says_so(tmp_project, render):
+    """Under three measured tasks the block warns rather than implying a rule."""
+    store = Store(tmp_project)
+    store.create_story("Story", "Desc")
+    store.create_task("US-TST-1", "Only one", "d", points=3)
+    _seed_durations(store, [("US-TST-1-1", 45)])
+
+    history = yaml.safe_load(render(store, "US-TST-1"))["duration_history"]
+
+    assert history["n"] == 1
+    assert "too thin to flag long tasks" in history["note"]
+
+
+@pytest.mark.parametrize("render", [estimate, scope])
+def test_an_empty_history_says_so_too(tmp_project, render):
+    """No activity log at all: empty bands, n of 0, and the same note."""
+    store = Store(tmp_project)
+    store.create_story("Story", "Desc")
+
+    history = yaml.safe_load(render(store, "US-TST-1"))["duration_history"]
+
+    assert history["by_points"] == {}
+    assert history["n"] == 0
+    assert "too thin" in history["note"]
+
+
+@pytest.mark.parametrize("render", [estimate, scope])
+def test_no_note_once_three_tasks_have_been_measured(three_pointers, render):
+    """At the threshold the note goes away — three samples is a history."""
+    history = yaml.safe_load(render(three_pointers, "US-TST-1"))["duration_history"]
+
+    assert history["n"] == 3
+    assert "note" not in history
+
+
+def test_estimate_reports_the_history_for_a_task_id_too(three_pointers):
+    """The block is the project's, not the item's, so a task ID gets it as well."""
+    data = yaml.safe_load(estimate(three_pointers, "US-TST-1-1"))
+
+    assert data["duration_history"]["n"] == 3

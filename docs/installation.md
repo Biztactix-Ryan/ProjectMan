@@ -86,7 +86,7 @@ projectman --help
 
 `pipx upgrade projectman` reinstalls from the source pipx recorded — for a git URL that
 means the published branch, **not** your working tree. A plain `pipx upgrade` never picks
-up local changes. The current release is 0.9.2; `CHANGELOG.md` records what changed in it.
+up local changes. The current release is 0.10.0; `CHANGELOG.md` records what changed in it.
 
 **Stale install symptoms:** the CLI or MCP server behaves like an older version than your
 checkout — a tool argument the code accepts is rejected as unexpected, a flag you can see
