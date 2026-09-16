@@ -78,6 +78,8 @@ def test_text_report_prints_every_section(runner, transcripts):
         "output tokens per call",
         "tool result bytes",
         "worker waits (minutes)",
+        "cache ttl (calls writing)",
+        "heartbeats",
         "full cache misses",
     ):
         assert label in result.output, f"{label!r} missing from:\n{result.output}"

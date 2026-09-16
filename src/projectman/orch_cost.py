@@ -24,6 +24,15 @@ The arithmetic that matters:
   cache expired and the whole prompt was re-sent.  The gap in minutes before
   it is the interesting part, because it is almost always a worker wait that
   outlived the one-hour cache TTL.
+* Which TTL a run was on is in ``usage.cache_creation``: the harness reports
+  every write as ``ephemeral_5m_input_tokens`` or ``ephemeral_1h_input_tokens``.
+  Claude Code drops the main conversation to the five-minute cache once a
+  subscription draws on usage credits, and on that cache every worker wait
+  over five minutes is a full miss — so the TTL mix is reported, not assumed.
+* A *heartbeat* is the orchestrator's own keep-alive: the ``/pm-orchestrate``
+  skill arms a session cron whose prompt starts ``Heartbeat <run-id>``, and
+  each firing is one cheap cached read that refreshes the TTL.  They are
+  counted so a run can show its waits were bridged rather than paid for.
 
 A transcript is somebody else's append-only output; nothing here may repair
 it or refuse it.  Malformed lines, records with no usage, unparseable
@@ -53,6 +62,14 @@ ACCEPT_TOOL_SUFFIXES = ("pm_accept", "pm_done_next")
 #: Marker the harness wraps a finished worker's hand-back in.  The first user
 #: record carrying it after a dispatch ends that dispatch's wait.
 TASK_NOTIFICATION = "<task-notification>"
+
+#: How the orchestrator's keep-alive prompt begins.  The skill's cron prompt is
+#: ``Heartbeat <run-id>: ...`` and every run id carries the ``orch-`` prefix,
+#: so a user record opening this way is a heartbeat firing, not a person.
+HEARTBEAT_MARKER = "Heartbeat orch-"
+
+#: ``usage.cache_creation`` keys, by the TTL they report a write under.
+TTL_KEYS = {"5m": "ephemeral_5m_input_tokens", "1h": "ephemeral_1h_input_tokens"}
 
 #: Fraction of the context above which fresh (uncached) tokens mean the
 #: prefix cache was gone, not merely appended to.
@@ -242,6 +259,12 @@ def analyze(path: Path | str, run_id: Optional[str] = None) -> dict[str, Any]:
         ``[{at, gap_min, tokens}]`` — every full cache miss, with the idle
         minutes before it (``None`` for the first call, which has no
         predecessor to be idle from).
+    ``ttl``
+        ``{"5m": n, "1h": n}`` — calls that wrote a cache entry under each
+        TTL, from ``usage.cache_creation``.  A run on the five-minute cache
+        shows up here before it shows up as a wall of misses.
+    ``heartbeats``
+        User records that are the skill's keep-alive prompt firing.
     ``dispatches``/``accepts``/``calls``
         The raw counts the ratios are built from.
     """
@@ -254,6 +277,8 @@ def analyze(path: Path | str, run_id: Optional[str] = None) -> dict[str, Any]:
     pending_launches: list[datetime] = []
     waits: list[float] = []
     misses: list[dict[str, Any]] = []
+    ttl = {"5m": 0, "1h": 0}
+    heartbeats = 0
 
     base: Optional[int] = None
     peak = 0
@@ -305,6 +330,11 @@ def analyze(path: Path | str, run_id: Optional[str] = None) -> dict[str, Any]:
                 if base is None:
                     base = context
                 peak = max(peak, context)
+                breakdown = usage.get("cache_creation")
+                if isinstance(breakdown, dict):
+                    for label, key in TTL_KEYS.items():
+                        if _int(breakdown.get(key)) > 0:
+                            ttl[label] += 1
                 fresh = context > 0 and (inputs + creation) > context * MISS_FRACTION
             if counted:
                 if fresh:
@@ -347,6 +377,11 @@ def analyze(path: Path | str, run_id: Optional[str] = None) -> dict[str, Any]:
                 if size:
                     tool_bytes[name] = tool_bytes.get(name, 0) + size
 
+        if role == "user" and any(
+            _text_of(block).lstrip().startswith(HEARTBEAT_MARKER) for block in blocks
+        ):
+            heartbeats += 1
+
         if role == "user" and pending_launches and timestamp is not None:
             if any(TASK_NOTIFICATION in _text_of(block) for block in blocks):
                 launched = pending_launches.pop(0)
@@ -375,6 +410,8 @@ def analyze(path: Path | str, run_id: Optional[str] = None) -> dict[str, Any]:
             "n": len(sorted_waits),
         },
         "misses": misses,
+        "ttl": ttl,
+        "heartbeats": heartbeats,
         "dispatches": dispatches,
         "accepts": accepts,
         "calls": calls,

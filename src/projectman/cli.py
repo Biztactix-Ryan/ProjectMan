@@ -855,6 +855,14 @@ def orch_cost(run_id, transcripts, as_json):
             f"(n={waits['n']})"
         )
 
+        ttl = report["ttl"]
+        click.echo("")
+        click.echo(
+            "  cache ttl (calls writing)  "
+            f"5m {ttl['5m']}  1h {ttl['1h']}  "
+            f"heartbeats {report['heartbeats']}"
+        )
+
         click.echo("")
         click.echo("  full cache misses")
         if report["misses"]:

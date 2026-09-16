@@ -24,13 +24,34 @@ def _at(minute):
     return (BASE + timedelta(minutes=minute)).isoformat().replace("+00:00", "Z")
 
 
-def _usage(*, inputs=10, creation=0, read=0, output=100):
-    return {
+def _usage(*, inputs=10, creation=0, read=0, output=100, ttl=None):
+    """A usage block; ``ttl`` ("5m" or "1h") adds the harness's per-TTL
+    ``cache_creation`` breakdown for the ``creation`` tokens."""
+    usage = {
         "input_tokens": inputs,
         "cache_creation_input_tokens": creation,
         "cache_read_input_tokens": read,
         "output_tokens": output,
     }
+    if ttl is not None:
+        usage["cache_creation"] = {
+            "ephemeral_5m_input_tokens": creation if ttl == "5m" else 0,
+            "ephemeral_1h_input_tokens": creation if ttl == "1h" else 0,
+        }
+    return usage
+
+
+def _heartbeat(minute, run=RUN):
+    """The skill's keep-alive cron prompt, as the transcript records it firing."""
+    return _user(
+        minute,
+        blocks=[
+            _text(
+                f"Heartbeat {run}: worker out → reply in five words, no tools; "
+                "no run in flight → CronDelete this job"
+            )
+        ],
+    )
 
 
 def _assistant(minute, *, usage=None, blocks=(), message_id=None):
@@ -216,6 +237,37 @@ def test_full_cache_miss_records_the_gap_before_it(tmp_path):
     assert second["tokens"] == 1820
 
 
+def test_ttl_mix_counts_calls_by_the_cache_they_wrote_to(tmp_path):
+    """One call per TTL it wrote under; a call that wrote nothing counts in neither."""
+    path = _transcript(
+        tmp_path,
+        [
+            _assistant(0, usage=_usage(creation=500, ttl="1h")),
+            _assistant(1, usage=_usage(creation=500, ttl="1h")),
+            _assistant(2, usage=_usage(creation=500, ttl="5m")),
+            _assistant(3, usage=_usage(creation=0, read=1500, ttl="1h")),
+            _assistant(4, usage=_usage(creation=500)),  # no breakdown at all
+        ],
+    )
+    assert analyze(path)["ttl"] == {"5m": 1, "1h": 2}
+
+
+def test_heartbeats_are_the_keep_alive_prompt_firing(tmp_path):
+    """Counted by the prompt's opening, so a person mentioning a heartbeat is not one."""
+    path = _transcript(
+        tmp_path,
+        [
+            _assistant(0),
+            _heartbeat(30),
+            _assistant(31),
+            _user(40, blocks=[_text("was that a Heartbeat orch- firing?")]),
+            _heartbeat(60),
+            _assistant(61),
+        ],
+    )
+    assert analyze(path)["heartbeats"] == 2
+
+
 def test_malformed_lines_and_usage_free_records_are_skipped(tmp_path):
     """A transcript is history: bad lines are stepped over, never raised on."""
     path = tmp_path / "session.jsonl"
@@ -303,13 +355,18 @@ def test_find_transcripts_sorts_newest_first(tmp_path):
 #   min  2   call 3   Agent launch (t2), context 22,000
 #   min  3   call 4   pm_grab + pm_get launched, context 24,000
 #   min  4            their results: 512 and 256 bytes
+#   min  5            the heartbeat cron fires (idle, both workers out)
+#   min  6   call 5   its few-word reply, a five-minute-TTL write, context 25,000
 #   min  9            <task-notification> answers t1     -> 8 min wait
-#   min 10   call 5   context 26,000 (the peak before the miss)
+#   min 10   call 6   context 26,000 (the peak before the miss)
 #   min 72            <task-notification> answers t2     -> 70 min wait
-#   min 73   call 6   full cache miss after a 63 min gap; pm_accept (t5)
+#   min 73   call 7   full cache miss after a 63 min gap; pm_accept (t5)
 #   min 74            pm_accept's result: 128 bytes
+#
+# Calls 2 and 7 write one-hour entries, call 5 a five-minute one, so the TTL
+# mix is {5m: 1, 1h: 2}; the heartbeat at minute 5 is the one firing.
 
-BASELINE_CALLS = 6
+BASELINE_CALLS = 7
 BASELINE_BASE = 20_000
 BASELINE_PEAK = 30_000
 BASELINE_GROWTH = BASELINE_PEAK - BASELINE_BASE
@@ -334,19 +391,19 @@ def baseline_transcript(tmp_path):
             _assistant(
                 1,
                 message_id="msg_dispatch",
-                usage=_usage(inputs=10, creation=490, read=19_500),
+                usage=_usage(inputs=10, creation=490, read=19_500, ttl="1h"),
                 blocks=[_text("dispatching")],
             ),
             _assistant(
                 1,
                 message_id="msg_dispatch",
-                usage=_usage(inputs=10, creation=490, read=19_500),
+                usage=_usage(inputs=10, creation=490, read=19_500, ttl="1h"),
                 blocks=[dispatch],
             ),
             _assistant(
                 1,
                 message_id="msg_dispatch",
-                usage=_usage(inputs=10, creation=490, read=19_500),
+                usage=_usage(inputs=10, creation=490, read=19_500, ttl="1h"),
                 blocks=[dispatch],
             ),
             _assistant(
@@ -368,6 +425,13 @@ def baseline_transcript(tmp_path):
                 4,
                 blocks=[_tool_result("t3", "g" * 512), _tool_result("t4", "e" * 256)],
             ),
+            _heartbeat(5),
+            _assistant(
+                6,
+                message_id="msg_beat",
+                usage=_usage(inputs=10, creation=990, read=24_000, ttl="5m"),
+                blocks=[_text("Still here, workers out.")],
+            ),
             _user(9, blocks=[notification]),
             _assistant(
                 10,
@@ -381,7 +445,7 @@ def baseline_transcript(tmp_path):
             _assistant(
                 73,
                 message_id="msg_miss",
-                usage=_usage(inputs=100, creation=24_900, read=5_000),
+                usage=_usage(inputs=100, creation=24_900, read=5_000, ttl="1h"),
                 blocks=[
                     _tool_use("t5", "mcp__projectman__pm_accept", id="US-PM-52-7"),
                 ],
@@ -395,7 +459,7 @@ def test_the_reference_transcript_reports_every_number(baseline_transcript):
     """One analyze() call over the whole fixture, checked end to end."""
     report = analyze(baseline_transcript, RUN)
 
-    # Dedupe: eight assistant records, six distinct message ids.
+    # Dedupe: nine assistant records, seven distinct message ids.
     assert report["calls"] == BASELINE_CALLS
     assert report["dispatches"] == 2
     assert report["accepts"] == 1
@@ -405,8 +469,11 @@ def test_the_reference_transcript_reports_every_number(baseline_transcript):
     assert report["growth"] == BASELINE_GROWTH
     assert report["per_dispatch"] == 5000.0
     assert report["per_task"] == 10000.0
-    assert report["calls_per_dispatch"] == 3.0
+    assert report["calls_per_dispatch"] == 3.5
     assert report["output_per_call"] == 100.0
+
+    assert report["ttl"] == {"5m": 1, "1h": 2}
+    assert report["heartbeats"] == 1
 
     assert report["waits"] == {"p50": 8.0, "p90": 70.0, "max": 70.0, "n": 2}
 
@@ -436,7 +503,10 @@ def test_the_cli_prints_and_serialises_the_reference_report(baseline_transcript)
 
     text = runner.invoke(cli, ["orch-cost", RUN, "--transcripts", root])
     assert text.exit_code == 0, text.output
-    for headline in ("20,000", "30,000", "10,000", "5,000.0", "10,000.0", "63.0"):
+    for headline in (
+        "20,000", "30,000", "10,000", "5,000.0", "10,000.0", "63.0",
+        "5m 1  1h 2  heartbeats 1",
+    ):
         assert headline in text.output, f"{headline!r} missing:\n{text.output}"
 
     payload = runner.invoke(

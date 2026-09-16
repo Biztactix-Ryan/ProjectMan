@@ -5,6 +5,40 @@ All notable changes to ProjectMan are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-09-17
+
+US-PM-54 (EPIC-PM-7). Measured on 2026-09-17, every full prompt-cache miss on
+a long orchestrated run sat after a worker wait longer than the one-hour cache
+TTL, and together they were 19-45% of the run's input spend. This release keeps
+the cache warm through those waits and makes the cache TTL a run was on visible.
+
+### Added
+
+- **`/pm-orchestrate` heartbeat (US-PM-54).** Phase 0 arms one session-only
+  cron job that fires every 30 minutes while the REPL is idle and has the
+  orchestrator answer in a few words with no tools. Each firing is a cheap
+  cached read that refreshes the one-hour prompt-cache TTL, so a worker wait
+  longer than an hour no longer re-sends the whole context at the 2x write
+  price. Measured on the three largest Kura runs, those misses were $6-16 a
+  run, 19-45% of input spend; the beats cost about $1. The prompt also tells
+  the orchestrator to delete the job when no run is in flight, and Phase 4
+  deletes it on the normal path. Rationale, the regime comparison against a
+  five-minute-cache ping-pong, and the `promptCacheTtl` setting that pins the
+  one-hour cache through usage-credit overage: *Heartbeat* in
+  `docs/reference/orchestrate-design.md`.
+- **`projectman orch-cost` reports the cache TTL mix and heartbeats.** `ttl`
+  counts the calls that wrote `ephemeral_5m` versus `ephemeral_1h` entries
+  (from `usage.cache_creation`), and `heartbeats` counts the keep-alive
+  firings, in both the text report and `--json`. A run that silently dropped
+  to the five-minute cache now shows up in its metrics.
+
+### Changed
+
+- The rendered `pm-orchestrate` skill size cap is 10,200 characters (was
+  10,000): the lane clauses the tests pin left no slack for the heartbeat's
+  `CronCreate`/`CronDelete` pair. Four unpinned parentheticals were trimmed;
+  no rule changed.
+
 ## [0.10.0] - 2026-09-09
 
 Changes landed 2026-09-09 in Sprints 15 and 16 (EPIC-PM-7, orchestrator

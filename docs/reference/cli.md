@@ -256,6 +256,8 @@ command says so on stderr and exits non-zero.
 | `calls per dispatch` / `output tokens per call` | How much model traffic a single worker launch costs |
 | `tool result bytes` | Bytes of `tool_result` content by tool name, largest first — which tool is actually filling the window |
 | `worker waits (minutes)` | p50, p90, max and `n` from an `Agent` launch to the task notification that answered it |
+| `cache ttl (calls writing)` | Calls that wrote a cache entry under the five-minute and the one-hour TTL, from `usage.cache_creation` — a run that silently dropped to the five-minute cache (usage-credit overage, or an API key) shows here before it shows as a wall of misses |
+| `heartbeats` | Firings of the `/pm-orchestrate` keep-alive cron (user records opening `Heartbeat <run-id>`), each a cheap cached read that refreshed the TTL during a worker wait |
 | `full cache misses` | Every call whose fresh tokens (`cache_creation + input`) exceeded half the context — the prefix cache was gone and the whole prompt was re-sent — with the idle gap in minutes before it |
 
 **An example of what to expect** (measured 2026-09-09 across several real
@@ -266,6 +268,7 @@ thresholds the command enforces):
 - Calls per dispatch rose from 4 to about 7 as validation steps were added; output per call stayed flat at roughly 1.1k.
 - Peak equals the final context in every session — nothing ever leaves the window, so cost per call grows linearly and total cost roughly quadratically with dispatches.
 - Every full cache miss lined up with a **worker wait longer than the one-hour cache TTL** (three per long run, each re-sending 200-450k tokens). Worker waits were p50 8-11 min / max 25 on ProjectMan, p50 21-36 / p90 60-105 / max 165 elsewhere.
+- Those misses were 19-45% of a long run's input spend at API rates (measured 2026-09-17, three Kura sessions, every write a one-hour entry). The `/pm-orchestrate` heartbeat exists to make that line zero: expect `heartbeats` to be about two per idle hour and `full cache misses` to be empty. A non-zero `5m` count means the run was on the five-minute cache — see *Heartbeat* in [`orchestrate-design.md`](orchestrate-design.md).
 
 A transcript is somebody else's append-only output, so nothing here repairs or
 refuses it: malformed lines, records without usage, unparseable timestamps and

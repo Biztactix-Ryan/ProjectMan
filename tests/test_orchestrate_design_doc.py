@@ -54,7 +54,7 @@ PRE_REWRITE_COMMIT = "1061084"
 
 #: every ``## `` section the doc carries, in document order — the eleven
 #: US-PM-25-5 wrote plus *The validator subagent* (US-PM-48-7) and *Lanes*
-#: (US-PM-53-9).  The list is the doc's table of contents, so a section quietly
+#: (US-PM-53-9) and *Heartbeat* (US-PM-54-6).  The list is the doc's table of contents, so a section quietly
 #: dropped in a later edit fails here rather than being noticed by the next
 #: reader who cannot find it.
 SECTIONS = [
@@ -67,6 +67,10 @@ SECTIONS = [
     # is a refinement of the isolation the section above establishes, and it is
     # read in that order — what a lane may not share, then what a run id is.
     "Lanes",
+    # US-PM-54-6 put *Heartbeat* after *Lanes*: both are about what the
+    # orchestrator does with a worker wait — one fills it, the other keeps
+    # the prompt cache alive across it.
+    "Heartbeat",
     "Run identity",
     "Pre-flight and claim classification",
     "Dispatch and the worker prompt",

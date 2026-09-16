@@ -153,6 +153,63 @@ filter, and no other-lane line in the validator prompt. Lanes are opt-in because
 lane is paid for in the orchestrator's context and in merge conflicts, and a sprint short
 enough not to notice the waits should not pay it.
 
+## Heartbeat
+
+The orchestrator spends most of a run waiting: a worker is dispatched in the background, the
+turn ends, and nothing is sent to the API until the task notification lands. Prompt caching
+makes that wait free only while the cache entry lives. Claude Code gives the main
+conversation a one-hour entry on a subscription within plan, and the first call after a
+longer gap re-sends the whole prompt as a cache *write* at twice the input price. Measured on
+2026-09-17 across the three largest runs on a larger project (Claude Fable 5.1, 535-603k
+peak context, every write a one-hour entry): one to three full misses per run, each after a
+worker wait of 60-112 minutes, each re-writing 194-469k tokens — $6 to $16 a run at API rates,
+19-45% of its input spend. Every miss sat right after a wait; none had another cause.
+
+**The fix is a cached read before the entry expires.** A read refreshes the entry's timer on
+either TTL, and a read of the whole prefix costs about 1/40th of re-writing it. The prior art
+is [cachebeat](https://github.com/ARahim3/cachebeat), a Claude Code skill that polls the
+session transcript for idle time and echoes a line that wakes the model into a few-word reply.
+The orchestrator does not need the polling: it knows exactly when it goes idle, so Phase 0
+arms one session-only cron job (`CronCreate`, every 30 minutes) whose prompt says to answer in
+a few words with no tools while a worker is out. Cron prompts fire only while the REPL is
+idle, never mid-turn, which is precisely the worker-wait window, and the job dies with the
+session. The same prompt tells the orchestrator to `CronDelete` the job when no run is in
+flight, so a run that dies before Phase 4 still stops beating; Phase 4 deletes it on the
+normal path.
+
+**Why 30 minutes, and why the one-hour cache.** The alternative is the five-minute cache — its
+writes cost 1.25x rather than 2x — bridged by a ping every four minutes. Replaying the real call
+timelines of those runs under one ideal cache model (read what the previous call had, write
+the increment, re-write everything after a gap longer than the TTL; the model reproduces the
+observed spend within 5%):
+
+| Regime | Per run (three Kura sessions) |
+|---|---|
+| One-hour cache as run today | $45-56 |
+| One-hour cache, heartbeat every 30 minutes | $32-39 |
+| Five-minute cache, ping every 4 minutes | $49-59 (175-200 pings) |
+| Five-minute cache, no pings | $180-240 (36-47 misses) |
+
+The runs are bursty — 30-40 gaps of 5-30 minutes and 8-14 idle hours each — so the one-hour
+entry covers the short gaps for a write premium of about $10 a run, while bridging them on the
+five-minute cache costs 15 pings an hour, $12-24 a run. Ping-pong only wins under roughly four
+idle hours per run. Thirty minutes is the shortest cron cadence that stays well inside the
+hour with the scheduler's jitter; cron cannot express "every 50", and hourly plus jitter would
+land past the TTL. Two beats an idle hour at 600k context is about $0.30. A beat is also not
+free in context: its reply is appended to the prefix every future call re-reads, which is why
+the prompt demands a few words and no tools.
+
+**The five-minute cache is the real risk, not the alternative.** Claude Code drops the main
+conversation to the five-minute TTL once a subscription draws on usage credits, and an API key
+gets it always. On that cache every worker wait over five minutes is a full miss — the bottom
+row of the table, four times the cost of the same run. The user-level setting
+`promptCacheTtl: "1h"` pins the one-hour cache through overage; subagents stay on five
+minutes, since a worker runs tools continuously and only pays the cheaper write. Because the
+drop is silent, `projectman orch-cost` reports the TTL mix of a run — calls that wrote
+`ephemeral_5m` versus `ephemeral_1h` entries, straight from `usage.cache_creation` — and the
+number of heartbeat firings, so a run that ran cold shows up in its metrics rather than on the
+bill. See *Sizes and numbers* for the cadence, and [`cli.md`](cli.md) for the report.
+
 ## Run identity
 
 One opaque id per run, `orch-<YYYY-MM-DD>-<4 random hex>`, minted before pre-flight and
@@ -567,6 +624,7 @@ The figures the skill's instructions depend on, with their sources.
 | **7–9k / 16–28k tokens** | Per-task orchestrator context growth, measured 2026-09-09 in this project and in a larger one | The measurement behind *The validator subagent*: validation output was the largest visible bucket, so it was moved into a context that is discarded |
 | **~1,500 chars** | The cap on the worker's report back to the orchestrator | Reports averaged 5.6 KB unbounded, mostly output the validator re-derives from the tree; the fixed five-part shape transcribes into `evidence` |
 | **~1,500 chars** | The cap on the validator's JSON report | Bounded so the report cannot re-import the output the split removed; the object doubles as the `evidence` argument |
+| **every 30 minutes** | Heartbeat cadence (`CronCreate`, session-only) | The shortest cron cadence that stays well inside the one-hour cache TTL with scheduler jitter; each beat is a cached read at about 1/40th of the re-write a miss costs. See *Heartbeat* |
 | **2 hours** | `stale_claim_hours` default (`pm_active(stale_after=…)` overrides per call) | The point past which an `orch-` claim is treated as recoverable rather than live |
 | **`offset` + `has_more`** | Activity-log paging in resume and the final report | The report must hold *every* event in the run's slice; a single unpaged page is a silently truncated report |
 | **40 / 10 / 20 / 160** | `evidence` caps: files, tests, dod items, chars per string | Set and justified in [`evidence-contract.md`](evidence-contract.md); clamped rather than rejected |
