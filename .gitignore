@@ -1,0 +1,10 @@
+# Derived index files — regenerated from the epic, story and task files
+# by pm_reindex, pm_commit, `projectman reindex` and indexer.ensure_fresh
+# on the read path, so git never needs to carry them (US-PM-29).
+# The patterns are unanchored: a hub's subproject stores under projects/
+# are covered by this one file.
+index.yaml
+INDEX.md
+INDEX-EPICS.md
+INDEX-STORIES.md
+INDEX-TASKS.md

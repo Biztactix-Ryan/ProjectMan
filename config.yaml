@@ -1,0 +1,15 @@
+activity_log_max_bytes: null
+activity_log_max_days: null
+auto_commit: false
+deploy_branch: null
+description: Git-native project management with MCP server for Claude Code
+name: ProjectMan
+next_epic_id: 8
+next_sprint_id: 17
+next_story_id: 55
+prefix: PM
+repo: ''
+stale_claim_hours: 2.0
+tools:
+  maintenance: false
+  web: false
