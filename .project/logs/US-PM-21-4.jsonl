@@ -1,1 +1,0 @@
-{"timestamp":"2026-09-01T21:32:58.176290Z","outcome":"success","status":"done","note":"Verified by TestHubNoSubmoduleNoise against a hub with a real submodule: after migration and PM commits, main's tree has exactly one gitlink (projects/api), the submodule pointer is unchanged, the parent working tree is clean and submodule status is in sync.","actor":"Farhan Rich"}
