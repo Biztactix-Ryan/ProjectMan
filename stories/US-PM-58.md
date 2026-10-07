@@ -13,7 +13,7 @@ epic_id: EPIC-PM-8
 id: US-PM-58
 points: 2
 priority: must
-status: backlog
+status: ready
 tags:
 - plugin
 - skills

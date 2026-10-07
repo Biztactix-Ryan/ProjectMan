@@ -17,7 +17,7 @@ epic_id: EPIC-PM-8
 id: US-PM-56
 points: 5
 priority: must
-status: backlog
+status: ready
 tags:
 - plugin
 - distribution

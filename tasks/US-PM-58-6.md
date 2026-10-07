@@ -9,7 +9,7 @@ depends_on:
 - US-PM-57-6
 id: US-PM-58-6
 points: 2
-status: todo
+status: review
 story_id: US-PM-58
 tags: []
 title: Run a small /pm-orchestrate sprint on the plugin install

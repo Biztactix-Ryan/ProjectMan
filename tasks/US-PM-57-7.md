@@ -1,6 +1,6 @@
 ---
 archived: false
-assignee: null
+assignee: claude
 claimed_at: null
 claimed_by_run: null
 created: '2026-10-07'
@@ -9,7 +9,7 @@ depends_on:
 - US-PM-56-9
 id: US-PM-57-7
 points: 2
-status: todo
+status: done
 story_id: US-PM-57
 tags: []
 title: Remove per-project pm-context hook copies, warn about the global one

@@ -1,6 +1,6 @@
 ---
 archived: false
-assignee: null
+assignee: claude
 claimed_at: null
 claimed_by_run: null
 created: '2026-10-07'
@@ -9,7 +9,7 @@ depends_on:
 - US-PM-59-8
 id: US-PM-59-4
 points: 1
-status: todo
+status: done
 story_id: US-PM-59
 tags: []
 title: 'Test: Guards apply only to subagent/worker calls or when explicitly enabled,

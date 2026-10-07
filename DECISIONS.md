@@ -4,6 +4,142 @@ Architectural decision record for ProjectMan. Newest first. Each entry: context,
 
 ---
 
+<a id="adr-006"></a>
+
+## ADR-006: The plugin is the repo root and launches its own server with `uv run` (2026-10-07)
+
+**Status:** Accepted (2026-10-07) — the outcome of the US-PM-55 spike (run
+orch-2026-10-07-fb10). Findings are from US-PM-55-5 and the measurements from US-PM-55-6;
+both are in their tasks' run logs. US-PM-56-7 builds the plugin on this record. Nothing here
+changes [ADR-001](#adr-001) (the store layout) or [ADR-004](#adr-004) (single-project scope).
+
+**Context.** Today the MCP server is a pipx install (`projectman serve`), and the skills and
+hooks come from the repo through `projectman refresh-skills`. These are two install steps on
+two schedules, and they drift: v0.11.0 was tagged on 2026-09-17 while the pipx install here
+was still 0.9.2. The spike asked whether a Claude Code plugin can carry the server itself, so
+that installing or updating the plugin also installs or updates the server. Measured with
+Claude Code 2.1.292, uv 0.11.32 and system CPython 3.12.3 on a fast wired link:
+
+- **The task's literal commands fail.** `uvx --from ${CLAUDE_PLUGIN_ROOT} projectman[all] serve`
+  fails because the extra belongs on the `--from` spec. `uv run --project ${CLAUDE_PLUGIN_ROOT}
+  projectman serve` fails with "MCP extras not installed" because `uv run` syncs without
+  extras. Two forms work, and both list all 42 tools:
+  - (A) `uvx --from ${CLAUDE_PLUGIN_ROOT}[all] projectman serve`
+  - (B) `uv run --project ${CLAUDE_PLUGIN_ROOT} --extra all projectman serve`
+- **A plugin in a subfolder carries no Python source.** For a git-installed plugin at
+  `./subrepo/plugin` (and for a `git-subdir` source), the plugin cache holds only
+  `.claude-plugin/` and `.mcp.json` (20K). There is no `src/`, no `pyproject.toml` and no
+  parent dir, so the server failed. A plugin at the repo root (`"source": "./"`, tested as
+  `pmself`) or a `url` source gets the whole tracked tree (about 5.2M, no `uv.lock`) and
+  connects. A local directory marketplace hides this, because it runs the plugin from the
+  source dir, so `${CLAUDE_PLUGIN_ROOT}/..` appears to work there.
+- **Warm start matches pipx** (spawn to `tools/list` reply, median of 7): pipx 0.656 s,
+  (A) 0.684 s, (B) 0.666 s.
+- **Cold start is 3.58 s for (A) and 3.87 s for (B)**, with an empty uv cache and about 265 MB
+  of `[all]` wheels downloaded. That is a best case on a fast link. A plugin update with a
+  warm cache takes 1.89-1.97 s for (A) and 1.81-1.83 s for (B).
+- **The first session after a cold install has no projectman tools.** Claude Code starts
+  plugin MCP servers fully async and `claude -p` does not wait. A cold build misses the init
+  event (status `pending`) and the tools are absent for that session. The next session
+  connects. The per-server connect timeout is 30 s.
+- **With no uv on PATH the server fails silently.** Both forms hit ENOENT at once. Claude
+  Code marks the server `failed`, the session runs normally, and the only trace is in the
+  debug log. There is no fallback and no prompt.
+- **Offline after a first install, only (B) works.** Once uv's cached index metadata is older
+  than about 10 minutes, (A) re-resolves against PyPI on every start. With no network it
+  fails in about 5.5 s, and on a hanging network (captive portal, dead wifi) after 48 s,
+  which is past Claude Code's 30 s timeout. (B), with its `.venv` and `uv.lock` already
+  present, started in 0.66 s in every offline case, as pipx does. Only `UV_OFFLINE=1` rescues
+  (A), and putting that in `.mcp.json` would break the cold install.
+- **Both forms need the network on a plugin update and on a cold install.** A new plugin
+  version is a new root, so (A) rebuilds the package and (B) rebuilds the `.venv`. With stale
+  metadata and no network both failed (4.4-5.3 s, or about 47 s on a hanging network). A cold
+  install offline fails for both, and (B) leaves an empty `.venv` behind.
+- **(B) writes into the plugin cache dir.** It creates a 243 MB `.venv` and a `uv.lock` in
+  `${CLAUDE_PLUGIN_ROOT}`. `uv.lock` is gitignored in the repo, so an installed plugin
+  arrives without one and resolves fresh. (A) writes only to the uv cache.
+
+**Decision.** The plugin carries and launches its own server. pipx stops being the install
+path.
+
+1. **The plugin root is the repo root.** `.claude-plugin/plugin.json` and
+   `.claude-plugin/marketplace.json` sit at the top of the repo, and the marketplace entry is
+   `"source": "./"`. A subfolder plugin is ruled out by the cache finding above. A `url` or
+   github source pointing at the same repo is equivalent and stays available to other
+   marketplaces.
+2. **The launch command is (B).** `.mcp.json` runs
+   `uv run --project ${CLAUDE_PLUGIN_ROOT} --extra all projectman serve`. It is the only form
+   that starts offline once installed, which is the property pipx gives today. On a working
+   network it starts within 10 ms of pipx.
+3. **`uv.lock` is committed.** It stops being gitignored, so every installed plugin resolves
+   the same versions that were tested, instead of whatever PyPI serves on the day of install.
+4. **The server version is the plugin version.** The server runs from the plugin's own
+   source, so there is no separate pin to keep in step. `plugin.json`'s `version` is set from
+   `pyproject.toml`'s at release time, and a test fails the build when the two differ.
+   Updating the plugin updates the server, and the 0.9.2-vs-0.11.0 kind of drift cannot
+   happen on this path.
+5. **A plugin SessionStart hook handles the two silent failures.**
+   - **uv check.** If `uv` is not on PATH, the hook prints one line saying the projectman
+     tools need uv and how to install it, then exits 0. The session still starts.
+   - **Warm-up.** When `${CLAUDE_PLUGIN_ROOT}/.venv` is missing (a cold install or a plugin
+     update), the hook runs `uv sync --project ${CLAUDE_PLUGIN_ROOT} --extra all` and reports
+     the result: "server ready" or "server is building, tools appear next session". If the
+     sync fails, for example offline, it says so instead of leaving a quiet `failed`. When the
+     `.venv` exists the hook does nothing, so a warm start costs nothing extra.
+
+**Alternatives rejected.**
+
+- *(A) `uvx --from ${CLAUDE_PLUGIN_ROOT}[all]`.* Rejected on the offline result. It is cleaner
+  (nothing written into the plugin root, no lockfile), but it fails offline as soon as the
+  index metadata is 10 minutes old, and on a hanging network it fails after 48 s, past the
+  connect timeout. A laptop on a train would lose its backlog tools for no reason, even with
+  every wheel already cached.
+- *Keep pipx and have the plugin pin to a compatible server.* The plugin would ship only
+  skills and hooks, and a SessionStart hook would compare `projectman --version` with the
+  plugin's and warn on a mismatch. Rejected: it keeps the two install steps and only detects
+  drift instead of removing it. A warning that asks for `pipx install --force` and
+  `refresh-skills` is the current manual recipe, restated. pipx's real advantages (no uv
+  needed at runtime, offline starts) are matched by (B) plus the uv check.
+- *A plugin in a subfolder (`plugin/`) launching from `${CLAUDE_PLUGIN_ROOT}/..`.* Rejected:
+  a git-installed plugin's cache has no parent dir and no source, so the server cannot start.
+  It only looks like it works from a local directory marketplace.
+- *Move or vendor the Python package into a plugin subfolder.* Rejected: it moves `src/` and
+  `pyproject.toml` (packaging, tests, CI, the PyPI layout) to satisfy the plugin cache, when a
+  root plugin needs no move at all.
+- *Put `UV_OFFLINE=1` in `.mcp.json` to rescue (A).* Rejected: a cold install would then fail
+  every time, because there is nothing in the cache to run offline.
+
+**Consequences and known edges.**
+
+- **uv is a hard prerequisite.** pipx needed uv only to install, not at runtime. The plugin
+  needs it on every start. The SessionStart uv check turns a silent `failed` into a stated
+  requirement, but it cannot install uv. The install docs must say so first.
+- **The first session after an install or update may still lack the tools.** The warm-up
+  sync and the async server start can run at the same time, and a cold build (3.6-3.9 s
+  measured, longer on a slower link) can outlast the init event either way. The hook's
+  message makes the gap visible ("tools appear next session"), but it does not close it.
+  Whether the hook can finish before the server spawns, and whether uv's `.venv` lock
+  serialises the two processes cleanly, is for US-PM-56-7 to verify.
+- **Plugin updates need the network.** Each new plugin version is a new root with no
+  `.venv`, so the first start after an update must reach PyPI unless the metadata is fresh.
+  A committed `uv.lock` should let uv skip resolution on update, but that was not measured
+  offline in the spike. Offline update remains a known failure, and the hook reports it.
+- **The plugin cache grows by about 243 MB per installed version.** The `.venv` lives in the
+  version's cache dir, beside the wheels in the uv cache (about 265 MB, shared across
+  versions). Old versions' dirs, and their `.venv`, go when Claude Code prunes them.
+- **The whole tracked tree ships as the plugin**: tests, docs, `.github` and `.claude`
+  included, about 5.2M. That is acceptable at this size. Trimming it is a packaging question
+  (a `url` source on a release branch, say), not a reason for a subfolder plugin.
+- **Tool names change.** Plugin servers are namespaced `mcp__plugin_<plugin>_<server>__*`,
+  not `mcp__projectman__*`. Skills, agents and allowlists that name tools need updating, and
+  a user with both the plugin and the old pipx `mcp__projectman__` server would see every
+  tool twice. The migration note removes the pipx MCP entry when the plugin is installed.
+- **pipx is not withdrawn.** The PyPI package and `projectman serve` stay for users who run
+  ProjectMan outside a Claude Code plugin, for the CLI, and for the web UI. pipx just stops
+  being the way Claude Code gets the server.
+
+---
+
 <a id="adr-005"></a>
 
 ## ADR-005: Each orchestrated task runs in its own worktree and commits on its own branch (2026-09-09)

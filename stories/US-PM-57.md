@@ -15,7 +15,7 @@ epic_id: EPIC-PM-8
 id: US-PM-57
 points: 3
 priority: must
-status: backlog
+status: done
 tags:
 - plugin
 - migration

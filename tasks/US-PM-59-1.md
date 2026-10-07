@@ -1,6 +1,6 @@
 ---
 archived: false
-assignee: null
+assignee: claude
 claimed_at: null
 claimed_by_run: null
 created: '2026-10-07'
@@ -8,7 +8,7 @@ depends_on:
 - US-PM-59-6
 id: US-PM-59-1
 points: 1
-status: todo
+status: done
 story_id: US-PM-59
 tags: []
 title: 'Test: The plugin carries a hooks module that `claude plugin validate` and

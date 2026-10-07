@@ -1,6 +1,6 @@
 ---
 archived: false
-assignee: null
+assignee: claude
 claimed_at: null
 claimed_by_run: null
 created: '2026-10-07'
@@ -8,7 +8,7 @@ depends_on:
 - US-PM-55-7
 id: US-PM-55-4
 points: 1
-status: todo
+status: done
 story_id: US-PM-55
 tags: []
 title: 'Test: An ADR records the chosen launch command, or the reason pipx stays and

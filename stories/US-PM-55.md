@@ -13,7 +13,7 @@ epic_id: EPIC-PM-8
 id: US-PM-55
 points: 3
 priority: must
-status: backlog
+status: done
 tags:
 - plugin
 - spike
