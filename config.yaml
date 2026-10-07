@@ -5,7 +5,7 @@ deploy_branch: null
 description: Git-native project management with MCP server for Claude Code
 name: ProjectMan
 next_epic_id: 9
-next_sprint_id: 17
+next_sprint_id: 18
 next_story_id: 63
 prefix: PM
 repo: ''

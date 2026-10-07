@@ -1,8 +1,8 @@
 # Project Audit Report
 
-digest: 803358af722338fe
+digest: 2f7d165b67357d31
 
-**Errors:** 0 | **Warnings:** 0 | **Info:** 100
+**Errors:** 0 | **Warnings:** 0 | **Info:** 104
 
 - [INFO] Story US-PM-1 has 2pts but tasks sum to 5pts
 - [INFO] Story US-PM-10 has 5pts but tasks sum to 11pts
@@ -52,6 +52,7 @@ digest: 803358af722338fe
 - [INFO] Story US-PM-51 has 8pts but tasks sum to 18pts
 - [INFO] Story US-PM-52 has 3pts but tasks sum to 9pts
 - [INFO] Story US-PM-53 has 8pts but tasks sum to 16pts
+- [INFO] Story US-PM-54 has 5pts but tasks sum to 9pts
 - [INFO] Story US-PM-6 has 3pts but tasks sum to 11pts
 - [INFO] Story US-PM-7 has 8pts but tasks sum to 14pts
 - [INFO] Story US-PM-8 has 8pts but tasks sum to 14pts
@@ -104,3 +105,6 @@ digest: 803358af722338fe
 - [INFO] Story US-PRJ-7 has 8pts but tasks sum to 28pts
 - [INFO] Story US-PRJ-8 has 5pts but tasks sum to 21pts
 - [INFO] Story US-PM-22 has a thin description (13 chars)
+- [INFO] PROJECT.md hasn't been updated in 48 days
+- [INFO] INFRASTRUCTURE.md hasn't been updated in 48 days
+- [INFO] SECURITY.md hasn't been updated in 48 days

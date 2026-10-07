@@ -3,7 +3,7 @@ created: '2026-10-07'
 id: EPIC-PM-8
 points: null
 priority: must
-status: draft
+status: active
 tags:
 - claude-code
 - plugin
