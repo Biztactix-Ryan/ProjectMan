@@ -3,15 +3,15 @@ name: pm-plan
 description: Plan the next sprint — close out the previous one, size to velocity, pick and scope stories, set a goal, and activate. Use when the user says "plan the sprint", "what should we do next", or wants to organize upcoming work.
 ---
 
-# /pm-plan — Sprint Planning
+# /projectman:pm-plan — Sprint Planning
 
-A sprint is the unit of orchestrated work: `/pm-orchestrate` drives the *active* sprint, so planning well here is what makes autonomous execution work. Every sprint needs a goal, dates, a story list sized to velocity, and fully scoped stories.
+A sprint is the unit of orchestrated work: `/projectman:pm-orchestrate` drives the *active* sprint, so planning well here is what makes autonomous execution work. Every sprint needs a goal, dates, a story list sized to velocity, and fully scoped stories.
 
 ## Phase 1 — Close out the previous sprint
 
 1. `pm_list_sprints(status="active")`:
    - **Active sprint past its end date** → it must be closed before planning a new one. Show what completed vs. planned, then `pm_update_sprint(id, status="completed")`. Unfinished stories roll back to the backlog (note them — they're prime candidates for the new sprint).
-   - **Active sprint still in-date** → stop and ask: continue it (suggest `/pm-orchestrate`) or close it early?
+   - **Active sprint still in-date** → stop and ask: continue it (suggest `/projectman:pm-orchestrate`) or close it early?
    - **No active sprint** → proceed.
 2. Compute velocity from history: `pm_list_sprints(status="completed")` — average completed points over the last 2–3 sprints. No history → plan conservatively and say so.
 
@@ -40,7 +40,7 @@ A sprint is the unit of orchestrated work: `/pm-orchestrate` drives the *active*
    - An empty list means nothing is flagged (or the history is too thin to judge) — say so and move on.
 10. Set it active (`pm_update_sprint(id, status="active")`) unless the user wants to start later.
 11. Summarize: sprint ID, goal, stories with points vs. velocity, dependency order, and flagged risks (long-task risks, cross-sprint dependencies, unestimated leftovers).
-12. Suggest the natural next step: "Run it with `/pm-orchestrate`" or "grab the first task with `/pm-do <id>`".
+12. Suggest the natural next step: "Run it with `/projectman:pm-orchestrate`" or "grab the first task with `/projectman:pm-do <id>`".
 
 ## Cross-Story Dependency Planning
 

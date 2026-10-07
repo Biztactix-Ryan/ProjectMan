@@ -5,16 +5,16 @@ disable-model-invocation: true
 args: "<task-id> [--complete]"
 ---
 
-# /pm-do — Execute Task
+# /projectman:pm-do — Execute Task
 
 ## Flags
 
 - `--complete` — Autonomous mode for spawned agents: no human is watching. Mark the task `done` only when every DoD item is verified with evidence; otherwise `review` with a note. Then end the session without suggesting next actions.
-  - **Not for `/pm-orchestrate` workers.** Dispatched *without* `--complete`: the worker leaves the task `in-progress` and `pm_accept` records the verdict and closes the task and its story. A worker-set `done` makes `pm_accept` answer `already_done` and the evidence never lands.
+  - **Not for `/projectman:pm-orchestrate` workers.** Dispatched *without* `--complete`: the worker leaves the task `in-progress` and `pm_accept` records the verdict and closes the task and its story. A worker-set `done` makes `pm_accept` answer `already_done` and the evidence never lands.
 
 ## Worker rules (orchestrated runs)
 
-Your cwd may be a git worktree on branch `orch/<run>/<task-id>`. Never `git checkout`, `restore`, `stash`, `reset` or `clean`; never switch branches. Commit only when the dispatch prompt says so, and only code paths — never `.project`. The store is reached through the `pm_*` tools, never a `.project` directory.
+Your cwd may be a git worktree on branch `orch/<run>/<task-id>`. Never `git reset` or `clean`; never switch branches. Commit only when the dispatch prompt says so, and only code paths — never `.project`. The store is reached through the `pm_*` tools, never a `.project` directory.
 
 ## Phase 1: Claim & Context
 
@@ -41,7 +41,7 @@ Your cwd may be a git worktree on branch `orch/<run>/<task-id>`. Never `git chec
 9. Note downstream effects: tasks waiting on this one are now unblocked — name them.
 10. Report back under 1500 chars, no code or logs, in this order: files changed (paths only); tests as `command -> pass|fail (n passed)`; DoD met; DoD unmet; blockers.
     - **`--complete`**: end here, same shape plus the status — it is independently verified.
-    - **Default**: if `pm_done_next` returned a next task, offer to continue; else suggest `/pm board`.
+    - **Default**: if `pm_done_next` returned a next task, offer to continue; else suggest `/projectman:pm board`.
 
 ## Cross-Story Dependency Awareness
 

@@ -1,0 +1,34 @@
+{
+  "name": "projectman",
+  "version": "0.11.0",
+  "description": "Git-native project management for Claude Code: the pm skills, the pm agent and the projectman MCP server",
+  "author": {
+    "name": "Biztactix"
+  },
+  "homepage": "https://github.com/Biztactix-Ryan/ProjectMan",
+  "repository": "https://github.com/Biztactix-Ryan/ProjectMan",
+  "license": "MIT",
+  "types": "./types/index.d.ts",
+  "mcpServers": {
+    "projectman": {
+      "command": "uv",
+      "args": [
+        "run",
+        "--project",
+        "${CLAUDE_PLUGIN_ROOT}",
+        "--extra",
+        "all",
+        "projectman",
+        "serve"
+      ]
+    }
+  },
+  "userConfig": {
+    "guard_main_session": {
+      "type": "boolean",
+      "title": "Guard the main session",
+      "description": "Also apply ProjectMan's worker guards (no git checkout/restore/stash) to the main session, not only to subagents.",
+      "default": false
+    }
+  }
+}

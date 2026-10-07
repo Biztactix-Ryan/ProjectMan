@@ -774,7 +774,7 @@ def run_audit(
             findings.append({
                 "severity": "warning",
                 "check": "malformed-files",
-                "message": f"{malformed_count} file(s) quarantined in .project/malformed/ — run /pm-fix",
+                "message": f"{malformed_count} file(s) quarantined in .project/malformed/ — call pm_malformed to review and fix them one at a time",
                 "items": [f.name for f in sorted(malformed_dir.glob("*.md"))[:5]],
             })
 

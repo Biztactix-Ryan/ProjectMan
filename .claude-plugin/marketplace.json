@@ -1,0 +1,14 @@
+{
+  "name": "projectman",
+  "owner": {
+    "name": "Biztactix"
+  },
+  "description": "ProjectMan's own marketplace: installs the projectman plugin from this repo",
+  "plugins": [
+    {
+      "name": "projectman",
+      "source": "./",
+      "description": "Git-native project management for Claude Code: the pm skills, the pm agent and the projectman MCP server"
+    }
+  ]
+}

@@ -14,34 +14,38 @@ Managing a growing number of projects with Claude Code leads to documentation dr
 
 ## Quick Start
 
-```bash
-# 1. Install pipx if you don't have it
-sudo apt install pipx    # Debian/Ubuntu
-brew install pipx        # macOS
-pipx ensurepath          # Add to PATH (restart your shell after this)
+The Claude Code plugin is the supported install. It brings the pm skills, the pm agent,
+the projectman MCP server and a SessionStart status hook. It needs
+[uv](https://docs.astral.sh/uv/getting-started/installation/) on `PATH` and a Claude Code
+release with plugin support. No minimum version is recorded yet; the plugin was verified
+on Claude Code 2.1.292.
 
-# 2. Install from GitHub
-pipx install "projectman[all] @ git+https://github.com/Biztactix-Ryan/ProjectMan.git"
+```
+# 1. In Claude Code, add the marketplace and install the plugin
+/plugin marketplace add Biztactix-Ryan/ProjectMan
+/plugin install projectman@projectman
+/reload-plugins
 
-# 3. Initialize your project
-cd your-repo
-projectman init --name "My Project" --prefix MP
-#    On a clone whose PM store is already on the `projectman` branch, plain
-#    `projectman init` attaches that store instead of scaffolding a new one.
-
-# 4. Install Claude Code integration
-projectman setup-claude
-
-# 5. Restart Claude Code, then:
-#    /pm init            — describe your project (wizard)
-#    /pm create epic     — define strategic initiatives
-#    /pm create story    — add user stories
-#    /pm scope US-MP-1   — decompose into tasks
-#    /pm-do US-MP-1-1    — grab and execute a task
-#    /pm web start       — launch the web dashboard
+# 2. Then:
+#    /projectman:pm init           — describe your project (wizard)
+#    /projectman:pm create story   — add user stories
+#    /projectman:pm-do US-MP-1-1   — grab and execute a task
 ```
 
-Running from a checkout? Reinstall from your local path after every pull — [Upgrading](docs/installation.md#upgrading) covers how to spot a stale install and the `mcp<2` pin a stale environment breaks on.
+To create a store from a shell (`projectman init --name "My Project" --prefix MP`), or to
+run the web dashboard outside Claude Code, also install the CLI with pipx (see
+[Install Options](#install-options)). On a clone whose PM store is already on the
+`projectman` branch, plain `projectman init` attaches that store instead of scaffolding
+a new one.
+
+**Already installed with `projectman setup-claude`?** Install the plugin as above, then
+run `projectman migrate-to-plugin --dry-run` to preview and `projectman migrate-to-plugin`
+to remove the old agent, skill copies and MCP entries, so the plugin takes over. Restart
+Claude Code afterwards. `setup-claude` and `refresh-skills` are deprecated: they now only
+print these steps.
+
+Full steps and verification: [Install as a Claude Code plugin](docs/installation.md#install-as-a-claude-code-plugin).
+Running the CLI from a checkout? Reinstall from your local path after every pull — [Upgrading](docs/installation.md#upgrading) covers how to spot a stale install and the `mcp<2` pin a stale environment breaks on.
 
 ## Features
 
@@ -67,7 +71,7 @@ Running from a checkout? Reinstall from your local path after every pull — [Up
 
 ```
 User → Claude Code Skills (/pm, /pm-status, /pm-plan, /pm-do, /pm-orchestrate, /pm-autoscope, /pm-cleanup)
-         → PM Agent (.claude/agents/pm.md)
+         → PM Agent (projectman:pm, from the plugin)
            → MCP Server (projectman serve, stdio)
              → Store (.project/ markdown files)
              → Embeddings (SQLite + fastembed)
@@ -105,7 +109,7 @@ projectman upgrade
 projectman upgrade --check
 ```
 
-`projectman upgrade` runs `pipx upgrade` and then re-renders the pm agent and skills wherever they're already installed (`~/.claude` and the current repo's `.claude/`). To refresh skills without upgrading — e.g. in another repo after upgrading globally — run `projectman refresh-skills`. Restart Claude Code afterward to pick up the updated skills.
+`projectman upgrade` upgrades the pipx CLI. The plugin updates on its own path: `/plugin marketplace update projectman`, `/plugin update projectman@projectman`, then `/reload-plugins` (see [Updating](docs/installation.md#updating)). If old `setup-claude` skill copies are still installed, `projectman upgrade` re-renders them for one more release and tells you to run `projectman migrate-to-plugin`.
 
 ## Documentation
 

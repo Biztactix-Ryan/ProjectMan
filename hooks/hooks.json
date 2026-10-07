@@ -1,0 +1,19 @@
+{
+  "description": "ProjectMan status block at session start (projectman session-context)",
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "command -v uv >/dev/null 2>&1 || { echo 'ProjectMan: the projectman plugin needs uv on PATH (https://docs.astral.sh/uv/getting-started/installation/); its MCP tools are unavailable until uv is installed.'; exit 0; }; exec uv run --quiet --project \"${CLAUDE_PLUGIN_ROOT}\" --extra all projectman session-context",
+            "timeout": 60
+          }
+        ]
+      }
+    ]
+  },
+  "modules": [
+    "./register.ts"
+  ]
+}

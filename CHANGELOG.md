@@ -3,6 +3,11 @@
 All notable changes to ProjectMan are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+To cut a release: bump the version in `pyproject.toml` and
+`.claude-plugin/plugin.json` together, run `projectman build-plugin`, run
+`uv lock`, then move the `[Unreleased]` notes under the new heading. The full
+checklist is under Deployment Process in `.project/INFRASTRUCTURE.md`.
+
 ## [Unreleased]
 
 ## [0.11.0] - 2026-09-17

@@ -3,23 +3,23 @@ name: pm
 description: Project management entry point — status, boards, creating/updating epics/stories/tasks, sprints, dependencies, git ops. Use for any ProjectMan request that doesn't match a more specific pm-* skill ("what should I work on", "create a story", "how are we doing", "commit project state").
 ---
 
-# /pm — Project Management
+# /projectman:pm — Project Management
 
-Smart router for all ProjectMan operations. Users only need to remember `/pm`. Tool parameters are documented on the MCP tools themselves — this skill covers routing and judgment, not signatures.
+Smart router for all ProjectMan operations. Users only need to remember `/projectman:pm`. Tool parameters are documented on the MCP tools themselves — this skill covers routing and judgment, not signatures.
 
 ## Routing
 
 ### No args → Smart status
 Call `pm_status`, then `pm_active`, then `pm_list_sprints(status="active")`. Suggest the most useful next action:
-- Active sprint with ready tasks → "Run the sprint: `/pm-orchestrate`, or grab a task: `/pm-do <id>`"
-- Active sprint past its end date → "Sprint ended — close it out and plan the next: `/pm-plan`"
-- No active sprint but scoped backlog → "Plan a sprint: `/pm-plan`"
-- Undecomposed stories → "Scope them: `/pm scope <id>` or `/pm-autoscope`"
-- No stories at all → "Create your first story with `/pm create story`"
-- Audit not run recently → "Check for drift: `/pm audit`"
+- Active sprint with ready tasks → "Run the sprint: `/projectman:pm-orchestrate`, or grab a task: `/projectman:pm-do <id>`"
+- Active sprint past its end date → "Sprint ended — close it out and plan the next: `/projectman:pm-plan`"
+- No active sprint but scoped backlog → "Plan a sprint: `/projectman:pm-plan`"
+- Undecomposed stories → "Scope them: `/projectman:pm scope <id>` or `/projectman:pm-autoscope`"
+- No stories at all → "Create your first story with `/projectman:pm create story`"
+- Audit not run recently → "Check for drift: `/projectman:pm audit`"
 
 ### Status & Queries
-- `status` / "how are we doing?" → run the `/pm-status` skill (full dashboard: sprint progress, blockers, recent failures) — don't rebuild it here
+- `status` / "how are we doing?" → run the `/projectman:pm-status` skill (full dashboard: sprint progress, blockers, recent failures) — don't rebuild it here
 - `get <id>` → `pm_get(id)` — epics, stories, tasks
 - `search <query>` → `pm_search(query)`
 - `board` → `pm_board` — available/in-progress/blocked work
@@ -33,8 +33,8 @@ Call `pm_status`, then `pm_active`, then `pm_list_sprints(status="active")`. Sug
 - `sprint` → `pm_list_sprints(status="active")` + progress of the active sprint
 - `sprint <id>` → `pm_get_sprint(id)`
 - `sprint complete [id]` → `pm_update_sprint(id, status="completed")` — show completed vs. planned points first
-- "plan a sprint" → redirect to `/pm-plan`
-- "run the sprint" → redirect to `/pm-orchestrate`
+- "plan a sprint" → redirect to `/projectman:pm-plan`
+- "run the sprint" → redirect to `/projectman:pm-orchestrate`
 
 ### Create & Update
 - `create epic "<title>" "<description>"` → `pm_create_epic`
@@ -61,12 +61,12 @@ Examples:
 
 ### Workflows
 - `scope <story-id>` → `pm_scope(id)`, propose task breakdown with points, create approved tasks (`pm_estimate(<id>)` offers calibration if you want it — **Estimation**, above)
-- `autoscope` → redirect to `/pm-autoscope`
+- `autoscope` → redirect to `/projectman:pm-autoscope`
 - `audit` → `pm_audit`, review findings, suggest and execute approved fixes
 - `init [project]` → set up project documentation (wizard for new, import for existing)
 - `fix` → `pm_malformed`, then fix quarantined files one at a time via `projectman fix-malformed <filename> --id ID --title T --type story|task` (break-glass: CLI, not a tool)
-- `grab <task-id> [assignee]` → `pm_grab(task_id, assignee)` — claim with readiness validation. On success, suggest `/pm-do <id>` to execute (spawned agents use `/pm-do <id> --complete`).
-- `done <task-id> [note]` → `pm_done_next(task_id, outcome, note)` — complete a task, auto-close its story when this was its last open task, and claim the next ready task in one call. Prefer this over separate `pm_update` + `pm_grab` when working through tasks. `pm_update(status="done")` completes the task only — it does not close the story. Under `/pm-orchestrate` do not call it at all: the orchestrator's `pm_accept` is what closes the task and the story, and a worker-set `done` makes it answer `already_done`.
+- `grab <task-id> [assignee]` → `pm_grab(task_id, assignee)` — claim with readiness validation. On success, suggest `/projectman:pm-do <id>` to execute (spawned agents use `/projectman:pm-do <id> --complete`).
+- `done <task-id> [note]` → `pm_done_next(task_id, outcome, note)` — complete a task, auto-close its story when this was its last open task, and claim the next ready task in one call. Prefer this over separate `pm_update` + `pm_grab` when working through tasks. `pm_update(status="done")` completes the task only — it does not close the story. Under `/projectman:pm-orchestrate` do not call it at all: the orchestrator's `pm_accept` is what closes the task and the story, and a worker-set `done` makes it answer `already_done`.
 
 ### Git Operations
 - `commit [--message "..."]` → `pm_commit(message)` — commit the project's .project/ changes
@@ -91,12 +91,12 @@ Route intent, not keywords:
 ## Post-Action Chaining
 
 After every action, suggest the logical next step:
-- Created a story → "Scope it: `/pm scope <id>`"
-- Scoped a story → "Plan it into a sprint: `/pm-plan`"
-- Grabbed a task → "Execute it: `/pm-do <id>`"
+- Created a story → "Scope it: `/projectman:pm scope <id>`"
+- Scoped a story → "Plan it into a sprint: `/projectman:pm-plan`"
+- Grabbed a task → "Execute it: `/projectman:pm-do <id>`"
 - Completed a task → `pm_done_next` already returns the next ready task — offer to continue with it
-- Sprint fully planned → "Run it: `/pm-orchestrate`"
-- Store clean and pushed → "Nothing outstanding — `/pm board` for the next task"
+- Sprint fully planned → "Run it: `/projectman:pm-orchestrate`"
+- Store clean and pushed → "Nothing outstanding — `/projectman:pm board` for the next task"
 
 ## ID Conventions
 

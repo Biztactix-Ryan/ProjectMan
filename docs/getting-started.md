@@ -15,11 +15,18 @@ On a clone of a repo whose PM store already lives on the `projectman` branch, th
 
 ### 2. Install Claude Code Integration
 
-```bash
-projectman setup-claude
+Install the ProjectMan plugin, the supported path. In Claude Code:
+
+```
+/plugin marketplace add Biztactix-Ryan/ProjectMan
+/plugin install projectman@projectman
+/reload-plugins
 ```
 
-Restart Claude Code to pick up the new MCP server and skills.
+The skills are namespaced under the plugin (`/projectman:pm`, `/projectman:pm-status`,
+...). Prerequisites and verification: [Install as a Claude Code plugin](installation.md#install-as-a-claude-code-plugin).
+`projectman setup-claude` is deprecated; if you used it before, run
+`projectman migrate-to-plugin` to remove the old copies.
 
 ### 3. Describe Your Project
 

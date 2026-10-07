@@ -163,7 +163,7 @@ PRE_US_PM_26_CONTEXT_MANDATES = [
 ]
 
 #: the orchestrator's run-scoped rules, verbatim as they read today
-ORCHESTRATE_PLAN_REFUSAL = "**No scoping or planning** (→ `/pm-plan`)"
+ORCHESTRATE_PLAN_REFUSAL = "**No scoping or planning** (→ `/projectman:pm-plan`)"
 
 ORCHESTRATE_DOCS = [
     pytest.param(TEMPLATES / "skill_pm_orchestrate.md.j2", id="orchestrate-template"),

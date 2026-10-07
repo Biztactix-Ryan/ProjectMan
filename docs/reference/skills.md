@@ -1,6 +1,6 @@
 # Skills Reference
 
-ProjectMan installs 8 Claude Code skills (slash commands) via `projectman setup-claude` — `/pm`, `/pm-status`, `/pm-plan`, `/pm-do`, `/pm-orchestrate`, `/pm-autoscope`, `/pm-cleanup` and `/pm-next`. These provide the primary interface for interacting with ProjectMan from Claude Code. This page is the single place that states the count; other docs point here rather than repeating it.
+ProjectMan installs 8 Claude Code skills (slash commands) via the Claude Code plugin (as `/projectman:pm`, `/projectman:pm-status`, ...; the deprecated `projectman setup-claude` installed them unprefixed) — `/pm`, `/pm-status`, `/pm-plan`, `/pm-do`, `/pm-orchestrate`, `/pm-autoscope`, `/pm-cleanup` and `/pm-next`. These provide the primary interface for interacting with ProjectMan from Claude Code. This page is the single place that states the count; other docs point here rather than repeating it.
 
 ## Routing and access
 

@@ -3,7 +3,7 @@ name: pm-next
 description: Read, save or clear the short note the next session should see first — the one carrying "we decided to fix X by doing Y and Z" across a context clear. Use when the user says "note for next time", "leave a note for the next session", or wants that note read back or cleared.
 ---
 
-# /pm-next — A Note to the Next Session
+# /projectman:pm-next — A Note to the Next Session
 
 Scratch text with one owner and a short life, kept as plain markdown in `.project/NEXT.md`. It is deliberately not a backlog item: no story, no epic, no estimate — just what the next session needs to pick the thread back up.
 
@@ -20,4 +20,4 @@ Scratch text with one owner and a short life, kept as plain markdown in `.projec
 
 Once the work a note describes is finished, offer to clear it. A stale note misdirects the next session further than an empty one does.
 
-`pm_context` already returns the note ahead of everything else, under `next_time`, so a fresh session surfaces it without the user having to remember it is there. `/pm-next` is for writing the note, reading it back on demand, and retiring it.
+`pm_context` already returns the note ahead of everything else, under `next_time`, so a fresh session surfaces it without the user having to remember it is there. `/projectman:pm-next` is for writing the note, reading it back on demand, and retiring it.

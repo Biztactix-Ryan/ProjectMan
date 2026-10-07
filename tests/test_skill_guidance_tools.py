@@ -938,7 +938,9 @@ def test_at_least_one_skill_template_names_a_step_for_each_guidance_tool(tool):
 
 #: the rules as they must read inside the fence, character for character
 WORKER_SAFETY_RULES = [
-    "Never run git checkout, git restore, git stash, or git reset",
+    # US-PM-59-9: checkout/restore/stash are refused by the plugin's git
+    # guard, so the fence keeps only the reset ban and points at the guard
+    "Never run git reset; guards block checkout/restore/stash",
     "Never call pm_create_* or any Store write outside a tmp_path-isolated fixture",
     "Edit tracked files directly with the Edit tool; do not stage code through scratchpad files",
     "they must end byte-identical — the branch diff shows it",

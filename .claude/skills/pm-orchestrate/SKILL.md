@@ -5,7 +5,7 @@ disable-model-invocation: true
 args: "[--sprint <id>] [--max <n>] [--lanes <1|2>] [--orchestrator-model|--executor-model <m>] [--resume <run-id>] [--dry-run] [--auto]"
 ---
 
-# /pm-orchestrate
+# /projectman:pm-orchestrate
 
 Dispatch each task, then **independently validate** it. Why: `docs/reference/orchestrate-design.md`.
 
@@ -32,7 +32,7 @@ Dirt outside `.project/` (`git status --short`) **stops the run**: report the di
 
 ## Phase 1 — Pre-flight
 
-1. Sprint: `--sprint <id>` → `pm_get_sprint(id)`, else `pm_list_sprints(status="active", brief=True)`. None → stop (`/pm-plan`); several → ask (`--auto`: latest).
+1. Sprint: `--sprint <id>` → `pm_get_sprint(id)`, else `pm_list_sprints(status="active", brief=True)`. None → stop (`/projectman:pm-plan`); several → ask (`--auto`: latest).
 2. `pm_status`, then `pm_audit`: ERROR-level findings **stop** the run, even under `--auto`. Keep its `digest: <16 hex>` as the **last audit digest** (21).
 3. **Classify in-progress claims from the data.** `pm_board(brief=True)` and `pm_active` give `claimed_by_run`, `claim_age`, `stale: true` (2 h, `stale_after=<hours>`), `stale_tasks`. By that:
    - another `orch-` run, stale or silent since its claim (`pm_activity(item_id=<task-id>, event_type="update")`) → `pm_grab(<task-id>, run_id=<this run>)` + `pm_update(<task-id>, outcome="info", note="recovered from run <old-run-id>")`; still emitting → live: skip under `--auto`.
@@ -46,11 +46,11 @@ Dirt outside `.project/` (`git status --short`) **stops the run**: report the di
 
 ## Phase 3 — Execution
 
-11. `pm_accept` returned `next` → use it, skip to 13; else `pm_board`; for lane B `pm_board(lane_compatible_with=<A's task>)`, first `available` in plan order (the filter already bars a dependency in flight); none → B idles till A is accepted.
+11. `pm_accept` returned `next` → use it, skip to 13; else `pm_board`; for lane B `pm_board(lane_compatible_with=<A's task>)`, first `available` in plan order (the filter bars a dependency in flight); none → B idles till A is accepted.
 12. Else the first plan `todo`, dependency-clear, unassigned or step 3 recoverable: `pm_grab(<id>, run_id=<this run>)`; never one held elsewhere; none → exit.
 13. `--max` exceeded (retries too; both lanes count) → stop, report, release any pre-claimed task in either lane: `pm_release(<id>, note="<why>", run_id=<this run>)`.
-14. Note lane and `<tb>` before **each** dispatch; `--lanes 2`: one claim per lane, by run id — A and B, each with task, `<tb>`, returned?
-15. `Agent`: `subagent_type: general-purpose`, `model:` `--executor-model` else `opus`, `isolation: "worktree"`, branch `orch/<this run>/<task-id>` off `<rb>`; prompt below, in the background (a notification marks it done). Two in flight: take the first notification to land through 16-19 while the other worker runs — one lane validated or merged at a time — then refill it (11/12, compatible with the task in flight) and wait.
+14. Note lane and `<tb>` before **each** dispatch; `--lanes 2`: one claim per lane, by run id — A and B: task, `<tb>`, returned?
+15. `Agent`: `subagent_type: general-purpose`, `model:` `--executor-model` else `opus`, `isolation: "worktree"`, branch `orch/<this run>/<task-id>` off `<rb>`; prompt below, in the background. Two in flight: take the first notification to land through 16-19 while the other worker runs — one lane validated or merged at a time — then refill it (11/12, compatible with the task in flight) and wait.
 
 16. **Status check**: `pm_get(task_id, fields="status,assignee")` — deliberate: `status` `in-progress`/`review`, `assignee` `claude`.
 17. **Validation**: an `Agent` (`subagent_type: general-purpose`, step 15's model, foreground, no worktree) with the Validator Prompt Template returns files, tests, DoD — **never run them yourself**.
@@ -86,10 +86,10 @@ merge conflict `git rebase orch/<this run>` first">
 <on resume: "run <old-run-id> died mid-task; validate the working tree first">
 
 First `git switch -c orch/<this run>/<task-id> orch/<this run>` (retry: plain
-`git switch`), then /pm-do with `<task-id>` — without --complete.
+`git switch`), then /projectman:pm-do with `<task-id>` — without --complete.
 
 Rules:
-- Never run git checkout, git restore, git stash, or git reset.
+- Never run git reset; guards block checkout/restore/stash.
 - Never call pm_create_* or any Store write outside a tmp_path-isolated fixture.
 - Edit tracked files directly with the Edit tool; do not stage code through scratchpad files.
 - Mutation tests: they must end byte-identical — the branch diff shows it.
@@ -116,7 +116,7 @@ forbidden files come from that list. Run the DoD tests in the worktree
 (`cd <path>`).
 Other lane in flight: <other task> — its files are out of scope; a diff touching
 them is a retry, not a park.
-Worker rules: no checkout/restore/stash/reset, one commit, no Store write.
+Worker rules: no reset, one commit, no Store write.
 One JSON object <1500 chars, no prose:
 {"verdict":"accept|retry|park|review","files":[...],"tests":[{"command":"",
 "passed":true}],"dod_met":[...],"dod_unmet":[...],
@@ -129,4 +129,4 @@ Stop when all sprint tasks are `done` or parked, `--max` is reached, `pm_audit` 
 
 ## What This Skill Does NOT Do
 
-- **No scoping or planning** (→ `/pm-plan`), **no claim it does not own**, **no implementing**.
+- **No scoping or planning** (→ `/projectman:pm-plan`), **no claim it does not own**, **no implementing**.

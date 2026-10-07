@@ -53,6 +53,8 @@ Detection reads **local ref storage only and never fetches**, so run `git fetch 
 
 ## projectman setup-claude
 
+**Deprecated.** The Claude Code plugin is the supported install (see [Install as a Claude Code plugin](../installation.md#install-as-a-claude-code-plugin)). `setup-claude` now prints the plugin install steps, points to [`migrate-to-plugin`](#projectman-migrate-to-plugin) and writes nothing. The behaviour below is still available behind the hidden `--legacy` flag for one release.
+
 Install Claude Code integration files into the current project.
 
 ```bash
@@ -87,9 +89,11 @@ projectman upgrade --check     # show installed version and pipx source only
 projectman upgrade --no-skills # upgrade without touching skill files
 ```
 
-After a successful upgrade the command invokes the **new** binary's `refresh-skills`, re-rendering the pm agent and skills from the upgraded templates wherever they are already installed (`~/.claude` and the current directory's `.claude/`). `projectman update` is an alias.
+After a successful upgrade, if setup-claude skill copies exist in `~/.claude` or the current directory's `.claude/`, the command invokes the **new** binary's `refresh-skills --legacy` to re-render them from the upgraded templates, then tells you to install the plugin and run [`migrate-to-plugin`](#projectman-migrate-to-plugin). It never creates new copies. The plugin itself updates through `/plugin update`. `projectman update` is an alias.
 
 ## projectman refresh-skills
+
+**Deprecated.** The plugin updates its own skills (`/plugin update projectman@projectman`, then `/reload-plugins`). `refresh-skills` now prints the plugin install steps, points to [`migrate-to-plugin`](#projectman-migrate-to-plugin) and writes nothing. The behaviour below needs the hidden `--legacy` flag (e.g. `projectman refresh-skills --keep-local --legacy`) and is removed next release.
 
 Re-render the pm agent + skills from the installed package's templates, in every location where they are already installed (`~/.claude` and `./.claude`). Does not install into new locations — use `setup-claude` for that. Run this in each project that keeps local skill copies after upgrading elsewhere.
 
@@ -100,7 +104,18 @@ projectman refresh-skills --keep-local  # keep + refresh local copies alongside 
 
 If the skills are installed both globally and in the current project, the project-local copies are superseded — Claude Code loads both and shows duplicate skills — so they are removed by default (only ProjectMan-managed files are touched: `agents/pm.md` and `skills/pm*`; other agents/skills are left alone). Pass `--keep-local` to keep and refresh them instead. After any refresh, restart Claude Code (or start a new session) to pick up the updated skills.
 
-Refreshing skills is the second half of reinstalling from a local checkout — see [Upgrading](../installation.md#upgrading) for the full sequence and for the symptoms of a stale install.
+See [Upgrading](../installation.md#upgrading) for reinstalling the CLI from a local checkout and for the symptoms of a stale install.
+
+## projectman migrate-to-plugin
+
+Remove a `setup-claude` install so the ProjectMan Claude Code plugin takes over. Run it after installing the plugin, in each project that has its own `.claude/` copies or `.mcp.json` entry, then restart Claude Code.
+
+```bash
+projectman migrate-to-plugin --dry-run  # list the changes, write nothing
+projectman migrate-to-plugin            # apply them
+```
+
+It removes the ProjectMan-managed agent and skills from `~/.claude` and `./.claude`, the user-scope projectman MCP server (via `claude mcp remove`), the projectman entry in `./.mcp.json`, and the per-project `.claude/hooks/pm-context.sh` with its SessionStart entry in `.claude/settings.json`. Other skills, MCP servers, hooks and settings, and a user-modified `pm-context.sh`, are kept; the global `~/.claude/hooks/session-start.sh` is left alone with a note. It prints one line per change.
 
 ## projectman web
 

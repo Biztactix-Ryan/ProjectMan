@@ -182,7 +182,7 @@ def test_worker_prompt_fence_is_extractable(source):
     """Guard the slice: every assertion below is scoped to this text."""
     fence = _worker_fence(ORCHESTRATE_SOURCES[source]())
     assert "template not found" not in fence, "the template failed to render"
-    assert "/pm-do" in fence, "the fence under the heading is not the worker prompt"
+    assert "/projectman:pm-do" in fence, "the fence under the heading is not the worker prompt"
     assert len(fence.splitlines()) >= 10, "the worker prompt lost its body"
 
 
@@ -336,8 +336,9 @@ def test_the_branch_clauses_reject_the_stage_only_worker_prompt():
 # works.  ADR-005 put the worker in a git worktree on ``orch/<run>/<task-id>``
 # with the ``.project`` store left behind in the primary checkout, so the
 # skill has to say four things the stage-only version had no reason to say:
-# where the worker is, that it still may not move (no checkout/restore/stash/
-# reset/clean, no branch switching), that a commit happens only when the
+# where the worker is, that it still may not move (no reset/clean, no branch
+# switching; checkout/restore/stash are refused by the plugin's git guard
+# since US-PM-59-9), that a commit happens only when the
 # dispatch prompt asks for one and covers code paths only, and that the store
 # is reached through the pm tools rather than through a ``.project`` directory
 # that is not there.  A worker told none of this in the skill it is following
@@ -353,8 +354,18 @@ CWD_MAY_BE_A_WORKTREE = re.compile(r"cwd[^.\n]{0,40}worktree", re.IGNORECASE)
 #: and that somewhere is the task branch the orchestrator merges
 NAMES_THE_TASK_BRANCH = re.compile(r"orch/<[^>\n]+>/<task-id>")
 
-#: the five commands that move a tree under a worker's feet
-FORBIDDEN_GIT = ("checkout", "restore", "stash", "reset", "clean")
+#: the commands that move a tree under a worker's feet and that the skill must
+#: still forbid in prose.  ``checkout``/``restore``/``stash`` left this list in
+#: US-PM-59-9: the plugin's git guard (hooks/git-guard.ts) refuses them in
+#: subagents, and the worker prompt fence points at that guard instead
+#: (``FENCE_POINTS_AT_THE_GIT_GUARD``).
+FORBIDDEN_GIT = ("reset", "clean")
+
+#: the commands the guard refuses, named in the fence's one-line pointer
+GUARDED_GIT = ("checkout", "restore", "stash")
+FENCE_POINTS_AT_THE_GIT_GUARD = re.compile(
+    r"guards? (?:block|refuse)s?\s+checkout/restore/stash", re.IGNORECASE
+)
 
 #: "Never `git checkout`, `restore`, ... ; never switch branches"
 NO_BRANCH_SWITCH = re.compile(
@@ -391,7 +402,7 @@ WORKTREE_CLAUSES = {
     "names the per-task branch it sits on": lambda t: bool(
         NAMES_THE_TASK_BRANCH.search(t)
     ),
-    "keeps the checkout/restore/stash/reset/clean bans": _bans_every_forbidden_git_command,
+    "keeps the reset/clean bans": _bans_every_forbidden_git_command,
     "forbids switching branches": lambda t: bool(NO_BRANCH_SWITCH.search(t)),
     "commits only when the dispatch prompt says so": lambda t: bool(
         COMMIT_ONLY_WHEN_TOLD.search(t)
@@ -432,6 +443,25 @@ def test_pm_do_git_bans_cover_the_worker_prompt_fence():
     assert not missing, (
         f"the worker prompt forbids {sorted(missing)} but /pm-do does not"
     )
+
+
+def test_worker_prompt_fence_points_at_the_git_guard():
+    """US-PM-59-9: the bans the guard enforces are replaced by a pointer, not dropped.
+
+    A fence that silently stopped naming checkout/restore/stash would read as
+    permission; the pointer tells the worker they are still off-limits and why
+    a call was refused.  The old prose may not come back alongside it.
+    """
+    fence = _worker_fence(_render_template(ORCHESTRATE_TEMPLATE_NAME))
+    assert FENCE_POINTS_AT_THE_GIT_GUARD.search(fence), (
+        f"the worker prompt does not point at the git guard for {GUARDED_GIT}"
+    )
+    low = fence.lower()
+    restated = [c for c in GUARDED_GIT if f"git {c}" in low]
+    assert not restated, f"the fence restates guard-enforced bans: {restated}"
+    assert not FENCE_POINTS_AT_THE_GIT_GUARD.search(
+        "- Never run git checkout, git restore, git stash, or git reset."
+    ), "falsification: the pre-guard bullet must not pass as the pointer"
 
 
 def test_the_worktree_clauses_reject_the_stage_only_pm_do():

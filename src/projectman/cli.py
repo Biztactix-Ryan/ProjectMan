@@ -235,19 +235,50 @@ def _write_claude_assets(claude_dir: Path) -> None:
         click.echo(f"Wrote {skill_dir / 'SKILL.md'}")
 
 
+PLUGIN_MARKETPLACE_SOURCE = "Biztactix-Ryan/ProjectMan"
+PLUGIN_INSTALL_REF = "projectman@projectman"  # <plugin>@<marketplace>, per .claude-plugin/marketplace.json
+
+
+def _plugin_deprecation_notice(command: str) -> None:
+    """Print why COMMAND no longer installs anything and what to do instead.
+
+    The plugin is the supported install (ADR-006); setup-claude and
+    refresh-skills keep their old behaviour behind a hidden --legacy flag
+    for one release.
+    """
+    click.echo(
+        f"'projectman {command}' is deprecated: the ProjectMan Claude Code plugin is now the supported install.\n"
+        "\n"
+        "In Claude Code, run:\n"
+        f"  /plugin marketplace add {PLUGIN_MARKETPLACE_SOURCE}\n"
+        f"  /plugin install {PLUGIN_INSTALL_REF}\n"
+        "\n"
+        "Already installed with setup-claude? Run 'projectman migrate-to-plugin' "
+        "(add --dry-run to preview) to remove the old agent, skills and MCP entries "
+        "so the plugin takes over, then restart Claude Code.\n"
+        "\n"
+        'See docs/installation.md, "Install as a Claude Code plugin". Nothing was written.'
+    )
+
+
 @cli.command("setup-claude")
 @click.option("--transport", type=click.Choice(["stdio", "sse"]), default="stdio", help="MCP transport mode (default: stdio)")
 @click.option("--host", default="127.0.0.1", help="Host for SSE mode")
 @click.option("--port", default=22001, type=int, help="Port for SSE mode")
 @click.option("--global", "global_", is_flag=True, help="Install agent + skills to ~/.claude for all projects (registers MCP at user scope via the claude CLI)")
 @click.option("--local-skills", is_flag=True, help="With --global: also write skill copies into the current project's .claude/")
-def setup_claude(transport, host, port, global_, local_skills):
-    """Install Claude Code integration (agent, skills, MCP config).
+@click.option("--legacy", is_flag=True, hidden=True, help="Run the pre-plugin install (removed next release)")
+def setup_claude(transport, host, port, global_, local_skills, legacy):
+    """Deprecated: install the ProjectMan Claude Code plugin instead.
 
-    Default: project-level install — writes .mcp.json and .claude/ in the
-    current directory. With --global: installs to ~/.claude so every project
-    gets the skills, and registers the MCP server at user scope.
+    Prints the plugin install steps and points to migrate-to-plugin; writes
+    nothing. The old behaviour (--legacy, hidden, one release): project-level
+    install writes .mcp.json and .claude/ in the current directory; with
+    --global installs to ~/.claude and registers the MCP server at user scope.
     """
+    if not legacy:
+        _plugin_deprecation_notice("setup-claude")
+        return
     root = Path.cwd()
 
     if global_:
@@ -313,37 +344,128 @@ def setup_claude(transport, host, port, global_, local_skills):
     click.echo("Claude Code integration installed. Restart Claude Code to activate.")
 
 
-def _remove_claude_assets(claude_dir: Path) -> None:
+def _frontmatter_name(path: Path):
+    """Return the ``name:`` from a markdown file's YAML frontmatter, or None."""
+    try:
+        text = path.read_text()
+    except (OSError, UnicodeDecodeError):
+        return None
+    if not text.startswith("---"):
+        return None
+    end = text.find("\n---", 3)
+    if end == -1:
+        return None
+    try:
+        meta = yaml.safe_load(text[3:end])
+    except yaml.YAMLError:
+        return None
+    return meta.get("name") if isinstance(meta, dict) else None
+
+
+def _remove_claude_assets(claude_dir: Path, dry_run: bool = False) -> list[str]:
     """Remove the ProjectMan-managed agent + skills from a .claude/ directory.
 
-    Only touches files this tool wrote (agents/pm.md, skills/pm*); other
-    agents and skills are left alone. Empty parent dirs are cleaned up.
+    Ownership rule: a file is ProjectMan's only if it sits at a path this tool
+    writes (agents/pm.md, skills/<CLAUDE_SKILLS|STALE_SKILLS>/SKILL.md) AND its
+    frontmatter ``name:`` is the one the template gives it. Anything else —
+    other skills, extra files inside a pm skill dir, a SKILL.md at a pm path
+    with a different or missing name — is left alone and reported as kept. A
+    managed file whose content differs from the current template (an older
+    release, or a local edit) is still removed, with a note saying so.
+
+    A skill dir is removed only once it is empty; empty agents/ and skills/
+    parents are cleaned up. Prints one line per change ("would ..." with
+    dry_run, which writes nothing) and returns those lines.
     """
+    prefix = "would " if dry_run else ""
+    lines: list[str] = []
+
+    def say(line: str) -> None:
+        lines.append(line)
+        click.echo(line)
+
+    def differs(path: Path, template_name: str) -> bool:
+        try:
+            return path.read_text() != _render_template(template_name)
+        except (OSError, UnicodeDecodeError):
+            return True
+
+    removed: set[Path] = set()
+
     agent = claude_dir / "agents" / "pm.md"
-    if agent.exists():
-        agent.unlink()
-        click.echo(f"Removed {agent}")
+    if agent.is_file():
+        if _frontmatter_name(agent) == "pm":
+            note = " (differs from the current template)" if differs(agent, "agent_pm.md.j2") else ""
+            if not dry_run:
+                agent.unlink()
+            removed.add(agent)
+            say(f"{prefix}remove {agent}{note}")
+        else:
+            say(f"keep {agent} (not written by ProjectMan: no 'name: pm' frontmatter)")
 
-    for skill_name, _ in CLAUDE_SKILLS:
+    skills = [(name, tmpl) for name, tmpl in CLAUDE_SKILLS] + [(name, None) for name in STALE_SKILLS]
+    for skill_name, template_name in skills:
         skill_dir = claude_dir / "skills" / skill_name
-        if skill_dir.exists():
-            shutil.rmtree(skill_dir)
-            click.echo(f"Removed {skill_dir}/")
-    for stale in STALE_SKILLS:
-        stale_dir = claude_dir / "skills" / stale
-        if stale_dir.exists():
-            shutil.rmtree(stale_dir)
-            click.echo(f"Removed stale {stale_dir}/")
+        if not skill_dir.is_dir():
+            continue
+        skill_md = skill_dir / "SKILL.md"
+        label = "" if template_name else "stale "
+        if skill_md.is_file():
+            if _frontmatter_name(skill_md) == skill_name:
+                note = ""
+                if template_name and differs(skill_md, template_name):
+                    note = " (differs from the current template)"
+                if not dry_run:
+                    skill_md.unlink()
+                removed.add(skill_md)
+            else:
+                say(f"keep {skill_md} (not written by ProjectMan: no 'name: {skill_name}' frontmatter)")
+                continue
+        else:
+            note = ""
+        extras = sorted(p for p in skill_dir.iterdir() if p not in removed)
+        if extras:
+            if skill_md in removed:
+                say(f"{prefix}remove {label}{skill_md}{note}")
+            for extra in extras:
+                say(f"keep {extra} (not written by ProjectMan)")
+        else:
+            if not dry_run:
+                skill_dir.rmdir()
+            say(f"{prefix}remove {label}{skill_dir}/{note}")
 
-    for parent in (claude_dir / "agents", claude_dir / "skills"):
-        if parent.is_dir() and not any(parent.iterdir()):
-            parent.rmdir()
+    if not dry_run:
+        for parent in (claude_dir / "agents", claude_dir / "skills"):
+            if parent.is_dir() and not any(parent.iterdir()):
+                parent.rmdir()
+    return lines
+
+
+@cli.command("build-plugin")
+@click.argument("plugin_root", default=".", type=click.Path(file_okay=False, path_type=Path))
+def build_plugin(plugin_root):
+    """Render the pm agent + skills into a Claude Code plugin root.
+
+    Writes agents/pm.md and skills/<name>/SKILL.md under PLUGIN_ROOT (default:
+    the current directory, which for this repo is the plugin root per ADR-006)
+    from the same templates setup-claude uses. The output is committed; rerun
+    after changing a template so the plugin does not drift from it.
+    """
+    if not (plugin_root / ".claude-plugin" / "plugin.json").exists():
+        click.echo(f"Note: {plugin_root / '.claude-plugin' / 'plugin.json'} not found — writing anyway.")
+    _write_claude_assets(plugin_root)
+    click.echo(f"Built plugin skills and agent in {plugin_root}")
 
 
 @cli.command("refresh-skills")
 @click.option("--keep-local", is_flag=True, help="Keep project-local pm skill copies even when the same skills are installed globally in ~/.claude (they are pruned as duplicates by default)")
-def refresh_skills(keep_local):
-    """Rewrite the pm agent + skills wherever they are already installed.
+@click.option("--legacy", is_flag=True, hidden=True, help="Run the pre-plugin refresh (removed next release)")
+def refresh_skills(keep_local, legacy):
+    """Deprecated: the plugin updates its skills; see migrate-to-plugin.
+
+    Prints the plugin install steps and points to migrate-to-plugin; writes
+    nothing. The old behaviour (--legacy, hidden, one release) rewrites the
+    pm agent + skills wherever they are already installed:
 
     Checks ~/.claude and the current directory's .claude/ and re-renders the
     ProjectMan-managed files (agents/pm.md, skills/pm*) from the installed
@@ -354,6 +476,9 @@ def refresh_skills(keep_local):
     duplicates — so the local copies are removed (pass --keep-local to
     keep and refresh them instead).
     """
+    if not legacy:
+        _plugin_deprecation_notice("refresh-skills")
+        return
     global_dir = Path.home() / ".claude"
     local_dir = Path.cwd() / ".claude"
     has_global = (global_dir / "skills" / "pm" / "SKILL.md").exists()
@@ -388,6 +513,233 @@ def refresh_skills(keep_local):
     click.echo("Restart Claude Code (or start a new session) to pick up the updated skills.")
 
 
+def _is_setup_claude_mcp_entry(entry) -> bool:
+    """True if a .mcp.json server entry has the shape setup-claude writes."""
+    if not isinstance(entry, dict):
+        return False
+    if entry.get("type") == "sse":
+        return set(entry) == {"type", "url"} and str(entry.get("url", "")).endswith("/sse")
+    return (
+        set(entry) <= {"command", "args", "type"}
+        and entry.get("command") == "projectman"
+        and entry.get("args") == ["serve"]
+    )
+
+
+#: Where /setup-project (ClaudeDefaultSetup) copies its session-start.sh in a
+#: project, and the path every SessionStart command it wires points at.
+PM_CONTEXT_HOOK = ".claude/hooks/pm-context.sh"
+
+
+def _is_pm_context_script(path: Path) -> bool:
+    """True if a pm-context.sh is ClaudeDefaultSetup's session-start.sh copy.
+
+    The copy is recognised by the two things every version of that script
+    carries: the ``## ProjectMan context`` heading it prints and the
+    ``pm-context-`` per-session dedupe marker. Anything else is user-authored.
+    """
+    try:
+        text = path.read_text()
+    except (OSError, UnicodeDecodeError):
+        return False
+    return "## ProjectMan context" in text and "pm-context-" in text
+
+
+def _is_pm_context_hook(hook) -> bool:
+    """True if a settings.json hook entry runs the per-project pm-context.sh."""
+    return (
+        isinstance(hook, dict)
+        and hook.get("type", "command") == "command"
+        and PM_CONTEXT_HOOK in str(hook.get("command", ""))
+    )
+
+
+def _remove_pm_context_hook(project_dir: Path, dry_run: bool, say) -> None:
+    """Remove .claude/hooks/pm-context.sh and its SessionStart settings entry.
+
+    Only what /setup-project wrote is touched: the script is removed only if
+    it is recognisably the session-start.sh copy (see _is_pm_context_script);
+    a user-modified script is kept, and so is its settings entry, so a hook
+    the user still relies on keeps working. In .claude/settings.json only the
+    SessionStart hook commands that run pm-context.sh are dropped — other
+    hooks, matchers and settings keys are kept; a group, the SessionStart
+    list and the hooks object are dropped once empty, and the file is deleted
+    if nothing else was in it. Reports each change through ``say``.
+    """
+    prefix = "would " if dry_run else ""
+    claude_dir = project_dir / ".claude"
+    script = project_dir / PM_CONTEXT_HOOK
+
+    if script.is_file():
+        if not _is_pm_context_script(script):
+            click.echo(
+                f"keep {script} (not recognised as the ProjectMan session-start copy) "
+                f"and its SessionStart entry in {claude_dir / 'settings.json'}"
+            )
+            return
+        say(f"{prefix}remove {script}")
+        if not dry_run:
+            script.unlink()
+            hooks_dir = script.parent
+            if not any(hooks_dir.iterdir()):
+                hooks_dir.rmdir()
+
+    settings_path = claude_dir / "settings.json"
+    if not settings_path.is_file():
+        return
+    try:
+        raw = settings_path.read_text()
+        settings = json.loads(raw)
+    except (OSError, UnicodeDecodeError, ValueError):
+        click.echo(f"keep {settings_path} (not valid JSON — remove the pm-context.sh SessionStart hook by hand)")
+        return
+    hooks = settings.get("hooks") if isinstance(settings, dict) else None
+    groups = hooks.get("SessionStart") if isinstance(hooks, dict) else None
+    if not isinstance(groups, list):
+        return
+
+    removed = 0
+    kept_groups = []
+    for group in groups:
+        inner = group.get("hooks") if isinstance(group, dict) else None
+        if not isinstance(inner, list):
+            kept_groups.append(group)
+            continue
+        kept_inner = [h for h in inner if not _is_pm_context_hook(h)]
+        removed += len(inner) - len(kept_inner)
+        if len(kept_inner) == len(inner):
+            kept_groups.append(group)
+        elif kept_inner:
+            kept_groups.append({**group, "hooks": kept_inner})
+    if not removed:
+        return
+
+    if kept_groups:
+        hooks["SessionStart"] = kept_groups
+    else:
+        del hooks["SessionStart"]
+    if not hooks:
+        del settings["hooks"]
+
+    if not settings:
+        say(f"{prefix}delete {settings_path} (it held only the pm-context.sh SessionStart hook)")
+        if not dry_run:
+            settings_path.unlink()
+    else:
+        say(f"{prefix}remove the pm-context.sh SessionStart hook from {settings_path} (keeping other settings)")
+        if not dry_run:
+            text = json.dumps(settings, indent=2)
+            settings_path.write_text(text + "\n" if raw.endswith("\n") else text)
+
+
+@cli.command("migrate-to-plugin")
+@click.option("--dry-run", is_flag=True, help="List the changes without writing anything")
+def migrate_to_plugin(dry_run):
+    """Remove the setup-claude install so the ProjectMan plugin takes over.
+
+    Removes the ProjectMan-managed agent + skills from ~/.claude and the
+    current directory's .claude/, the user-scope projectman MCP server
+    (via `claude mcp remove`), the projectman entry in ./.mcp.json, and the
+    per-project .claude/hooks/pm-context.sh with its SessionStart entry in
+    .claude/settings.json. Only files ProjectMan wrote are touched: other
+    skills, extra files in a pm skill dir, other MCP servers, other hooks
+    and settings, and a user-modified pm-context.sh are kept. The global
+    ~/.claude/hooks/session-start.sh is left alone, with a note. Prints one
+    line per change.
+    """
+    import subprocess
+
+    prefix = "would " if dry_run else ""
+    changes: list[str] = []
+
+    def say(line: str) -> None:
+        changes.append(line)
+        click.echo(line)
+
+    # 1. Skills + agent, in ~/.claude and ./.claude (once if they are the same dir).
+    global_dir = Path.home() / ".claude"
+    local_dir = Path.cwd() / ".claude"
+    dirs = [global_dir]
+    if local_dir.resolve() != global_dir.resolve():
+        dirs.append(local_dir)
+    for claude_dir in dirs:
+        if claude_dir.is_dir():
+            lines = _remove_claude_assets(claude_dir, dry_run=dry_run)
+            changes.extend(line for line in lines if not line.startswith("keep "))
+
+    # 2. User-scope MCP server, via the claude CLI.
+    remove_cmd = ["claude", "mcp", "remove", "--scope", "user", "projectman"]
+    if shutil.which("claude"):
+        try:
+            got = subprocess.run(
+                ["claude", "mcp", "get", "projectman"],
+                capture_output=True, text=True, timeout=60,
+            )
+            has_user_entry = got.returncode == 0 and "Scope: User" in got.stdout
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            has_user_entry = False
+            click.echo(f"claude mcp get failed ({exc}) — check with: claude mcp get projectman", err=True)
+        if has_user_entry:
+            say(f"{prefix}run {' '.join(remove_cmd)}")
+            if not dry_run:
+                result = subprocess.run(remove_cmd, capture_output=True, text=True)
+                if result.returncode != 0:
+                    click.echo(f"claude mcp remove failed: {result.stderr.strip()}", err=True)
+                    click.echo(f"manual step: run {' '.join(remove_cmd)}")
+    else:
+        # No CLI to ask — look in ~/.claude.json, where user-scope servers live.
+        has_user_entry = False
+        claude_json = Path.home() / ".claude.json"
+        try:
+            data = json.loads(claude_json.read_text())
+            has_user_entry = "projectman" in (data.get("mcpServers") or {})
+        except (OSError, ValueError, AttributeError):
+            pass
+        if has_user_entry:
+            say(f"manual step: claude CLI not found — run {' '.join(remove_cmd)}")
+
+    # 3. The projectman entry in ./.mcp.json, keeping other servers.
+    mcp_path = Path.cwd() / ".mcp.json"
+    if mcp_path.is_file():
+        try:
+            config = json.loads(mcp_path.read_text())
+        except ValueError:
+            config = None
+            click.echo(f"keep {mcp_path} (not valid JSON — remove the projectman entry by hand)")
+        servers = config.get("mcpServers") if isinstance(config, dict) else None
+        if isinstance(servers, dict) and "projectman" in servers:
+            entry = servers.pop("projectman")
+            if not servers and set(config) == {"mcpServers"} and _is_setup_claude_mcp_entry(entry):
+                say(f"{prefix}delete {mcp_path} (it held only the projectman server)")
+                if not dry_run:
+                    mcp_path.unlink()
+            else:
+                kept = ", ".join(sorted(servers)) or "none"
+                say(f"{prefix}remove projectman from {mcp_path} (keeping servers: {kept})")
+                if not dry_run:
+                    with open(mcp_path, "w") as f:
+                        json.dump(config, f, indent=2)
+
+    # 4. The per-project pm-context.sh hook /setup-project wired.
+    _remove_pm_context_hook(Path.cwd(), dry_run, say)
+
+    # 5. ClaudeDefaultSetup's global hook is not ours to remove — just say so.
+    global_hook = global_dir / "hooks" / "session-start.sh"
+    if global_hook.is_file():
+        click.echo(
+            f"note: {global_hook} (ClaudeDefaultSetup's global SessionStart hook) duplicates "
+            "the plugin's SessionStart hook — left untouched; the two dedupe per session, "
+            "remove it from ~/.claude/settings.json yourself if you no longer want it."
+        )
+
+    if not changes:
+        click.echo("Nothing to migrate — no setup-claude install found.")
+    elif dry_run:
+        click.echo(f"Dry run: {len(changes)} change(s) listed, nothing written.")
+    else:
+        click.echo(f"Migrated: {len(changes)} change(s). Restart Claude Code to load the plugin instead.")
+
+
 PROJECTMAN_REPO = "git+https://github.com/Biztactix-Ryan/ProjectMan"
 
 
@@ -397,9 +749,10 @@ PROJECTMAN_REPO = "git+https://github.com/Biztactix-Ryan/ProjectMan"
 def upgrade(check, no_skills):
     """Upgrade projectman via pipx (or check the installed version).
 
-    After a successful upgrade, installed pm skills (in ~/.claude and the
-    current directory's .claude/) are re-rendered from the new version's
-    templates so tools and skills stay in sync.
+    After a successful upgrade, existing setup-claude skill copies (in
+    ~/.claude and the current directory's .claude/) are re-rendered from the
+    new version's templates (refresh-skills --legacy) so tools and skills stay
+    in sync; none are created. Plugin installs update through /plugin.
     """
     import subprocess
     from importlib.metadata import PackageNotFoundError
@@ -449,16 +802,29 @@ def upgrade(check, no_skills):
         click.echo(f"Upgraded {current} → {new_version}. Restart any running MCP servers to pick up the new version.")
 
     if not no_skills:
-        # Re-render installed skills from the NEW package's templates. This
-        # process still runs the pre-upgrade code, so the refresh must be
-        # executed by the upgraded binary.
-        exe = shutil.which("projectman")
-        if exe:
-            refresh = subprocess.run([exe, "refresh-skills"], text=True)
-            if refresh.returncode != 0:
-                click.echo("Skill refresh failed — run 'projectman refresh-skills' manually.", err=True)
-        else:
-            click.echo("projectman executable not found on PATH — run 'projectman refresh-skills' manually to update skills.")
+        # setup-claude copies are deprecated (the plugin is the supported
+        # install), but machines that still have them must not be left with
+        # skills older than the tools. So: re-render existing copies via the
+        # hidden --legacy path, never create new ones, and point at the
+        # migration. This process still runs the pre-upgrade code, so the
+        # refresh must be executed by the upgraded binary.
+        home_claude = Path.home() / ".claude"
+        local_claude = Path.cwd() / ".claude"
+        has_copies = any(
+            (d / "skills" / "pm" / "SKILL.md").exists() for d in (home_claude, local_claude)
+        )
+        if has_copies:
+            exe = shutil.which("projectman")
+            if exe:
+                refresh = subprocess.run([exe, "refresh-skills", "--legacy"], text=True)
+                if refresh.returncode != 0:
+                    click.echo("Skill refresh failed — run 'projectman refresh-skills --legacy' manually.", err=True)
+            else:
+                click.echo("projectman executable not found on PATH — run 'projectman refresh-skills --legacy' manually to update skills.")
+            click.echo(
+                "These are setup-claude skill copies, which are deprecated: install the plugin "
+                f"(/plugin install {PLUGIN_INSTALL_REF}) and run 'projectman migrate-to-plugin'."
+            )
 
 
 @cli.command()
@@ -765,6 +1131,136 @@ def git_status_cmd(as_json):
     width = max(len(label) for label, _ in rows)
     for label, value in rows:
         click.echo(f"  {label.ljust(width)}  {value}")
+
+
+#: How long a printed status block suppresses a second one for the same
+#: session.  Shared with ClaudeDefaultSetup's ``session-start.sh`` (and its
+#: per-project copy ``pm-context.sh``): all three honour and touch the same
+#: marker, so whichever hook runs first prints and the others stay quiet.
+_SESSION_CONTEXT_DEDUPE_SECONDS = 30
+
+#: Longest excerpt of the next-session note the status block carries.  The
+#: block is a pointer, not the note: pm_context returns it in full.
+_SESSION_CONTEXT_NOTE_CHARS = 200
+
+
+def _session_context_marker(session_id: str) -> Path:
+    """The per-session dedupe marker, at the path session-start.sh uses."""
+    import os
+
+    run_dir = Path(os.environ.get("XDG_RUNTIME_DIR") or "/tmp") / (
+        f"claude-notify-{os.environ.get('USER') or 'u'}"
+    )
+    return run_dir / f"pm-context-{session_id}"
+
+
+def _session_context_lines(root: Path) -> list[str]:
+    """The status block for the store at ``root/.project``, one line per entry."""
+    import collections
+
+    from projectman.indexer import build_index
+    from projectman.store import Store
+
+    store = Store(root)
+    index = build_index(store)
+    config = store.config
+
+    lines = [f"Project **{config.name}** ({config.prefix})"]
+
+    by_type: dict[str, collections.Counter] = collections.defaultdict(collections.Counter)
+    for entry in index.entries:
+        status = "archived" if entry.archived else entry.status
+        by_type[entry.type][status] += 1
+    for item_type, plural in (("epic", "epics"), ("story", "stories"), ("task", "tasks")):
+        counts = by_type[item_type]
+        if counts:
+            detail = ", ".join(
+                f"{status} {count}"
+                for status, count in sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))
+            )
+            lines.append(f"- {plural}: {sum(counts.values())} ({detail})")
+
+    if index.total_points:
+        pct = round(index.completed_points * 100 / index.total_points)
+        lines.append(f"- points: {index.completed_points}/{index.total_points} ({pct}%)")
+
+    in_progress = [
+        entry for entry in index.entries
+        if entry.type == "task" and entry.status == "in-progress" and not entry.archived
+    ]
+    for entry in in_progress[:5]:
+        lines.append(f"- in progress: {entry.id} {entry.title}")
+    if len(in_progress) > 5:
+        lines.append(f"- in progress: … and {len(in_progress) - 5} more (pm_active)")
+
+    active_sprints = store.list_sprints(status="active")
+    if active_sprints:
+        sprint = active_sprints[0]
+        lines.append(f"- active sprint: {sprint.id} {sprint.name}")
+
+    note = store.read_next()
+    if note:
+        first = " ".join(note.split())
+        if len(first) > _SESSION_CONTEXT_NOTE_CHARS:
+            first = first[: _SESSION_CONTEXT_NOTE_CHARS].rstrip() + "…"
+        lines.append(f"- next-session note (pm_next, {store.next_note_path}): {first}")
+
+    handoff = store.project_dir / "HANDOFF.md"
+    if handoff.exists():
+        lines.append(f"- last handoff: {handoff} (read it before starting)")
+    return lines
+
+
+@cli.command("session-context")
+def session_context():
+    """Print the ProjectMan status block for a Claude Code SessionStart hook.
+
+    Reads the hook's JSON on stdin (``cwd``, ``session_id``) and prints
+    project counts, points, in-flight tasks, the active sprint and the
+    next-session note when ``<cwd>/.project/config.yaml`` exists; anywhere
+    else it prints nothing.  It dedupes with session-start.sh through the
+    same per-session marker, and always exits 0 so a broken store never
+    blocks a session from starting.
+    """
+    import sys
+    import time
+
+    payload = {}
+    if not sys.stdin.isatty():
+        try:
+            payload = json.loads(sys.stdin.read() or "{}")
+        except ValueError:
+            payload = {}
+    if not isinstance(payload, dict):
+        payload = {}
+
+    root = Path(payload.get("cwd") or Path.cwd())
+    project_dir = root / ".project"
+    if not (project_dir / "config.yaml").is_file():
+        return
+
+    marker = _session_context_marker(str(payload.get("session_id") or "nosession"))
+    try:
+        if time.time() - marker.stat().st_mtime < _SESSION_CONTEXT_DEDUPE_SECONDS:
+            return  # already printed for this session moments ago
+    except OSError:
+        pass
+    try:
+        marker.parent.mkdir(parents=True, exist_ok=True)
+        marker.touch()
+    except OSError:
+        pass
+
+    click.echo(f"## ProjectMan context ({project_dir})")
+    try:
+        for line in _session_context_lines(root):
+            click.echo(line)
+    except Exception as exc:  # the hook must never fail the session
+        click.echo(f"ProjectMan project detected but the summary failed: {exc}")
+    click.echo(
+        "Use pm_context for full context, /projectman:pm-status for the dashboard, "
+        "/projectman:pm board for what to pick up."
+    )
 
 
 def _thousands(value) -> str:

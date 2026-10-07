@@ -1,5 +1,14 @@
 # Installation
 
+The supported install is the Claude Code plugin: see
+[Install as a Claude Code plugin](#install-as-a-claude-code-plugin). It needs uv and a
+Claude Code release with plugin support (no minimum version is recorded yet; verified on
+Claude Code 2.1.292). The pipx CLI below is optional with the plugin: install it for
+`projectman init`, `projectman web` and `projectman migrate-to-plugin` from a shell.
+`projectman setup-claude` and `projectman refresh-skills` are deprecated and now only print
+the plugin steps; an existing setup-claude install moves over with
+[`projectman migrate-to-plugin`](#old-setup-claude-copies).
+
 ## Prerequisites
 
 - Python 3.10+
@@ -29,7 +38,7 @@ pipx ensurepath
 
 After running `pipx ensurepath`, restart your shell (or run `source ~/.bashrc` / `source ~/.zshrc`) for the PATH change to take effect.
 
-## Install with pipx (Recommended)
+## Install the CLI with pipx
 
 ```bash
 # Install everything (MCP + web dashboard + semantic search)
@@ -84,29 +93,24 @@ projectman --help
 
 ## Upgrading
 
-`pipx upgrade projectman` reinstalls from the source pipx recorded — for a git URL that
-means the published branch, **not** your working tree. A plain `pipx upgrade` never picks
-up local changes. The current release is 0.11.0; `CHANGELOG.md` records what changed in it.
+**Plugin:** `/plugin marketplace update projectman`, `/plugin update projectman@projectman`,
+then `/reload-plugins` — see [Updating](#updating). Nothing else to run.
 
-**Stale install symptoms:** the CLI or MCP server behaves like an older version than your
-checkout — a tool argument the code accepts is rejected as unexpected, a flag you can see
-in `src/` is missing, or an installed pm skill mentions a tool that does not exist.
+**pipx CLI from a checkout:** `pipx upgrade projectman` reinstalls from the source pipx
+recorded, **not** your working tree, so it never picks up local changes. The current
+release is 0.11.0; `CHANGELOG.md` records what changed in it.
 
-Reinstall from the checkout, re-render the skills, then restart Claude Code:
+**Stale install symptoms:** the CLI behaves like an older version than your checkout — a
+tool argument the code accepts is rejected as unexpected, or a flag you can see in `src/`
+is missing. Reinstall from the checkout, then restart Claude Code:
 
 ```bash
-# 1. Reinstall from the local tree (--force: the version number may not have changed)
-pipx install --force "/path/to/ProjectMan[all]"
-
-# 2. Re-render the pm agent + skills from the newly installed templates
-projectman refresh-skills --keep-local
+pipx install --force "/path/to/ProjectMan[all]"   # --force: the version may not have changed
 ```
 
-`--keep-local` keeps and refreshes project-local `.claude/` skill copies; without it they
-are pruned when the same skills are installed globally in `~/.claude`.
-
-Then **restart Claude Code** (or start a new session): the MCP server is a long-lived child
-process, so a running session keeps the old code until that process is replaced.
+Still on setup-claude skill copies? Run `projectman migrate-to-plugin`. For this one
+release only, `projectman refresh-skills --keep-local --legacy` re-renders them the old way
+(plain `refresh-skills` now only prints the plugin steps).
 
 ### The `mcp<2` requirement
 
@@ -129,3 +133,110 @@ Reinstalling as above resolves the pin. In a hand-managed environment, force it 
 | `embeddings` | fastembed, numpy | Semantic search via embeddings |
 | `all` | all of the above | Everything |
 | `dev` | pytest, pytest-tmp-files, httpx | Testing |
+
+## Install as a Claude Code plugin
+
+ProjectMan ships as a Claude Code plugin, and this is the supported install. The repo is
+both the marketplace and the plugin. Installing it gives you the pm skills (`/projectman:pm`, `/projectman:pm-status`,
+...), the `projectman:pm` agent, the projectman MCP server and a SessionStart hook that
+prints a ProjectMan status block. You don't need pipx or `setup-claude` for this path.
+
+### Prerequisites
+
+- [uv](https://docs.astral.sh/uv/getting-started/installation/) on `PATH`. The plugin
+  starts its MCP server with `uv run --project <plugin dir> --extra all projectman serve`
+  and its hook with `uv run ... projectman session-context`. uv builds the environment on
+  first use. Without uv, the hook prints a one-line warning and the MCP tools stay
+  unavailable.
+- git, and Claude Code with plugin support. No minimum version is recorded yet; these
+  steps were verified on Claude Code 2.1.292 (`claude --version`).
+
+### Add the marketplace and install
+
+In Claude Code:
+
+```
+/plugin marketplace add Biztactix-Ryan/ProjectMan
+/plugin install projectman@projectman
+```
+
+From a local clone, point the marketplace at the checkout instead:
+
+```
+/plugin marketplace add /path/to/ProjectMan
+/plugin install projectman@projectman
+```
+
+The same steps from a shell, scoped to one project (`--scope user` is the default; with
+`local`, the entries go into that project's `.claude/settings.local.json`):
+
+```bash
+cd /path/to/your/project
+claude plugin marketplace add /path/to/ProjectMan --scope local
+claude plugin install projectman@projectman --scope local
+```
+
+**First session after install:** if you install from inside a running session, the MCP
+tools may not show up until the next session. Run `/reload-plugins`. If the tools are
+still missing, start a new session.
+
+### Verify
+
+- **Skills and agent:** `/projectman:pm-status` and the other `projectman:*` skills show
+  up in the `/` menu, and the `projectman:pm` agent is listed in `/agents`.
+- **MCP tools:** `/mcp` lists `plugin:projectman:projectman` as connected. Its tools are
+  namespaced `mcp__plugin_projectman_projectman__pm_*`.
+- **Status block:** start a session in a directory that has a `.project/` (run
+  `projectman init` first if needed). The session opens with a
+  `## ProjectMan context (<path>/.project)` block. The hook prints nothing in directories
+  without a `.project/`.
+
+To check without opening the TUI, run a headless session and read its init event:
+
+```bash
+claude -p --output-format stream-json --verbose --include-hook-events --max-turns 1 "Reply OK"
+```
+
+The `system`/`init` line lists the `projectman:*` skills, the `projectman:pm` agent and
+`plugin:projectman:projectman` with `"status": "connected"`. A `hook_response` line for
+`SessionStart:startup` carries the status block in its `output`.
+
+### Updating
+
+```
+/plugin marketplace update projectman
+/plugin update projectman@projectman
+/reload-plugins
+```
+
+From a shell, run `claude plugin marketplace update projectman` and then
+`claude plugin update projectman@projectman`. After that, run `/reload-plugins` in any
+open session, or start a new one. `/reload-plugins` re-reads the plugin's skills, agents
+and hooks inside the running session, so you don't need to restart Claude Code.
+
+`plugin update` only moves when the plugin's `version` in `.claude-plugin/plugin.json`
+changes. If the version is unchanged, it reports "already at the latest version".
+
+A marketplace added from a local clone is read straight from that folder. An edit to a
+skill in the checkout is picked up by `/reload-plugins` or by the next session, without
+a `plugin update`.
+
+### Old `setup-claude` copies
+
+If you previously ran `projectman setup-claude` (or `refresh-skills`), the pm skills and
+agent also exist as plain copies in `~/.claude/` or a project's `.claude/`. A pipx
+`projectman` MCP entry may also exist in `~/.claude.json`. These sit alongside the
+plugin, so every skill appears twice: once as `pm-status`, once as
+`projectman:pm-status`. There are also two projectman MCP servers. Remove the old copies
+with `projectman migrate-to-plugin`; run it in each project that has its own `.claude/`
+copies or `.mcp.json` entry:
+
+```bash
+projectman migrate-to-plugin --dry-run   # list what would be removed, write nothing
+projectman migrate-to-plugin             # remove it
+```
+
+It removes only what ProjectMan wrote: the pm agent and skills in `~/.claude` and
+`./.claude`, the user-scope projectman MCP server, the projectman entry in `./.mcp.json`,
+and the per-project `pm-context.sh` SessionStart hook. Other skills, MCP servers, hooks
+and a user-modified `pm-context.sh` are kept. Restart Claude Code afterwards.

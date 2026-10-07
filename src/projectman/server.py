@@ -4040,7 +4040,7 @@ def pm_auto_scope(
     """Discover what needs scoping — returns codebase signals (full scan) or undecomposed stories (incremental).
 
     Auto-detects mode: full scan when no epics/stories exist, incremental when stories lack tasks.
-    Use with /pm-autoscope skill for automated epic/story/task creation.
+    Use with the /projectman:pm-autoscope skill for automated epic/story/task creation.
 
     Args:
         mode: Force mode: "full" (codebase scan for new projects) or "incremental" (scope existing stories). Auto-detected if omitted.

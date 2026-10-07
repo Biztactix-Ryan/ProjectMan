@@ -3,7 +3,7 @@ name: pm-autoscope
 description: Automated scoping — analyze the codebase or backlog and bulk-create epics, stories, and tasks with dependencies. Use when the user says "scope everything", "autoscope", "break down the backlog", or a new project needs its initial structure.
 ---
 
-# /pm-autoscope — Automated Scoping
+# /projectman:pm-autoscope — Automated Scoping
 
 Automates the discovery and creation pipeline for epics, stories, and tasks.
 
@@ -47,7 +47,7 @@ Triggered when stories exist but some have no tasks. This is the primary use cas
    - N stories scoped
    - N tasks created
    - Total points assigned
-4. Suggest next steps: `/pm board` to see available work or `/pm-plan` for sprint planning
+4. Suggest next steps: `/projectman:pm board` to see available work or `/projectman:pm-plan` for sprint planning
 
 ## Guidelines
 
@@ -94,5 +94,5 @@ Use `pm_create_tasks` (batch) to create all tasks at once:
 ## Forcing a mode
 
 Users can force a specific mode:
-- `/pm autoscope full` — force full codebase scan even if stories exist
-- `/pm autoscope incremental` — force incremental even if no stories exist
+- `/projectman:pm autoscope full` — force full codebase scan even if stories exist
+- `/projectman:pm autoscope incremental` — force incremental even if no stories exist

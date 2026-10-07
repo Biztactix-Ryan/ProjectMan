@@ -3,7 +3,7 @@ name: pm-cleanup
 description: Archive completed epics, stories, tasks, and old sprints to reduce context noise. Use when the user says "clean up", "archive done work", or the backlog is cluttered with finished items.
 ---
 
-# /pm-cleanup — Archive Completed Work
+# /projectman:pm-cleanup — Archive Completed Work
 
 Archive completed work to reduce context noise when looking for active items.
 
@@ -16,4 +16,4 @@ Archive completed work to reduce context noise when looking for active items.
 4. **Ask for explicit approval before proceeding** — do not archive without user confirmation
 5. Archive in order: tasks → stories → epics (via `pm_archive`)
 6. Call `pm_reindex` to rebuild indexes
-7. Summarize archived items, then suggest the natural next step: commit the archive (`/pm commit all`) and, with a clean backlog, plan the next sprint (`/pm-plan`)
+7. Summarize archived items, then suggest the natural next step: commit the archive (`/projectman:pm commit all`) and, with a clean backlog, plan the next sprint (`/projectman:pm-plan`)

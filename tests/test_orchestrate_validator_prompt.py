@@ -55,9 +55,10 @@ NOTE_MAX_CHARS = 200
 ANSWER_MAX_CHARS = 1500
 
 #: the worker rules the validator is told to check, as substrings of the
-#: lowercased fence.  ``checkout|restore|stash|reset`` may be written as a
-#: slash-separated list, so each verb is looked for on its own.
-SAFETY_VERBS = ["checkout", "restore", "stash", "reset"]
+#: lowercased fence.  Since US-PM-59-9 only ``reset`` is listed: the plugin's
+#: guards (hooks/git-guard.ts) refuse checkout/restore/stash in workers, so a
+#: worker diff can no longer carry them and the validator need not look.
+SAFETY_VERBS = ["reset"]
 
 
 def _validator_fence(text: str) -> str:

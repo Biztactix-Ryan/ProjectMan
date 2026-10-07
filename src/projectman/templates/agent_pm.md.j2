@@ -30,7 +30,7 @@ Tasks (US-PREFIX-N-N) — implementation units, 1-5 points each
   ↓  pass Definition of Ready gates
 Task Board — available pool, ordered by priority
   ↓  devs grab tasks
-Execution — /pm-do with full context loading
+Execution — /projectman:pm-do with full context loading
   ↓  audit catches drift
 Continuous audit — checks alignment across all layers
 ```
@@ -44,12 +44,12 @@ Continuous audit — checks alignment across all layers
 5. **Estimate** — `pm_estimate(id)` returns the fibonacci bands and this project's averages if you want a calibration; otherwise set `points` directly
 6. **Board** — `pm_board` to see available work
 7. **Grab** — `pm_grab(task_id)` to claim a task with readiness validation
-8. **Execute** — `/pm-do <task-id>` to implement
+8. **Execute** — `/projectman:pm-do <task-id>` to implement
 9. **Complete** — `pm_done_next(task_id, outcome, note)` (or `pm_accept`, the
     orchestrator's verdict form) completes the task and closes the parent story
     automatically when it was the story's last open task. Plain
     `pm_update(status="done")` completes only the task — the story must then be
-    closed explicitly. Under `/pm-orchestrate` the worker never marks the task
+    closed explicitly. Under `/projectman:pm-orchestrate` the worker never marks the task
     done; only the orchestrator's `pm_accept` does.
 10. **Audit** — `pm_audit` to check for drift
 
@@ -104,7 +104,7 @@ The task board (`pm_board`) is the "home screen" for developers:
 Developer starts session
   → pm_board          (see what's available)
   → pm_grab US-PRJ-1-1   (claim a task)
-  → /pm-do US-PRJ-1-1    (implement it)
+  → /projectman:pm-do US-PRJ-1-1    (implement it)
   → pm_board          (see what's next)
 ```
 
@@ -130,14 +130,14 @@ Context flows downward through the project's six documents:
 
 ## Sprints
 
-Sprints are the unit of orchestrated execution — `/pm-orchestrate` drives the active sprint. Statuses: planning → active → completed | cancelled (`pm_create_sprint`, `pm_update_sprint`, `pm_list_sprints`, `pm_get_sprint`).
+Sprints are the unit of orchestrated execution — `/projectman:pm-orchestrate` drives the active sprint. Statuses: planning → active → completed | cancelled (`pm_create_sprint`, `pm_update_sprint`, `pm_list_sprints`, `pm_get_sprint`).
 
 1. Run `pm_status` and `pm_audit`; close out any expired active sprint first
 2. Review `pm_active` for in-flight work; check `pm_burndown` + completed sprints for velocity
 3. Prioritize backlog stories by value and dependency order
-4. Scope and estimate candidates until they fit velocity — use `/pm-plan` for the full workflow
+4. Scope and estimate candidates until they fit velocity — use `/projectman:pm-plan` for the full workflow
 5. Persist with `pm_create_sprint` (goal, dates, story IDs) and activate
-6. Execute via `/pm-orchestrate`; complete the sprint with `pm_update_sprint(status="completed")`
+6. Execute via `/projectman:pm-orchestrate`; complete the sprint with `pm_update_sprint(status="completed")`
 
 ## Documentation
 

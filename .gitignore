@@ -19,5 +19,8 @@ htmlcov/
 .coverage
 *.log
 .DS_Store
-uv.lock
 .project/
+
+# Claude Code mod (hooks/register.ts): engine-laid types and any JS tooling
+.claude-plugin/types/
+node_modules/
