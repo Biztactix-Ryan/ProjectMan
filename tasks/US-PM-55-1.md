@@ -1,0 +1,20 @@
+---
+archived: false
+assignee: null
+claimed_at: null
+claimed_by_run: null
+created: '2026-10-07'
+depends_on: []
+id: US-PM-55-1
+points: null
+status: todo
+story_id: US-PM-55
+tags: []
+title: 'Test: A candidate launch command starts `projectman serve` from a plugin root
+  with the [all] extras resolved and the ...'
+updated: '2026-10-07'
+---
+
+Verify acceptance criterion for story US-PM-55:
+
+> A candidate launch command starts `projectman serve` from a plugin root with the [all] extras resolved and the MCP tools listed in a Claude Code session
