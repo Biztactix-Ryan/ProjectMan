@@ -3,6 +3,8 @@ import type { ProjectmanGuardDenial } from '../types'
 import { findBannedGit, GIT_RULE_REASON } from './git-guard.ts'
 import { absolutize, mentionsStore, STORE_RULE_REASON, storeHit, storeRoots, targetOf } from './store-guard.ts'
 import type { ResolveFn } from './store-guard.ts'
+import { formatCommand, MCP_SERVER_KEY, parseYaml, PM_COMMANDS, resultText } from './pm-views.ts'
+import type { Yaml } from './pm-views.ts'
 
 // ProjectMan orchestration guards (US-PM-59). Enforce the worker rules on tool
 // calls in-process instead of in skill prose.
@@ -78,4 +80,33 @@ export const register: Register = (on, options) => {
       return { deny: `${STORE_RULE_REASON} (the ProjectMan guard failed to read this call)` }
     }
   })
+
+  // US-PM-60-6: /pm-board, /pm-status-view and /pm-next-task answer from the
+  // projectman MCP server through `$.mcp.call`, with no model request, so a
+  // check costs no tokens. `immediate` lets them run while a turn streams.
+  on('session.start', async ($, e, next) => {
+    for (const command of PM_COMMANDS) {
+      await $.command.register({ name: command.name, description: command.description, immediate: true })
+    }
+    return next(e)
+  })
+
+  // The names spelled out so `claude plugin validate` reads the matcher; a
+  // mod test holds them equal to PM_COMMANDS.
+  on('command.run', { command: ['pm-board', 'pm-status-view', 'pm-next-task'] }, async ($, e, next) => {
+    const command = PM_COMMANDS.find((c) => c.name === e.command)
+    if (command === undefined) return next(e)
+    const connected = await $.mcp.connect(MCP_SERVER_KEY)
+    if (!connected.isConnected) {
+      return { text: `ProjectMan: the projectman MCP server is not connected (${connected.message})` }
+    }
+    const results: Yaml[] = []
+    for (const call of command.calls) {
+      const answer = await $.mcp.call(connected.server, call.tool, call.args)
+      const text = resultText(answer)
+      if (answer.isError) return { text: `ProjectMan: ${call.tool} failed: ${text.trim() || 'no detail'}` }
+      results.push(parseYaml(text))
+    }
+    return { text: formatCommand(command, results) }
+  }).catch(($, e) => ({ text: `ProjectMan: /${e.command} failed to read the MCP server's answer` }))
 }
