@@ -232,6 +232,8 @@ From a shell, run `claude plugin marketplace update projectman` and then
 `claude plugin update projectman@projectman`. After that, run `/reload-plugins` in any
 open session, or start a new one. `/reload-plugins` re-reads the plugin's skills, agents
 and hooks inside the running session, so you don't need to restart Claude Code.
+`plugin update` still ends with "Restart to apply changes". Running `/reload-plugins`
+is enough; it picks up changed skills and newly added ones.
 
 `plugin update` only moves when the plugin's `version` in `.claude-plugin/plugin.json`
 changes. If the version is unchanged, it reports "already at the latest version".
