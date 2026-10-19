@@ -131,16 +131,22 @@ function engine(on: On, answers: Record<string, string>, opts: EngineOpts = {}):
     const text = opts.asJson ? JSON.stringify({ result: body }) : body
     return { value: { content: [{ type: 'text', text }], isError: false } }
   })
-  on('model.complete', ($, e) => {
-    seen.model.push('model.complete')
+  // Every model call on `$` (complete, classify, fork and any added later),
+  // and the side doors to one: a raw HTTP request or a process (`claude -p`).
+  // Each is refused and recorded; the tests require `seen.model` stay empty.
+  on('model.*', ($, e, next) => {
+    seen.model.push(next.event)
     return { deny: 'no model request may be made' }
   })
-  on('model.classify', ($, e) => {
-    seen.model.push('model.classify')
-    return { deny: 'no model request may be made' }
-  })
-  on('model.fork', ($, e) => {
-    seen.model.push('model.fork')
+  for (const door of ['http.fetch', 'process.run'] as const) {
+    on(door, () => {
+      seen.model.push(door)
+      return { deny: 'no model request may be made' }
+    })
+  }
+  // process.spawn streams, so its hook is an async generator.
+  on('process.spawn', async function* () {
+    seen.model.push('process.spawn')
     return { deny: 'no model request may be made' }
   })
   on('command.run', ($, e) => {
@@ -527,3 +533,88 @@ test('boardColumns reads available / in progress / blocked from pm_board', async
   expect(inProgress?.tasks[0]?.assignee).toBe('claude')
   expect(boardColumns(parseYaml('board:\n  in_progress:\n  - id: T-1\nstale_tasks:\n- T-1\n'))[1]?.tasks[0]?.isStale).toBe(true)
 })
+
+// ------------------------------------------------- US-PM-60 criterion
+//
+// "Board, status and next commands return their view with no model request
+// made." Each command on each path (text: no surface; drawing: terminal and
+// desktop, the board's refresh included) returns its view, answered from the
+// MCP server alone: no model call, no HTTP or process side door, no core
+// command, and no hidden `context` handed to the model.
+
+// The host refuses any `$` call a hooks module's source scan does not list,
+// and `claude plugin validate .` lists register.ts's calls: mcp, session,
+// state, ui, fs.stat, command.register, nothing on model, http or process.
+// So a model call is refused before it is made; the hook below, whose module
+// lists none, shows the rule, and the stand-ins above record anything that
+// would get past it.
+test('US-PM-60 guard: a model call the module does not list is refused before any request', async ($, on) => {
+  const errs: string[] = []
+  on('session.start', async ($, e) => {
+    await $.model.classify('x', ['a', 'b']).catch((x) => errs.push(String(x)))
+    await $.model.complete({ model: 'any', prompt: 'x' }).catch((x) => errs.push(String(x)))
+    return { cwd: e.cwd }
+  })
+  const seen = engine(on, ANSWERS)
+  await $.session.start({ cwd: '/work/proj', surface: 'terminal', isInteractive: true })
+  expect(errs.length).toBe(2)
+  for (const err of errs) expect(err).toContain('refused')
+  expect(seen.model).toEqual([])
+})
+
+const VIEW_PATHS = [
+  { path: 'text', surfaces: [] as RenderSurface[] },
+  { path: 'terminal', surfaces: ['terminal'] as RenderSurface[] },
+  { path: 'desktop', surfaces: ['desktop'] as RenderSurface[] },
+] as const
+
+function expectedView(name: string, path: string): string {
+  const command = PM_COMMANDS.find((c) => c.name === name)!
+  if (path === 'text') return { 'pm-board': BOARD_SUMMARY, 'pm-status-view': STATUS_SUMMARY, 'pm-next-task': NEXT_SUMMARY }[name]!
+  if (name === 'pm-board') return BOARD_OPENED
+  return formatCommand(command, parsedAnswers(command))
+}
+
+for (const { path, surfaces } of VIEW_PATHS) {
+  for (const name of ['pm-board', 'pm-status-view', 'pm-next-task'] as const) {
+    test(`US-PM-60 criterion: /${name} on the ${path} path returns its view with no model request`, async ($, on) => {
+      const seen = engine(on, ANSWERS, { surfaces })
+      const ran = await $.command.run(run(name))
+
+      expect(ran.text).toBe(expectedView(name, path))
+      expect(ran.context).toBeUndefined()
+      expect(seen.mcp.length).toBeGreaterThan(0)
+      expect(seen.mcp.every((c) => c.server === SERVER)).toBe(true)
+      expect(seen.model).toEqual([])
+      expect(seen.core).toEqual([])
+      // Only the drawing path opens the board pane, and only for /pm-board.
+      expect(seen.opened.length).toBe(path !== 'text' && name === 'pm-board' ? 1 : 0)
+    })
+  }
+}
+
+for (const surface of PANE_SURFACES) {
+  test(`US-PM-60 criterion: on ${surface}, the board pane draws and refreshes with no model request`, async ($, on) => {
+    const answers: Record<string, string> = { ...ANSWERS }
+    const seen = engine(on, answers, { surfaces: [surface] })
+    const ran = await $.command.run(run('pm-board'))
+    expect(ran.text).toBe(BOARD_OPENED)
+
+    const ui = await $.ui.mount({ plugin: 'projectman', surface, component: 'Pane', requestId: BOARD_PANE, props: paneProps() })
+    expect(await ui.find({ type: 'Text', text: 'Available (5)' })).toBeDefined()
+    expect(seen.model).toEqual([])
+
+    answers.pm_board = BOARD_YAML_REFRESHED
+    await ui.press({ key: REFRESH_KEY })
+    expect(await ui.find({ type: 'Text', text: 'Available (4)' })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: 'Blocked (1)' })).toBeDefined()
+
+    // A third read, on an empty answer, stays off the model too.
+    answers.pm_board = ''
+    await ui.press({ key: REFRESH_KEY })
+    expect(seen.mcp.map((c) => c.tool)).toEqual(['pm_board', 'pm_board', 'pm_board'])
+    expect(seen.model).toEqual([])
+    expect(seen.core).toEqual([])
+    await ui.unmount()
+  })
+}
