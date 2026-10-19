@@ -1,6 +1,7 @@
 import type { CommandRunInput, On, RenderSurface } from 'claude-code'
 import type { ProjectmanBoardView } from '../../types'
 import { expect, test } from 'claude-code/testing'
+import type { Engine } from 'claude-code/testing'
 import {
   boardColumns,
   formatBoard,
@@ -615,6 +616,160 @@ for (const surface of PANE_SURFACES) {
     expect(seen.mcp.map((c) => c.tool)).toEqual(['pm_board', 'pm_board', 'pm_board'])
     expect(seen.model).toEqual([])
     expect(seen.core).toEqual([])
+    await ui.unmount()
+  })
+}
+
+// ------------------------------------------- US-PM-60 criterion: mid-turn
+//
+// "Commands work while a Claude turn is in progress." The commands register
+// `immediate`, so the engine runs `/pm-board` typed over a streaming turn at
+// once instead of queueing it for the turn's end. Each test holds a main-loop
+// turn in flight (its `turn.start` raised, its first model step streaming and
+// parked on a gate beneath, as a response still arriving is) and runs the
+// command or presses the pane's refresh over it: the view comes back while
+// the step is still unsettled, from the MCP server alone, and the turn then
+// finishes as it would have, its answer untouched.
+
+const TURN_ID = 'turn-mid'
+const TURN_TEXT = 'Working through the refactor…'
+
+type InFlight = {
+  /** What happened on the turn, in order. */
+  log: string[]
+  /** True once the parked step has streamed its end. */
+  isSettled: () => boolean
+  /** Lets the parked step finish, reads it to its end and completes the turn. */
+  finish: () => Promise<{ answer: string; stopReason: unknown }>
+}
+
+type TurnHooks = { log: string[]; open: () => void }
+
+// The engine's side of a turn, beneath the plugin (registered before the
+// test's first `$` call): `turn.start` answered, and one `turn.step` that
+// streams a first piece and then waits on a gate.
+function turnHooks(on: On): TurnHooks {
+  const log: string[] = []
+  let open!: () => void
+  const gate = new Promise<void>((resolve) => (open = resolve))
+  on('turn.start', ($, e) => {
+    log.push('turn.start')
+    return { turnId: e.turnId }
+  })
+  on('turn.step', async function* ($, e) {
+    log.push('step.streaming')
+    yield { kind: 'text', index: 0, text: TURN_TEXT }
+    await gate
+    log.push('step.end')
+    yield { kind: 'stop', stopReason: 'end_turn', usage: null }
+    return { turnId: e.turnId, index: e.index, answer: TURN_TEXT, toolUses: [], stopReason: 'end_turn', usage: null }
+  })
+  on('turn.complete', ($, e) => {
+    log.push(`turn.complete ${e.reason}`)
+    return { text: e.answer }
+  })
+  return { log, open }
+}
+
+// Starts the main-loop turn and leaves its first step streaming, parked on the gate.
+async function turnInFlight($: Engine, { log, open }: TurnHooks): Promise<InFlight> {
+  expect(await $.turn.start({ text: 'refactor the parser', turnId: TURN_ID })).toEqual({ turnId: TURN_ID })
+  const step = $.turn.step({ turnId: TURN_ID, index: 0, model: 'claude-opus', messageCount: 1 })
+  const first = await step.next()
+  expect(first.value).toMatchObject({ kind: 'text', text: TURN_TEXT })
+  // Pull the next piece: it waits on the gate, so the step stays in flight.
+  let settled = false
+  const rest = step.next().then((r) => {
+    settled = true
+    return r
+  })
+  return {
+    log,
+    isSettled: () => settled,
+    finish: async () => {
+      open()
+      let piece = await rest
+      while (!piece.done) piece = await step.next()
+      const result = piece.value
+      await $.turn.complete({ turnId: TURN_ID, answer: result.answer, durationMs: 1200, isAborted: false, reason: 'answer' })
+      return { answer: result.answer, stopReason: result.stopReason }
+    },
+  }
+}
+
+const TURN_DONE = ['turn.start', 'step.streaming', 'step.end', 'turn.complete answer']
+
+for (const { path, surfaces } of VIEW_PATHS) {
+  for (const name of ['pm-board', 'pm-status-view', 'pm-next-task'] as const) {
+    test(`US-PM-60 criterion: /${name} on the ${path} path works mid-turn`, async ($, on) => {
+      const seen = engine(on, ANSWERS, { surfaces })
+      const hooks = turnHooks(on)
+      on('session.start', ($, e) => ({ cwd: e.cwd }))
+      await $.session.start({ cwd: '/work/proj', surface: 'terminal', isInteractive: true })
+      // Declared immediate: typed mid-turn, the engine runs it at once.
+      expect(seen.registered).toContainEqual(expect.objectContaining({ name, immediate: true }))
+
+      const turn = await turnInFlight($, hooks)
+      const ran = await $.command.run(run(name))
+
+      // The view is back while the turn's step is still streaming.
+      expect(turn.isSettled()).toBe(false)
+      expect(turn.log).toEqual(['turn.start', 'step.streaming'])
+      expect(ran.text).toBe(expectedView(name, path))
+      expect(ran.context).toBeUndefined()
+      expect(seen.mcp.length).toBeGreaterThan(0)
+      expect(seen.model).toEqual([])
+      expect(seen.core).toEqual([])
+
+      // The turn then ends as it would have; the command did not touch it.
+      expect(await turn.finish()).toEqual({ answer: TURN_TEXT, stopReason: 'end_turn' })
+      expect(turn.log).toEqual(TURN_DONE)
+    })
+  }
+}
+
+test('US-PM-60 criterion: all three commands run back to back over one in-flight turn', async ($, on) => {
+  const seen = engine(on, ANSWERS)
+  const turn = await turnInFlight($, turnHooks(on))
+  for (const name of ['pm-board', 'pm-status-view', 'pm-next-task'] as const) {
+    const ran = await $.command.run(run(name))
+    expect(ran.text).toBe(expectedView(name, 'terminal'))
+    expect(turn.isSettled()).toBe(false)
+  }
+  expect(seen.mcp.map((c) => c.tool)).toEqual(['pm_board', 'pm_status', 'pm_board', 'pm_next'])
+  expect(seen.model).toEqual([])
+  expect((await turn.finish()).answer).toBe(TURN_TEXT)
+  expect(turn.log).toEqual(TURN_DONE)
+})
+
+for (const surface of PANE_SURFACES) {
+  test(`US-PM-60 criterion: on ${surface}, the board pane's refresh works mid-turn`, async ($, on) => {
+    const answers: Record<string, string> = { ...ANSWERS }
+    const seen = engine(on, answers, { surfaces: [surface] })
+    const hooks = turnHooks(on)
+    expect((await $.command.run(run('pm-board'))).text).toBe(BOARD_OPENED)
+    const ui = await $.ui.mount({ plugin: 'projectman', surface, component: 'Pane', requestId: BOARD_PANE, props: paneProps() })
+    expect(await ui.find({ type: 'Text', text: 'Blocked (0)' })).toBeDefined()
+
+    const turn = await turnInFlight($, hooks)
+    answers.pm_board = BOARD_YAML_REFRESHED
+    await ui.press({ key: REFRESH_KEY })
+
+    // Redrawn from the new read while the turn's step is still streaming.
+    expect(turn.isSettled()).toBe(false)
+    expect(turn.log).toEqual(['turn.start', 'step.streaming'])
+    expect(seen.mcp.map((c) => c.tool)).toEqual(['pm_board', 'pm_board'])
+    expect(await ui.find({ type: 'Text', text: 'Blocked (1)' })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: 'Available (4)' })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: 'Read 2 times this session.' })).toBeDefined()
+    expect((await ui.find({ type: 'Button', key: REFRESH_KEY }))?.text).toBe('Refresh')
+    expect(seen.model).toEqual([])
+    expect(seen.core).toEqual([])
+
+    expect(await turn.finish()).toEqual({ answer: TURN_TEXT, stopReason: 'end_turn' })
+    expect(turn.log).toEqual(TURN_DONE)
+    // The pane outlives the turn, as the refresh left it.
+    expect(await ui.find({ type: 'Text', text: 'Blocked (1)' })).toBeDefined()
     await ui.unmount()
   })
 }
