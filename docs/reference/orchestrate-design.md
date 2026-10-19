@@ -44,8 +44,10 @@ section: at most two lanes, one claim each, merged in acceptance order. One lane
 default.
 
 **A worktree and a branch per task: commits, but no pushes.** Each dispatch runs in its own
-git worktree on `orch/<run-id>/<task-id>`, cut from the run branch `orch/<run-id>`, which is
-itself cut from `HEAD` at pre-flight. The worker commits its code there — code only, never
+git worktree on `orch/<run-id>--<task-id>`, cut from the run branch `orch/<run-id>`, which is
+itself cut from `HEAD` at pre-flight. The task branch is a sibling of the run branch, not a
+ref nested under it: git stores `orch/<run-id>` as a file, so it refuses to create
+`orch/<run-id>/<task-id>` while the run branch exists (US-PM-68). The worker commits its code there — code only, never
 `.project` — and the orchestrator merges that branch onto the run branch when, and only
 when, it accepts the task. Nothing is pushed and the store is never committed by a run: no
 `git push`, no `pm_push`, no `pm_commit`. The run's product is a run branch the user reads
@@ -60,7 +62,9 @@ it: every store read and write goes through the MCP tools against the primary ch
 Cleanup is part of the model rather than housekeeping: once the final report has listed the
 run's branches — merged, unmerged and abandoned — the run removes the worktree and branch of
 every merged task, leaves a parked or review task's pair standing for whoever reads it, and
-removes the run worktree last.
+removes the run worktree last. A merged task branch goes with `git branch -D`, and only once
+`git branch --merged <run branch>` lists it: `-d` checks against the orchestrator's `HEAD`,
+which does not carry the run's merges, so it would refuse every time.
 
 **Failures park, they do not halt.** A task failing validation twice is left in `review`
 with a run-log record and the loop moves to the next ready task. A run that stops on the
@@ -503,7 +507,7 @@ paged on `has_more`, is everything that run did. Each task it names is then sort
 **R3 — an adopted task is dispatched as a retry, never as fresh work.** Its worker may have
 died with half-written files in its worktree, and the store records nothing about how far
 it got. So the adopted task's branch and worktree are read first — its last commit on
-`orch/<run-id>/<task-id>` and the status of the checkout that branch was left in — and the
+`orch/<run-id>--<task-id>` and the status of the checkout that branch was left in — and the
 prompt carries the `<on resume: ...>` line telling the worker to validate that state before
 editing. A failure on an
 adopted task is a *first* failure — retry once, then park — because the dead run's attempt

@@ -24,7 +24,7 @@ Mint `orch-<YYYY-MM-DD>-<4 hex>`; the `orch-` prefix is load-bearing. Pass `run_
 
 ### Run branch
 
-Dirt outside `.project/` (`git status --short`) **stops the run**: report the dirty list. Else `git branch orch/<this run> HEAD` (`<rb>`), `git worktree add <scratch>/orch-<this run> <rb>` (`<rw>`, merges); `<tb>` = `<rb>/<task-id>`.
+Dirt outside `.project/` (`git status --short`) **stops the run**: report the dirty list. Else `git branch orch/<this run> HEAD` (`<rb>`), `git worktree add <scratch>/orch-<this run> <rb>` (`<rw>`, merges); `<tb>` = `<rb>--<task-id>`.
 
 ### Heartbeat
 
@@ -50,7 +50,7 @@ Dirt outside `.project/` (`git status --short`) **stops the run**: report the di
 12. Else the first plan `todo`, dependency-clear, unassigned or step 3 recoverable: `pm_grab(<id>, run_id=<this run>)`; never one held elsewhere; none → exit.
 13. `--max` exceeded (retries too; both lanes count) → stop, report, release any pre-claimed task in either lane: `pm_release(<id>, note="<why>", run_id=<this run>)`.
 14. Note lane and `<tb>` before **each** dispatch; `--lanes 2`: one claim per lane, by run id — A and B: task, `<tb>`, returned?
-15. `Agent`: `subagent_type: general-purpose`, `model:` `--executor-model` else `opus`, `isolation: "worktree"`, branch `orch/<this run>/<task-id>` off `<rb>`; prompt below, in the background. Two in flight: take the first notification to land through 16-19 while the other worker runs — one lane validated or merged at a time — then refill it (11/12, compatible with the task in flight) and wait.
+15. `Agent`: `subagent_type: general-purpose`, `model:` `--executor-model` else `opus`, `isolation: "worktree"`, branch `orch/<this run>--<task-id>` off `<rb>`; prompt below, in the background. Two in flight: take the first notification to land through 16-19 while the other worker runs — one lane validated or merged at a time — then refill it (11/12, compatible with the task in flight) and wait.
 
 16. **Status check**: `pm_get(task_id, fields="status,assignee")` — deliberate: `status` `in-progress`/`review`, `assignee` `claude`.
 17. **Validation**: an `Agent` (`subagent_type: general-purpose`, step 15's model, foreground, no worktree) with the Validator Prompt Template returns files, tests, DoD — **never run them yourself**.
@@ -66,7 +66,7 @@ Dirt outside `.project/` (`git status --short`) **stops the run**: report the di
 ## Phase 4 — Report
 
 22. **From the log**: `pm_activity(run_id=<this run>)`, page `offset` while `has_more: true`: **Accepted** (`→ done`), **Retried** (`→ todo`, `failed`), **Parked**/**accept-as-review** (`→ review`, `pm_run_log(<id>)`: `blocked`/`partial`), **Recovered claims** (`claimed_by_run` → `<this run>`), **Released** (`info`), **Stories closed**, **Points moved** (`pm_get(<ids>, fields="points")`), **Untouched**. Notes cross-check; on disagreement **the log wins**.
-23. **Branches**: `<rb>`; `git branch --list 'orch/<this run>/*'` vs `git branch --merged <rb>`: **merged**, **unmerged** (parked/review), **abandoned** (released) — per 22's log. `git diff --stat HEAD...<rb>` (code); `git status --short -- .project/` (store).
+23. **Branches**: `<rb>`; `git branch --list '<rb>--*'` vs `git branch --merged <rb>`: **merged**, **unmerged** (parked/review), **abandoned** (released) — per 22's log. `git diff --stat HEAD...<rb>` (code); `git status --short -- .project/` (store).
 24. `CronDelete` the heartbeat. All tasks `done` → `pm_update_sprint(sprint_id, status="completed", run_id=<this run>)`.
 
 ## Resume
@@ -85,7 +85,7 @@ Criteria: <criteria>; DoD: <dod items>
 merge conflict `git rebase orch/<this run>` first">
 <on resume: "run <old-run-id> died mid-task; validate the working tree first">
 
-First `git switch -c orch/<this run>/<task-id> orch/<this run>` (retry: plain
+First `git switch -c orch/<this run>--<task-id> orch/<this run>` (retry: plain
 `git switch`), then /projectman:pm-do with `<task-id>` — without --complete.
 
 Rules:
@@ -125,7 +125,7 @@ One JSON object <1500 chars, no prose:
 
 ## Stop Conditions
 
-Stop when all sprint tasks are `done` or parked, `--max` is reached, `pm_audit` finds a new ERROR-level finding (`unchanged: true` never is), or `--resume` named a live run. Run Phase 4 first, releasing any pre-claimed unstarted task in either lane: `pm_release(<id>, note="<why>", run_id=<this run>)`. Merged: `git worktree remove <path>`, `git branch -d <tb>`; parked/review keep both; remove `<rw>` last, after 23's list. Print `git merge --no-ff <rb>`.
+Stop when all sprint tasks are `done` or parked, `--max` is reached, `pm_audit` finds a new ERROR-level finding (`unchanged: true` never is), or `--resume` named a live run. Run Phase 4 first, releasing any pre-claimed unstarted task in either lane: `pm_release(<id>, note="<why>", run_id=<this run>)`. 23's merged: `git worktree remove <path>`, `git branch -D <tb>`; parked/review keep both; remove `<rw>` last, after 23's list. Print `git merge --no-ff <rb>`.
 
 ## What This Skill Does NOT Do
 

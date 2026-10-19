@@ -258,7 +258,7 @@ def test_the_design_doc_says_why_the_log_does_not_replace_the_diff():
 
 # ═══ step 23 — the run's branches, and their cleanup (51-10) ════
 #
-# ADR-005 made every task a branch in ``orch/<run-id>/*``, so "what did this
+# ADR-005 made every task a branch ``orch/<run-id>--*``, so "what did this
 # run leave behind" is a question about refs rather than about the working
 # tree.  Step 23 answers it, and Stop Conditions disposes of what it listed:
 # a listing that never leads to a ``git worktree remove`` leaks a checkout per
@@ -266,14 +266,16 @@ def test_the_design_doc_says_why_the_log_does_not_replace_the_diff():
 # evidence the report is made of.
 
 #: the namespace the run's task branches live in, spelled out or by shorthand
-BRANCH_LIST = re.compile(r"git branch --list '(?:orch/<this run>|<rb>)/\*'")
+BRANCH_LIST = re.compile(r"git branch --list '(?:orch/<this run>|<rb>)--\*'")
 
 #: how a merged branch is told from an unmerged one — by git, not by name
 MERGED_QUERY = re.compile(r"git branch --merged\s+`?<rb>`?")
 
-#: the cleanup verbs, one for the checkout and one for the ref
+#: the cleanup verbs, one for the checkout and one for the ref.  ``-D``, not
+#: ``-d`` (US-PM-68-6): ``-d`` checks mergedness against HEAD, which never
+#: carries the run's merges, so it refuses; step 23's ``--merged <rb>`` is the check.
 WORKTREE_REMOVE = re.compile(r"git worktree remove")
-BRANCH_DELETE = re.compile(r"git branch -d")
+BRANCH_DELETE = re.compile(r"git branch -D")
 
 #: the single line the user runs afterwards, from their own branch
 MERGE_INSTRUCTION = re.compile(r"git merge --no-ff\s+`?(?:<rb>|orch/<this run>)`?")

@@ -360,7 +360,7 @@ def test_orchestrate_design_has_an_isolation_model_section_citing_adr_005():
         "the Isolation model section names ADR-005 but does not link to "
         "`.project/DECISIONS.md`, where it lives"
     )
-    for phrase in ("worktree", "orch/<run-id>/<task-id>"):
+    for phrase in ("worktree", "orch/<run-id>--<task-id>"):
         assert phrase in section, (
             f"the Isolation model section does not mention {phrase!r} — it "
             "should describe the model ADR-005 records, in short form"
@@ -396,7 +396,7 @@ def test_orchestrate_design_no_longer_heads_a_stage_only_model_section():
 SKILLS_DOC_CLAUSES = {
     "the run branch": "run branch `orch/<run-id>`",
     "the worktree dispatch": 'isolation: "worktree"',
-    "the per-task branch": "`orch/<run-id>/<task-id>`",
+    "the per-task branch": "`orch/<run-id>--<task-id>`",
     "the merge on accept": "git merge --ff-only",
     "branches merged, unmerged and abandoned": "**merged**",
 }

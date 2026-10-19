@@ -243,7 +243,7 @@ def test_rendered_template_dispatches_the_validator():
 WORKTREE_ISOLATION = re.compile(r'isolation:\s*"worktree"')
 
 #: the per-task branch, carrying both the run id and the task id
-TASK_BRANCH = re.compile(r"orch/<this run>/<task-id>")
+TASK_BRANCH = re.compile(r"orch/<this run>--<task-id>")
 
 #: the run branch it is cut from — spelled out, or by the Phase 0 shorthand
 RUN_BRANCH_REF = re.compile(r"run branch|`<rb>`")
@@ -285,7 +285,7 @@ def test_step_15_names_the_task_branch_cut_from_the_run_branch(path):
     """A worktree with no branch of its own still shares one history."""
     _, line = _line_starting(_text(path), WORKER_STEP)
     assert TASK_BRANCH.search(line), (
-        f"{path.name}: step 15 names no orch/<run-id>/<task-id> branch for the "
+        f"{path.name}: step 15 names no orch/<run-id>--<task-id> branch for the "
         f"worker:\n\n{line}"
     )
     assert RUN_BRANCH_REF.search(line), (

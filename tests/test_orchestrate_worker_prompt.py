@@ -242,9 +242,10 @@ def test_the_two_documents_state_one_shape_not_two():
 # commit/push") is retargeted here rather than deleted: pushing is still
 # forbidden, committing is now the worker's last act.
 
-#: the branch the worker cuts from the run branch, first thing
+#: the branch the worker cuts from the run branch, first thing — a sibling
+#: ``--`` ref since US-PM-68-6 (git refuses one nested under ``orch/<run>``)
 SWITCH_TO_TASK_BRANCH = re.compile(
-    r"git switch -c orch/<this run>/<task-id> orch/<this run>"
+    r"git switch -c orch/<this run>--<task-id> orch/<this run>"
 )
 
 #: code paths only — an ``-A`` over the whole tree would sweep in .project
@@ -353,7 +354,7 @@ def test_the_branch_clauses_reject_the_stage_only_worker_prompt():
 CWD_MAY_BE_A_WORKTREE = re.compile(r"cwd[^.\n]{0,40}worktree", re.IGNORECASE)
 
 #: and that somewhere is the task branch the orchestrator merges
-NAMES_THE_TASK_BRANCH = re.compile(r"orch/<[^>\n]+>/<task-id>")
+NAMES_THE_TASK_BRANCH = re.compile(r"orch/<[^>\n]+>--<task-id>")
 
 #: the commands that move a tree under a worker's feet and that the skill must
 #: still forbid in prose.  ``checkout``/``restore``/``stash`` left this list in
