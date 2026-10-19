@@ -22,7 +22,7 @@ import projectman
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 TEMPLATES = Path(projectman.__file__).resolve().parent / "templates"
-RENDERED_SKILLS = REPO_ROOT / ".claude" / "skills"
+RENDERED_SKILLS = REPO_ROOT / "skills"
 
 # `assignee=""`, `assignee = ''`, `assignee: ""` — every way the sentinel spells.
 SENTINEL = re.compile(r"""assignee\s*[=:]\s*(""|'')""")

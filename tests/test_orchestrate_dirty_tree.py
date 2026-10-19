@@ -17,7 +17,7 @@ commit would clear.  So the acceptance criterion pinned here is —
 clause by clause, on that step.
 
 Three documents are checked: the Jinja template (source of truth), the tracked
-rendered ``.claude/skills/pm-orchestrate/SKILL.md`` (what an orchestrating
+rendered ``skills/pm-orchestrate/SKILL.md`` (what an orchestrating
 agent actually loads) and a live render of the template, so a template edit
 that never survives the renderer is caught even before the byte-for-byte
 equality test in ``test_orchestrate_skill_size.py`` fires.

@@ -15,7 +15,7 @@ acceptance criterion pinned here is —
 the ``Worker Prompt Template`` fence of the pm-orchestrate skill.
 
 Three documents are checked for the fence: the Jinja template (source of
-truth), the tracked rendered ``.claude/skills/pm-orchestrate/SKILL.md`` (what
+truth), the tracked rendered ``skills/pm-orchestrate/SKILL.md`` (what
 an orchestrating agent actually loads) and a live render of the template (so a
 template edit that never survives the renderer is caught even before the
 byte-for-byte equality test in ``test_orchestrate_skill_size.py`` fires).

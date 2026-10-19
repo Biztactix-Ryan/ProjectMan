@@ -11,7 +11,7 @@ rationale.
 
 The size is pinned here on the *rendered* text rather than the template file,
 because rendering is what the agent actually sees, and the tracked copy under
-``.claude/skills/`` is asserted to be that same text — a template edit that
+``skills/`` is asserted to be that same text — a template edit that
 skips ``refresh-skills`` is caught rather than silently shipped.
 
 The last test is a falsification guard: the pre-rewrite template, read straight
@@ -46,7 +46,7 @@ TEMPLATE_REPO_PATH = f"src/projectman/templates/{TEMPLATE_NAME}"
 PRE_REWRITE_COMMIT = "1061084"
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-RENDERED_SKILLS = REPO_ROOT / ".claude" / "skills"
+RENDERED_SKILLS = REPO_ROOT / "skills"
 ORCHESTRATE_SKILL = RENDERED_SKILLS / "pm-orchestrate" / "SKILL.md"
 
 DESIGN_DOC_LINK = "orchestrate-design.md"

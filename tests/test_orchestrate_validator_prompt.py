@@ -14,7 +14,7 @@ orchestrator sends —
 Template`` fence of the pm-orchestrate skill.
 
 Both documents are checked: the Jinja template (source of truth) and the
-tracked rendered ``.claude/skills/pm-orchestrate/SKILL.md``, because the
+tracked rendered ``skills/pm-orchestrate/SKILL.md``, because the
 rendered copy is what an orchestrating agent actually loads.  Their
 byte-for-byte equality is already owned by
 ``test_orchestrate_skill_size.py::test_tracked_rendered_skill_matches_the_template``

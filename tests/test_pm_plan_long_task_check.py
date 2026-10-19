@@ -21,7 +21,7 @@ step numbers, so inserting a step anywhere in Phase 4 cannot silently satisfy
 it.
 
 Three documents are checked: the Jinja template (source of truth), the tracked
-rendered ``.claude/skills/pm-plan/SKILL.md`` (what a planning agent actually
+rendered ``skills/pm-plan/SKILL.md`` (what a planning agent actually
 loads) and a live render of the template, so a template edit that never
 survives the renderer is caught too.
 

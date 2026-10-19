@@ -63,7 +63,7 @@ INTERACTIVE_DOCS = {
     ),
     "agent-pm": (
         TEMPLATES / "agent_pm.md.j2",
-        REPO_ROOT / ".claude" / "agents" / "pm.md",
+        REPO_ROOT / "agents" / "pm.md",
     ),
 }
 

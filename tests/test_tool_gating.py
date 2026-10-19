@@ -772,7 +772,7 @@ def test_no_guidance_redirects_a_carve_out_to_the_cli():
 
 from projectman.cli import CLAUDE_SKILLS  # noqa: E402
 
-RENDERED_CLAUDE = REPO_ROOT / ".claude"
+RENDERED_CLAUDE = REPO_ROOT
 
 #: ``→ `pm_restore```, ``call pm_restore``, ``pm_restore(...)`` — the forms this
 #: guidance uses to dispatch an agent at a tool. A bare mention in prose (the

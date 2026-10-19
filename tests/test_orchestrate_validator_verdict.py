@@ -24,7 +24,7 @@ on the Validation steps of the pm-orchestrate skill:
   the task is parked with the fixed note ``"validator returned no verdict"``.
 
 Both documents are checked, the Jinja template (source of truth) and the
-tracked rendered ``.claude/skills/pm-orchestrate/SKILL.md`` an orchestrating
+tracked rendered ``skills/pm-orchestrate/SKILL.md`` an orchestrating
 agent actually loads, plus the render produced by ``_render_template`` itself,
 so a template edit that never reaches the renderer is caught as well.
 Byte-for-byte equality of template and tracked copy is owned by

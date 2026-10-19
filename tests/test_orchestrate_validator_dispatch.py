@@ -30,7 +30,7 @@ Validator Prompt Template fence, so the work is proven moved rather than
 deleted.
 
 Both documents are checked, the Jinja template (source of truth) and the
-tracked rendered ``.claude/skills/pm-orchestrate/SKILL.md`` an orchestrating
+tracked rendered ``skills/pm-orchestrate/SKILL.md`` an orchestrating
 agent actually loads, plus the render produced by ``_render_template`` itself.
 Byte-for-byte equality of template and tracked copy is owned by
 ``test_orchestrate_skill_size.py::test_tracked_rendered_skill_matches_the_template``

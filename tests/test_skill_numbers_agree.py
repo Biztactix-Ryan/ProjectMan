@@ -50,8 +50,8 @@ from projectman.models import FIBONACCI_POINTS
 REPO_ROOT = Path(__file__).resolve().parents[1]
 TEMPLATES = REPO_ROOT / "src" / "projectman" / "templates"
 DOCS = REPO_ROOT / "docs" / "reference"
-RENDERED_SKILLS = REPO_ROOT / ".claude" / "skills"
-RENDERED_AGENT = REPO_ROOT / ".claude" / "agents" / "pm.md"
+RENDERED_SKILLS = REPO_ROOT / "skills"
+RENDERED_AGENT = REPO_ROOT / "agents" / "pm.md"
 
 SKILLS_DOC = DOCS / "skills.md"
 AGENT_DOC = DOCS / "agent.md"

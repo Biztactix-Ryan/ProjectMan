@@ -146,7 +146,7 @@ POINTER_DOCS = [
     TEMPLATES / "skill_pm.md.j2",
     RENDERED_SKILLS / "pm" / "SKILL.md",
     TEMPLATES / "agent_pm.md.j2",
-    REPO_ROOT / ".claude" / "agents" / "pm.md",
+    REPO_ROOT / "agents" / "pm.md",
 ]
 
 
@@ -325,7 +325,7 @@ def test_removing_step_4b_did_not_renumber_the_verdict_steps(path):
 # step — an ordering *mandate* restored here would contradict that module.
 
 #: workflow → (template filename, tracked rendered copy)
-#: ``agent_pm`` renders outside ``.claude/skills/``, hence the explicit paths.
+#: ``agent_pm`` renders outside ``skills/``, hence the explicit paths.
 ESTIMATION_DOCS = {
     "pm": ("skill_pm.md.j2", RENDERED_SKILLS / "pm" / "SKILL.md"),
     "pm-autoscope": (
@@ -333,7 +333,7 @@ ESTIMATION_DOCS = {
         RENDERED_SKILLS / "pm-autoscope" / "SKILL.md",
     ),
     "pm-plan": ("skill_pm_plan.md.j2", RENDERED_SKILLS / "pm-plan" / "SKILL.md"),
-    "agent-pm": ("agent_pm.md.j2", REPO_ROOT / ".claude" / "agents" / "pm.md"),
+    "agent-pm": ("agent_pm.md.j2", REPO_ROOT / "agents" / "pm.md"),
 }
 
 #: ``pm_estimate(`` as the skills spell the call
@@ -709,7 +709,7 @@ def _mentions(text: str, tool: str) -> list[str]:
 SKILL_DOCS = (
     _skill_templates()
     + _rendered_skills()
-    + sorted((REPO_ROOT / ".claude" / "agents").glob("*.md"))
+    + sorted((REPO_ROOT / "agents").glob("*.md"))
 )
 
 #: (document, tool) for every document that mentions that tool at all

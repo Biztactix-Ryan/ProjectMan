@@ -10,7 +10,7 @@ that can each rot on their own:
    ``_render_template`` the CLI calls, so a template that fails to load (which
    ``_render_template`` swallows into a ``# ... template not found`` stub) is
    caught rather than silently shipped.
-2. **The tracked rendered copy matches.**  ``.claude/skills/pm-next/SKILL.md``
+2. **The tracked rendered copy matches.**  ``skills/pm-next/SKILL.md``
    is what a checkout of this repo actually loads; the templates carry no Jinja
    variables, so it must be a byte copy, and a one-sided edit would otherwise
    ship.
@@ -37,7 +37,7 @@ TEMPLATES = REPO_ROOT / "src" / "projectman" / "templates"
 
 TEMPLATE_NAME = "skill_pm_next.md.j2"
 TEMPLATE = TEMPLATES / TEMPLATE_NAME
-RENDERED = REPO_ROOT / ".claude" / "skills" / "pm-next" / "SKILL.md"
+RENDERED = REPO_ROOT / "skills" / "pm-next" / "SKILL.md"
 
 SKILLS_DOC = REPO_ROOT / "docs" / "reference" / "skills.md"
 USER_GUIDE = REPO_ROOT / "docs" / "user-guide" / "daily-workflow.md"
@@ -79,7 +79,7 @@ def test_the_template_exists_and_renders():
 
 
 def test_the_tracked_rendered_copy_is_byte_identical_to_the_template():
-    """`.claude/skills/pm-next/SKILL.md` is what a checkout loads."""
+    """`skills/pm-next/SKILL.md` is what a checkout loads."""
     assert RENDERED.is_file(), f"{RENDERED} is missing — run `projectman setup-claude`"
     assert _text(RENDERED) == _render_template(TEMPLATE_NAME), (
         f"{RENDERED} has drifted from {TEMPLATE}"
