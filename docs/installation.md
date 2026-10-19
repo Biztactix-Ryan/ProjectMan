@@ -149,7 +149,7 @@ prints a ProjectMan status block. You don't need pipx or `setup-claude` for this
   first use. Without uv, the hook prints a one-line warning and the MCP tools stay
   unavailable.
 - git, and Claude Code with plugin support. No minimum version is recorded yet; these
-  steps were verified on Claude Code 2.1.292 (`claude --version`).
+  steps were verified on Claude Code 2.1.292 and, from a clean config directory, on 2.1.303 (`claude --version`).
 
 ### Add the marketplace and install
 
@@ -186,10 +186,22 @@ still missing, start a new session.
   up in the `/` menu, and the `projectman:pm` agent is listed in `/agents`.
 - **MCP tools:** `/mcp` lists `plugin:projectman:projectman` as connected. Its tools are
   namespaced `mcp__plugin_projectman_projectman__pm_*`.
-- **Status block:** start a session in a directory that has a `.project/` (run
-  `projectman init` first if needed). The session opens with a
-  `## ProjectMan context (<path>/.project)` block. The hook prints nothing in directories
-  without a `.project/`.
+- **Status block:** start a session in a directory that has a `.project/`. The session
+  opens with a `## ProjectMan context (<path>/.project)` block. The hook prints nothing
+  in directories without a `.project/`, and no plugin skill or MCP tool creates one.
+
+Creating a store needs the `projectman init` CLI. If you installed the CLI, run
+`projectman init` in the project. On a plugin-only machine, run the copy that ships
+with the plugin, through the same `uv` environment the plugin's MCP server uses:
+
+```bash
+cd /path/to/your/project
+uv run --project ~/.claude/plugins/cache/projectman/projectman/0.11.0 --extra all projectman init
+```
+
+Replace `0.11.0` with the installed version. If you're not sure of the path, run
+`claude plugin list --json` and use the `installPath` it shows. Then start a new
+session in the project to see the status block.
 
 To check without opening the TUI, run a headless session and read its init event:
 
@@ -199,7 +211,14 @@ claude -p --output-format stream-json --verbose --include-hook-events --max-turn
 
 The `system`/`init` line lists the `projectman:*` skills, the `projectman:pm` agent and
 `plugin:projectman:projectman` with `"status": "connected"`. A `hook_response` line for
-`SessionStart:startup` carries the status block in its `output`.
+`SessionStart:startup` carries the status block in its `output`. Both lines are written
+before Claude Code contacts the API, so the check works even when the session is not
+logged in; the reply is then "Not logged in", which does not affect the check.
+`claude mcp list` shows the server as connected as well.
+
+`claude plugin install` may also print "1 userConfig option not yet set". That option is
+`guard_main_session`, which defaults to off. You only need to set it if you want the
+worker git guards in the main session too (`/plugin configure projectman@projectman`).
 
 ### Updating
 
