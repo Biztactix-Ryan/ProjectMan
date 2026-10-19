@@ -1,6 +1,8 @@
 import type { CommandRunInput, On, RenderSurface } from 'claude-code'
+import type { ProjectmanBoardView } from '../../types'
 import { expect, test } from 'claude-code/testing'
 import {
+  boardColumns,
   formatBoard,
   formatCommand,
   formatNext,
@@ -13,6 +15,7 @@ import {
   summarizeStatus,
 } from '../../hooks/pm-views.ts'
 import { viewMode, viewModeFor } from '../../hooks/surface.ts'
+import { BOARD_OPENED, BOARD_PANE, BOARD_PANE_TITLE, COLUMNS_KEY, columnKey, REFRESH_KEY } from '../../hooks/board-pane.tsx'
 
 // US-PM-60-6: /pm-board, /pm-status-view and /pm-next-task register at
 // session start and answer from the projectman MCP server via $.mcp.call,
@@ -75,17 +78,42 @@ const NOTE_YAML = `note: 'Fix the board pane next.
   Then the text fallback, it''s US-PM-60-8.'
 `
 
-type Recorded = { mcp: { server: string; tool: string; args: Record<string, unknown> }[]; model: string[]; core: string[]; registered: unknown[] }
+type Recorded = {
+  mcp: { server: string; tool: string; args: Record<string, unknown> }[]
+  model: string[]
+  core: string[]
+  registered: unknown[]
+  opened: { id: string; title?: string }[]
+  /** Each value the plugin wrote to projectman.board, in order. */
+  board: (ProjectmanBoardView | null)[]
+}
 
-type EngineOpts = { asJson?: boolean; errorTool?: string; connected?: boolean; surfaces?: readonly RenderSurface[]; surfacesFail?: boolean }
+type EngineOpts = {
+  asJson?: boolean
+  errorTool?: string
+  connected?: boolean
+  surfaces?: readonly RenderSurface[]
+  surfacesFail?: boolean
+  placed?: boolean
+}
 
 // `surfaces` is where the session draws: the terminal by default (the
-// drawing path), `[]` for VS Code chat and `claude -p`.
+// drawing path), `[]` for VS Code chat and `claude -p`. `placed: false` is a
+// surface that cannot seat the pane now. `answers` and `opts` are read at
+// each call, so a test can change what the server answers between reads.
 function engine(on: On, answers: Record<string, string>, opts: EngineOpts = {}): Recorded {
-  const seen: Recorded = { mcp: [], model: [], core: [], registered: [] }
+  const seen: Recorded = { mcp: [], model: [], core: [], registered: [], opened: [], board: [] }
   on('session.surfaces', () => {
     if (opts.surfacesFail) throw new Error('no surface list')
     return { value: opts.surfaces ?? ['terminal'] }
+  })
+  on('state.set', ($, e, next) => {
+    if (e.plugin === 'projectman' && e.key === 'board') seen.board.push(e.value as ProjectmanBoardView | null)
+    return next(e)
+  })
+  on('ui.open', ($, e) => {
+    seen.opened.push({ id: e.id, title: e.title })
+    return { value: opts.placed === false ? { isPlaced: false, reason: 'the terminal is 80 columns wide' } : { isPlaced: true } }
   })
   on('command.register', ($, e) => {
     seen.registered.push(e)
@@ -159,8 +187,9 @@ test('command names do not clash with the plugin skills', async () => {
   for (const command of PM_COMMANDS) expect(skills.includes(command.name)).toBe(false)
 })
 
+// The full board as text: what /pm-board answers where a pane cannot be seated.
 test('/pm-board calls pm_board on the MCP server and formats the board, no model request', async ($, on) => {
-  const seen = engine(on, ANSWERS)
+  const seen = engine(on, ANSWERS, { placed: false })
   const ran = await $.command.run(run('pm-board'))
 
   expect(seen.mcp).toEqual([{ server: SERVER, tool: 'pm_board', args: { brief: true, limit: 10 } }])
@@ -321,8 +350,9 @@ for (const surface of ['terminal', 'desktop'] as const) {
     engine(on, ANSWERS, { surfaces: [surface] })
     for (const command of PM_COMMANDS) {
       const ran = await $.command.run(run(command.name))
-      // The pane stub (US-PM-60-7 replaces it) answers with the full view.
-      expect(ran.text).toBe(formatCommand(command, parsedAnswers(command)))
+      // The board opens as a pane (US-PM-60-7); status and next answer with the full view.
+      if (command.name === 'pm-board') expect(ran.text).toBe(BOARD_OPENED)
+      else expect(ran.text).toBe(formatCommand(command, parsedAnswers(command)))
       expect([BOARD_SUMMARY, STATUS_SUMMARY, NEXT_SUMMARY]).not.toContain(ran.text)
     }
   })
@@ -338,4 +368,162 @@ test('compact summaries cope with empty answers', async () => {
   expect(summarizeBoard(parseYaml('board:\n  blocked:\n  - id: T-1\nstale_tasks:\n- T-1\n'))).toBe(
     'ProjectMan board: 0 in progress · 0 in review · 1 blocked · 0 available · 0 not ready\nBlocked: T-1\nStale claims: T-1',
   )
+})
+
+// ---------------------------------------------------------------- board pane
+//
+// US-PM-60-7: on a drawing surface /pm-board writes the board to
+// projectman.board and opens it as a pane; the pane draws available / in
+// progress / blocked columns and its refresh button re-calls pm_board. Each
+// test body runs on the terminal and the desktop surface.
+
+// The board after work moved: US-PM-60-6 done, US-PM-60-7 picked up, one blocked.
+const BOARD_YAML_REFRESHED = `board:
+  available:
+  - id: US-PM-56-4
+    title: 'Test: On a machine with no prior setup, installing works'
+    points: 2
+  in_progress:
+  - id: US-PM-60-7
+    title: Draw the board as a pane with a refresh button
+    points: 3
+    assignee: claude
+  blocked:
+  - id: US-PM-56-12
+    title: Clean-machine install from the GitHub marketplace URL with TUI reload
+    points: 1
+summary:
+  available: 4
+  in_progress: 1
+  blocked: 1
+stale_tasks: []
+`
+
+// The Pane props a surface hands the hook: docked, `bodyColumns` wide.
+function paneProps(bodyColumns = 120) {
+  return { title: BOARD_PANE_TITLE, isFocused: false, bodyColumns, placement: 'dock' as const, scroll: { offset: 0, bodyRows: 30 }, view: {} }
+}
+
+const PANE_SURFACES = ['terminal', 'desktop'] as const
+
+for (const surface of PANE_SURFACES) {
+  test(`on ${surface}, /pm-board opens the pane with available / in progress / blocked columns`, async ($, on) => {
+    const seen = engine(on, ANSWERS, { surfaces: [surface] })
+    const ran = await $.command.run(run('pm-board'))
+    expect(ran.text).toBe(BOARD_OPENED)
+    expect(seen.opened).toEqual([{ id: BOARD_PANE, title: BOARD_PANE_TITLE }])
+
+    const ui = await $.ui.mount({ plugin: 'projectman', surface, component: 'Pane', requestId: BOARD_PANE, props: paneProps() })
+    for (const key of ['available', 'in_progress', 'blocked'] as const) {
+      expect(await ui.find({ type: 'Box', key: columnKey(key) })).toBeDefined()
+    }
+    expect(await ui.find({ key: 'col-not_ready' })).toBeUndefined()
+    expect((await ui.find({ key: COLUMNS_KEY }))?.props.flexDirection).toBe('row')
+    expect(await ui.find({ type: 'Text', text: 'Available (5)' })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: 'In progress (1)' })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: 'Blocked (0)' })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: 'US-PM-56-12  Clean-machine install' })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: 'US-PM-60-6  Register board, status and next commands that call MCP directly [3] @claude' })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: '… and 3 more' })).toBeDefined()
+    // Not-ready tasks are not on the pane.
+    expect(await ui.find({ type: 'Text', text: 'US-PM-60-1' })).toBeUndefined()
+    expect((await ui.find({ type: 'Button', key: REFRESH_KEY }))?.text).toBe('Refresh')
+    expect(seen.model).toEqual([])
+    await ui.unmount()
+  })
+
+  test(`on ${surface}, the refresh button re-calls pm_board and redraws the pane from $.state`, async ($, on) => {
+    const answers: Record<string, string> = { ...ANSWERS }
+    const seen = engine(on, answers, { surfaces: [surface] })
+    await $.command.run(run('pm-board'))
+    const ui = await $.ui.mount({ plugin: 'projectman', surface, component: 'Pane', requestId: BOARD_PANE, props: paneProps() })
+    expect(await ui.find({ type: 'Text', text: 'Blocked (0)' })).toBeDefined()
+
+    answers.pm_board = BOARD_YAML_REFRESHED
+    await ui.press({ key: REFRESH_KEY })
+
+    expect(seen.mcp).toEqual([
+      { server: SERVER, tool: 'pm_board', args: { brief: true, limit: 10 } },
+      { server: SERVER, tool: 'pm_board', args: { brief: true, limit: 10 } },
+    ])
+    expect(seen.model).toEqual([])
+    expect(await ui.find({ type: 'Text', text: 'Blocked (1)' })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: 'Available (4)' })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: 'US-PM-60-7  Draw the board as a pane' })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: 'US-PM-60-6' })).toBeUndefined()
+    expect(await ui.find({ type: 'Text', text: 'Read 2 times this session.' })).toBeDefined()
+    // The command's write, then the refresh: in flight, then the new read.
+    expect(seen.board.map((v) => [v?.loads, v?.isRefreshing])).toEqual([
+      [1, false],
+      [1, true],
+      [2, false],
+    ])
+    expect(seen.board.at(-1)?.columns.map((c) => c.total)).toEqual([4, 1, 1])
+    await ui.unmount()
+  })
+
+  test(`on ${surface}, a failed refresh keeps the columns and shows why`, async ($, on) => {
+    const opts: { errorTool?: string; surfaces: RenderSurface[] } = { surfaces: [surface] }
+    const seen = engine(on, ANSWERS, opts)
+    await $.command.run(run('pm-board'))
+    const ui = await $.ui.mount({ plugin: 'projectman', surface, component: 'Pane', requestId: BOARD_PANE, props: paneProps() })
+
+    opts.errorTool = 'pm_board'
+    await ui.press({ key: REFRESH_KEY })
+
+    expect(await ui.find({ type: 'Text', text: 'ProjectMan: pm_board failed: Error: no .project here' })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: 'Available (5)' })).toBeDefined()
+    expect(seen.board.at(-1)).toMatchObject({ loads: 1, isRefreshing: false, error: 'ProjectMan: pm_board failed: Error: no .project here' })
+    await ui.unmount()
+  })
+
+  test(`on ${surface}, a pane drawn before any read offers the refresh, which loads it`, async ($, on) => {
+    const seen = engine(on, ANSWERS, { surfaces: [surface] })
+    const ui = await $.ui.mount({ plugin: 'projectman', surface, component: 'Pane', requestId: BOARD_PANE, props: paneProps() })
+    expect(await ui.find({ type: 'Text', text: 'Press Refresh' })).toBeDefined()
+    expect(await ui.find({ key: columnKey('available') })).toBeUndefined()
+
+    await ui.press({ key: REFRESH_KEY })
+
+    expect(seen.mcp.map((c) => c.tool)).toEqual(['pm_board'])
+    expect(await ui.find({ type: 'Text', text: 'Press Refresh' })).toBeUndefined()
+    expect(await ui.find({ type: 'Text', text: 'In progress (1)' })).toBeDefined()
+    await ui.unmount()
+  })
+
+  test(`on ${surface}, a narrow pane stacks the columns`, async ($, on) => {
+    engine(on, ANSWERS, { surfaces: [surface] })
+    await $.command.run(run('pm-board'))
+    const ui = await $.ui.mount({ plugin: 'projectman', surface, component: 'Pane', requestId: BOARD_PANE, props: paneProps(50) })
+    expect((await ui.find({ key: COLUMNS_KEY }))?.props.flexDirection).toBe('column')
+    expect(await ui.find({ type: 'Text', text: 'Blocked (0)' })).toBeDefined()
+    await ui.unmount()
+  })
+}
+
+test('a pane the surface cannot seat leaves /pm-board answering with the full board', async ($, on) => {
+  const seen = engine(on, ANSWERS, { surfaces: ['terminal'], placed: false })
+  const ran = await $.command.run(run('pm-board'))
+  expect(seen.opened).toEqual([{ id: BOARD_PANE, title: BOARD_PANE_TITLE }])
+  expect(ran.text).toBe(formatBoard(parseYaml(BOARD_YAML)))
+})
+
+test('the text path opens no pane', async ($, on) => {
+  const seen = engine(on, ANSWERS, { surfaces: [] })
+  const ran = await $.command.run(run('pm-board'))
+  expect(seen.opened).toEqual([])
+  expect(ran.text).toBe(BOARD_SUMMARY)
+})
+
+test('boardColumns reads available / in progress / blocked from pm_board', async () => {
+  expect(boardColumns(null).map((c) => [c.key, c.total, c.tasks.length])).toEqual([
+    ['available', 0, 0],
+    ['in_progress', 0, 0],
+    ['blocked', 0, 0],
+  ])
+  const [available, inProgress] = boardColumns(parseYaml(BOARD_YAML))
+  expect(available?.total).toBe(5)
+  expect(available?.tasks[0]).toEqual({ id: 'US-PM-56-12', title: 'Clean-machine install from the GitHub marketplace URL with TUI reload', points: 1, assignee: null, isStale: false })
+  expect(inProgress?.tasks[0]?.assignee).toBe('claude')
+  expect(boardColumns(parseYaml('board:\n  in_progress:\n  - id: T-1\nstale_tasks:\n- T-1\n'))[1]?.tasks[0]?.isStale).toBe(true)
 })

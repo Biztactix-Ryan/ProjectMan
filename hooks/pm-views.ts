@@ -8,6 +8,8 @@
 // plain / single- / double-quoted / literal scalars, and the empty flow
 // collections `[]` and `{}`. It is not a general YAML parser.
 
+import type { ProjectmanBoardColumn, ProjectmanBoardTask } from '../types'
+
 /** One slash command this module serves: its name, line and MCP calls. */
 export type PmCommand = {
   name: string
@@ -332,6 +334,32 @@ export function formatBoard(data: Yaml): string {
   const stale = Array.isArray(top.stale_tasks) ? top.stale_tasks.map(str) : []
   if (stale.length > 0) out.push('', `Stale claims: ${stale.join(', ')}`)
   return out.join('\n')
+}
+
+/** The board pane's columns (US-PM-60-7), in the order drawn. */
+const PANE_COLUMNS: readonly [key: ProjectmanBoardColumn['key'], label: string][] = [
+  ['available', 'Available'],
+  ['in_progress', 'In progress'],
+  ['blocked', 'Blocked'],
+]
+
+/** `pm_board`'s answer, parsed, as the pane's available / in progress / blocked columns. */
+export function boardColumns(data: Yaml): ProjectmanBoardColumn[] {
+  const top = asMap(data)
+  const board = asMap(top.board)
+  const summary = asMap(top.summary)
+  const stale = new Set(Array.isArray(top.stale_tasks) ? top.stale_tasks.map(str) : [])
+  return PANE_COLUMNS.map(([key, label]) => {
+    const rows = asRows(board[key])
+    const tasks: ProjectmanBoardTask[] = rows.map((row) => ({
+      id: str(row.id),
+      title: str(row.title),
+      points: num(row.points) ?? null,
+      assignee: row.assignee ? str(row.assignee) : null,
+      isStale: row.stale === true || stale.has(str(row.id)),
+    }))
+    return { key, label, total: Math.max(num(summary[key]) ?? 0, tasks.length), tasks }
+  })
 }
 
 /** The project status (`pm_status`'s answer, parsed) as transcript text. */

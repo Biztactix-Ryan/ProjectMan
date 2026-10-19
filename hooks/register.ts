@@ -1,19 +1,84 @@
-import type { Register, ToolCallInput } from 'claude-code'
-import type { ProjectmanGuardDenial } from '../types'
+import { atom, read, update } from 'claude-code'
+import type { EngineInterface, Register, ToolCallInput } from 'claude-code'
+import type { ProjectmanBoardView, ProjectmanGuardDenial } from '../types'
+import { BOARD_OPENED, BOARD_PANE, BOARD_PANE_TITLE, boardPane } from './board-pane.tsx'
 import { findBannedGit, GIT_RULE_REASON } from './git-guard.ts'
 import { absolutize, mentionsStore, STORE_RULE_REASON, storeHit, storeRoots, targetOf } from './store-guard.ts'
 import type { ResolveFn } from './store-guard.ts'
-import { formatCommand, MCP_SERVER_KEY, parseYaml, PM_COMMANDS, resultText, summarizeCommand } from './pm-views.ts'
+import {
+  boardColumns,
+  formatCommand,
+  MCP_SERVER_KEY,
+  parseYaml,
+  PM_BOARD,
+  PM_COMMANDS,
+  resultText,
+  summarizeCommand,
+} from './pm-views.ts'
 import type { PmCommand, Yaml } from './pm-views.ts'
 import { viewMode } from './surface.ts'
 
+/** What the board pane draws (US-PM-60-7): null until the board is first read. */
+const board = atom({ plugin: 'projectman', key: 'board' } as const, null as ProjectmanBoardView | null)
+
+/** A command's MCP answers, parsed and in order, or why they could not be had. */
+type Fetched = { results: Yaml[] } | { error: string }
+
+/** Calls a command's projectman MCP tools straight from the mod: no model request. */
+async function fetchCommand($: EngineInterface, command: PmCommand): Promise<Fetched> {
+  const connected = await $.mcp.connect(MCP_SERVER_KEY)
+  if (!connected.isConnected) {
+    return { error: `ProjectMan: the projectman MCP server is not connected (${connected.message})` }
+  }
+  const results: Yaml[] = []
+  for (const call of command.calls) {
+    const answer = await $.mcp.call(connected.server, call.tool, call.args)
+    const text = resultText(answer)
+    if (answer.isError) return { error: `ProjectMan: ${call.tool} failed: ${text.trim() || 'no detail'}` }
+    results.push(parseYaml(text))
+  }
+  return { results }
+}
+
+/** The board as read: columns from `pm_board`, one more load counted. */
+function loaded(previous: ProjectmanBoardView | null, data: Yaml): ProjectmanBoardView {
+  return { columns: boardColumns(data), loads: (previous?.loads ?? 0) + 1, isRefreshing: false, error: null }
+}
+
 /**
- * The drawing path: where a surface draws, the view opens as a pane.
- * A stub until US-PM-60-7 draws the board as a pane with a refresh button;
- * until then it answers with the full view as text.
+ * The refresh button: re-reads `pm_board` and writes `projectman.board`,
+ * which redraws the pane. A press while a read is in flight does nothing; a
+ * failed read keeps the previous columns and shows why.
  */
-function drawView(command: PmCommand, results: readonly Yaml[]): { text: string } {
-  return { text: formatCommand(command, results) }
+async function refreshBoard($: EngineInterface): Promise<void> {
+  if ((await read($, board))?.isRefreshing) return
+  await update($, board, (v) => ({ columns: v?.columns ?? [], loads: v?.loads ?? 0, isRefreshing: true, error: null }))
+  let outcome: Fetched
+  try {
+    outcome = await fetchCommand($, PM_BOARD)
+  } catch {
+    outcome = { error: "ProjectMan: could not read the projectman MCP server's answer" }
+  }
+  const done = outcome
+  await update($, board, (v) =>
+    'results' in done
+      ? loaded(v, done.results[0] ?? null)
+      : { columns: v?.columns ?? [], loads: v?.loads ?? 0, isRefreshing: false, error: done.error },
+  )
+}
+
+/**
+ * The drawing path, where a surface draws. /pm-board writes the board to
+ * `projectman.board` and opens it as a pane (US-PM-60-7); a pane the surface
+ * could not seat leaves the full view as text. The status and next-task
+ * views answer with their full view as text.
+ */
+async function drawView($: EngineInterface, command: PmCommand, results: readonly Yaml[]): Promise<{ text: string }> {
+  if (command !== PM_BOARD) return { text: formatCommand(command, results) }
+  await update($, board, (v) => loaded(v, results[0] ?? null))
+  const opened = await $.ui.open({ id: BOARD_PANE, title: BOARD_PANE_TITLE }).catch(() => undefined)
+  if (opened?.isPlaced !== true) return { text: formatCommand(command, results) }
+  return { text: BOARD_OPENED }
 }
 
 // ProjectMan orchestration guards (US-PM-59). Enforce the worker rules on tool
@@ -106,19 +171,18 @@ export const register: Register = (on, options) => {
   on('command.run', { command: ['pm-board', 'pm-status-view', 'pm-next-task'] }, async ($, e, next) => {
     const command = PM_COMMANDS.find((c) => c.name === e.command)
     if (command === undefined) return next(e)
-    const connected = await $.mcp.connect(MCP_SERVER_KEY)
-    if (!connected.isConnected) {
-      return { text: `ProjectMan: the projectman MCP server is not connected (${connected.message})` }
-    }
-    const results: Yaml[] = []
-    for (const call of command.calls) {
-      const answer = await $.mcp.call(connected.server, call.tool, call.args)
-      const text = resultText(answer)
-      if (answer.isError) return { text: `ProjectMan: ${call.tool} failed: ${text.trim() || 'no detail'}` }
-      results.push(parseYaml(text))
-    }
+    const fetched = await fetchCommand($, command)
+    if ('error' in fetched) return { text: fetched.error }
     // US-PM-60-8: a pane where a surface draws; a compact summary where none does.
-    if ((await viewMode($)) === 'pane') return drawView(command, results)
-    return { text: summarizeCommand(command, results) }
+    if ((await viewMode($)) === 'pane') return drawView($, command, fetched.results)
+    return { text: summarizeCommand(command, fetched.results) }
   }).catch(($, e) => ({ text: `ProjectMan: /${e.command} failed to read the MCP server's answer` }))
+
+  // US-PM-60-7: the board pane, drawn from `projectman.board` on any surface.
+  // The read subscribes the pane, so the refresh button's write redraws it.
+  // The id spelled out (BOARD_PANE) so `claude plugin validate` reads the matcher.
+  on('ui.render', { component: 'Pane', requestId: 'pm-board' }, async ($, e) => {
+    const view = await read($, board)
+    return boardPane($.ui.resolve(e), view, e.props.bodyColumns, () => void refreshBoard($))
+  })
 }
