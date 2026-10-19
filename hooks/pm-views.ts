@@ -373,3 +373,69 @@ export function formatCommand(command: PmCommand, results: readonly Yaml[]): str
   if (command === PM_STATUS_VIEW) return formatStatus(results[0] ?? null)
   return formatNext(results[0] ?? null, results[1] ?? null)
 }
+
+// ---------------------------------------------------------------- compact text
+//
+// US-PM-60-8: where no surface draws (VS Code chat, `claude -p`) a command
+// answers with these instead of a pane: ids rather than titles, one line per
+// group, a few lines in all.
+
+/** How many ids a compact group lists before `+n more`. */
+const COMPACT_IDS = 3
+/** Where a compact line is cut (the note's first line, a task title). */
+const COMPACT_WIDTH = 100
+
+function clip(text: string): string {
+  return text.length > COMPACT_WIDTH ? `${text.slice(0, COMPACT_WIDTH - 1)}…` : text
+}
+
+/** The board in a few lines: the counts, then the ids in each live group. */
+export function summarizeBoard(data: Yaml): string {
+  const top = asMap(data)
+  const board = asMap(top.board)
+  const summary = asMap(top.summary)
+  const counts = BOARD_GROUPS.map(([key, label]) => `${num(summary[key]) ?? asRows(board[key]).length} ${label.toLowerCase()}`)
+  const out = [`ProjectMan board: ${counts.join(' · ')}`]
+  for (const [key, label] of BOARD_GROUPS) {
+    if (key === 'not_ready') continue
+    const ids = asRows(board[key]).map((row) => str(row.id))
+    const total = num(summary[key]) ?? ids.length
+    if (total === 0 || ids.length === 0) continue
+    const shown = ids.slice(0, COMPACT_IDS)
+    const more = total - shown.length
+    out.push(`${label}: ${shown.join(', ')}${more > 0 ? ` (+${more} more)` : ''}`)
+  }
+  const stale = Array.isArray(top.stale_tasks) ? top.stale_tasks.map(str) : []
+  if (stale.length > 0) out.push(`Stale claims: ${stale.join(', ')}`)
+  return out.join('\n')
+}
+
+/** The project status on one line. */
+export function summarizeStatus(data: Yaml): string {
+  const s = asMap(data)
+  const name = str(s.project) || 'Project'
+  return (
+    `${name}: ${str(s.completion) || '?'} complete (${num(s.completed_points) ?? 0}/${num(s.total_points) ?? 0} pts)` +
+    ` · ${num(s.epics) ?? 0} epics · ${num(s.stories) ?? 0} stories · ${num(s.tasks) ?? 0} tasks`
+  )
+}
+
+/** The next ready task and the note's first line, two lines. */
+export function summarizeNext(boardData: Yaml, noteData: Yaml): string {
+  const [first] = asRows(asMap(asMap(boardData).board).available)
+  const out = [first ? clip(`Next task: ${str(first.id)}  ${str(first.title)}${pts(first.points)}`) : 'Next task: none ready.']
+  const note = asMap(noteData).note
+  if (typeof note === 'string' && note.trim() !== '') {
+    const lines = note.trim().split('\n')
+    const head = clip(`Note: ${(lines[0] ?? '').trim()}`)
+    out.push(lines.length > 1 && !head.endsWith('…') ? `${head} …` : head)
+  } else out.push('No next-session note saved.')
+  return out.join('\n')
+}
+
+/** A command's compact text summary, for a surface that draws nothing. */
+export function summarizeCommand(command: PmCommand, results: readonly Yaml[]): string {
+  if (command === PM_BOARD) return summarizeBoard(results[0] ?? null)
+  if (command === PM_STATUS_VIEW) return summarizeStatus(results[0] ?? null)
+  return summarizeNext(results[0] ?? null, results[1] ?? null)
+}

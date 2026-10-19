@@ -3,8 +3,18 @@ import type { ProjectmanGuardDenial } from '../types'
 import { findBannedGit, GIT_RULE_REASON } from './git-guard.ts'
 import { absolutize, mentionsStore, STORE_RULE_REASON, storeHit, storeRoots, targetOf } from './store-guard.ts'
 import type { ResolveFn } from './store-guard.ts'
-import { formatCommand, MCP_SERVER_KEY, parseYaml, PM_COMMANDS, resultText } from './pm-views.ts'
-import type { Yaml } from './pm-views.ts'
+import { formatCommand, MCP_SERVER_KEY, parseYaml, PM_COMMANDS, resultText, summarizeCommand } from './pm-views.ts'
+import type { PmCommand, Yaml } from './pm-views.ts'
+import { viewMode } from './surface.ts'
+
+/**
+ * The drawing path: where a surface draws, the view opens as a pane.
+ * A stub until US-PM-60-7 draws the board as a pane with a refresh button;
+ * until then it answers with the full view as text.
+ */
+function drawView(command: PmCommand, results: readonly Yaml[]): { text: string } {
+  return { text: formatCommand(command, results) }
+}
 
 // ProjectMan orchestration guards (US-PM-59). Enforce the worker rules on tool
 // calls in-process instead of in skill prose.
@@ -107,6 +117,8 @@ export const register: Register = (on, options) => {
       if (answer.isError) return { text: `ProjectMan: ${call.tool} failed: ${text.trim() || 'no detail'}` }
       results.push(parseYaml(text))
     }
-    return { text: formatCommand(command, results) }
+    // US-PM-60-8: a pane where a surface draws; a compact summary where none does.
+    if ((await viewMode($)) === 'pane') return drawView(command, results)
+    return { text: summarizeCommand(command, results) }
   }).catch(($, e) => ({ text: `ProjectMan: /${e.command} failed to read the MCP server's answer` }))
 }
