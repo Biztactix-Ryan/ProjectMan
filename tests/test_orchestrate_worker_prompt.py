@@ -341,7 +341,8 @@ def test_the_branch_clauses_reject_the_stage_only_worker_prompt():
 # since US-PM-59-9), that a commit happens only when the
 # dispatch prompt asks for one and covers code paths only, and that the store
 # is reached through the pm tools rather than through a ``.project`` directory
-# that is not there.  A worker told none of this in the skill it is following
+# that is not there (since US-PM-59-5 a pointer at the store guard, which
+# refuses those writes and names the pm tools in its refusal).  A worker told none of this in the skill it is following
 # would learn it only from the prompt, and a retry prompt is the shortest text
 # in the run.
 #
@@ -382,11 +383,13 @@ COMMIT_CODE_ONLY = re.compile(
     r"code paths?[^.\n]{0,40}never\s+`?\.project", re.IGNORECASE
 )
 
-#: the store lives in the primary checkout; the pm tools are the only route
-STORE_VIA_PM_TOOLS = re.compile(
-    r"store is reached through[^.\n]{0,40}`?pm_\*`?[^.\n]{0,60}"
-    r"never\s+(?:a|through a)\s*`?\.project`?\s*directory",
-    re.IGNORECASE,
+#: the store lives in the primary checkout; the pm tools are the only route.
+#: Since US-PM-59-5 the plugin's store guard (hooks/store-guard.ts) refuses
+#: Write/Edit into the real ``.project`` and its refusal names the pm tools,
+#: so the skill keeps a pointer at that guard instead of the old sentence
+#: "The store is reached through the `pm_*` tools, never a `.project` directory."
+STORE_GUARD_POINTER = re.compile(
+    r"guards? (?:block|refuse)s?[^.\n]{0,60}`?\.project`? writes", re.IGNORECASE
 )
 
 
@@ -410,8 +413,8 @@ WORKTREE_CLAUSES = {
     "commits code paths only, never the store": lambda t: bool(
         COMMIT_CODE_ONLY.search(t)
     ),
-    "reaches the store through the pm tools, not a .project directory": lambda t: bool(
-        STORE_VIA_PM_TOOLS.search(t)
+    "points at the guard that refuses .project writes": lambda t: bool(
+        STORE_GUARD_POINTER.search(t)
     ),
 }
 

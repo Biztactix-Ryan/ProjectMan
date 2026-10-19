@@ -14,7 +14,7 @@ args: "<task-id> [--complete]"
 
 ## Worker rules (orchestrated runs)
 
-Your cwd may be a git worktree on branch `orch/<run>/<task-id>`. Never `git reset` or `clean`; never switch branches. Commit only when the dispatch prompt says so, and only code paths — never `.project`. The store is reached through the `pm_*` tools, never a `.project` directory.
+Your cwd may be a git worktree on branch `orch/<run>/<task-id>`. Never `git reset` or `clean`; never switch branches. Commit only when the dispatch prompt says so, and only code paths — never `.project`. Guards block checkout/restore/stash and `.project` writes.
 
 ## Phase 1: Claim & Context
 
