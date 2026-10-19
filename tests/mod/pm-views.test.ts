@@ -623,6 +623,110 @@ for (const surface of PANE_SURFACES) {
   })
 }
 
+// ------------------------------- US-PM-60 criterion: board pane (US-PM-60-2)
+//
+// "The board opens as a pane in the terminal and the Desktop Code tab and
+// refreshes on demand." On each surface: /pm-board opens the pane and the
+// surface places it; the pane draws exactly the available / in progress /
+// blocked columns from a fixture pm_board answer; Refresh, pressed as its
+// button and as its `r` hotkey, re-calls pm_board and the pane shows the
+// changed board; and refresh after refresh keeps working. The harness
+// presses a Button by key, as a click or its hotkey does, so the hotkey is
+// held to the one Button armed with `r` and pressed through the engine's
+// `$.ui.press` on that surface.
+
+// A third board: everything moved to in progress.
+const BOARD_YAML_THIRD = `board:
+  available: []
+  in_progress:
+  - id: US-PM-60-2
+    title: 'Test: The board opens as a pane and refreshes on demand'
+    points: 1
+    assignee: claude
+  - id: US-PM-56-4
+    title: 'Test: On a machine with no prior setup, installing works'
+    points: 2
+  blocked: []
+summary:
+  available: 0
+  in_progress: 2
+  blocked: 0
+stale_tasks: []
+`
+
+// What each fixture answer draws: each column's heading, and a task line it shows.
+const BOARDS = [
+  { yaml: BOARD_YAML, headings: ['Available (5)', 'In progress (1)', 'Blocked (0)'], shows: 'US-PM-60-6  Register board' },
+  { yaml: BOARD_YAML_REFRESHED, headings: ['Available (4)', 'In progress (1)', 'Blocked (1)'], shows: 'US-PM-60-7  Draw the board as a pane' },
+  { yaml: BOARD_YAML_THIRD, headings: ['Available (0)', 'In progress (2)', 'Blocked (0)'], shows: 'US-PM-60-2  Test: The board opens' },
+] as const
+
+const COLUMN_KEYS = (['available', 'in_progress', 'blocked'] as const).map(columnKey)
+
+for (const surface of PANE_SURFACES) {
+  test(`US-PM-60 criterion: on ${surface}, the board opens as a pane and refreshes on demand`, async ($, on) => {
+    const answers: Record<string, string> = { ...ANSWERS }
+    const seen = engine(on, answers, { surfaces: [surface] })
+
+    // /pm-board opens the pane and the surface seats it ({ isPlaced: true });
+    // the command answers BOARD_OPENED only for a placed pane (a pane not
+    // placed answers the board as text, held below under "not placed").
+    const ran = await $.command.run(run('pm-board'))
+    expect(ran.text).toBe(BOARD_OPENED)
+    expect(seen.opened).toEqual([{ id: BOARD_PANE, title: BOARD_PANE_TITLE }])
+
+    const ui = await $.ui.mount({ plugin: 'projectman', surface, component: 'Pane', requestId: BOARD_PANE, props: paneProps() })
+    // Exactly the three columns, in order, under the columns row.
+    const drawn = async () => (await ui.findAll({ type: 'Box' })).map((b) => b.key).filter((k) => k?.startsWith('col-'))
+    const shows = async (i: number) => {
+      const board = BOARDS[i]!
+      for (const heading of board.headings) expect(await ui.find({ type: 'Text', text: heading })).toBeDefined()
+      expect(await ui.find({ type: 'Text', text: board.shows })).toBeDefined()
+      expect(await drawn()).toEqual(COLUMN_KEYS)
+    }
+    expect(await ui.find({ key: COLUMNS_KEY })).toBeDefined()
+    await shows(0)
+
+    // The refresh is one Button, keyed `refresh` and armed with hotkey `r`.
+    const buttons = await ui.findAll({ type: 'Button' })
+    const armed = buttons.filter((b) => b.props.hotkey === 'r')
+    expect(armed.map((b) => b.key)).toEqual([REFRESH_KEY])
+    expect(armed[0]?.text).toBe('Refresh')
+
+    // The button: pm_board re-called, the changed board drawn.
+    answers.pm_board = BOARD_YAML_REFRESHED
+    await ui.press({ key: REFRESH_KEY })
+    expect(seen.mcp.map((c) => c.tool)).toEqual(['pm_board', 'pm_board'])
+    await shows(1)
+    expect(await ui.find({ type: 'Text', text: 'US-PM-60-6' })).toBeUndefined()
+
+    // The hotkey `r`: the engine pressing the Button it arms, on this surface.
+    answers.pm_board = BOARD_YAML_THIRD
+    await $.ui.press({ plugin: 'projectman', key: armed[0]!.key!, surface })
+    expect(seen.mcp.map((c) => c.tool)).toEqual(['pm_board', 'pm_board', 'pm_board'])
+    await shows(2)
+    expect(await ui.find({ type: 'Text', text: 'US-PM-60-7' })).toBeUndefined()
+
+    // Refresh after refresh keeps working: each press one read, each read drawn.
+    for (let n = 0; n < 6; n++) {
+      const i = n % BOARDS.length
+      answers.pm_board = BOARDS[i]!.yaml
+      if (n % 2 === 0) await ui.press({ key: REFRESH_KEY })
+      else await $.ui.press({ plugin: 'projectman', key: REFRESH_KEY, surface })
+      expect(seen.mcp.length).toBe(4 + n)
+      await shows(i)
+      expect(await ui.find({ type: 'Text', text: `Read ${4 + n} times this session.` })).toBeDefined()
+      expect((await ui.find({ type: 'Button', key: REFRESH_KEY }))?.text).toBe('Refresh')
+    }
+    expect(seen.mcp.every((c) => c.server === SERVER && c.tool === 'pm_board')).toBe(true)
+    expect(seen.board.at(-1)).toMatchObject({ loads: 9, isRefreshing: false, error: null })
+    expect(seen.opened.length).toBe(1)
+    expect(seen.model).toEqual([])
+    expect(seen.core).toEqual([])
+    await ui.unmount()
+  })
+}
+
 // ------------------------------------------- US-PM-60 criterion: mid-turn
 //
 // "Commands work while a Claude turn is in progress." The commands register
