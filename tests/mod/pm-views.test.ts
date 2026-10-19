@@ -727,6 +727,39 @@ for (const surface of PANE_SURFACES) {
   })
 }
 
+// ----------------------- US-PM-60 criterion: both surfaces (US-PM-60-5)
+//
+// "UI tests mount the pane on both the terminal and desktop surfaces." One
+// test mounts the board pane through the harness's `$.ui.mount` on each of
+// PANE_SURFACES in turn, holds each drawing to its surface and to the pane's
+// tree (the three columns, in order, and the Refresh button), and requires
+// the surfaces mounted be exactly terminal and desktop, so dropping either
+// from PANE_SURFACES (which every pane test above loops over) fails here.
+
+test('US-PM-60 criterion: UI tests mount the pane on both the terminal and desktop surfaces', async ($, on) => {
+  const seen = engine(on, ANSWERS, { surfaces: [...PANE_SURFACES] })
+  expect((await $.command.run(run('pm-board'))).text).toBe(BOARD_OPENED)
+
+  const mounted: RenderSurface[] = []
+  for (const surface of PANE_SURFACES) {
+    const ui = await $.ui.mount({ plugin: 'projectman', surface, component: 'Pane', requestId: BOARD_PANE, props: paneProps() })
+    expect(ui.surface).toBe(surface)
+    expect(await ui.drawn()).toMatchObject({ type: 'Box', props: { key: 'pm-board' } })
+    const columns = (await ui.findAll({ type: 'Box' })).map((b) => b.key).filter((k) => k?.startsWith('col-'))
+    expect(columns).toEqual(COLUMN_KEYS)
+    for (const heading of BOARDS[0].headings) expect(await ui.find({ type: 'Text', text: heading })).toBeDefined()
+    const refresh = await ui.find({ type: 'Button', key: REFRESH_KEY })
+    expect(refresh?.text).toBe('Refresh')
+    mounted.push(ui.surface)
+    await ui.unmount()
+  }
+
+  expect([...new Set(mounted)].sort()).toEqual(['desktop', 'terminal'])
+  expect(mounted.length).toBe(2)
+  expect(seen.model).toEqual([])
+  expect(seen.core).toEqual([])
+})
+
 // ------------------------------------------- US-PM-60 criterion: mid-turn
 //
 // "Commands work while a Claude turn is in progress." The commands register
