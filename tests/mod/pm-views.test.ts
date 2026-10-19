@@ -96,11 +96,13 @@ type EngineOpts = {
   surfaces?: readonly RenderSurface[]
   surfacesFail?: boolean
   placed?: boolean
+  openFails?: boolean
 }
 
 // `surfaces` is where the session draws: the terminal by default (the
 // drawing path), `[]` for VS Code chat and `claude -p`. `placed: false` is a
-// surface that cannot seat the pane now. `answers` and `opts` are read at
+// surface that cannot seat the pane now, `openFails` one whose ui.open
+// rejects. `answers` and `opts` are read at
 // each call, so a test can change what the server answers between reads.
 function engine(on: On, answers: Record<string, string>, opts: EngineOpts = {}): Recorded {
   const seen: Recorded = { mcp: [], model: [], core: [], registered: [], opened: [], board: [] }
@@ -114,6 +116,7 @@ function engine(on: On, answers: Record<string, string>, opts: EngineOpts = {}):
   })
   on('ui.open', ($, e) => {
     seen.opened.push({ id: e.id, title: e.title })
+    if (opts.openFails) throw new Error('no pane host')
     return { value: opts.placed === false ? { isPlaced: false, reason: 'the terminal is 80 columns wide' } : { isPlaced: true } }
   })
   on('command.register', ($, e) => {
@@ -772,4 +775,79 @@ for (const surface of PANE_SURFACES) {
     expect(await ui.find({ type: 'Text', text: 'Blocked (1)' })).toBeDefined()
     await ui.unmount()
   })
+}
+
+// ------------------------------------------------- US-PM-60 criterion
+//
+// "On surfaces that do not draw, the commands reply with a text summary."
+// Each command, where nothing draws, answers with a text summary and opens
+// no pane: no surface attached (a plain `claude -p` run, Claude Code for VS
+// Code chat) and a surface list that cannot be read. And a drawing surface
+// that cannot seat the board pane now (refused, or ui.open failing) falls
+// back to the board as text; status and next never ask for a pane.
+
+const TEXT_SUMMARY: Record<string, string> = {
+  'pm-board': BOARD_SUMMARY,
+  'pm-status-view': STATUS_SUMMARY,
+  'pm-next-task': NEXT_SUMMARY,
+}
+
+const NOTHING_DRAWS: { where: string; opts: EngineOpts }[] = [
+  { where: 'no surface attached (claude -p, VS Code chat)', opts: { surfaces: [] } },
+  { where: 'a surface list that cannot be read', opts: { surfacesFail: true } },
+]
+
+for (const { where, opts } of NOTHING_DRAWS) {
+  for (const name of ['pm-board', 'pm-status-view', 'pm-next-task'] as const) {
+    test(`US-PM-60 criterion: text summary where nothing draws, /${name} with ${where}`, async ($, on) => {
+      const seen = engine(on, ANSWERS, opts)
+      const ran = await $.command.run(run(name))
+
+      expect(ran.text).toBe(TEXT_SUMMARY[name])
+      expect((ran.text ?? '').split('\n').length).toBeLessThanOrEqual(4)
+      expect(ran.text).not.toBe(BOARD_OPENED)
+      expect(ran.context).toBeUndefined()
+      // No pane opened, and the board pane's state left unwritten.
+      expect(seen.opened).toEqual([])
+      expect(seen.board).toEqual([])
+      expect(seen.model).toEqual([])
+      expect(seen.core).toEqual([])
+    })
+  }
+}
+
+const PANE_UNSEATED: { why: string; opts: EngineOpts }[] = [
+  { why: 'the surface cannot seat the pane now', opts: { placed: false } },
+  { why: 'opening the pane fails', opts: { openFails: true } },
+]
+
+for (const surface of PANE_SURFACES) {
+  for (const { why, opts } of PANE_UNSEATED) {
+    test(`US-PM-60 criterion: text summary where the pane is not placed, /pm-board on ${surface} when ${why}`, async ($, on) => {
+      const seen = engine(on, ANSWERS, { surfaces: [surface], ...opts })
+      const ran = await $.command.run(run('pm-board'))
+
+      // The pane was asked for once and not seated, so the board answers as text.
+      expect(seen.opened).toEqual([{ id: BOARD_PANE, title: BOARD_PANE_TITLE }])
+      expect(ran.text).toBe(formatBoard(parseYaml(BOARD_YAML)))
+      expect(ran.text).not.toBe(BOARD_OPENED)
+      expect(ran.context).toBeUndefined()
+      expect(seen.model).toEqual([])
+      expect(seen.core).toEqual([])
+    })
+
+    for (const name of ['pm-status-view', 'pm-next-task'] as const) {
+      test(`US-PM-60 criterion: text where the pane is not placed, /${name} on ${surface} when ${why}`, async ($, on) => {
+        const seen = engine(on, ANSWERS, { surfaces: [surface], ...opts })
+        const command = PM_COMMANDS.find((c) => c.name === name)!
+        const ran = await $.command.run(run(name))
+
+        // These views never ask for a pane; they answer as text either way.
+        expect(ran.text).toBe(formatCommand(command, parsedAnswers(command)))
+        expect(seen.opened).toEqual([])
+        expect(seen.model).toEqual([])
+        expect(seen.core).toEqual([])
+      })
+    }
+  }
 }
