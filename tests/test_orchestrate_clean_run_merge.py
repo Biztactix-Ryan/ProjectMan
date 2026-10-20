@@ -215,3 +215,100 @@ def test_a_moved_start_branch_refuses_ff_and_takes_no_ff(repo):
     assert _git(repo, "merge", "--no-ff", "-m", "run", "orch/run").returncode == 0
     assert _git(repo, "branch", "-d", "orch/run").returncode == 0
     assert (repo / "task").exists() and (repo / "moved").exists()
+
+
+# ─── the whole stop-condition decision, end to end in a throwaway repo ──
+#
+# ``_land_or_keep`` is the Stop Conditions clause transcribed step for step:
+# gate on the run log and on ``git status --short`` outside ``.project/``,
+# then ff-only (falling back to ``--no-ff``) and ``-d``, or keep and print.
+# Running it against real git covers every branch of the behaviour.
+
+#: run-log outcomes the clause says keep the run branch
+HOLDING_OUTCOMES = ("parked", "review", "unmerged")
+
+
+def _dirty_outside_project(repo) -> bool:
+    status = _git(repo, "status", "--short").stdout.splitlines()
+    return any(not line[3:].startswith(".project/") for line in status if line.strip())
+
+
+def _land_or_keep(repo, sb, rb, log, this_run="orch-test"):
+    """Return ``("merged", None)`` or ``("kept", <printed merge command>)``."""
+    held = any(entry["outcome"] in HOLDING_OUTCOMES for entry in log)
+    if held or _dirty_outside_project(repo):
+        return "kept", f"git merge --no-ff {rb}"
+    assert _git(repo, "branch", "--show-current").stdout.strip() == sb
+    if _git(repo, "merge", "--ff-only", rb).returncode != 0:
+        assert _git(repo, "merge", "--no-ff", "-m", this_run, rb).returncode == 0
+    assert _git(repo, "branch", "-d", rb).returncode == 0
+    return "merged", None
+
+
+def _branch_exists(repo, name) -> bool:
+    return _git(repo, "rev-parse", "--verify", "-q", f"refs/heads/{name}").returncode == 0
+
+
+def _head(repo) -> str:
+    return _git(repo, "rev-parse", "HEAD").stdout.strip()
+
+
+CLEAN_LOG = [{"id": "T-1", "outcome": "merged"}, {"id": "T-2", "outcome": "merged"}]
+KEPT = ("kept", "git merge --no-ff orch/run")
+
+
+def test_decision_clean_run_fast_forwards_and_deletes_the_run_branch(repo):
+    repo, wt = repo
+    assert _git(repo, "worktree", "remove", str(wt)).returncode == 0
+    run_tip = _git(repo, "rev-parse", "orch/run").stdout.strip()
+    assert _land_or_keep(repo, "main", "orch/run", CLEAN_LOG) == ("merged", None)
+    assert not _branch_exists(repo, "orch/run")
+    assert _head(repo) == run_tip, "a clean run on an unmoved <sb> must fast-forward"
+
+
+def test_decision_clean_run_on_a_moved_start_branch_takes_no_ff(repo):
+    repo, wt = repo
+    _commit(repo, "moved")
+    assert _git(repo, "worktree", "remove", str(wt)).returncode == 0
+    assert _land_or_keep(repo, "main", "orch/run", CLEAN_LOG) == ("merged", None)
+    assert not _branch_exists(repo, "orch/run")
+    parents = _git(repo, "rev-list", "--parents", "-n1", "HEAD").stdout.split()
+    assert len(parents) == 3, "the --no-ff fallback must leave a merge commit"
+    assert (repo / "task").exists() and (repo / "moved").exists()
+
+
+@pytest.mark.parametrize("outcome", HOLDING_OUTCOMES)
+def test_decision_any_held_task_keeps_the_run_branch_and_prints_the_merge(repo, outcome):
+    repo, wt = repo
+    assert _git(repo, "worktree", "remove", str(wt)).returncode == 0
+    before = _head(repo)
+    log = CLEAN_LOG + [{"id": "T-3", "outcome": outcome}]
+    assert _land_or_keep(repo, "main", "orch/run", log) == KEPT
+    assert _branch_exists(repo, "orch/run")
+    assert _head(repo) == before, f"a run with a {outcome} task must not touch <sb>"
+    assert not (repo / "task").exists()
+
+
+@pytest.mark.parametrize("dirt", ["untracked", "modified"])
+def test_decision_a_dirty_tree_outside_project_keeps_the_run_branch(repo, dirt):
+    repo, wt = repo
+    assert _git(repo, "worktree", "remove", str(wt)).returncode == 0
+    if dirt == "untracked":
+        (repo / "stray.txt").write_text("x", encoding="utf-8")
+    else:
+        (repo / "base").write_text("edited", encoding="utf-8")
+    before = _head(repo)
+    assert _land_or_keep(repo, "main", "orch/run", CLEAN_LOG) == KEPT
+    assert _branch_exists(repo, "orch/run")
+    assert _head(repo) == before
+
+
+def test_decision_dirt_only_under_project_still_lands_the_run(repo):
+    """``outside .project/`` is load-bearing: Store churn never blocks the merge."""
+    repo, wt = repo
+    assert _git(repo, "worktree", "remove", str(wt)).returncode == 0
+    (repo / ".project").mkdir()
+    (repo / ".project" / "activity.jsonl").write_text("{}\n", encoding="utf-8")
+    assert _land_or_keep(repo, "main", "orch/run", CLEAN_LOG) == ("merged", None)
+    assert not _branch_exists(repo, "orch/run")
+    assert (repo / "task").exists()
