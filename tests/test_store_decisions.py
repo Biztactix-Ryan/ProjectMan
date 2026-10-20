@@ -294,3 +294,47 @@ class TestUpdateDecision:
         assert update["run_id"] == "run-1"
         assert update["changes"]["title"] == {"before": "Q?", "after": "New?"}
         assert update["changes"]["body"] == {"before": "ctx", "after": "ctx2"}
+
+
+class TestUS_PM_63_Criterion:
+    """US-PM-63 criterion: blocks accepts only *existing* task, story or epic
+    ids, checked on both create_decision and update_decision."""
+
+    @pytest.fixture
+    def items(self, store):
+        story, _ = store.create_story("Story", "Body")
+        task = store.create_task(story.id, "Task", "Body")
+        epic = store.create_epic("Epic", "Body")
+        return {"task": task.id, "story": story.id, "epic": epic.id}
+
+    @pytest.mark.parametrize("kind", ["task", "story", "epic"])
+    def test_us_pm_63_criterion_existing_id_of_each_kind_accepted(
+        self, store, items, kind
+    ):
+        meta = store.create_decision("Q?", blocks=[items[kind]])
+        assert meta.blocks == [items[kind]]
+        meta = store.update_decision(meta.id, blocks=[items[kind]])
+        assert meta.blocks == [items[kind]]
+
+    @pytest.mark.parametrize("missing", ["US-TST-1-9", "US-TST-99", "EPIC-TST-99"])
+    def test_us_pm_63_criterion_missing_well_formed_id_rejected_on_create(
+        self, store, items, missing
+    ):
+        with pytest.raises(ValidationError, match=missing):
+            store.create_decision("Q?", blocks=[items["story"], missing])
+        assert store.list_decisions() == []
+
+    @pytest.mark.parametrize("missing", ["US-TST-1-9", "US-TST-99", "EPIC-TST-99"])
+    def test_us_pm_63_criterion_missing_well_formed_id_rejected_on_update(
+        self, store, items, missing
+    ):
+        store.create_decision("Q?", blocks=[items["task"]])
+        with pytest.raises(ValidationError, match=missing):
+            store.update_decision("DEC-TST-1", blocks=[missing])
+        meta, _ = store.get_decision("DEC-TST-1")
+        assert meta.blocks == [items["task"]]
+
+    @pytest.mark.parametrize("bad", ["SPRINT-TST-1", "DEC-TST-1", "us-TST-1"])
+    def test_us_pm_63_criterion_malformed_id_rejected_by_store(self, store, bad):
+        with pytest.raises(ValidationError):
+            store.create_decision("Q?", blocks=[bad])

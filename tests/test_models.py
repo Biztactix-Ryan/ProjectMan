@@ -524,3 +524,43 @@ class TestDecisionFrontmatter:
 
 def test_item_type_has_decision():
     assert ItemType("decision") is ItemType.decision
+
+
+class TestUS_PM_63_Criterion:
+    """US-PM-63 criterion: DecisionFrontmatter validates DEC-PREFIX-N ids, the
+    open/answered/withdrawn status set, an options list and the shape of
+    blocks entries (existence is checked by the Store; see
+    tests/test_store_decisions.py::TestUS_PM_63_Criterion)."""
+
+    @pytest.mark.parametrize("value", ["DEC-PRJ-1", "DEC-PM-12", "DEC-A1-100"])
+    def test_us_pm_63_criterion_valid_decision_id_accepted(self, value):
+        assert _decision(id=value).id == value
+
+    @pytest.mark.parametrize("value", ["DEC-1", "DEC-prj-1", "DEC-PRJ", "US-PRJ-1"])
+    def test_us_pm_63_criterion_bad_decision_id_rejected(self, value):
+        with pytest.raises(ValidationError, match="Decision ID must match"):
+            _decision(id=value)
+
+    @pytest.mark.parametrize("value", ["open", "answered", "withdrawn"])
+    def test_us_pm_63_criterion_each_status_accepted(self, value):
+        assert _decision(status=value).status == DecisionStatus(value)
+
+    @pytest.mark.parametrize("value", ["closed", "done", "archived"])
+    def test_us_pm_63_criterion_other_status_rejected(self, value):
+        with pytest.raises(ValidationError):
+            _decision(status=value)
+
+    def test_us_pm_63_criterion_options_list_with_recommended_label(self):
+        d = _decision(options=_OPTIONS, recommendation="sqlite")
+        assert [o.label for o in d.options] == ["redis", "sqlite"]
+        with pytest.raises(ValidationError, match="recommendation must be one of"):
+            _decision(options=_OPTIONS, recommendation="postgres")
+
+    def test_us_pm_63_criterion_blocks_accepts_task_story_epic_shapes(self):
+        ids = ["US-PRJ-1-1", "US-PRJ-2", "EPIC-PRJ-3"]
+        assert _decision(blocks=ids).blocks == ids
+
+    @pytest.mark.parametrize("value", ["SPRINT-PRJ-1", "DEC-PRJ-1", "US-PRJ-1-1-1"])
+    def test_us_pm_63_criterion_blocks_rejects_malformed_ids(self, value):
+        with pytest.raises(ValidationError, match="blocks entries"):
+            _decision(blocks=[value])
