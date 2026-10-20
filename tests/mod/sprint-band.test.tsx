@@ -11,6 +11,7 @@ import {
   taskInFlight,
 } from '../../hooks/sprint-band.tsx'
 import { parseYaml } from '../../hooks/pm-views.ts'
+import { movesBand, PM_WRITE_TOOLS, pmToolName } from '../../hooks/band-refresh.ts'
 
 // US-PM-62-6: the sprint band above the prompt. The test's hooks beneath the
 // plugin stand for the engine: they answer mcp.connect / mcp.call from canned
@@ -134,6 +135,8 @@ type EngineOpts = {
   /** This tool answers with an error. */
   errorTool?: string
   connected?: boolean
+  /** Runs before each call is answered: may hold it, or throw as a server gone away. */
+  onCall?: (tool: string) => Promise<void> | void
 }
 
 // `answers` and `opts` are read at each call, so a test can change them between reads.
@@ -148,7 +151,8 @@ function engine(on: On, answers: Record<string, string>, opts: EngineOpts = {}):
     expect(e.server).toBe('projectman')
     return { value: { isConnected: true, server: SERVER } }
   })
-  on('mcp.call', ($, e) => {
+  on('mcp.call', async ($, e) => {
+    await opts.onCall?.(e.tool)
     seen.mcp.push({ server: e.server, tool: e.tool, args: e.args })
     if (opts.noStore || e.tool === opts.errorTool) return { value: { content: [{ type: 'text', text: NO_STORE }], isError: true } }
     return { value: { content: [{ type: 'text', text: answers[e.tool] ?? '' }], isError: false } }
@@ -371,4 +375,261 @@ test('sprint progress counts done stories against the planned points', async () 
   })
   expect(taskInFlight(parseYaml(NO_ACTIVE_YAML))).toBeNull()
   expect(bandFrom(null, parseYaml(NO_ACTIVE_YAML), parseYaml(NO_NOTE_YAML))).toBeNull()
+})
+
+// ------------------------------------------------- US-PM-62-2 criterion
+//
+// "The band updates after pm MCP tool calls that change status." A pm tool
+// that writes, under either server prefix, re-reads the band once its call
+// answers without error; read-only tools, errors and refusals read nothing.
+// The test's tool.call hook beneath the plugin stands for the server's tool:
+// it changes what the band's reads answer, as the real write would.
+
+const PREFIXES = ['mcp__plugin_projectman_projectman__', 'mcp__projectman__'] as const
+
+// After US-PM-62-6 is done: no task in flight, its story done (3 more points).
+const SPRINT_AFTER_DONE = SPRINT_YAML.replace(
+  "title: 'Mod: sprint band above the prompt'\n  status: ready",
+  "title: 'Mod: sprint band above the prompt'\n  status: done",
+)
+const LINE_AFTER_DONE = `Sprint 20 — 14/19 pts · ${NOTE_PART}`
+
+type ToolOpts = {
+  /** What the tool answers; by default a plain result. */
+  answer?: Record<string, unknown>
+  /** Run as the tool writes: changes what the band reads next. */
+  write?: () => void
+}
+
+/** The engine's MCP tools, beneath the plugin: records each call and answers. */
+function pmTools(on: On, opts: ToolOpts = {}): string[] {
+  const called: string[] = []
+  on('tool.call', { tool: /^mcp__/ }, ($, e) => {
+    called.push(e.tool)
+    opts.write?.()
+    return (opts.answer ?? { result: 'ok', text: 'ok' }) as never
+  })
+  return called
+}
+
+const pmCall = ($: Engine, tool: string, args: Record<string, unknown> = {}) => $.tool.call({ tool, ...args } as never)
+
+/** The status change pm_update / pm_done_next makes when US-PM-62-6 is done. */
+const finishTask = (answers: Record<string, string>) => () => {
+  answers.pm_active = NO_ACTIVE_YAML
+  answers.pm_get_sprint = SPRINT_AFTER_DONE
+}
+
+for (const prefix of PREFIXES) {
+  test(`US-PM-62-2 criterion: the band updates after ${prefix}pm_update changes a status`, async ($, on) => {
+    const clock = mock.clock(on)
+    const answers = { ...ANSWERS }
+    const seen = engine(on, answers)
+    const called = pmTools(on, { write: finishTask(answers) })
+    const ui = await mountBand($, clock)
+    expect(await bandText(ui)).toEqual([FULL_LINE])
+    expect(seen.mcp.length).toBe(4)
+
+    const out = await pmCall($, `${prefix}pm_update`, { id: 'US-PM-62-6', status: 'done' })
+    expect(out.result).toBe('ok')
+    expect(called).toEqual([`${prefix}pm_update`])
+    // The read runs on the timer, after the call has answered.
+    expect(seen.mcp.length).toBe(4)
+
+    await clock.settle()
+    expect(seen.mcp.length).toBe(8)
+    expect(await bandText(ui)).toEqual([LINE_AFTER_DONE])
+    expect(seen.model).toEqual([])
+  })
+}
+
+for (const tool of ['pm_done_next', 'pm_grab', 'pm_accept', 'pm_create_task', 'pm_update_sprint', 'pm_answer_decision']) {
+  test(`US-PM-62-2 criterion: ${tool} re-reads the band`, async ($, on) => {
+    const clock = mock.clock(on)
+    const answers = { ...ANSWERS }
+    const seen = engine(on, answers)
+    pmTools(on, { write: finishTask(answers) })
+    const ui = await mountBand($, clock)
+    await pmCall($, `mcp__plugin_projectman_projectman__${tool}`)
+    await clock.settle()
+    expect(seen.mcp.length).toBe(8)
+    expect(await bandText(ui)).toEqual([LINE_AFTER_DONE])
+  })
+}
+
+test('read-only pm tools, and pm_next reading the note, do not re-read the band', async ($, on) => {
+  const clock = mock.clock(on)
+  const seen = engine(on, ANSWERS)
+  const called = pmTools(on)
+  await mountBand($, clock)
+  for (const prefix of PREFIXES) {
+    for (const tool of ['pm_get', 'pm_board', 'pm_status', 'pm_active', 'pm_get_sprint', 'pm_next']) {
+      await pmCall($, `${prefix}${tool}`)
+    }
+  }
+  await clock.settle()
+  expect(called.length).toBe(12)
+  expect(seen.mcp.length).toBe(4)
+})
+
+test('pm_next saving or clearing the note re-reads the band', async ($, on) => {
+  const clock = mock.clock(on)
+  const answers = { ...ANSWERS }
+  const seen = engine(on, answers)
+  pmTools(on, { write: () => void (answers.pm_next = NO_NOTE_YAML) })
+  const ui = await mountBand($, clock)
+
+  await pmCall($, 'mcp__projectman__pm_next', { clear: true })
+  await clock.settle()
+  expect(seen.mcp.length).toBe(8)
+  expect(await bandText(ui)).toEqual([`${SPRINT_PART} · ${TASK_PART}`])
+
+  await pmCall($, 'mcp__plugin_projectman_projectman__pm_next', { text: 'Cut 0.12.0' })
+  await clock.settle()
+  expect(seen.mcp.length).toBe(12)
+})
+
+test('tools of another server never re-read the band', async ($, on) => {
+  const clock = mock.clock(on)
+  const seen = engine(on, ANSWERS)
+  const called = pmTools(on)
+  await mountBand($, clock)
+  await pmCall($, 'mcp__other__pm_update', { id: 'X-1' })
+  await pmCall($, 'mcp__plugin_other_projectman__pm_update', { id: 'X-1' })
+  await clock.settle()
+  expect(called.length).toBe(2)
+  expect(seen.mcp.length).toBe(4)
+})
+
+test('a burst of pm writes in one turn makes one re-read', async ($, on) => {
+  const clock = mock.clock(on)
+  const answers = { ...ANSWERS }
+  const seen = engine(on, answers)
+  pmTools(on, { write: finishTask(answers) })
+  const ui = await mountBand($, clock)
+
+  await pmCall($, 'mcp__projectman__pm_update', { id: 'US-PM-62-6', status: 'review' })
+  await pmCall($, 'mcp__projectman__pm_accept', { id: 'US-PM-62-6' })
+  await pmCall($, 'mcp__plugin_projectman_projectman__pm_grab', { id: 'US-PM-62-7' })
+  await pmCall($, 'mcp__plugin_projectman_projectman__pm_update_many', { updates: [] })
+  await clock.settle()
+
+  expect(seen.mcp.length).toBe(8)
+  expect(seen.band[seen.band.length - 1]?.reads).toBe(2)
+  expect(await bandText(ui)).toEqual([LINE_AFTER_DONE])
+})
+
+test('a write landing while a re-read runs makes exactly one more read, which sees it', async ($, on) => {
+  const clock = mock.clock(on)
+  const answers = { ...ANSWERS }
+  // Holds one pm_list_sprints call until released.
+  let hold = false
+  let isHeld = false
+  let release: () => void = () => {}
+  const onCall = async (tool: string) => {
+    if (hold && tool === 'pm_list_sprints') {
+      hold = false
+      isHeld = true
+      await new Promise<void>((r) => (release = r))
+    }
+  }
+  const seen = engine(on, answers, { onCall })
+  pmTools(on)
+  const ui = await mountBand($, clock)
+
+  hold = true
+  await pmCall($, 'mcp__projectman__pm_grab', { id: 'US-PM-62-6' })
+  await clock.settle()
+  expect(isHeld).toBe(true)
+  // The first re-read is in flight: two more writes arrive, then it finishes.
+  finishTask(answers)()
+  await pmCall($, 'mcp__projectman__pm_update', { id: 'US-PM-62-6', status: 'done' })
+  await pmCall($, 'mcp__projectman__pm_done_next', { id: 'US-PM-62-6' })
+  await clock.settle()
+  release()
+  await clock.settle()
+
+  expect(seen.mcp.length).toBe(12)
+  expect(seen.band[seen.band.length - 1]?.reads).toBe(3)
+  expect(await bandText(ui)).toEqual([LINE_AFTER_DONE])
+})
+
+test('an errored or refused pm write does not re-read the band', async ($, on) => {
+  const clock = mock.clock(on)
+  const seen = engine(on, ANSWERS)
+  const opts: ToolOpts = { answer: { isError: true, result: 'Error: no such item', text: 'Error: no such item' } }
+  pmTools(on, opts)
+  await mountBand($, clock)
+
+  const errored = await pmCall($, 'mcp__projectman__pm_update', { id: 'US-NOPE-1', status: 'done' })
+  expect(errored.isError).toBe(true)
+  opts.answer = { deny: 'not allowed' }
+  const refused = await pmCall($, 'mcp__plugin_projectman_projectman__pm_grab', { id: 'US-PM-62-6' })
+  expect(refused.deny).toBe('not allowed')
+  await clock.settle()
+  expect(seen.mcp.length).toBe(4)
+})
+
+test("a pm call's result passes through unchanged, error or not", async ($, on) => {
+  const clock = mock.clock(on)
+  engine(on, ANSWERS)
+  const answer = { result: { id: 'US-PM-62-6', status: 'done' }, text: 'id: US-PM-62-6\nstatus: done\n', context: ['note'] }
+  const opts: ToolOpts = { answer }
+  pmTools(on, opts)
+  await mountBand($, clock)
+
+  expect(await pmCall($, 'mcp__plugin_projectman_projectman__pm_update', { id: 'US-PM-62-6', status: 'done' })).toEqual(answer)
+  expect(await pmCall($, 'mcp__projectman__pm_get', { id: 'US-PM-62-6' })).toEqual(answer)
+  const errored = { isError: true, result: 'boom', text: 'boom' }
+  opts.answer = errored
+  expect(await pmCall($, 'mcp__projectman__pm_update', { id: 'US-PM-62-6' })).toEqual(errored)
+})
+
+test('a failed re-read is swallowed: the result stands, the band hides, later writes still read', async ($, on) => {
+  const clock = mock.clock(on)
+  let isBroken = false
+  const onCall = () => {
+    if (isBroken) throw new Error('server went away')
+  }
+  const seen = engine(on, ANSWERS, { onCall })
+  pmTools(on)
+  const ui = await mountBand($, clock)
+  expect(await bandText(ui)).toEqual([FULL_LINE])
+
+  isBroken = true
+  const out = await pmCall($, 'mcp__projectman__pm_update', { id: 'US-PM-62-6', status: 'done' })
+  expect(out.result).toBe('ok')
+  await clock.settle()
+  expect(await ui.find({ key: BAND_KEY })).toBeUndefined()
+  expect(await ui.find({ key: ENGINE_BAND })).toBeDefined()
+
+  isBroken = false
+  await pmCall($, 'mcp__projectman__pm_update', { id: 'US-PM-62-6', status: 'done' })
+  await clock.settle()
+  expect(await bandText(ui)).toEqual([FULL_LINE])
+  expect(seen.mcp.length).toBe(8)
+})
+
+test('a pm write before any band is drawn makes no MCP call', async ($, on) => {
+  const clock = mock.clock(on)
+  const seen = engine(on, ANSWERS)
+  const called = pmTools(on)
+  await pmCall($, 'mcp__projectman__pm_update', { id: 'US-PM-62-6', status: 'done' })
+  await clock.settle()
+  expect(called.length).toBe(1)
+  expect(seen.mcp).toEqual([])
+})
+
+test('the prefixes and the pm_next modes', async () => {
+  expect(pmToolName('mcp__projectman__pm_update')).toBe('pm_update')
+  expect(pmToolName('mcp__plugin_projectman_projectman__pm_done_next')).toBe('pm_done_next')
+  expect(pmToolName('mcp__other__pm_update')).toBeUndefined()
+  expect(pmToolName('pm_update')).toBeUndefined()
+  expect(movesBand({ tool: 'mcp__projectman__pm_update' })).toBe(true)
+  expect(movesBand({ tool: 'mcp__projectman__pm_get' })).toBe(false)
+  expect(movesBand({ tool: 'mcp__projectman__pm_next' })).toBe(false)
+  expect(movesBand({ tool: 'mcp__projectman__pm_next', text: null })).toBe(false)
+  expect(movesBand({ tool: 'mcp__projectman__pm_next', text: 'x' })).toBe(true)
+  expect(movesBand({ tool: 'mcp__projectman__pm_next', clear: true })).toBe(true)
+  expect([...PM_WRITE_TOOLS].sort()).toEqual([...PM_WRITE_TOOLS])
 })

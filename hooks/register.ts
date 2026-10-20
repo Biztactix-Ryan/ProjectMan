@@ -19,6 +19,7 @@ import type { PmCommand, Yaml } from './pm-views.ts'
 import { viewMode } from './surface.ts'
 import { BAND_ACTIVE, BAND_NOTE, BAND_SPRINTS, bandFrom, bandSprintCall, activeSprintId, sprintBand } from './sprint-band.tsx'
 import type { BandCall } from './sprint-band.tsx'
+import { movesBand, PM_TOOL } from './band-refresh.ts'
 
 /** What the board pane draws (US-PM-60-7): null until the board is first read. */
 const board = atom({ plugin: 'projectman', key: 'board' } as const, null as ProjectmanBoardView | null)
@@ -84,6 +85,56 @@ async function refreshBand($: EngineInterface): Promise<void> {
   }
   const done = view
   await update($, band, (v) => ({ view: done, isReading: false, reads: (v?.reads ?? 0) + 1 }))
+}
+
+/**
+ * The band's re-reads, coalesced (US-PM-62-7): a burst of requests (a turn of
+ * pm writes, several draws before the first read lands) makes one read, and a
+ * request that arrives while a read runs makes one more after it, so the band
+ * never settles on state older than the last write. The module's own: a
+ * reload starts it over, as no read of the old module's is still its own.
+ */
+const bandQueue = {
+  /** A request no read has started on since. */
+  isStale: false,
+  /** The first draw's request: read though no band is drawn yet. */
+  isForced: false,
+  /** A read is scheduled or running. */
+  isDraining: false,
+}
+
+/** Runs the asked-for reads, one at a time, until none is outstanding; never throws. */
+async function drainBand($: EngineInterface): Promise<void> {
+  try {
+    while (bandQueue.isStale) {
+      bandQueue.isStale = false
+      const isForced = bandQueue.isForced
+      bandQueue.isForced = false
+      // No surface has drawn the band: nothing to keep fresh, no MCP call.
+      if (!isForced && (await read($, band)) === null) continue
+      await refreshBand($)
+    }
+  } catch {
+    // The band is a convenience; a failed read leaves it as it was.
+  } finally {
+    bandQueue.isDraining = false
+  }
+}
+
+/**
+ * Asks for a band re-read, run on the timer so the caller never waits on the
+ * MCP server; `force` reads though no band is drawn yet (the first draw).
+ */
+function rereadBand($: EngineInterface, force = false): void {
+  bandQueue.isStale = true
+  if (force) bandQueue.isForced = true
+  if (bandQueue.isDraining) return
+  bandQueue.isDraining = true
+  try {
+    $.clock.after(0, () => void drainBand($))
+  } catch {
+    bandQueue.isDraining = false
+  }
 }
 
 /** The board as read: columns from `pm_board`, one more load counted. */
@@ -239,7 +290,7 @@ export const register: Register = (on, options) => {
   // band shows. It yields to a survey.
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     const state = await read($, band)
-    if (state === null) $.clock.after(0, () => void refreshBand($))
+    if (state === null) rereadBand($, true)
     if (e.props.hasSurvey || !state?.view) return next(e)
     return sprintBand($.ui.resolve(e), state.view, e.props.bodyColumns)
   })
@@ -249,10 +300,27 @@ export const register: Register = (on, options) => {
   on('turn.complete', async ($, e, next) => {
     const result = await next(e)
     try {
-      if ((await read($, band)) !== null) $.clock.after(0, () => void refreshBand($))
+      rereadBand($)
     } catch {
       // The band is a convenience; the turn's answer stands without it.
     }
     return result
   })
+
+  // US-PM-62-7: re-read the band after a pm tool call that writes (status,
+  // a new task, the note) answers without error, so it moves with the work
+  // rather than at the turn's end. The result is returned as `next` gave it,
+  // never waiting on the read, which runs on the timer once the call has
+  // answered; a refused or errored call reads nothing. Either server prefix.
+  on('tool.call', { tool: PM_TOOL }, async ($, e, next) => {
+    const result = await next(e)
+    try {
+      if (result.deny === undefined && result.isError !== true && movesBand(e as unknown as { tool: string } & Record<string, unknown>)) {
+        rereadBand($)
+      }
+    } catch {
+      // The band is a convenience; the tool's result stands without it.
+    }
+    return result
+  }).catch(($, e, next) => next(e))
 }
