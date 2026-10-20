@@ -449,3 +449,88 @@ def test_us_pm_64_criterion_only_resolved_decisions_leave_the_task_grabbable(tre
     assert data["grabbed"]["task"]["status"] == "in-progress"
     meta, _ = tree.get_task("US-TST-1-1")
     assert meta.assignee == "claude" and meta.claimed_by_run == "run-crit"
+
+
+# ─── US-PM-64 criterion: answering/withdrawing frees the task (US-PM-64-3) ───
+
+_RESOLUTIONS = pytest.mark.parametrize(
+    "resolution",
+    [{"status": "answered", "answer": "Postgres"}, {"status": "withdrawn"}],
+    ids=["answered", "withdrawn"],
+)
+_TARGETS = pytest.mark.parametrize(
+    "target",
+    ["US-TST-1-1", "US-TST-1", "EPIC-TST-1"],
+    ids=["task", "story", "epic"],
+)
+
+
+def _item_files(store):
+    """Bytes of every epic, story, task and decision file in the tmp store."""
+    root = store.project_dir
+    return {
+        str(path.relative_to(root)): path.read_bytes()
+        for sub in ("epics", "stories", "tasks", "decisions")
+        if (root / sub).is_dir()
+        for path in sorted((root / sub).glob("*.md"))
+    }
+
+
+@_TARGETS
+@_RESOLUTIONS
+def test_us_pm_64_criterion_resolving_the_decision_frees_the_task_with_no_other_change(
+    tree, target, resolution
+):
+    """US-PM-64 criterion: answering or withdrawing the decision makes the task
+    grabbable again with no other change — the task, story and epic files are
+    byte-identical, only the decision file differs, and pm_board moves the
+    task from blocked back to available."""
+    tree.create_decision("Which database?", blocks=[target])
+    assert _grab_as_run("US-TST-1-1")["status"] == "not_ready"
+    assert "US-TST-1-1" in _ids(_board()["board"]["blocked"])
+    task_path = tree._task_path("US-TST-1-1")
+    task_bytes = task_path.read_bytes()
+    files_before = _item_files(tree)
+
+    tree.update_decision("DEC-TST-1", **resolution)
+
+    # No other change: only the decision file was rewritten.
+    assert task_path.read_bytes() == task_bytes
+    files_after = _item_files(tree)
+    assert set(files_after) == set(files_before)
+    changed = sorted(k for k in files_before if files_before[k] != files_after[k])
+    assert changed == ["decisions/DEC-TST-1.md"]
+
+    board = _board()
+    assert "US-TST-1-1" in _ids(board["board"]["available"])
+    assert board["board"]["blocked"] == []
+
+    data = _grab_as_run("US-TST-1-1")
+    assert data["grabbed"]["task"]["id"] == "US-TST-1-1"
+    assert data["grabbed"]["task"]["status"] == "in-progress"
+    meta, _ = tree.get_task("US-TST-1-1")
+    assert meta.assignee == "claude" and meta.claimed_by_run == "run-crit"
+
+
+@_TARGETS
+@_RESOLUTIONS
+def test_us_pm_64_criterion_a_second_open_decision_still_blocks(
+    tree, target, resolution
+):
+    """US-PM-64 criterion: resolving one decision frees the task only when no
+    other open decision still holds it."""
+    tree.create_decision("First?", blocks=[target])
+    tree.create_decision("Second?", blocks=["US-TST-1-1"])
+
+    tree.update_decision("DEC-TST-1", **resolution)
+
+    data = _grab_as_run("US-TST-1-1")
+    assert data["status"] == "not_ready"
+    assert data["blockers"] == ["blocked by open decision DEC-TST-2: Second?"]
+    rows = {row["id"]: row for row in _board()["board"]["blocked"]}
+    assert rows["US-TST-1-1"]["decisions"] == [{"id": "DEC-TST-2", "title": "Second?"}]
+    assert tree.get_task("US-TST-1-1")[0].assignee is None
+
+    tree.update_decision("DEC-TST-2", status="withdrawn")
+
+    assert _grab_as_run("US-TST-1-1")["grabbed"]["task"]["id"] == "US-TST-1-1"
