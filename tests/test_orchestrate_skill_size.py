@@ -5,7 +5,8 @@ skill was pinned at 9000 characters by US-PM-25, raised to 10000 by
 US-PM-53 (two-lane dispatch) on 2026-09-09 by user decision, because the
 isolation model (US-PM-51) and the lanes did not fit in 9 KB, and to 10200 by
 US-PM-54 (heartbeat) on 2026-09-17, likewise by user decision, then lowered
-to 10170 by US-PM-59-5 when the plugin guards replaced the prose bans.  The skill is
+to 10170 by US-PM-59-5 when the plugin guards replaced the prose bans; US-PM-68
+kept 10170 without a raise, trimming asides instead.  The skill is
 loaded into an orchestrating agent's context on every dispatch, so its length
 is a per-run tax; before US-PM-25-6 the template was 31,731 bytes of mostly
 rationale.
@@ -21,7 +22,9 @@ asserted to be *rejected*.  A size check that never fires is not evidence, and t
 shown to bite.
 """
 
+import re
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -36,8 +39,10 @@ from projectman.cli import _render_template
 # slack for the one CronCreate/CronDelete pair the heartbeat needs; lowered to
 # 10170 by US-PM-59-5 once the plugin guards took over the checkout/restore/
 # stash bans (US-PM-59-9 cut the render from 10199 to 10167 characters).
-# US-PM-68-9's retry-in-the-first-worktree wording fit without a raise
-# (10151 characters), paid for by trimming asides.
+# US-PM-68 (task-branch form, clean-run merge, pm-do for workers, retry in the
+# first worktree) kept 10170 without a raise (10168 characters), paid for by
+# trimming asides.  A raise must add its value and reason here and to the
+# size test's docstring — test_the_budget_history_names_the_current_budget.
 MAX_CHARS = 10170
 
 TEMPLATE_NAME = "skill_pm_orchestrate.md.j2"
@@ -92,12 +97,43 @@ def _render_orchestrate() -> str:
 
 
 def test_rendered_orchestrate_skill_is_within_the_size_budget():
-    """At most ``MAX_CHARS``: 9000 by US-PM-25, 10000 by US-PM-53, 10200 by US-PM-54, 10170 since US-PM-59-5."""
+    """At most ``MAX_CHARS``: 9000 by US-PM-25, 10000 by US-PM-53, 10200 by US-PM-54, 10170 since US-PM-59-5 (kept by US-PM-68)."""
     rendered = _render_orchestrate()
     assert _within_limit(rendered), (
         f"rendered {TEMPLATE_NAME} is {len(rendered)} characters, "
         f"{len(rendered) - MAX_CHARS} over the {MAX_CHARS}-character budget"
     )
+
+
+def _budgets_named(text: str) -> list[int]:
+    """The four-or-five-digit budget values a history text names, in order."""
+    return [int(n) for n in re.findall(r"\b\d{4,5}\b", text)]
+
+
+def test_the_budget_history_names_the_current_budget():
+    """A raise has to say so: the history must end at today's ``MAX_CHARS``.
+
+    The size test's docstring is the one-line history of the budget, and the
+    module docstring carries each value's reason.  Bumping ``MAX_CHARS``
+    without extending both leaves the last value they name stale, which this
+    test rejects — so a budget cannot grow silently.
+    """
+    history = test_rendered_orchestrate_skill_is_within_the_size_budget.__doc__
+    named = _budgets_named(history)
+    assert named and named[-1] == MAX_CHARS, (
+        f"the size test's history line ends at {named[-1] if named else None}, "
+        f"but MAX_CHARS is {MAX_CHARS} — record the new value and who set it"
+    )
+    assert MAX_CHARS in _budgets_named(__doc__), (
+        f"the module docstring does not name {MAX_CHARS} — state why the budget is that"
+    )
+
+
+def test_the_history_check_would_fail_on_an_unrecorded_raise(monkeypatch):
+    """Falsification guard: a bumped ``MAX_CHARS`` with the old history fails."""
+    monkeypatch.setattr(sys.modules[__name__], "MAX_CHARS", MAX_CHARS + 130)
+    with pytest.raises(AssertionError):
+        test_the_budget_history_names_the_current_budget()
 
 
 def test_tracked_rendered_skill_matches_the_template():

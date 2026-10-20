@@ -46,7 +46,7 @@ Dirt outside `.project/` (`git status --short`) **stops the run**: report the di
 
 ## Phase 3 — Execution
 
-11. `pm_accept` returned `next` → use it, skip to 13; else `pm_board`; for lane B `pm_board(lane_compatible_with=<A's task>)`, first `available` in plan order (the filter bars a dependency in flight); none → B idles till A is accepted.
+11. `pm_accept` returned `next` → use it, skip to 13; else `pm_board`; for lane B `pm_board(lane_compatible_with=<A's task>)`, first `available` in plan order (it bars a dependency in flight); none → B idles till A is accepted.
 12. Else the first plan `todo`, dependency-clear, unassigned or step 3 recoverable: `pm_grab(<id>, run_id=<this run>)`; never one held elsewhere; none → exit.
 13. `--max` exceeded (retries too; both lanes count) → stop, report, `pm_release(<id>, ...)` any pre-claimed task in either lane.
 14. Note lane and `<tb>` before **each** dispatch, then its worktree path; `--lanes 2`: one claim per lane, by run id — A and B: task, `<tb>`, path, returned?
@@ -56,7 +56,7 @@ Dirt outside `.project/` (`git status --short`) **stops the run**: report the di
 17. **Validation**: an `Agent` (`subagent_type: general-purpose`, step 15's model, foreground, no worktree) with the Validator Prompt Template returns files, tests, DoD — **never run them yourself**.
 18. Missing or malformed verdict = one failure: re-run the validator once, then `pm_park(task_id, note="validator returned no verdict")`.
 19. **Verdict** — its `verdict` picks the verb; the object minus `verdict`/`note` is `evidence`, its `note` the note: **ONE line, at most 200 characters** (`note_long` = over).
-    - **Accept**: `pm_accept(task_id, note="<one line>", run_id=<this run>, evidence={"files":[...],"tests":[{"command":"...","passed":true}],"dod_met":[...]})` → `done`. Merge in `<rw>` before the next dispatch: `git merge --ff-only <tb>` else `--no-ff -m "<task-id>"`; on conflict `merge --abort` + `pm_retry` (paths in `evidence.files`, note "rebase onto `<rb>`"); a second conflict parks. Merge order is acceptance order, never dispatch order: B, cut before A's merge, may conflict; that retry keeps its lane and `<tb>`, and is not a new dispatch for `--max`.
+    - **Accept**: `pm_accept(task_id, note="<one line>", run_id=<this run>, evidence={"files":[...],"tests":[{"command":"...","passed":true}],"dod_met":[...]})` → `done`, `story_closed` if last. Merge in `<rw>` before the next dispatch: `git merge --ff-only <tb>` else `--no-ff -m "<task-id>"`; on conflict `merge --abort` + `pm_retry` (paths in `evidence.files`, note "rebase onto `<rb>`"); a second conflict parks. Merge order is acceptance order, never dispatch order: B, cut before A's merge, may conflict; that retry keeps its lane and `<tb>`, and is not a new dispatch for `--max`.
     - **Retry** (first failure): `pm_retry(task_id, note="<why>", evidence={"tests":[<failing>]})` → `todo`; dispatch **one** retry worker as 15, no `isolation`, naming 14's path.
     - **Park** (second failure/blocker): `pm_park(task_id, note="<why>", evidence={"tests":[<failing>],"dod_unmet":[...]})`; continue.
     - **Accept-as-review** (human needed): `pm_review(task_id, note="<why>", evidence={"dod_met":[...],"dod_unmet":[...]})`.
@@ -130,4 +130,4 @@ Stop when all sprint tasks are `done` or parked, `--max` is reached, `pm_audit` 
 
 ## What This Skill Does NOT Do
 
-- **No scoping or planning** (→ `/projectman:pm-plan`),**no claim it does not own**, **no implementing**.
+- **No scoping or planning** (→ `/projectman:pm-plan`), **no claim it does not own**, **no implementing**.
