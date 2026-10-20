@@ -1,7 +1,6 @@
 ---
 name: pm-do
 description: Execute a single ProjectMan task end-to-end — claim it, load story context, implement, verify the DoD with evidence, record the outcome, complete. Use when the user names a task or says "do task X".
-disable-model-invocation: true
 args: "<task-id> [--complete]"
 ---
 

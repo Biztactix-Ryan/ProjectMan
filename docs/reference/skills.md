@@ -88,7 +88,7 @@ Pick up and execute a specific task. This is the "do the work" command.
 
 **Auto-spawn:** When using `/pm grab` in a Web UI environment (with `CLAUDE_WEB_PORT` set), a focused task session is automatically spawned via the PostToolUse activity hook — no need to manually run `/pm-do`. In CLI-only mode, `/pm-do` is suggested as a fallback.
 
-**Note:** This skill has `disable-model-invocation: true` — it only runs when you explicitly invoke it with `/pm-do`, never automatically. This is because it performs real code changes.
+**Note:** This skill is model-invocable — it has no `disable-model-invocation` flag — so a worker subagent `/pm-orchestrate` dispatches can run `/projectman:pm-do` through the Skill tool, and Claude may pick it up when you name a task or say "do task X" (US-PM-68-8). It still claims the task before touching code, and `--complete` is never set unless the caller passes it. `/pm-orchestrate`, which only a human starts, keeps the flag.
 
 ## /pm-autoscope
 
