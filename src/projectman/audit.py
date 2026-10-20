@@ -12,7 +12,13 @@ import yaml
 from .activity_log import log_paths, read_log_entries
 from .deps import build_combined_dep_graph, detect_cycle
 from .durations import long_task_risk
-from .models import RunLogEntry
+from .models import (
+    DEFAULT_DECISION_STALE_DAYS,
+    EPIC_ID,
+    TASK_ID,
+    DecisionStatus,
+    RunLogEntry,
+)
 from .store import Store
 
 # ── State digest (US-PM-11-5) ────────────────────────────────────────────
@@ -56,6 +62,9 @@ from .store import Store
 # config.yaml is covered by the same walk, and Check 18 depends on it too —
 # `orchestrate.max_task_minutes` is the ceiling the bands are compared with,
 # so raising it must be able to clear the warning on the next audit.
+# decisions/*.md are inputs to Checks 19-21 (US-PM-67-7) and are covered by
+# the same walk: answering, withdrawing or re-pointing a decision moves the
+# digest, and so does `decision_stale_days` in config.yaml.
 DIGEST_LENGTH = 16
 DIGEST_LINE_PREFIX = "digest: "
 
@@ -525,6 +534,147 @@ def check_long_task_risk(store: Store) -> list[dict]:
     return findings
 
 
+# ── Checks 19-21: open decisions nobody is acting on (US-PM-67-7) ────────
+#
+# A decision blocks the tasks, stories and epics its ``blocks`` list names
+# while it is ``open`` (see :mod:`projectman.decisions`).  Three ways an open
+# one goes wrong without anything else noticing:
+#
+#   * decision-stale — open for longer than ``decision_stale_days`` (default
+#     14), counted from ``created``.  The age must *pass* the threshold, the
+#     same rule ``stale_claim_hours`` uses, so exactly 14 days is not stale.
+#   * decision-blocks-nothing — the ``blocks`` list is empty, or no item it
+#     names is still open (every one is done, archived or gone).  The question
+#     holds nothing up, so it is either answerable now or should be withdrawn.
+#   * decision-blocks-archived — it names an archived task, story or epic.
+#     The archived item will never be picked up, so that entry is dead weight
+#     in the list (and, if nothing else is open, the decision also blocks
+#     nothing — both findings fire, each with its own remedy).
+#
+# Answered and withdrawn decisions never block anything, so they are never
+# reported here.
+#
+# SEVERITY: warning, never error, for the reason given at Checks 16-18 —
+# /pm-orchestrate halts a run on any error-level finding, and an unanswered
+# question must not stop the run that is working through everything else.
+#
+# INPUTS: the decision files are read once (``list_decisions``), and item
+# state comes from the audit's own snapshot.  Archived stories and epics are
+# not in that snapshot, so an id it lacks is read off disk once — only for
+# ids an open decision actually names.  The digest needs no change: it hashes
+# the whole ``.project`` tree, ``decisions/`` included, so editing a decision
+# changes it.
+def check_decisions(
+    store: Store,
+    *,
+    today: date,
+    stale_days: float,
+    tasks: list,
+    stories: list,
+    epics: list,
+) -> list[dict]:
+    """Stale / blocking-nothing / blocking-archived findings for open decisions.
+
+    *tasks* may include archived tasks (they carry an ``archived`` flag);
+    *stories* and *epics* are the live lists, archived ones absent.  *today*
+    anchors the age arithmetic so tests share one clock with the caller.
+    """
+    open_decisions = store.list_decisions(status=DecisionStatus.open.value)
+    if not open_decisions:
+        return []
+
+    task_by_id = {t.id: t for t in tasks}
+    story_by_id = {s.id: s for s in stories}
+    epic_by_id = {e.id: e for e in epics}
+    states: dict[str, str] = {}
+
+    def state(item_id: str) -> str:
+        """``open``, ``done``, ``archived`` or ``missing`` for a blocked id."""
+        if item_id in states:
+            return states[item_id]
+        if item_id in task_by_id:
+            task = task_by_id[item_id]
+            result = (
+                "archived" if task.archived
+                else "done" if task.status.value == "done"
+                else "open"
+            )
+        elif item_id in story_by_id or item_id in epic_by_id:
+            meta = story_by_id.get(item_id) or epic_by_id[item_id]
+            result = "done" if meta.status.value == "done" else "open"
+        elif TASK_ID.match(item_id):
+            # The task list includes archived tasks, so absent means gone.
+            result = "missing"
+        else:
+            # Not in the live snapshot: an archived story/epic, or nothing.
+            reader = store.get_epic if EPIC_ID.match(item_id) else store.get_story
+            try:
+                meta, _ = reader(item_id)
+            except Exception:
+                meta = None
+            if meta is None:
+                result = "missing"
+            elif meta.status.value == "archived":
+                result = "archived"
+            elif meta.status.value == "done":
+                result = "done"
+            else:
+                result = "open"
+        states[item_id] = result
+        return result
+
+    findings: list[dict] = []
+    for decision in open_decisions:
+        age = (today - decision.created).days
+        if age > stale_days:
+            findings.append({
+                "severity": "warning",
+                "check": "decision-stale",
+                "message": (
+                    f"Decision {decision.id} has been open for {age} days "
+                    f"(decision_stale_days is {stale_days:g}) — answer or "
+                    f"withdraw it"
+                ),
+                "items": [decision.id],
+            })
+
+        item_states = {item_id: state(item_id) for item_id in decision.blocks}
+        if not decision.blocks:
+            findings.append({
+                "severity": "warning",
+                "check": "decision-blocks-nothing",
+                "message": (
+                    f"Decision {decision.id} is open but blocks nothing — its "
+                    f"blocks list is empty"
+                ),
+                "items": [decision.id],
+            })
+        elif "open" not in item_states.values():
+            findings.append({
+                "severity": "warning",
+                "check": "decision-blocks-nothing",
+                "message": (
+                    f"Decision {decision.id} is open but blocks nothing — every "
+                    f"item it blocks is done, archived or gone "
+                    f"({', '.join(decision.blocks)})"
+                ),
+                "items": [decision.id],
+            })
+
+        archived = [i for i, s in item_states.items() if s == "archived"]
+        if archived:
+            findings.append({
+                "severity": "warning",
+                "check": "decision-blocks-archived",
+                "message": (
+                    f"Decision {decision.id} blocks archived item(s) "
+                    f"{', '.join(archived)} — drop them from its blocks list"
+                ),
+                "items": [decision.id, *archived],
+            })
+    return findings
+
+
 def run_audit(
     root: Path,
     include_info: bool = True,
@@ -917,6 +1067,20 @@ def run_audit(
     # Check 18: Tasks in the active sprint whose size band usually overruns
     # the orchestrator's prompt cache (US-PM-50-10).
     findings.extend(check_long_task_risk(store))
+
+    # Check 19: Open decisions older than decision_stale_days (US-PM-67-7).
+    # Check 20: Open decisions blocking nothing still open (US-PM-67-7).
+    # Check 21: Open decisions blocking archived items (US-PM-67-7).
+    # All three are warnings and come from one pass over the decision files —
+    # see check_decisions.
+    findings.extend(check_decisions(
+        store,
+        today=date.today(),
+        stale_days=float(getattr(store.config, "decision_stale_days", DEFAULT_DECISION_STALE_DAYS)),
+        tasks=all_tasks,
+        stories=all_stories,
+        epics=all_epics,
+    ))
 
     # Generate report
     error_count = sum(1 for f in findings if f["severity"] == "error")

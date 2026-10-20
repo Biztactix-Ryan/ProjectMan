@@ -42,6 +42,7 @@ next_story_id: 1         # Auto-incremented
 next_epic_id: 1          # Auto-incremented
 next_sprint_id: 1        # Auto-incremented
 stale_claim_hours: 2.0   # Age at which an in-progress claim is flagged stale
+decision_stale_days: 14  # Age at which pm_audit warns an open decision is stale
 activity_log_max_bytes:  # Optional — rotate activity.jsonl past this many bytes
 activity_log_max_days:   # Optional — rotate activity.jsonl past this many days
 tools:                   # Optional — which gated tool families agents see
@@ -62,6 +63,7 @@ orchestrate:             # Optional — knobs for orchestrated runs
 | `next_epic_id` | int | Next epic number to assign (auto-incremented) |
 | `next_sprint_id` | int | Next sprint number to assign (auto-incremented) |
 | `stale_claim_hours` | float | How long an in-progress claim may sit before `pm_active` / `pm_board` flag it `stale: true` — a claim must *pass* this age, so exactly at the threshold is not yet stale. Default `2.0`. A task with no `claimed_at` is never stale regardless. Turn it *up* rather than to `0` to disable — `0` flags every live claim. A value that is not a non-negative finite number falls back to `2.0` rather than failing the config load |
+| `decision_stale_days` | float | How many days a decision may stay `open` before `pm_audit` warns `decision-stale` — age is counted from the decision's `created` date and must *pass* this value, so exactly at the threshold is not yet stale. Default `14`. Answered and withdrawn decisions are never flagged. Turn it *up* rather than to `0` to disable — `0` flags every open decision older than today. A value that is not a non-negative finite number falls back to `14` rather than failing the config load |
 | `activity_log_max_bytes` | int\|null | Rotate `activity.jsonl` once it reaches this many bytes. Default `null` — no size bound, the log grows forever. See [Activity Log Rotation](#activity-log-rotation) |
 | `activity_log_max_days` | float\|null | Rotate `activity.jsonl` once its **oldest entry** is this many days old. Default `null` — no age bound. See [Activity Log Rotation](#activity-log-rotation) |
 | `tools.maintenance` | bool | Register the two break-glass tools (`pm_restore`, `pm_fix_malformed`). Default `false` |

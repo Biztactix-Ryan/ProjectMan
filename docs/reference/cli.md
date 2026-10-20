@@ -527,5 +527,8 @@ projectman audit
 | 17 | Acceptance-criteria / test-task drift | WARNING | A criterion has no test task, or a test task names a criterion the story no longer has |
 | 18 | Completion carrying no evidence | WARNING | Task marked done with no run-log entry or evidence recorded |
 | 19 | Long-task risk in the active sprint | WARNING | An open task of an active sprint is in a points band whose p90 grab-to-done duration exceeds `orchestrate.max_task_minutes` |
+| 20 | Stale open decision (`decision-stale`) | WARNING | An `open` decision whose age since `created` passes `decision_stale_days` (default 14; exactly at the threshold is not stale) |
+| 21 | Decision blocking nothing (`decision-blocks-nothing`) | WARNING | An `open` decision whose `blocks` list is empty, or whose blocked items are all done, archived or gone |
+| 22 | Decision blocking archived items (`decision-blocks-archived`) | WARNING | An `open` decision whose `blocks` list names an archived task, story or epic |
 
 Output is written to `.project/DRIFT.md` and printed to stdout.

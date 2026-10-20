@@ -45,6 +45,13 @@ DEFAULT_STALE_CLAIM_HOURS = 2.0
 #: drift apart.
 DEFAULT_MAX_TASK_MINUTES = 60.0
 
+#: Default age, in days, past which an open decision is reported stale by
+#: ``pm_audit`` (US-PM-67-7).  Two weeks is one sprint's length here: a
+#: question still open after a whole sprint is either holding work up or no
+#: longer being asked.  Named once so the field default and the
+#: malformed-value fallback cannot drift apart.
+DEFAULT_DECISION_STALE_DAYS = 14.0
+
 
 class StoryStatus(str, Enum):
     backlog = "backlog"
@@ -529,6 +536,12 @@ class ProjectConfig(BaseModel):
     #: orchestrator loop.  A float so a fast pool can say `0.25`; set it
     #: high rather than to 0 to disable -- 0 would flag every live claim.
     stale_claim_hours: float = DEFAULT_STALE_CLAIM_HOURS
+    #: How many days a decision may stay ``open`` before ``pm_audit`` warns
+    #: `decision-stale` (US-PM-67-7).  Measured from the decision's
+    #: ``created`` date; a decision must *pass* this age, so exactly at the
+    #: threshold is not yet stale.  Set it high rather than to 0 to disable --
+    #: 0 flags every open decision older than today.
+    decision_stale_days: float = DEFAULT_DECISION_STALE_DAYS
     #: Bounds on the activity log (US-PRJ-52-10).  Both default to None,
     #: meaning the log grows forever exactly as it always has; set either
     #: and the append that finds `activity.jsonl` over the bound rotates it
@@ -571,6 +584,26 @@ class ProjectConfig(BaseModel):
             return DEFAULT_STALE_CLAIM_HOURS
         if not math.isfinite(parsed) or parsed < 0:
             return DEFAULT_STALE_CLAIM_HOURS
+        return parsed
+
+    @field_validator("decision_stale_days", mode="before")
+    @classmethod
+    def tolerate_a_junk_decision_age(cls, v: object) -> float:
+        """A malformed `decision_stale_days` falls back to the default.
+
+        Same reasoning as `stale_claim_hours`: the key only tunes one audit
+        warning, and raising on a typo would take `load_config` -- and every
+        tool in the server -- down with it.  Anything `float()` refuses,
+        NaN/infinity and a negative value are replaced; zero is kept.
+        """
+        if v is None:
+            return DEFAULT_DECISION_STALE_DAYS
+        try:
+            parsed = float(v)  # type: ignore[arg-type]
+        except (TypeError, ValueError):
+            return DEFAULT_DECISION_STALE_DAYS
+        if not math.isfinite(parsed) or parsed < 0:
+            return DEFAULT_DECISION_STALE_DAYS
         return parsed
 
     @field_validator("activity_log_max_bytes", "activity_log_max_days", mode="before")
