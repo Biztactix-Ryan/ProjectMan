@@ -28,6 +28,7 @@ STORY_ID = re.compile(rf"^US-{PREFIX}-\d+$")
 TASK_ID = re.compile(rf"^US-{PREFIX}-\d+-\d+$")
 EPIC_ID = re.compile(rf"^EPIC-{PREFIX}-\d+$")
 SPRINT_ID = re.compile(rf"^SPRINT-{PREFIX}-\d+$")
+DECISION_ID = re.compile(rf"^DEC-{PREFIX}-\d+$")
 
 #: Default claim-staleness threshold, in hours (US-PM-14-5).  Named once so
 #: the field default and the fallback a malformed config value lands on cannot
@@ -281,6 +282,156 @@ class SprintFrontmatter(BaseModel):
                 f"(e.g. SPRINT-PRJ-1), got: {v}"
             )
         return v
+
+
+class DecisionStatus(str, Enum):
+    open = "open"
+    answered = "answered"
+    withdrawn = "withdrawn"
+
+
+def _is_blockable_id(value: str) -> bool:
+    """True if *value* has the shape of an item a decision can block.
+
+    Shape only: whether the item exists is a store lookup, not a model
+    concern, so it is checked where decisions are written (US-PM-63).
+    """
+    return bool(TASK_ID.match(value) or STORY_ID.match(value) or EPIC_ID.match(value))
+
+
+class DecisionOption(BaseModel):
+    """One candidate answer to a decision's question."""
+
+    label: str
+    summary: str = ""
+    pros: list[str] = []
+    cons: list[str] = []
+
+    @field_validator("label")
+    @classmethod
+    def validate_label(cls, v: str) -> str:
+        # The label is what `recommendation` and `answer` refer to, so a
+        # blank one could never be picked.
+        v = v.strip()
+        if not v:
+            raise ValueError("Decision option label must not be empty")
+        return v
+
+
+class DecisionFrontmatter(BaseModel):
+    id: str
+    #: The question, short.  The context lives in the markdown body.
+    title: str
+    status: DecisionStatus = DecisionStatus.open
+    priority: Priority = Priority.should
+    #: Items that cannot proceed until this is answered: task, story or epic
+    #: IDs.  Validated as shapes here; existence is the store's job.
+    blocks: list[str] = []
+    #: Who asked -- an agent or a human.
+    raised_by: Optional[str] = None
+    #: The item the question came up while working on, if any.
+    raised_from: Optional[str] = None
+    options: list[DecisionOption] = []
+    #: Label of the recommended option, if there is one.
+    recommendation: Optional[str] = None
+    #: The answer: an option label or free text.
+    answer: Optional[str] = None
+    rationale: Optional[str] = None
+    answered_by: Optional[str] = None
+    answered_at: Optional[datetime] = None
+    created: date
+    updated: date
+
+    @field_validator("id")
+    @classmethod
+    def validate_id(cls, v: str) -> str:
+        if not DECISION_ID.match(v):
+            raise ValueError(
+                f"Decision ID must match {DECISION_ID.pattern} "
+                f"(e.g. DEC-PRJ-1), got: {v}"
+            )
+        return v
+
+    @field_validator("blocks")
+    @classmethod
+    def validate_blocks(cls, v: list[str]) -> list[str]:
+        for item_id in v:
+            if not _is_blockable_id(item_id):
+                raise ValueError(
+                    f"Decision blocks entries must be a task ID matching "
+                    f"{TASK_ID.pattern} (e.g. US-PRJ-1-1), a story ID matching "
+                    f"{STORY_ID.pattern} (e.g. US-PRJ-1) or an epic ID matching "
+                    f"{EPIC_ID.pattern} (e.g. EPIC-PRJ-1), got: {item_id}"
+                )
+        return v
+
+    @field_validator("raised_from")
+    @classmethod
+    def validate_raised_from(cls, v: Optional[str]) -> Optional[str]:
+        # A question can come up while working on an item or while answering
+        # another decision, so a decision ID is accepted here as well.
+        if v is not None and not (_is_blockable_id(v) or DECISION_ID.match(v)):
+            raise ValueError(
+                f"Decision raised_from must be a task, story, epic or decision "
+                f"ID (e.g. US-PRJ-1-1, US-PRJ-1, EPIC-PRJ-1, DEC-PRJ-1), got: {v}"
+            )
+        return v
+
+    @field_validator("options")
+    @classmethod
+    def validate_unique_labels(
+        cls, v: list[DecisionOption]
+    ) -> list[DecisionOption]:
+        # Labels are how recommendation and answer name an option; two
+        # options sharing one would make that reference ambiguous.
+        seen: set[str] = set()
+        for option in v:
+            if option.label in seen:
+                raise ValueError(
+                    f"Decision option labels must be unique, got duplicate: "
+                    f"{option.label}"
+                )
+            seen.add(option.label)
+        return v
+
+    @field_validator("recommendation")
+    @classmethod
+    def validate_recommendation(
+        cls, v: Optional[str], info: ValidationInfo
+    ) -> Optional[str]:
+        if v is None:
+            return v
+        # `options` is declared before `recommendation`, so it has already
+        # been validated -- unless it failed, in which case that error is
+        # the one worth reporting and this check has nothing to compare to.
+        if "options" not in info.data:
+            return v
+        labels = [option.label for option in info.data["options"]]
+        if v not in labels:
+            raise ValueError(
+                f"Decision recommendation must be one of the option labels "
+                f"{labels}, got: {v}"
+            )
+        return v
+
+    @field_validator("answered_at", mode="before")
+    @classmethod
+    def coerce_answered_at(cls, v: Any) -> Any:
+        # A hand-edited file may carry a bare date, which YAML hands back as
+        # a `date`; read it as midnight UTC rather than rejecting the file.
+        if isinstance(v, date) and not isinstance(v, datetime):
+            return datetime(v.year, v.month, v.day, tzinfo=timezone.utc)
+        return v
+
+    @field_validator("answered_at")
+    @classmethod
+    def normalize_answered_at(cls, v: Optional[datetime]) -> Optional[datetime]:
+        # Same rule as TaskFrontmatter.claimed_at: naive means UTC.
+        if v is None:
+            return None
+        if v.tzinfo is None:
+            return v.replace(tzinfo=timezone.utc)
+        return v.astimezone(timezone.utc)
 
 
 class ToolFlags(BaseModel):
@@ -552,6 +703,9 @@ class ItemType(str, Enum):
     #: activity log without pretending the note is a backlog item: the
     #: indexer, the audit and search all skip it deliberately (US-PM-28).
     note = "note"
+    #: An open question the project needs answered (US-PM-63), stored under
+    #: ``.project/decisions/`` with :class:`DecisionFrontmatter`.
+    decision = "decision"
 
 
 class LogSource(str, Enum):

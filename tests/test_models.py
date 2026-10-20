@@ -1,17 +1,22 @@
 """Tests for Pydantic models."""
 
 import pytest
-from datetime import date
+from datetime import date, datetime, timezone
 from pydantic import ValidationError
 
 from projectman.models import (
+    DECISION_ID,
     EPIC_ID,
     FIBONACCI_POINTS,
     PREFIX,
     SPRINT_ID,
     STORY_ID,
     TASK_ID,
+    DecisionFrontmatter,
+    DecisionOption,
+    DecisionStatus,
     EpicFrontmatter,
+    ItemType,
     SprintFrontmatter,
     StoryFrontmatter,
     TaskFrontmatter,
@@ -395,3 +400,127 @@ class TestSprintIdValidation:
         with pytest.raises(ValidationError) as exc:
             SprintFrontmatter(id=value, name="S", created=TODAY, updated=TODAY)
         assert SPRINT_ID.pattern in str(exc.value)
+
+
+# --- Decisions (US-PM-63-6) -------------------------------------------------
+
+
+def _decision(**kw):
+    base = dict(
+        id="DEC-PRJ-1", title="Which cache backend?", created=TODAY, updated=TODAY
+    )
+    base.update(kw)
+    return DecisionFrontmatter(**base)
+
+
+_OPTIONS = [
+    {"label": "redis", "summary": "Use Redis", "pros": ["fast"], "cons": ["ops"]},
+    {"label": "sqlite", "summary": "Use SQLite"},
+]
+
+
+class TestDecisionIdPattern:
+    @pytest.mark.parametrize("value", ["DEC-PRJ-1", "DEC-PM-12", "DEC-A1-100"])
+    def test_accepts(self, value):
+        assert DECISION_ID.match(value)
+
+    @pytest.mark.parametrize(
+        "value",
+        ["DEC-1", "DEC-prj-1", "DEC-PRJ", "DEC-PRJ-1-1", "US-PRJ-1", "DECPRJ-1", ""],
+    )
+    def test_rejects(self, value):
+        assert not DECISION_ID.match(value)
+
+    def test_uses_prefix_fragment(self):
+        assert PREFIX in DECISION_ID.pattern
+
+
+class TestDecisionFrontmatter:
+    def test_valid_decision(self):
+        d = _decision(
+            status="answered",
+            priority="must",
+            blocks=["US-PRJ-1-1", "US-PRJ-2", "EPIC-PRJ-3"],
+            raised_by="claude",
+            raised_from="US-PRJ-1-1",
+            options=_OPTIONS,
+            recommendation="redis",
+            answer="sqlite",
+            rationale="Fewer moving parts",
+            answered_by="farhan",
+            answered_at="2026-10-20T10:00:00Z",
+        )
+        assert d.status == DecisionStatus.answered
+        assert d.priority == Priority.must
+        assert d.blocks == ["US-PRJ-1-1", "US-PRJ-2", "EPIC-PRJ-3"]
+        assert all(isinstance(o, DecisionOption) for o in d.options)
+        assert d.options[0].pros == ["fast"]
+        assert d.recommendation == "redis"
+        assert d.answered_at == datetime(2026, 10, 20, 10, tzinfo=timezone.utc)
+
+    def test_defaults(self):
+        d = _decision()
+        assert d.status == DecisionStatus.open
+        assert d.priority == Priority.should
+        assert d.blocks == []
+        assert d.options == []
+        for field in (
+            "raised_by", "raised_from", "recommendation", "answer",
+            "rationale", "answered_by", "answered_at",
+        ):
+            assert getattr(d, field) is None, field
+
+    def test_option_defaults(self):
+        o = DecisionOption(label="a")
+        assert (o.summary, o.pros, o.cons) == ("", [], [])
+
+    @pytest.mark.parametrize(
+        "value", ["DEC-1", "dec-PRJ-1", "DEC-PRJ", "US-PRJ-1", "DEC-PRJ-1-1", ""]
+    )
+    def test_bad_id_rejected(self, value):
+        with pytest.raises(ValidationError, match="Decision ID must match"):
+            _decision(id=value)
+
+    @pytest.mark.parametrize("value", ["closed", "done", "pending", ""])
+    def test_bad_status_rejected(self, value):
+        with pytest.raises(ValidationError):
+            _decision(status=value)
+
+    def test_status_set(self):
+        assert {s.value for s in DecisionStatus} == {"open", "answered", "withdrawn"}
+
+    @pytest.mark.parametrize(
+        "value", ["US-1", "us-PRJ-1", "SPRINT-PRJ-1", "DEC-PRJ-1", "US-PRJ-1-1-1", ""]
+    )
+    def test_malformed_blocks_entry_rejected(self, value):
+        with pytest.raises(ValidationError, match="blocks entries"):
+            _decision(blocks=["US-PRJ-1", value])
+
+    def test_recommendation_not_among_labels_rejected(self):
+        with pytest.raises(ValidationError, match="recommendation must be one of"):
+            _decision(options=_OPTIONS, recommendation="postgres")
+
+    def test_recommendation_without_options_rejected(self):
+        with pytest.raises(ValidationError, match="recommendation must be one of"):
+            _decision(recommendation="redis")
+
+    def test_duplicate_option_labels_rejected(self):
+        with pytest.raises(ValidationError, match="unique"):
+            _decision(options=[{"label": "a"}, {"label": "a"}])
+
+    def test_blank_option_label_rejected(self):
+        with pytest.raises(ValidationError, match="label must not be empty"):
+            _decision(options=[{"label": "  "}])
+
+    def test_raised_from_accepts_decision_and_rejects_junk(self):
+        assert _decision(raised_from="DEC-PRJ-2").raised_from == "DEC-PRJ-2"
+        with pytest.raises(ValidationError, match="raised_from"):
+            _decision(raised_from="not-an-id")
+
+    def test_answered_at_bare_date_read_as_utc_midnight(self):
+        d = _decision(answered_at=date(2026, 10, 20))
+        assert d.answered_at == datetime(2026, 10, 20, tzinfo=timezone.utc)
+
+
+def test_item_type_has_decision():
+    assert ItemType("decision") is ItemType.decision
