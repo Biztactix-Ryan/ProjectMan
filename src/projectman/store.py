@@ -971,9 +971,9 @@ class Store:
         """Index or re-index an item in the embedding store.
 
         Silently skips if embeddings are not available (fastembed not installed).
-        Only indexes stories and tasks (epics are not indexed).
+        Only indexes stories, tasks and decisions (epics are not indexed).
         """
-        if item_type not in ("story", "task"):
+        if item_type not in ("story", "task", "decision"):
             return
         try:
             from .embeddings import EmbeddingStore
@@ -3124,6 +3124,7 @@ class Store:
         post = frontmatter.Post(content=context, **meta.model_dump(mode="json"))
         _atomic_write_text(decision_path, frontmatter.dumps(post))
         self._emit_log(EventType.create, decision_id, ItemType.decision)
+        self._index_embedding(decision_id, meta.title, "decision", context)
         return meta
 
     def get_decision(self, decision_id: str) -> tuple[DecisionFrontmatter, str]:
@@ -3220,6 +3221,8 @@ class Store:
             changes=changes,
             run_id=run_id,
         )
+        if "title" in changes or "body" in changes:
+            self._index_embedding(decision_id, meta.title, "decision", new_body)
         return meta
 
     # ─── Git Operations ──────────────────────────────────────────

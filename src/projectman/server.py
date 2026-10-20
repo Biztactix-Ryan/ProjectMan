@@ -14,7 +14,15 @@ from .durations import long_task_risk
 from .errors import NotFoundError, ValidationError, wire_code_for
 from .event_bus import EventBus, NoOpEventBus
 from .indexer import build_index, write_index
-from .models import EPIC_ID, SPRINT_ID, STORY_ID, TASK_ID, Evidence, ProjectIndex
+from .models import (
+    DECISION_ID,
+    EPIC_ID,
+    SPRINT_ID,
+    STORY_ID,
+    TASK_ID,
+    Evidence,
+    ProjectIndex,
+)
 from .store import (
     CLAIM_FIELDS,
     NOTE_SUMMARY_RECOMMENDED,
@@ -66,15 +74,16 @@ def _store() -> Store:
     return _store_cache[default_dir]
 
 
-#: The four ID shapes, in the order :func:`_prefix_of` tries them.  All four
+#: The five ID shapes, in the order :func:`_prefix_of` tries them.  All five
 #: are ``<KIND>-<PREFIX>-<n>[-<m>]``, so the prefix is always segment 1 — the
 #: patterns are the *validator* and the split is the extraction, which keeps
-#: the shapes defined once in models.py (US-PM-34-6).
-_ID_PATTERNS = (TASK_ID, STORY_ID, EPIC_ID, SPRINT_ID)
+#: the shapes defined once in models.py (US-PM-34-6).  Decisions joined in
+#: US-PM-63.
+_ID_PATTERNS = (TASK_ID, STORY_ID, EPIC_ID, SPRINT_ID, DECISION_ID)
 
 
 def _prefix_of(item_id: object) -> str:
-    """The project prefix embedded in an epic/story/task/sprint ID.
+    """The project prefix embedded in an epic/story/task/sprint/decision ID.
 
     ``"US-API-3-2"`` -> ``"API"``.  Every accepted shape is
     ``<KIND>-<PREFIX>-<digits>`` with an optional trailing ``-<digits>`` for a
@@ -84,7 +93,7 @@ def _prefix_of(item_id: object) -> str:
     to the answer.
 
     Raises:
-        errors.ValidationError: the ID matches none of the four patterns —
+        errors.ValidationError: the ID matches none of the five patterns —
             lowercase, a missing segment, an unknown kind, empty, or not a
             string at all.  Code ``invalid``.
     """
@@ -92,8 +101,8 @@ def _prefix_of(item_id: object) -> str:
     if not any(pattern.match(text) for pattern in _ID_PATTERNS):
         raise ValidationError(
             f"malformed id {item_id!r} — expected US-<PREFIX>-<n>, "
-            f"US-<PREFIX>-<n>-<m>, EPIC-<PREFIX>-<n> or SPRINT-<PREFIX>-<n> "
-            f"with an uppercase prefix"
+            f"US-<PREFIX>-<n>-<m>, EPIC-<PREFIX>-<n>, SPRINT-<PREFIX>-<n> or "
+            f"DEC-<PREFIX>-<n> with an uppercase prefix"
         )
     return text.split("-")[1]
 
@@ -881,7 +890,7 @@ def pm_get(
     task_id: Optional[Union[str, list[str]]] = None,
     fields: Optional[str] = None,
 ) -> str:
-    """Get full details of epics, stories, or tasks by ID. Accepts multiple comma-separated IDs — always fetch related items in one call instead of repeated single-ID calls.
+    """Get full details of epics, stories, tasks or decisions by ID. Accepts multiple comma-separated IDs — always fetch related items in one call instead of repeated single-ID calls.
 
     Pass `fields` when you only need a few keys — a verification read after a
     worker reports done is `pm_get(task_id, fields="status,assignee")`, which
@@ -923,7 +932,9 @@ def pm_get(
                     result["recent_run_log"] = entries
             if names is None:
                 return result
-            if store._is_epic_id(item_id):
+            if store._is_decision_id(item_id):
+                kind = "decision"
+            elif store._is_epic_id(item_id):
                 kind = "epic"
             elif store._is_task_id(item_id):
                 kind = "task"
@@ -1313,7 +1324,7 @@ def pm_active(
     annotations=ToolAnnotations(title="Search Items", readOnlyHint=True),
 )
 def pm_search(query: str, tag: Optional[str] = None) -> str:
-    """Search stories and tasks by keyword or semantic similarity.
+    """Search items by keyword or semantic similarity.
 
     Args:
         query: Search query string
@@ -1342,9 +1353,10 @@ def pm_search(query: str, tag: Optional[str] = None) -> str:
                     # and every lookup raised -- the tag filter silently
                     # dropped every hit.
                     store = _store()
-                    # The embedding index only ever holds stories and tasks
-                    # (see EmbeddingStore.reindex_all), so two batch listings
-                    # cover every possible result id -- no store.get per hit.
+                    # The embedding index holds stories, tasks and decisions
+                    # (see EmbeddingStore.reindex_all); decisions carry no
+                    # tags, so two batch listings cover every id a tag can
+                    # match -- no store.get per hit.
                     # An id that is no longer on disk is absent from the map
                     # and drops out, as it did when get() raised.
                     tags_by_id = {

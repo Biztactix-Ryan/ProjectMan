@@ -34,7 +34,8 @@ class SearchOutcome:
 def keyword_search(
     query: str, project_dir: Path, top_k: int = 10, tag: str | None = None
 ) -> list[SearchResult]:
-    """Scan all stories/tasks for substring matches in title + content.
+    """Scan epics, stories, tasks and decisions for substring matches in
+    title + content (a decision's title is its question, its body the context).
 
     The hits only.  Callers that need to report a partial sweep should call
     :func:`keyword_search_with_skipped`, which carries the skipped count too.
@@ -56,7 +57,12 @@ def keyword_search_with_skipped(
     skipped = 0
     query_lower = query.lower()
 
-    for subdir, item_type in [("epics", "epic"), ("stories", "story"), ("tasks", "task")]:
+    for subdir, item_type in [
+        ("epics", "epic"),
+        ("stories", "story"),
+        ("tasks", "task"),
+        ("decisions", "decision"),
+    ]:
         search_dir = project_dir / subdir
         if not search_dir.exists():
             continue

@@ -237,7 +237,11 @@ class EmbeddingStore:
         self._invalidate_cache()
 
     def reindex_all(self, store):
-        """Reindex all stories and tasks from the store."""
+        """Reindex all stories, tasks and decisions from the store.
+
+        A decision is embedded as its question (title) plus its context
+        (body); ``list_decisions`` already skips files that do not parse.
+        """
         for story in store.list_stories():
             _, body = store.get_story(story.id)
             content = self._build_content(body, story.tags)
@@ -247,6 +251,15 @@ class EmbeddingStore:
             meta, body = store.get_task(task.id)
             content = self._build_content(body, meta.tags)
             self.index_item(task.id, task.title, "task", content)
+
+        # Duck-typed: a store-like object without decisions has none to index.
+        list_decisions = getattr(store, "list_decisions", None)
+        for decision in list_decisions() if list_decisions else ():
+            try:
+                _, body = store.get_decision(decision.id)
+            except Exception:
+                continue  # vanished or broke since the listing
+            self.index_item(decision.id, decision.title, "decision", body)
 
         self._invalidate_cache()
 

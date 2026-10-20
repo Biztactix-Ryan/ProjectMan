@@ -592,7 +592,7 @@ class ProjectConfig(BaseModel):
 class IndexEntry(BaseModel):
     id: str
     title: str
-    type: str  # "story", "task", or "epic"
+    type: str  # "story", "task", "epic" or "decision"
     status: str
     # Tasks carry archival as a flag beside status; epics/stories encode it in
     # status itself, so this stays False for them.
@@ -610,6 +610,7 @@ class ProjectIndex(BaseModel):
     story_count: int = 0
     task_count: int = 0
     epic_count: int = 0
+    decision_count: int = 0
 
 
 class Outcome(str, Enum):

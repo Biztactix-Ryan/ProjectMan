@@ -1,4 +1,4 @@
-"""Build and write the project index from stories and tasks."""
+"""Build and write the project index from epics, stories, tasks and decisions."""
 
 from collections import Counter
 from pathlib import Path
@@ -11,7 +11,7 @@ from .store import Store
 
 #: The five files ``write_index`` derives from the item files.  Nothing in a
 #: store is the source of truth for them — every byte is recomputed from the
-#: epics, stories and tasks — so new stores do not track them; see
+#: epics, stories, tasks and decisions — so new stores do not track them; see
 #: :func:`write_store_gitignore` and ``docs/reference/file-formats.md``.
 DERIVED_INDEX_FILES = (
     "index.yaml",
@@ -58,14 +58,26 @@ def _task_status_label(task) -> str:
     return label
 
 
+def _decision_sort_key(decision) -> tuple[int, str]:
+    """Order decisions by number, so DEC-X-10 follows DEC-X-9."""
+    tail = decision.id.rsplit("-", 1)[-1]
+    return (int(tail) if tail.isdigit() else 0, decision.id)
+
+
+def _md_cell(text: str) -> str:
+    """Make free text safe inside one markdown table cell."""
+    return " ".join(str(text).split()).replace("|", "\\|")
+
+
 def build_index(
     store: Store,
     *,
     epics: Optional[list] = None,
     stories: Optional[list] = None,
     tasks: Optional[list] = None,
+    decisions: Optional[list] = None,
 ) -> ProjectIndex:
-    """Read all epics, stories, and tasks, produce a ProjectIndex.
+    """Read all epics, stories, tasks and decisions, produce a ProjectIndex.
 
     Accepts optional pre-loaded lists to avoid redundant cache lookups.
 
@@ -76,6 +88,10 @@ def build_index(
     inflates the outstanding work a burndown says is still to do.  Dropping
     it from both is the only reading that says "this is no longer part of
     the plan".
+
+    Decisions are listed too (US-PM-63) but carry no points, so they never
+    move the points math.  ``list_decisions`` skips a file that does not
+    parse, so one malformed decision costs that row and nothing else.
     """
     if epics is None:
         epics = store.list_epics()
@@ -83,6 +99,8 @@ def build_index(
         stories = store.list_stories()
     if tasks is None:
         tasks = store.list_tasks()
+    if decisions is None:
+        decisions = store.list_decisions()
 
     entries: list[IndexEntry] = []
     total_points = 0
@@ -131,6 +149,16 @@ def build_index(
             if task.status.value == "done":
                 completed_points += task.points
 
+    for decision in sorted(decisions, key=_decision_sort_key):
+        entries.append(
+            IndexEntry(
+                id=decision.id,
+                title=decision.title,
+                type="decision",
+                status=decision.status.value,
+            )
+        )
+
     epic_count = sum(1 for e in entries if e.type == "epic")
     story_count = sum(1 for e in entries if e.type == "story")
     task_count = sum(1 for e in entries if e.type == "task")
@@ -142,6 +170,7 @@ def build_index(
         story_count=story_count,
         task_count=task_count,
         epic_count=epic_count,
+        decision_count=len(decisions),
     )
 
 
@@ -151,10 +180,13 @@ def write_markdown_indexes(
     epics: Optional[list] = None,
     stories: Optional[list] = None,
     tasks: Optional[list] = None,
+    decisions: Optional[list] = None,
 ) -> None:
     """Generate the 4 markdown index files in .project/.
 
     Accepts optional pre-loaded lists to avoid redundant cache lookups.
+    INDEX.md also lists the open decisions — the questions blocking work —
+    since answered and withdrawn ones need nothing from a reader.
     """
     if epics is None:
         epics = store.list_epics()
@@ -162,6 +194,8 @@ def write_markdown_indexes(
         stories = store.list_stories()
     if tasks is None:
         tasks = store.list_tasks()
+    if decisions is None:
+        decisions = store.list_decisions()
 
     # Pre-compute counts
     stories_per_epic: Counter[str] = Counter()
@@ -191,6 +225,7 @@ def write_markdown_indexes(
         f"| Epics | {len(epics)} |",
         f"| Stories | {len(stories)} |",
         f"| Tasks | {len(tasks)} |",
+        f"| Decisions | {len(decisions)} |",
         "",
         "## Indexes",
         "",
@@ -198,7 +233,24 @@ def write_markdown_indexes(
         "- [Stories](INDEX-STORIES.md)",
         "- [Tasks](INDEX-TASKS.md)",
         "",
+        "## Open decisions",
+        "",
     ]
+    open_decisions = sorted(
+        (d for d in decisions if d.status.value == "open"), key=_decision_sort_key
+    )
+    if open_decisions:
+        lines.append("| ID | Question | Priority | Blocks |")
+        lines.append("| -- | -------- | -------- | ------ |")
+        for d in open_decisions:
+            link = f"[{d.id}](decisions/{d.id}.md)"
+            blocks = ", ".join(d.blocks) if d.blocks else "—"
+            lines.append(
+                f"| {link} | {_md_cell(d.title)} | {d.priority.value} | {blocks} |"
+            )
+    else:
+        lines.append("_No open decisions._")
+    lines.append("")
     index_content = "\n".join(lines)
 
     (store.project_dir / "INDEX.md").write_text(index_content)
@@ -286,13 +338,19 @@ def write_index(store: Store) -> None:
     epics = [meta for meta, _ in epic_entries]
     stories = [meta for meta, _ in story_entries]
     tasks = [meta for meta, _ in task_entries]
+    # Decisions are never cached, so this is already a disk read.
+    decisions = store.list_decisions()
 
-    index = build_index(store, epics=epics, stories=stories, tasks=tasks)
+    index = build_index(
+        store, epics=epics, stories=stories, tasks=tasks, decisions=decisions
+    )
     index_path = store.project_dir / "index.yaml"
     data = index.model_dump(mode="json")
     with open(index_path, "w") as f:
         yaml.dump(data, f, default_flow_style=False, sort_keys=False)
-    write_markdown_indexes(store, epics=epics, stories=stories, tasks=tasks)
+    write_markdown_indexes(
+        store, epics=epics, stories=stories, tasks=tasks, decisions=decisions
+    )
 
 
 def write_store_gitignore(project_dir: Path) -> Path:
@@ -330,13 +388,19 @@ def write_store_gitignore(project_dir: Path) -> Path:
 
 
 def _newest_item_mtime_ns(store: Store) -> Optional[int]:
-    """Modification time of the most recently written epic, story or task file.
+    """Modification time of the most recently written epic, story, task or
+    decision file.
 
     ``None`` when the project holds no item files at all: nothing can have
     outrun the index, so there is nothing to be stale against.
     """
     newest: Optional[int] = None
-    for directory in (store.epics_dir, store.stories_dir, store.tasks_dir):
+    for directory in (
+        store.epics_dir,
+        store.stories_dir,
+        store.tasks_dir,
+        store.decisions_dir,
+    ):
         if not directory.is_dir():
             continue
         for path in directory.glob("*.md"):
