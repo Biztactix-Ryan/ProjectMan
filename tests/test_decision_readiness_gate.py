@@ -384,3 +384,68 @@ def test_check_readiness_signature_is_backward_compatible(tree):
     assert check_readiness(meta, body, tree, decisions=preloaded)["blockers"] == [
         "blocked by open decision DEC-TST-1: Which database?"
     ]
+
+
+# ─── US-PM-64 criterion: pm_grab refuses a decision-blocked task (US-PM-64-1) ─
+
+
+def _task_events(task_id):
+    from projectman.activity_log import log_paths, read_log_entries
+    from projectman.server import _project_dir
+
+    paths = log_paths(_project_dir())
+    return [e for e in read_log_entries(paths) if e.get("item_id") == task_id]
+
+
+def _grab_as_run(task_id):
+    from projectman.server import pm_grab
+
+    return yaml.safe_load(pm_grab(task_id, run_id="run-crit"))
+
+
+@pytest.mark.parametrize(
+    "target",
+    ["US-TST-1-1", "US-TST-1", "EPIC-TST-1"],
+    ids=["task", "story", "epic"],
+)
+def test_us_pm_64_criterion_pm_grab_refuses_and_names_the_decision(tree, target):
+    """US-PM-64 criterion: pm_grab refuses a task blocked by an open decision on
+    the task, its story or its epic and names the decision id in the blocker."""
+    tree.create_decision("Which database?", blocks=[target])
+    before = _snapshot(tree, "US-TST-1-1")
+    events_before = _task_events("US-TST-1-1")
+
+    data = _grab_as_run("US-TST-1-1")
+
+    assert data["status"] == "not_ready"
+    assert "grabbed" not in data
+    assert any(
+        "DEC-TST-1" in b and "Which database?" in b for b in data["blockers"]
+    ), data["blockers"]
+    # Refusal leaves the task untouched: no status/assignee change, no claim
+    # metadata, and no claim event in the activity log.
+    assert _snapshot(tree, "US-TST-1-1") == before
+    meta, _ = tree.get_task("US-TST-1-1")
+    assert meta.status.value == "todo"
+    assert meta.assignee is None
+    assert meta.claimed_at is None and meta.claimed_by_run is None
+    assert _task_events("US-TST-1-1") == events_before
+    assert not [e for e in _task_events("US-TST-1-1") if e.get("run_id") == "run-crit"]
+
+
+def test_us_pm_64_criterion_only_resolved_decisions_leave_the_task_grabbable(tree):
+    """US-PM-64 criterion: a task whose only decisions are answered or withdrawn
+    is grabbable — resolved decisions never block."""
+    tree.create_decision("Answered on task?", blocks=["US-TST-1-1"])
+    tree.create_decision("Withdrawn on story?", blocks=["US-TST-1"])
+    tree.create_decision("Answered on epic?", blocks=["EPIC-TST-1"])
+    tree.update_decision("DEC-TST-1", status="answered", answer="Postgres")
+    tree.update_decision("DEC-TST-2", status="withdrawn")
+    tree.update_decision("DEC-TST-3", status="answered", answer="Yes")
+
+    data = _grab_as_run("US-TST-1-1")
+
+    assert data["grabbed"]["task"]["id"] == "US-TST-1-1"
+    assert data["grabbed"]["task"]["status"] == "in-progress"
+    meta, _ = tree.get_task("US-TST-1-1")
+    assert meta.assignee == "claude" and meta.claimed_by_run == "run-crit"
