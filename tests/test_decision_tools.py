@@ -58,6 +58,26 @@ def _update(id, **kwargs):
     return yaml.safe_load(pm_update(id, **kwargs))["updated"]
 
 
+def call_over_the_wire(name, arguments):
+    """One real tools/call through the low-level handler; (isError, text)."""
+    import anyio
+    import mcp.types as types
+    from projectman.server import mcp as mcp_server
+
+    handler = mcp_server._mcp_server.request_handlers[types.CallToolRequest]
+
+    async def run():
+        request = types.CallToolRequest(
+            method="tools/call",
+            params=types.CallToolRequestParams(name=name, arguments=arguments),
+        )
+        result = (await handler(request)).root
+        text = result.content[0].text if result.content else ""
+        return bool(result.isError), text
+
+    return anyio.run(run)
+
+
 def _events(store, item_id):
     path = store.project_dir / "activity.jsonl"
     if not path.exists():
@@ -398,6 +418,96 @@ class TestUpdate:
         with pytest.raises(ToolError, match=r"\[code: invalid\]"):
             _update("DEC-TST-1", status="answered", answer="   ")
         assert (server_store.decisions_dir / "DEC-TST-1.md").read_text() == before
+
+    def test_every_editable_field_round_trips_from_disk(self, server_store):
+        """Each editable field, written by pm_update, read back from the raw
+        file and from a fresh Store (no in-process cache can answer)."""
+        from projectman.store import Store, clear_all_caches
+
+        server_store.create_story("A story", "A description long enough to pass")
+        server_store.create_story("B story", "A description long enough to pass")
+        _create(title="Q?", context="old", blocks="US-TST-1", priority="could")
+        path = server_store.decisions_dir / "DEC-TST-1.md"
+
+        def on_disk():
+            clear_all_caches()
+            raw = yaml.safe_load(path.read_text().split("---")[1])
+            meta, body = Store(server_store.root).get_decision("DEC-TST-1")
+            return raw, meta, body
+
+        edits = [
+            ({"title": "Which queue?"}, lambda r, m, b: m.title == r["title"] == "Which queue?"),
+            ({"body": "new context"}, lambda r, m, b: b.strip() == "new context"),
+            ({"priority": "must"}, lambda r, m, b: m.priority == r["priority"] == "must"),
+            ({"blocks": "US-TST-1,US-TST-2"}, lambda r, m, b: m.blocks == r["blocks"] == ["US-TST-1", "US-TST-2"]),
+            (
+                {"options": [{"label": "redis", "summary": "s", "pros": ["p"], "cons": ["c"]}, "sqs"]},
+                lambda r, m, b: [o["label"] for o in r["options"]] == ["redis", "sqs"]
+                and (m.options[0].summary, m.options[0].pros, m.options[0].cons) == ("s", ["p"], ["c"]),
+            ),
+            ({"recommendation": "sqs"}, lambda r, m, b: m.recommendation == r["recommendation"] == "sqs"),
+            ({"rationale": "cheaper"}, lambda r, m, b: m.rationale == r["rationale"] == "cheaper"),
+            ({"answer": "redis"}, lambda r, m, b: m.answer == r["answer"] == "redis" and r["status"] == "open"),
+            ({"status": "answered"}, lambda r, m, b: r["status"] == "answered" and m.answered_at is not None),
+            ({"answer": "sqs after all"}, lambda r, m, b: m.answer == "sqs after all" and r["status"] == "answered"),
+            ({"status": "withdrawn"}, lambda r, m, b: m.status.value == r["status"] == "withdrawn"),
+            ({"status": "open"}, lambda r, m, b: r["status"] == "open"),
+        ]
+        for kwargs, check in edits:
+            _update("DEC-TST-1", **kwargs)
+            assert check(*on_disk()), kwargs
+
+    @pytest.mark.parametrize(
+        "kwargs",
+        [
+            {"status": "answered"},
+            {"status": "answered", "answer": ""},
+            {"status": "answered", "answer": "  \t\n "},
+        ],
+        ids=["missing", "empty", "whitespace"],
+    )
+    def test_answered_without_text_is_a_genuine_error_on_the_wire(
+        self, server_store, kwargs
+    ):
+        """The refusal reaches an MCP client as isError, nothing written."""
+        _create(title="Q?")
+        path = server_store.decisions_dir / "DEC-TST-1.md"
+        before = path.read_bytes()
+        log = server_store.project_dir / "activity.jsonl"
+        log_before = log.read_bytes()
+
+        with pytest.raises(ToolError, match=r"without answer text.*\[code: invalid\]"):
+            _update("DEC-TST-1", **kwargs)
+        is_error, text = call_over_the_wire("pm_update", {"id": "DEC-TST-1", **kwargs})
+        assert is_error, text
+        assert "without answer text" in text
+        assert path.read_bytes() == before
+        assert log.read_bytes() == log_before
+
+    def test_answered_with_an_already_stored_empty_answer_is_rejected(
+        self, server_store
+    ):
+        _create(title="Q?")
+        _update("DEC-TST-1", answer="")  # an open decision may hold an empty answer
+        meta, _ = server_store.get_decision("DEC-TST-1")
+        assert meta.answer == ""
+        path = server_store.decisions_dir / "DEC-TST-1.md"
+        before = path.read_bytes()
+        with pytest.raises(ToolError, match=r"without answer text.*\[code: invalid\]"):
+            _update("DEC-TST-1", status="answered")
+        assert path.read_bytes() == before
+
+    def test_blanking_the_answer_of_an_answered_decision_is_rejected(
+        self, server_store
+    ):
+        _create(title="Q?")
+        _update("DEC-TST-1", status="answered", answer="redis")
+        path = server_store.decisions_dir / "DEC-TST-1.md"
+        before = path.read_bytes()
+        for blank in ("", "   "):
+            with pytest.raises(ToolError, match=r"without answer text.*\[code: invalid\]"):
+                _update("DEC-TST-1", answer=blank)
+        assert path.read_bytes() == before
 
     def test_unknown_blocks_id_is_rejected(self, server_store):
         _create(title="Q?")
