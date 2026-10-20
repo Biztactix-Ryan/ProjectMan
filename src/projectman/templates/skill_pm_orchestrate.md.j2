@@ -20,7 +20,7 @@ Dispatch each task, then **independently validate** it. Why: `docs/reference/orc
 
 ### Run id
 
-Mint `orch-<YYYY-MM-DD>-<4 hex>`; `orch-` is required. Pass `run_id=<this run>` on every claim, verdict, `pm_update*` and prompt; 22 reads `pm_activity(run_id=<this run>)`.
+Mint `orch-<YYYY-MM-DD>-<4 hex>`; `orch-` is required. Pass `run_id=<this run>` on every claim, verdict, `pm_update*` and prompt; 22 reads `pm_activity(run_id=)`.
 
 ### Run branch
 
@@ -32,12 +32,12 @@ Dirt outside `.project/` (`git status --short`) **stops the run**: report the di
 
 ## Phase 1 — Pre-flight
 
-1. Sprint: `--sprint <id>` → `pm_get_sprint(id)`, else `pm_list_sprints(status="active", brief=True)`. None → stop (`/projectman:pm-plan`); several → ask (`--auto`: latest).
-2. `pm_status`, then `pm_audit`: ERROR-level findings **stop** the run, even under `--auto`. Keep its `digest: <16 hex>` as the **last audit digest** (21).
-3. **Classify in-progress claims from the data.** `pm_board(brief=True)` and `pm_active` give `claimed_by_run`, `claim_age`, `stale: true` (2 h, `stale_after=<hours>`), `stale_tasks`. By that:
+1. Sprint: `--sprint <id>` → `pm_get_sprint(id)`, else `pm_list_sprints(status="active", brief=True)`. None → stop; several → ask (`--auto`: latest).
+2. `pm_status`, then `pm_audit`: ERROR-level findings **stop** the run, `--auto` too. Keep its `digest: <16 hex>` as the **last audit digest** (21).
+3. `pm_board(brief=True)` and `pm_active` give `claimed_by_run`, `claim_age`, `stale: true` (2 h, `stale_after=<hours>`), `stale_tasks`:
    - another `orch-` run, stale or silent since its claim (`pm_activity(item_id=<task-id>, event_type="update")`) → `pm_grab(<task-id>, run_id=<this run>)` + `pm_update(<task-id>, outcome="info", note="recovered from run <old-run-id>")`; still emitting → live: skip under `--auto`.
    - a human, or any id without the `orch-` prefix — **never touch it**.
-4. `git status --short` (`.project/` after Phase 0). Over **200** entries: warn — step 23 and every dispatch walk it; commit or clean first. `--auto` continues; report in Phase 4.
+4. `git status --short`: over **200** entries: warn — step 23 and every dispatch walk it; commit or clean first. `--auto` continues; report in Phase 4.
 
 ## Phase 2 — Plan
 
@@ -49,15 +49,15 @@ Dirt outside `.project/` (`git status --short`) **stops the run**: report the di
 11. `pm_accept` returned `next` → use it, skip to 13; else `pm_board`; for lane B `pm_board(lane_compatible_with=<A's task>)`, first `available` in plan order (the filter bars a dependency in flight); none → B idles till A is accepted.
 12. Else the first plan `todo`, dependency-clear, unassigned or step 3 recoverable: `pm_grab(<id>, run_id=<this run>)`; never one held elsewhere; none → exit.
 13. `--max` exceeded (retries too; both lanes count) → stop, report, `pm_release(<id>, ...)` any pre-claimed task in either lane.
-14. Note lane and `<tb>` before **each** dispatch; `--lanes 2`: one claim per lane, by run id — A and B: task, `<tb>`, returned?
+14. Note lane and `<tb>` before **each** dispatch, then its worktree path; `--lanes 2`: one claim per lane, by run id — A and B: task, `<tb>`, path, returned?
 15. `Agent`: `subagent_type: general-purpose`, `model:` `--executor-model` else `opus`, `isolation: "worktree"`, branch `orch/<this run>--<task-id>` off `<rb>`; prompt below, in the background. Two in flight: take the first notification to land through 16-19 while the other worker runs — one lane validated or merged at a time — then refill it (11/12, compatible with the task in flight) and wait.
 
 16. **Status check**: `pm_get(task_id, fields="status,assignee")` — deliberate: `status` `in-progress`/`review`, `assignee` `claude`.
 17. **Validation**: an `Agent` (`subagent_type: general-purpose`, step 15's model, foreground, no worktree) with the Validator Prompt Template returns files, tests, DoD — **never run them yourself**.
 18. Missing or malformed verdict = one failure: re-run the validator once, then `pm_park(task_id, note="validator returned no verdict")`.
-19. **Verdict** — its `verdict` picks the verb; the object minus `verdict`/`note` is `evidence`, its `note` the note: **ONE line, at most 200 characters** (`note_long: true` = over).
+19. **Verdict** — its `verdict` picks the verb; the object minus `verdict`/`note` is `evidence`, its `note` the note: **ONE line, at most 200 characters** (`note_long` = over).
     - **Accept**: `pm_accept(task_id, note="<one line>", run_id=<this run>, evidence={"files":[...],"tests":[{"command":"...","passed":true}],"dod_met":[...]})` → `done`. Merge in `<rw>` before the next dispatch: `git merge --ff-only <tb>` else `--no-ff -m "<task-id>"`; on conflict `merge --abort` + `pm_retry` (paths in `evidence.files`, note "rebase onto `<rb>`"); a second conflict parks. Merge order is acceptance order, never dispatch order: B, cut before A's merge, may conflict; that retry keeps its lane and `<tb>`, and is not a new dispatch for `--max`.
-    - **Retry** (first failure): `pm_retry(task_id, note="<why>", evidence={"tests":[<failing>]})` → `todo`; dispatch **one** retry worker.
+    - **Retry** (first failure): `pm_retry(task_id, note="<why>", evidence={"tests":[<failing>]})` → `todo`; dispatch **one** retry worker as 15, no `isolation`, naming 14's path.
     - **Park** (second failure/blocker): `pm_park(task_id, note="<why>", evidence={"tests":[<failing>],"dod_unmet":[...]})`; continue.
     - **Accept-as-review** (human needed): `pm_review(task_id, note="<why>", evidence={"dod_met":[...],"dod_unmet":[...]})`.
 20. Only `pm_accept` closes a task, never a worker.
@@ -81,12 +81,13 @@ run_id=<this run>) returns its context.
 
 Task: <task-id>; Run id: <this run>
 Criteria: <criteria>; DoD: <dod items>
-<on retry: "last attempt failed: <failures>; fix on the same branch; after a
-merge conflict `git rebase orch/<this run>` first">
+<on retry: "last attempt failed: <failures>; `cd <worktree path from the first
+report>`, fix on the same branch, amend to keep one commit; after a merge
+conflict `git rebase orch/<this run>` first">
 <on resume: "run <old-run-id> died mid-task; validate the working tree first">
 
-First `git switch -c orch/<this run>--<task-id> orch/<this run>` (retry: plain
-`git switch`), then /projectman:pm-do with `<task-id>` — without --complete.
+First `git switch -c orch/<this run>--<task-id> orch/<this run>` (not on
+retry), then /projectman:pm-do with `<task-id>` — without --complete.
 
 Rules:
 - Never run git reset; guards block checkout/restore/stash.
@@ -125,8 +126,8 @@ One JSON object <1500 chars, no prose:
 
 ## Stop Conditions
 
-Stop when all sprint tasks are `done` or parked, `--max` is reached, `pm_audit` finds a new ERROR-level finding (`unchanged: true` never is), or `--resume` named a live run. Run Phase 4 first, releasing any pre-claimed unstarted task in either lane: `pm_release(<id>, note="<why>", run_id=<this run>)`. 23's merged: `git worktree remove <path>`, `git branch -D <tb>`; parked/review keep both; remove `<rw>` last, after 23's list. Then, if 22's log has nothing parked, in review or unmerged and `git status --short` is clean outside `.project/`, on `<sb>`: `git merge --ff-only <rb>` (moved: `--no-ff -m "<this run>"`), `git branch -d <rb>`, report it; else keep `<rb>`, print `git merge --no-ff <rb>`.
+Stop when all sprint tasks are `done` or parked, `--max` is reached, `pm_audit` finds a new ERROR-level finding (`unchanged` never is), or `--resume` named a live run. Run Phase 4 first, releasing any pre-claimed unstarted task in either lane: `pm_release(<id>, note="<why>", run_id=<this run>)`. 23's merged: `git worktree remove <path>`, `git branch -D <tb>`; parked/review keep both; remove `<rw>` last, after 23's list. Then, if 22's log has nothing parked, in review or unmerged and `git status --short` is clean outside `.project/`, on `<sb>`: `git merge --ff-only <rb>` (moved: `--no-ff -m "<this run>"`), `git branch -d <rb>`, report it; else keep `<rb>`, print `git merge --no-ff <rb>`.
 
 ## What This Skill Does NOT Do
 
-- **No scoping or planning** (→ `/projectman:pm-plan`), **no claim it does not own**, **no implementing**.
+- **No scoping or planning** (→ `/projectman:pm-plan`),**no claim it does not own**, **no implementing**.

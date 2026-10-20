@@ -144,7 +144,7 @@ landed on it, so B's merge can conflict with work B never saw. That is expected 
 exceptional, and it needs no new failure path — it is routed through the one already written
 for a conflicting merge: abort the merge, `pm_retry` with the conflicting paths in
 `evidence.files` and a note to rebase onto the run branch, then park on a second conflict. A
-conflict retry keeps its lane and its task branch and is not a fresh dispatch, so it cannot
+conflict retry keeps its lane, its task branch and its worktree and is not a fresh dispatch, so it cannot
 silently spend `--max`: that budget bounds how much *new* work a run starts, and a rebase of
 work already done is not new work.
 
@@ -417,6 +417,16 @@ completion still landed, and the loop falls back to the plan.
 
 **Why retry carries the failing test entries forward.** The next attempt inherits the exact
 commands that failed, so a retry worker starts from evidence instead of from a summary.
+
+**Why a retry continues in the first attempt's worktree** (US-PM-68). A worker dispatched
+with `isolation: "worktree"` gets a fresh worktree, but on a retry its task branch is still
+checked out in the first attempt's worktree, and git refuses to check one branch out in two
+worktrees, so the retry's `git switch` fails. So step 14 notes each dispatch's worktree path
+from its report, and step 19 sends the retry worker — a conflict retry included — with no
+isolation, its prompt telling it to `cd` into that path and fix on the branch already checked
+out there, amending so the branch still carries one commit (after a merge conflict it runs
+`git rebase orch/<run-id>` first). The first attempt's work and the branch's single commit
+both survive, which is what the validator's branch diff and the accept-time merge expect.
 
 **Why a park continues the loop.** See *Isolation model*: parking is what keeps one bad
 task from costing the sprint.

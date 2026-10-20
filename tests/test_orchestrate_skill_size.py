@@ -36,6 +36,8 @@ from projectman.cli import _render_template
 # slack for the one CronCreate/CronDelete pair the heartbeat needs; lowered to
 # 10170 by US-PM-59-5 once the plugin guards took over the checkout/restore/
 # stash bans (US-PM-59-9 cut the render from 10199 to 10167 characters).
+# US-PM-68-9's retry-in-the-first-worktree wording fit without a raise
+# (10151 characters), paid for by trimming asides.
 MAX_CHARS = 10170
 
 TEMPLATE_NAME = "skill_pm_orchestrate.md.j2"

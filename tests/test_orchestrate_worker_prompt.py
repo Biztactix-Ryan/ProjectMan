@@ -267,8 +267,10 @@ BRANCH_AND_SHA = re.compile(r"branch, sha and worktree path", re.IGNORECASE)
 #: the worktree outlives the worker: the validator runs the DoD tests in it
 LEAVES_THE_WORKTREE = re.compile(r"worktree left in place", re.IGNORECASE)
 
-#: a retry switches to the branch it already has rather than re-creating it
-RETRY_SWITCH = re.compile(r"retry: plain\s*\n?`?git switch`?", re.IGNORECASE)
+#: a retry does not cut the branch again — since US-PM-68-9 it does not
+#: switch at all: the branch is still checked out in the first attempt's
+#: worktree, so the retry cds there (pinned below) instead of switching
+RETRY_SWITCH = re.compile(r"\(not on\s+retry\)", re.IGNORECASE)
 
 #: and clears a merge conflict by rebasing onto the run branch
 REBASE_ON_CONFLICT = re.compile(r"git rebase orch/<this run>")
@@ -285,7 +287,7 @@ BRANCH_CLAUSES = {
     "makes one commit titled with the task id": lambda f: bool(ONE_COMMIT.search(f)),
     "still forbids pushing": lambda f: bool(NO_PUSH.search(f)),
     "a retry stays on the same branch": lambda f: bool(SAME_BRANCH.search(f)),
-    "a retry switches to it rather than re-creating it": lambda f: bool(
+    "a retry does not re-create the branch": lambda f: bool(
         RETRY_SWITCH.search(f)
     ),
     "a merge conflict is rebased onto the run branch": lambda f: bool(
