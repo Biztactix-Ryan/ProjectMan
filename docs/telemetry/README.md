@@ -13,6 +13,7 @@ This directory holds **measurements**, not code. The code is
 | `baseline-windowed-post-fix.json` | the machine-readable **windowed post-fix baseline** (US-PM-32), captured with `--since` so that only sessions started after the last observed pre-US-PM-1 note rejection are counted. Same extractor, same schema, same `capture` command as the other two. Do not overwrite it either. |
 | [`baseline-windowed-post-fix.md`](baseline-windowed-post-fix.md) | human summary of that capture **plus the three-way comparison** against `baseline-pre-fix` and `baseline-post-subtraction`, and a **holds / does not hold / inconclusive** verdict on each Sprint 1-9 claim once pre-fix sessions are excluded. Also records why `--since auto` could not resolve on this corpus, and the `git.dirty: true` provenance caveat. |
 | `tool-list-size.md` | the US-PM-15-7 **tool-list payload measurement**: `tools/list` bytes with and without the gated tool families, per family, plus the command that regenerates it. Not a corpus measurement -- it describes the schema surface the server offers, so it is regenerated on demand rather than pinned. |
+| [`session-context-size.md`](session-context-size.md) | the US-PM-62-8 **SessionStart status block measurement**: bytes and estimated tokens of the full block vs the block reduced where the sprint band draws, on a fixture store, plus the signal that picks between them. Pinned by `tests/test_session_context_band.py`. |
 
 ## What a baseline is
 

@@ -1155,8 +1155,44 @@ def _session_context_marker(session_id: str) -> Path:
     return run_dir / f"pm-context-{session_id}"
 
 
-def _session_context_lines(root: Path) -> list[str]:
-    """The status block for the store at ``root/.project``, one line per entry."""
+#: Set by the plugin's mod (hooks/register.ts, US-PM-62-8) to the id of the
+#: session whose surface draws the sprint band, in its ``classic.SessionStart``
+#: hook *before* the hook chain reaches this command.  Hooks modules sit above
+#: the (non-managed) settings and plugin command hooks in that chain, and
+#: ``$.env.set`` reaches every process the session starts after, so the value
+#: this command reads is the mod's answer for this very SessionStart.  The mod
+#: sets it only where a listed surface raises the band's ``AbovePrompt`` hook
+#: (terminal, desktop) and unsets it everywhere else: nothing listed
+#: (``claude -p``, the SDK, Claude Code for VS Code) or only vscode / mobile
+#: surfaces, which raise no ``AbovePrompt``.
+_BAND_SESSION_ENV = "PROJECTMAN_BAND_SESSION"
+
+
+def _band_draws(session_id: object) -> bool:
+    """True only on positive, same-session evidence that the sprint band draws.
+
+    The variable must equal the hook payload's own ``session_id`` exactly.
+    Unset, empty, another session's id (a nested ``claude -p`` inherits its
+    parent's value; ``/clear`` moves to a new id), a payload without an id, or
+    anything malformed all answer False, which keeps today's full block.
+    """
+    import os
+
+    if not isinstance(session_id, str) or not session_id:
+        return False
+    return os.environ.get(_BAND_SESSION_ENV) == session_id
+
+
+def _session_context_lines(root: Path, band: bool = False) -> list[str]:
+    """The status block for the store at ``root/.project``, one line per entry.
+
+    ``band`` (the sprint band draws in this session, US-PM-62-8) drops what
+    the band shows the person or the model can ask for: the counts, points,
+    in-flight tasks and the active sprint.  It keeps what steers the model's
+    first move and the band cannot give it: the project line, open decisions,
+    the next-session note (the band is the person's; the model still needs
+    the note) and the last handoff.
+    """
     import collections
 
     from projectman.indexer import build_index
@@ -1167,6 +1203,9 @@ def _session_context_lines(root: Path) -> list[str]:
     config = store.config
 
     lines = [f"Project **{config.name}** ({config.prefix})"]
+    if band:
+        lines.extend(_session_context_steering(store))
+        return lines
 
     by_type: dict[str, collections.Counter] = collections.defaultdict(collections.Counter)
     for entry in index.entries:
@@ -1185,14 +1224,7 @@ def _session_context_lines(root: Path) -> list[str]:
         pct = round(index.completed_points * 100 / index.total_points)
         lines.append(f"- points: {index.completed_points}/{index.total_points} ({pct}%)")
 
-    from projectman.decisions import open_decision_summary
-
-    decisions = open_decision_summary(store)
-    if decisions["open"]:
-        lines.append(
-            f"- decisions: {decisions['open']} open, blocking "
-            f"{decisions['blocked_points']} pts (/projectman:pm-decide)"
-        )
+    lines.extend(_session_context_decisions(store))
 
     in_progress = [
         entry for entry in index.entries
@@ -1208,6 +1240,26 @@ def _session_context_lines(root: Path) -> list[str]:
         sprint = active_sprints[0]
         lines.append(f"- active sprint: {sprint.id} {sprint.name}")
 
+    lines.extend(_session_context_note_and_handoff(store))
+    return lines
+
+
+def _session_context_decisions(store) -> list[str]:
+    """The open-decisions line, when any decision is open."""
+    from projectman.decisions import open_decision_summary
+
+    decisions = open_decision_summary(store)
+    if not decisions["open"]:
+        return []
+    return [
+        f"- decisions: {decisions['open']} open, blocking "
+        f"{decisions['blocked_points']} pts (/projectman:pm-decide)"
+    ]
+
+
+def _session_context_note_and_handoff(store) -> list[str]:
+    """The next-session note's excerpt and the last handoff, when present."""
+    lines = []
     note = store.read_next()
     if note:
         first = " ".join(note.split())
@@ -1221,6 +1273,11 @@ def _session_context_lines(root: Path) -> list[str]:
     return lines
 
 
+def _session_context_steering(store) -> list[str]:
+    """The reduced block's body: what the band does not carry to the model."""
+    return _session_context_decisions(store) + _session_context_note_and_handoff(store)
+
+
 @cli.command("session-context")
 def session_context():
     """Print the ProjectMan status block for a Claude Code SessionStart hook.
@@ -1231,6 +1288,11 @@ def session_context():
     else it prints nothing.  It dedupes with session-start.sh through the
     same per-session marker, and always exits 0 so a broken store never
     blocks a session from starting.
+
+    Where the plugin's mod has set ``PROJECTMAN_BAND_SESSION`` to this
+    payload's ``session_id`` (the sprint band draws in this session) the block
+    is reduced to the lines the band does not carry to the model; anywhere
+    else it is the full block, byte for byte (US-PM-62-8).
     """
     import sys
     import time
@@ -1261,12 +1323,22 @@ def session_context():
     except OSError:
         pass
 
+    # US-PM-62-8: where the mod says the sprint band draws in *this* session,
+    # the person sees sprint progress and the task in flight above the prompt,
+    # so the block keeps only what steers the model.  Any doubt: full block.
+    band = _band_draws(payload.get("session_id"))
     click.echo(f"## ProjectMan context ({project_dir})")
     try:
-        for line in _session_context_lines(root):
+        for line in _session_context_lines(root, band=band):
             click.echo(line)
     except Exception as exc:  # the hook must never fail the session
         click.echo(f"ProjectMan project detected but the summary failed: {exc}")
+    if band:
+        click.echo(
+            "Counts, the active sprint and in-flight tasks are on the person's sprint band; "
+            "use pm_context or /projectman:pm-status for them."
+        )
+        return
     click.echo(
         "Use pm_context for full context, /projectman:pm-status for the dashboard, "
         "/projectman:pm board for what to pick up."

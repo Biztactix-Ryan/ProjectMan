@@ -20,6 +20,7 @@ import { viewMode } from './surface.ts'
 import { BAND_ACTIVE, BAND_NOTE, BAND_SPRINTS, bandFrom, bandSprintCall, activeSprintId, sprintBand } from './sprint-band.tsx'
 import type { BandCall } from './sprint-band.tsx'
 import { movesBand, PM_TOOL } from './band-refresh.ts'
+import { bandSessionValue } from './band-session.ts'
 
 /** What the board pane draws (US-PM-60-7): null until the board is first read. */
 const board = atom({ plugin: 'projectman', key: 'board' } as const, null as ProjectmanBoardView | null)
@@ -259,6 +260,35 @@ export const register: Register = (on, options) => {
   on('session.start', async ($, e, next) => {
     for (const command of PM_COMMANDS) {
       await $.command.register({ name: command.name, description: command.description, immediate: true })
+    }
+    return next(e)
+  })
+
+  // US-PM-62-8: tell the SessionStart command hook (`projectman
+  // session-context`, beneath this one in the classic chain) whether the
+  // sprint band draws in this session: PROJECTMAN_BAND_SESSION is set to the
+  // session's id where a listed surface raises AbovePrompt (terminal or
+  // desktop, BAND_SURFACES), unset everywhere else (none, vscode, mobile), before
+  // `next(e)` starts the command. See band-session.ts for why it is safe.
+  on('classic.SessionStart', async ($, e, next) => {
+    let surfaces: readonly string[] | null = null
+    try {
+      surfaces = await $.session.surfaces()
+    } catch {
+      surfaces = null
+    }
+    try {
+      await $.env.set('PROJECTMAN_BAND_SESSION', bandSessionValue(e.session_id, surfaces))
+    } catch {
+      // No signal set: the command prints the full block, as without the band.
+    }
+    return next(e)
+  }).catch(async ($, e, next) => {
+    if (next.called) return next(e)
+    try {
+      await $.env.set('PROJECTMAN_BAND_SESSION', undefined)
+    } catch {
+      // Unset or not, a stale value names another session's id.
     }
     return next(e)
   })

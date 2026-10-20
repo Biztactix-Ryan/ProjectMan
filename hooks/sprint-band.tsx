@@ -1,4 +1,4 @@
-import type { ElementConstructor, RenderElement, TextProps, BoxProps } from 'claude-code'
+import type { ElementConstructor, RenderElement, RenderSurface, TextProps, BoxProps } from 'claude-code'
 import type { ProjectmanBand } from '../types'
 import { asMap, asRows, num, str } from './pm-views.ts'
 import type { Yaml } from './pm-views.ts'
@@ -30,6 +30,14 @@ export const bandSprintCall = (id: string): BandCall => ({ tool: 'pm_get_sprint'
 
 /** The key of the band's Box, which a test (or another plugin) addresses it by. */
 export const BAND_KEY = 'pm-band'
+
+/**
+ * The surfaces the band draws on: those that raise the `AbovePrompt` render
+ * hook, which the engine's types document as "Raised on the terminal and
+ * desktop surfaces only". vscode and mobile list as surfaces but raise no
+ * AbovePrompt, so the band never draws there (US-PM-62-8 reads this).
+ */
+export const BAND_SURFACES: readonly RenderSurface[] = ['terminal', 'desktop']
 
 const TITLE_WIDTH = 60
 const NOTE_WIDTH = 80
