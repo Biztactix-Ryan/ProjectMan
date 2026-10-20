@@ -170,8 +170,9 @@ def test_the_default_hides_exactly_the_five_gated_tools():
     assert not GATED_TOOLS & default
     assert len(everything) - len(default) == 5
     # 42 since US-PM-28 added ``pm_next`` to the ungated core; 44 since
-    # US-PM-63 added ``pm_create_decision`` and ``pm_list_decisions``.
-    assert len(default) == 44
+    # US-PM-63 added ``pm_create_decision`` and ``pm_list_decisions``; 45
+    # since US-PM-65-7 added ``pm_answer_decision``.
+    assert len(default) == 45
 
 
 def test_each_flag_restores_only_its_own_family():

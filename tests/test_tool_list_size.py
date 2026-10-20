@@ -177,9 +177,15 @@ POST_SUBTRACTION_BASELINE_BYTES = 88441
 #: (`pm_create_decision`, `pm_list_decisions`) join the default surface because
 #: workers park with a decision (US-PM-64), so they are not gated.  The same
 #: call covers `pm_park`'s `decision` argument (US-PM-64-9), +387 bytes on
-#: re-measure.  Re-measure with `python -m tools.usage_telemetry.tool_list_size`
-#: before moving it again.
-DEFAULT_PAYLOAD_CEILING_BYTES = 93649
+#: re-measure.  US-PM-65-7 adds `pm_answer_decision` to the default surface
+#: (+1,751 bytes on re-measure): the pm-decide skill calls it, so gating it
+#: would break that skill on a default install.  Re-measure with
+#: `python -m tools.usage_telemetry.tool_list_size` before moving it again.
+DEFAULT_PAYLOAD_CEILING_BYTES = 95400
+
+#: Floor on the share of the all-families payload the gate saves, in percent.
+#: See `test_the_drop_is_measurable_not_marginal` for how it got here.
+MIN_REDUCTION_PCT = 3.5
 
 
 def test_no_tool_advertises_a_project_parameter():
@@ -239,9 +245,11 @@ def test_the_drop_is_measurable_not_marginal(measurement):
     ones; US-PM-27 deleted those five tools outright, and US-PM-35 deleted
     three more from ``maintenance``, so their bytes left the "all families
     enabled" payload as well and the remaining gate saves a smaller — but
-    still real — share of a smaller payload.
+    still real — share of a smaller payload.  4% became 3.5% with US-PM-65-7:
+    the gate's saving is unchanged at 3,913 bytes, but `pm_answer_decision`
+    grew the ungated surface it is a share of (4.01% -> 3.94%).
     """
-    assert measurement["reduction"]["pct"] >= 4.0, measurement["reduction"]
+    assert measurement["reduction"]["pct"] >= MIN_REDUCTION_PCT, measurement["reduction"]
     assert measurement["reduction"]["tools"] == sum(
         len(names) for names in TOOL_FAMILIES.values()
     )
@@ -451,7 +459,7 @@ def test_a_started_server_serves_fewer_bytes_than_an_all_families_one(
     every = _wire_payload()
 
     assert every.bytes - default.bytes == tls.measure()["reduction"]["bytes"]
-    assert (every.bytes - default.bytes) / every.bytes >= 0.04
+    assert (every.bytes - default.bytes) / every.bytes >= MIN_REDUCTION_PCT / 100
 
 
 # ------------------------------------------- the capture populates the keys --

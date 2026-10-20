@@ -552,3 +552,255 @@ def test_pm_estimate_refuses_decision_and_sprint_ids_as_invalid(server_store):
     for item_id in ("DEC-TST-1", "SPRINT-TST-1"):
         with pytest.raises(ToolError, match=r"cannot be estimated.*\[code: invalid\]"):
             pm_estimate(item_id)
+
+
+# ─── pm_answer_decision (US-PM-65-7) ─────────────────────────────
+#
+# Story US-PM-65, criteria 1 and 2:
+#
+# * pm_answer_decision records answer, rationale, answered_by and
+#   answered_at, sets status answered and returns the items it unblocked;
+# * pm_answer_decision with withdraw closes the decision as withdrawn with a
+#   required reason.
+
+
+def _answer(id, **kwargs):
+    from projectman.server import pm_answer_decision
+
+    return yaml.safe_load(pm_answer_decision(id, **kwargs))
+
+
+def _snapshot(store, decision_id="DEC-TST-1"):
+    """Bytes of the decision file and the activity log, for refusal checks."""
+    log = store.project_dir / "activity.jsonl"
+    return (
+        (store.decisions_dir / f"{decision_id}.md").read_bytes(),
+        log.read_bytes() if log.exists() else b"",
+    )
+
+
+class TestAnswer:
+    def test_answer_records_every_field_and_unblocks(self, server_store):
+        """AC 1: answer, rationale, answered_by, answered_at, status, unblocked."""
+        from datetime import datetime, timedelta, timezone
+
+        story, (t1, t2) = _story_with_tasks(server_store, "A", [(3, "todo"), (2, "todo")])
+        _create(title="Which queue?", blocks=story, options=["redis", "sqs"])
+
+        before = datetime.now(timezone.utc)
+        out = _answer("DEC-TST-1", answer="redis", rationale="already deployed")
+        answered = out["answered"]
+        assert answered["id"] == "DEC-TST-1"
+        assert answered["status"] == "answered"
+        assert answered["answer"] == "redis"
+        assert answered["rationale"] == "already deployed"
+        assert answered["answered_by"] == "test-actor"
+        assert answered["unblocked"] == [t1, t2]
+
+        meta, _ = server_store.get_decision("DEC-TST-1")
+        assert meta.status.value == "answered"
+        assert meta.answer == "redis"
+        assert meta.rationale == "already deployed"
+        assert meta.answered_by == "test-actor"
+        assert before - timedelta(seconds=1) <= meta.answered_at
+        assert meta.answered_at <= datetime.now(timezone.utc)
+
+    def test_answer_logs_one_update_event(self, server_store):
+        _create(title="Q?")
+        _answer("DEC-TST-1", answer="yes", rationale="because")
+        events = _events(server_store, "DEC-TST-1")
+        assert [(e["event_type"], e["item_type"]) for e in events] == [
+            ("create", "decision"),
+            ("update", "decision"),
+        ]
+        changes = events[1]["changes"]
+        assert changes["status"] == {"before": "open", "after": "answered"}
+        assert changes["answer"]["after"] == "yes"
+        assert changes["rationale"]["after"] == "because"
+        assert events[1]["actor"] == "test-actor"
+
+    def test_rationale_is_optional(self, server_store):
+        _create(title="Q?")
+        answered = _answer("DEC-TST-1", answer="yes")["answered"]
+        assert "rationale" not in answered
+        meta, _ = server_store.get_decision("DEC-TST-1")
+        assert meta.status.value == "answered" and meta.rationale is None
+
+    def test_unblocked_is_only_what_no_open_decision_still_holds(self, server_store):
+        """A task another open decision still holds is not unblocked; done and
+        archived tasks never are; the epic reach counts like the gate."""
+        epic = server_store.create_epic("E", "An epic description long enough")
+        story_a, (a1, a2, a_done) = _story_with_tasks(
+            server_store, "A", [(1, "todo"), (2, "todo"), (3, "done")], epic_id=epic.id
+        )
+        story_b, (b1, b_arch) = _story_with_tasks(server_store, "B", [(1, "todo"), (1, "todo")])
+        _story_c, (c1,) = _story_with_tasks(server_store, "C", [(1, "todo")])
+        server_store.archive(b_arch)
+        server_store.update(b1, status="review")  # a parked task is still unblocked
+
+        # DEC-1 holds the epic (so story A's tasks) and story B.
+        _create(title="Wide?", blocks=f"{epic.id},{story_b}")
+        # DEC-2 still holds a2 directly.
+        _create(title="Narrow?", blocks=a2)
+
+        unblocked = _answer("DEC-TST-1", answer="go")["answered"]["unblocked"]
+        assert unblocked == [a1, b1]
+        assert a2 not in unblocked and a_done not in unblocked
+        assert b_arch not in unblocked and c1 not in unblocked
+
+        # Closing the second one lifts the last hold on a2.
+        assert _answer("DEC-TST-2", withdraw=True, reason="moot")["withdrawn"][
+            "unblocked"
+        ] == [a2]
+
+    def test_a_decision_blocking_nothing_unblocks_nothing(self, server_store):
+        _create(title="Q?")
+        assert _answer("DEC-TST-1", answer="x")["answered"]["unblocked"] == []
+
+    def test_unblocked_tasks_become_grabbable(self, server_store):
+        from projectman.readiness import check_readiness
+
+        _story, (t1,) = _story_with_tasks(server_store, "A", [(2, "todo")])
+        _create(title="Q?", blocks=t1)
+        task, body = server_store.get_task(t1)
+        held = check_readiness(task, body, server_store)
+        assert any("DEC-TST-1" in b for b in held["blockers"])
+
+        assert _answer("DEC-TST-1", answer="x")["answered"]["unblocked"] == [t1]
+        task, body = server_store.get_task(t1)
+        after = check_readiness(task, body, server_store)
+        assert not any("DEC-TST-1" in b for b in after["blockers"])
+
+    @pytest.mark.parametrize("answer", [None, "", "   "], ids=["missing", "empty", "blank"])
+    def test_answer_text_is_required(self, server_store, answer):
+        _create(title="Q?")
+        before = _snapshot(server_store)
+        with pytest.raises(ToolError, match=r"without answer text.*\[code: invalid\]"):
+            _answer("DEC-TST-1", answer=answer)
+        assert _snapshot(server_store) == before
+
+    def test_reason_without_withdraw_is_refused(self, server_store):
+        _create(title="Q?")
+        before = _snapshot(server_store)
+        with pytest.raises(ToolError, match=r"reason is only for withdraw.*\[code: invalid\]"):
+            _answer("DEC-TST-1", answer="x", reason="why")
+        assert _snapshot(server_store) == before
+
+    def test_reanswering_is_a_conflict_unless_overwriting(self, server_store):
+        _create(title="Q?")
+        _answer("DEC-TST-1", answer="redis", rationale="first")
+        first, _ = server_store.get_decision("DEC-TST-1")
+        before = _snapshot(server_store)
+
+        with pytest.raises(ToolError, match=r"already answered.*overwrite.*\[code: conflict\]"):
+            _answer("DEC-TST-1", answer="sqs")
+        assert _snapshot(server_store) == before
+        is_error, text = call_over_the_wire(
+            "pm_answer_decision", {"id": "DEC-TST-1", "answer": "sqs"}
+        )
+        assert is_error and "already answered" in text
+        assert _snapshot(server_store) == before
+
+        answered = _answer("DEC-TST-1", answer="sqs", rationale="second", overwrite=True)[
+            "answered"
+        ]
+        assert answered["answer"] == "sqs"
+        assert answered["rationale"] == "second"
+        assert answered["overwrote"] == "answered"
+        # A closed decision held nothing, so nothing new is unblocked.
+        assert answered["unblocked"] == []
+        meta, _ = server_store.get_decision("DEC-TST-1")
+        assert (meta.status.value, meta.answer, meta.rationale) == ("answered", "sqs", "second")
+        assert meta.answered_at >= first.answered_at
+        assert [e["event_type"] for e in _events(server_store, "DEC-TST-1")] == [
+            "create",
+            "update",
+            "update",
+        ]
+
+    def test_missing_decision_is_not_found(self, server_store):
+        with pytest.raises(ToolError, match=r"\[code: not_found\]"):
+            _answer("DEC-TST-404", answer="x")
+
+    @pytest.mark.parametrize("bad", ["US-TST-1", "DEC-1", "", "nope"])
+    def test_a_non_decision_id_is_invalid(self, server_store, bad):
+        server_store.create_story("A story", "A description long enough to pass")
+        story_file = server_store.project_dir / "stories" / "US-TST-1.md"
+        before = story_file.read_bytes()
+        with pytest.raises(ToolError, match=r"\[code: invalid\]"):
+            _answer(bad, answer="x")
+        assert story_file.read_bytes() == before
+
+
+class TestWithdraw:
+    def test_withdraw_closes_with_the_reason(self, server_store):
+        """AC 2: withdrawn, reason recorded, no answer, block lifted."""
+        _story, (t1,) = _story_with_tasks(server_store, "A", [(2, "todo")])
+        _create(title="Q?", blocks=t1)
+
+        withdrawn = _answer("DEC-TST-1", withdraw=True, reason="no longer relevant")[
+            "withdrawn"
+        ]
+        assert withdrawn["id"] == "DEC-TST-1"
+        assert withdrawn["status"] == "withdrawn"
+        assert withdrawn["rationale"] == "no longer relevant"
+        assert withdrawn["unblocked"] == [t1]
+        assert "answer" not in withdrawn
+
+        meta, _ = server_store.get_decision("DEC-TST-1")
+        assert meta.status.value == "withdrawn"
+        assert meta.rationale == "no longer relevant"
+        assert meta.answer is None
+        assert meta.answered_at is None
+
+        events = _events(server_store, "DEC-TST-1")
+        assert [e["event_type"] for e in events] == ["create", "update"]
+        assert events[1]["changes"]["status"] == {"before": "open", "after": "withdrawn"}
+
+    @pytest.mark.parametrize("reason", [None, "", "  \n"], ids=["missing", "empty", "blank"])
+    def test_withdraw_requires_a_reason(self, server_store, reason):
+        _create(title="Q?")
+        before = _snapshot(server_store)
+        with pytest.raises(ToolError, match=r"needs a non-blank reason.*\[code: invalid\]"):
+            _answer("DEC-TST-1", withdraw=True, reason=reason)
+        args = {"id": "DEC-TST-1", "withdraw": True}
+        if reason is not None:
+            args["reason"] = reason
+        is_error, text = call_over_the_wire("pm_answer_decision", args)
+        assert is_error and "non-blank reason" in text
+        assert _snapshot(server_store) == before
+        meta, _ = server_store.get_decision("DEC-TST-1")
+        assert meta.status.value == "open"
+
+    @pytest.mark.parametrize(
+        "extra, message",
+        [({"answer": "x"}, "without an answer"), ({"rationale": "x"}, "not rationale")],
+        ids=["answer", "rationale"],
+    )
+    def test_withdraw_refuses_answer_fields(self, server_store, extra, message):
+        _create(title="Q?")
+        before = _snapshot(server_store)
+        with pytest.raises(ToolError, match=rf"{message}.*\[code: invalid\]"):
+            _answer("DEC-TST-1", withdraw=True, reason="moot", **extra)
+        assert _snapshot(server_store) == before
+
+    def test_closing_a_closed_decision_needs_overwrite(self, server_store):
+        _create(title="Q?")
+        _answer("DEC-TST-1", answer="redis")
+        before = _snapshot(server_store)
+        with pytest.raises(ToolError, match=r"already answered.*\[code: conflict\]"):
+            _answer("DEC-TST-1", withdraw=True, reason="changed course")
+        assert _snapshot(server_store) == before
+
+        withdrawn = _answer(
+            "DEC-TST-1", withdraw=True, reason="changed course", overwrite=True
+        )["withdrawn"]
+        assert withdrawn["status"] == "withdrawn"
+        assert withdrawn["overwrote"] == "answered"
+
+        before = _snapshot(server_store)
+        with pytest.raises(ToolError, match=r"already withdrawn.*\[code: conflict\]"):
+            _answer("DEC-TST-1", withdraw=True, reason="again")
+        with pytest.raises(ToolError, match=r"already withdrawn.*\[code: conflict\]"):
+            _answer("DEC-TST-1", answer="redis")
+        assert _snapshot(server_store) == before

@@ -591,7 +591,7 @@ Update sprint fields (status, stories, dates, etc.).
 
 ## Decision Tools
 
-A decision (`DEC-PRJ-N`) is an open question the project needs answered, stored in `.project/decisions/DEC-PRJ-N.md`: the question as its title, the context as its body, and frontmatter carrying `status` (`open` / `answered` / `withdrawn`), `priority`, `blocks`, `raised_by`, `raised_from`, `options`, `recommendation`, `answer`, `rationale`, `answered_by` and `answered_at`. `pm_get` and `pm_search` return decisions like any other item; edit one with [`pm_update`](#pm_updateid-status-points-title-assignee-unassign-clear-epic_id-body-acceptance_criteria-tags-depends_on-outcome-note-run_id-evidence-priority-blocks-options-recommendation-answer-rationale).
+A decision (`DEC-PRJ-N`) is an open question the project needs answered, stored in `.project/decisions/DEC-PRJ-N.md`: the question as its title, the context as its body, and frontmatter carrying `status` (`open` / `answered` / `withdrawn`), `priority`, `blocks`, `raised_by`, `raised_from`, `options`, `recommendation`, `answer`, `rationale`, `answered_by` and `answered_at`. `pm_get` and `pm_search` return decisions like any other item; edit one with [`pm_update`](#pm_updateid-status-points-title-assignee-unassign-clear-epic_id-body-acceptance_criteria-tags-depends_on-outcome-note-run_id-evidence-priority-blocks-options-recommendation-answer-rationale), and answer or withdraw it with [`pm_answer_decision`](#pm_answer_decisionid-answer-rationale-withdraw-reason-overwrite).
 
 ### pm_create_decision(title, context?, options?, recommendation?, blocks?, priority?, raised_from?, raised_by?)
 Record an open decision with the next free number, and log a `create` event.
@@ -611,6 +611,17 @@ List decisions in number order, each with the points of work it is holding up.
 - **blocks** (optional): Only decisions whose `blocks` list names one of these IDs — a list or a comma-separated string ([both shapes](#token-list-parameters)). Matches the named ID itself: a decision blocking a story is not returned for one of that story's tasks.
 - **limit** / **offset** (optional, default `50` / `0`): Pagination
 - **Returns**: `decisions` (frontmatter, without the body, plus `blocked_points`), `count` on this page, `total` matching the filters, `offset` and `has_more`. `blocked_points` sums the points of the **open** tasks (neither `done` nor archived) the decision blocks — named directly, every task of a named story, every task under every story of a named epic — counting each task once; an unestimated task counts zero.
+
+### pm_answer_decision(id, answer?, rationale?, withdraw?, reason?, overwrite?)
+Answer or withdraw a decision, lifting the block it holds, and log one `update` event (with the before/after `changes`). Every refusal below writes nothing — neither the decision file nor the activity log.
+- **id**: Decision ID (`DEC-PRJ-N`). Any other shape is an `invalid` error; a well-formed ID with no file is `not_found`. No alias — a decision has no typed id spelling.
+- **answer** (required unless withdrawing): An option label or free text. Missing or blank is an `invalid` error.
+- **rationale** (optional): Why that answer
+- **withdraw** (optional, default `false`): Close the decision as `withdrawn` instead of answering it. `answer` and `rationale` are refused with it.
+- **reason** (required with `withdraw`): Why it is withdrawn, stored as the decision's `rationale`. Missing or blank is an `invalid` error, and so is a `reason` without `withdraw`.
+- **overwrite** (optional, default `false`): A decision that is already `answered` or `withdrawn` is a `conflict` error unless this is `true`; with it, the new answer or withdrawal replaces the old one.
+- Answering sets `status: answered`, `answer`, `rationale`, and stamps `answered_by` (the activity-log actor) and `answered_at` (now, UTC — re-stamped on an overwrite). Withdrawing sets `status: withdrawn` and `rationale`; an earlier answer, if any, is kept as history.
+- **Returns**: `answered:` or `withdrawn:` with `id`, `status`, the fields written, `overwrote` (the previous status) on an overwrite, and `unblocked` — the IDs of the open tasks (neither `done` nor archived) this decision held, directly or through their story or epic, that no other open decision still holds, in ID order. Those tasks are now grabbable as far as decisions go (other readiness gates still apply). Closing a decision that was not `open` unblocks nothing, so `unblocked` is `[]`.
 
 ## Intelligence Tools
 

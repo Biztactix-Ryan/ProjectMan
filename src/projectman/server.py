@@ -11,7 +11,7 @@ from mcp.types import ToolAnnotations
 
 from .config import enabled_tool_families, find_project_root, load_config
 from .durations import long_task_risk
-from .errors import NotFoundError, ValidationError, wire_code_for
+from .errors import ConflictError, NotFoundError, ValidationError, wire_code_for
 from .event_bus import EventBus, NoOpEventBus
 from .indexer import build_index, write_index
 from .models import (
@@ -20,6 +20,7 @@ from .models import (
     SPRINT_ID,
     STORY_ID,
     TASK_ID,
+    DecisionFrontmatter,
     DecisionOption,
     DecisionStatus,
     Evidence,
@@ -4817,7 +4818,8 @@ def pm_create_decision(
     """Record an open question the project needs answered, as a tracked decision.
 
     Writes `.project/decisions/DEC-<PREFIX>-N.md` (next free number, status
-    `open`) and logs a `create` event. Answer or withdraw it with `pm_update`.
+    `open`) and logs a `create` event. Answer or withdraw it with
+    `pm_answer_decision`.
 
     Args:
         title: The question, short (e.g. "Which queue backend?")
@@ -4911,6 +4913,129 @@ def pm_list_decisions(
                 "has_more": offset + len(listed) < total,
             }
         )
+    except Exception as e:
+        raise _failed(e) from e
+
+
+def _unblocked_by(store: Store, old: DecisionFrontmatter) -> list[str]:
+    """Open task IDs *old* held that no open decision holds any more.
+
+    Called after the decision was closed.  A decision that was not ``open``
+    held nothing, so closing it again unblocks nothing.  A task is one *old*
+    held — named directly, via its story or via its story's epic, the same
+    reach as the readiness gate — that is neither ``done`` nor archived, and
+    it is unblocked only if no other open decision still holds it.
+    """
+    if old.status != DecisionStatus.open or not old.blocks:
+        return []
+    from .decisions import blocking_decisions
+
+    stories = {s.id: s for s in store.list_stories()}
+    still_open = store.list_decisions(status=DecisionStatus.open.value)
+    unblocked = []
+    for task in store.list_tasks(archived=False):
+        if task.status == TaskStatus.done:
+            continue
+        if not blocking_decisions(task, store, decisions=[old], stories=stories):
+            continue
+        if blocking_decisions(task, store, decisions=still_open, stories=stories):
+            continue
+        unblocked.append(task.id)
+    return sorted(unblocked, key=lambda t: [int(n) for n in t.split("-")[2:]])
+
+
+@mcp.tool(
+    title="Answer Decision",
+    annotations=ToolAnnotations(
+        title="Answer Decision", readOnlyHint=False, destructiveHint=False
+    ),
+)
+def pm_answer_decision(
+    id: str,
+    answer: Optional[str] = None,
+    rationale: Optional[str] = None,
+    withdraw: bool = False,
+    reason: Optional[str] = None,
+    overwrite: bool = False,
+) -> str:
+    """Answer or withdraw a decision, lifting the block it holds.
+
+    Answering sets status `answered`, answer, rationale, `answered_by` and
+    `answered_at`. `withdraw=true` sets `withdrawn`, storing the required
+    `reason` as the rationale. Logs an `update` event. An already closed
+    decision is a `conflict` unless `overwrite=true`; refusals write nothing.
+
+    Args:
+        id: Decision ID (DEC-PRJ-N)
+        answer: Option label or free text; required unless withdrawing
+        rationale: Why that answer
+        withdraw: Close as withdrawn instead of answering
+        reason: Why withdrawn; required with withdraw, refused without it
+        overwrite: Replace the outcome of an answered or withdrawn decision
+
+    Response: `answered:` or `withdrawn:` with the fields written and
+    `unblocked` — open task IDs it held that no open decision still holds.
+    """
+    from datetime import datetime, timezone
+
+    try:
+        if not DECISION_ID.match(id or ""):
+            raise ValidationError(
+                f"pm_answer_decision takes a decision ID (DEC-<PREFIX>-<n>), got {id!r}"
+            )
+        store = _store_for_id(id)
+        if withdraw:
+            if answer is not None:
+                raise ValidationError(
+                    "withdraw closes a decision without an answer; drop answer"
+                )
+            if rationale is not None:
+                raise ValidationError(
+                    "withdraw takes its why as reason, not rationale"
+                )
+            if not (reason and reason.strip()):
+                raise ValidationError("withdrawing a decision needs a non-blank reason")
+        else:
+            if reason is not None:
+                raise ValidationError(
+                    "reason is only for withdraw=true; an answer's why is rationale"
+                )
+            if not (answer and answer.strip()):
+                raise ValidationError(
+                    f"Decision {id} cannot be answered without answer text"
+                )
+
+        old, _ = store.get_decision(id)
+        if old.status != DecisionStatus.open and not overwrite:
+            raise ConflictError(
+                f"Decision {id} is already {old.status.value}; pass overwrite=true "
+                f"to replace it"
+            )
+
+        if withdraw:
+            fields = {"status": DecisionStatus.withdrawn, "rationale": reason}
+        else:
+            fields = {
+                "status": DecisionStatus.answered,
+                "answer": answer,
+                "rationale": rationale,
+                "answered_by": store._resolve_actor(),
+                "answered_at": datetime.now(timezone.utc),
+            }
+        meta = store.update_decision(id, **fields)
+        unblocked = _unblocked_by(store, old)
+        verb = "withdrawn" if withdraw else "answered"
+        _emit("project.updated", {"summary": f"Decision {meta.id} {verb}"})
+
+        dumped = meta.model_dump(mode="json")
+        result = {"id": meta.id, "status": dumped["status"]}
+        for field in fields:
+            if field != "status" and fields[field] is not None:
+                result[field] = dumped[field]
+        if old.status != DecisionStatus.open:
+            result["overwrote"] = old.status.value
+        result["unblocked"] = unblocked
+        return _yaml_dump({verb: result})
     except Exception as e:
         raise _failed(e) from e
 

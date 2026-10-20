@@ -573,6 +573,9 @@ def test_the_rollout_covers_every_id_taking_tool_that_should_have_one():
         # Both reasons: story_id is the parent, and `id` sits between required
         # parameters, so aliasing would drop title/item_type out of `required`.
         "pm_fix_malformed": "story_id is the parent; id is mid-signature",
+        # Decisions have no typed spelling to alias: `id` is the only name for
+        # a DEC- operand anywhere (pm_update takes one through `id` as well).
+        "pm_answer_decision": "a decision has no typed id spelling to alias",
     }
     spellings = {"id", "task_id", "story_id", "epic_id", "sprint_id", "item_id"}
     wired = {w.tool for w in WIRED}
