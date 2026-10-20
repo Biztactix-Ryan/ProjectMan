@@ -608,6 +608,9 @@ class TestCachedVectorMatrix:
             def list_tasks(self):
                 return []
 
+            def list_decisions(self):
+                return []
+
         emb.reindex_all(_EmptyStore())
         assert emb._matrix is None and emb._rows is None and emb._cache_stamp is None
 

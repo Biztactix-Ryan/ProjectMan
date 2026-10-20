@@ -219,11 +219,13 @@ Parameters that take both shapes:
 | `pm_create_story` | `tags`, `depends_on` |
 | `pm_create_epic` | `tags` |
 | `pm_create_task` | `tags`, `depends_on` |
-| `pm_update` | `tags`, `depends_on`, `clear` |
+| `pm_update` | `tags`, `depends_on`, `clear`, `blocks` |
 | `pm_update_many` | `ids`, `tags`, `depends_on`, `clear` |
 | `pm_archive_many` | `ids` |
 | `pm_create_sprint` | `planned_stories` |
 | `pm_update_sprint` | `planned_stories` |
+| `pm_create_decision` | `blocks` |
+| `pm_list_decisions` | `blocks` |
 
 > **`acceptance_criteria` is not one of these.** Criteria are natural
 > language, not tokens, so a comma inside one is punctuation and is never a
@@ -368,9 +370,9 @@ Create multiple tasks under a story in a single call.
 - **tasks**: List of task objects, each with `title` (str), `description` (str), `points` (int, optional), `depends_on` (list[str], optional)
 - **Returns**: List of created task `id`/`title` (plus set fields), count, and total points
 
-### pm_update(id, status?, points?, title?, assignee?, unassign?, clear?, epic_id?, body?, acceptance_criteria?, tags?, depends_on?, outcome?, note?, run_id?, evidence?)
-Update an epic, story, or task.
-- **id**: Epic, story, or task ID (alias: `task_id`). `epic_id` is **not** an alias — it links a story to an epic.
+### pm_update(id, status?, points?, title?, assignee?, unassign?, clear?, epic_id?, body?, acceptance_criteria?, tags?, depends_on?, outcome?, note?, run_id?, evidence?, priority?, blocks?, options?, recommendation?, answer?, rationale?)
+Update an epic, story, task or decision.
+- **id**: Epic, story, task or decision ID (alias: `task_id`). `epic_id` is **not** an alias — it links a story to an epic.
 - **assignee** (optional): Assignee name (tasks only). To remove one, pass `unassign=true` — never an empty assignee.
 - **unassign** (optional, default `false`): Remove the assignee (tasks only). Changes nothing else — no status reset, no run-log entry; use `pm_release` for the whole hand-back. Passing `unassign=true` together with a non-empty `assignee` is an error.
 - **clear** (optional): **Field names** to reset to empty — a list `["depends_on", "tags"]` or a comma-separated string `"depends_on,tags"` ([both shapes](#token-list-parameters)). Valid names and what they clear to: `assignee` → null (tasks), `depends_on` → `[]` (tasks, stories), `tags` → `[]` (epics, stories, tasks), `points` → null, `epic_id` → null (stories). Clearing an already-empty field succeeds — `clear` states a desired end state. An unknown name, a name that does not apply to this item type, or naming a field here *and* setting it in the same call is an error.
@@ -386,6 +388,13 @@ Update an epic, story, or task.
 - Epic status values: `draft`, `active`, `done`, `archived`
 - Story status values: `backlog`, `ready`, `active`, `done`, `archived`
 - Task status values: `todo`, `in-progress`, `review`, `done`, `blocked`
+- Decision status values: `open`, `answered`, `withdrawn`
+- **Decisions** (`DEC-PRJ-N`) take `title`, `body` (the context), `status`, `run_id` and the decision-only fields below; any other field on a decision is an `invalid` error, and so is a decision-only field on an epic, story or task.
+  - **priority**: `must`, `should`, `could`, `wont`
+  - **blocks**: Task, story or epic IDs the decision blocks, replacing the list — a list or a comma-separated string ([both shapes](#token-list-parameters)). Every ID must exist; an unknown one is an `invalid` error and nothing is written. An empty list unblocks everything.
+  - **options**: Candidate answers replacing the list — `{label, summary, pros, cons}` objects or bare strings taken as labels
+  - **recommendation**: Label of the recommended option
+  - **answer** / **rationale**: The answer (an option label or free text) and why. `status="answered"` with no answer text — in this call or already on the decision — is an `invalid` error and nothing is written. Moving to `answered` stamps `answered_at` and `answered_by` (the activity-log actor).
 - **Returns**: `id`, current `status`, and the fields changed by this call (plus `run_log: <outcome>` when a run-log entry was appended) — not the full object
 - When — and only when — a supplied note had to be truncated, the response also carries `note_truncated: true`, `note_original_length`, `note_stored_length`, `note_dropped_chars` and `note_limit`, so a caller detects truncation without string-matching. Absence of the fields means the note was stored whole. Every note-writing tool (`pm_update`, `pm_release`, `pm_done_next`, `pm_accept`, `pm_retry`, `pm_park`, `pm_review`) reports it the same way.
 - When — and only when — an `evidence` cap actually fired, the response also carries `evidence_clamped: true` and `evidence_dropped` (see [Structured evidence](#structured-evidence)).
@@ -579,11 +588,34 @@ Update sprint fields (status, stories, dates, etc.).
 - **run_id** (optional): Opaque id of the orchestrator run closing (or otherwise editing) the sprint, stamped on the activity-log event so the close appears in `pm_activity(run_id=...)` beside that run's claims and verdicts. Not a sprint field.
 - **Returns**: Updated sprint metadata, plus `dependency_warnings` if newly planned stories have unmet dependencies
 
+## Decision Tools
+
+A decision (`DEC-PRJ-N`) is an open question the project needs answered, stored in `.project/decisions/DEC-PRJ-N.md`: the question as its title, the context as its body, and frontmatter carrying `status` (`open` / `answered` / `withdrawn`), `priority`, `blocks`, `raised_by`, `raised_from`, `options`, `recommendation`, `answer`, `rationale`, `answered_by` and `answered_at`. `pm_get` and `pm_search` return decisions like any other item; edit one with [`pm_update`](#pm_updateid-status-points-title-assignee-unassign-clear-epic_id-body-acceptance_criteria-tags-depends_on-outcome-note-run_id-evidence-priority-blocks-options-recommendation-answer-rationale).
+
+### pm_create_decision(title, context?, options?, recommendation?, blocks?, priority?, raised_from?, raised_by?)
+Record an open decision with the next free number, and log a `create` event.
+- **title**: The question, short
+- **context** (optional): Markdown body — what prompted the question and what is already known
+- **options** (optional): Candidate answers — `{label, summary, pros, cons}` objects or bare strings taken as labels. Labels must be non-blank and unique.
+- **recommendation** (optional): Label of the recommended option
+- **blocks** (optional): Task, story or epic IDs that cannot proceed until this is answered — a list or a comma-separated string ([both shapes](#token-list-parameters)). Every ID must exist; an unknown one is an `invalid` error and nothing is written (no number is burnt).
+- **priority** (optional): `must`, `should` (default), `could`, `wont`
+- **raised_from** (optional): The task, story, epic or decision ID the question came up on
+- **raised_by** (optional): Who asked — an agent or a human
+- **Returns**: `created:` with `id`, `title`, `status`, `priority`, and whichever of `blocks`, `raised_by`, `raised_from`, `recommendation` and `option_labels` are set
+
+### pm_list_decisions(status?, blocks?, limit?, offset?)
+List decisions in number order, each with the points of work it is holding up.
+- **status** (optional): Filter by `open`, `answered` or `withdrawn`; anything else is an `invalid` error
+- **blocks** (optional): Only decisions whose `blocks` list names one of these IDs — a list or a comma-separated string ([both shapes](#token-list-parameters)). Matches the named ID itself: a decision blocking a story is not returned for one of that story's tasks.
+- **limit** / **offset** (optional, default `50` / `0`): Pagination
+- **Returns**: `decisions` (frontmatter, without the body, plus `blocked_points`), `count` on this page, `total` matching the filters, `offset` and `has_more`. `blocked_points` sums the points of the **open** tasks (neither `done` nor archived) the decision blocks — named directly, every task of a named story, every task under every story of a named epic — counting each task once; an unestimated task counts zero.
+
 ## Intelligence Tools
 
 ### pm_estimate(id)
 Get estimation context with calibration guidelines.
-- **id**: Story or task ID to estimate (alias: `task_id`)
+- **id**: Story or task ID to estimate (alias: `task_id`). A sprint or decision ID carries no points and is an `invalid` error.
 - **Returns**: the item, its body and `current_points`, `estimation_guidance` (fibonacci scale, the 1/2/3/5/8/13 calibration bands, this project's historical average points) and [`duration_history`](#duration_history).
 
 ### pm_scope(id)

@@ -252,9 +252,7 @@ class EmbeddingStore:
             content = self._build_content(body, meta.tags)
             self.index_item(task.id, task.title, "task", content)
 
-        # Duck-typed: a store-like object without decisions has none to index.
-        list_decisions = getattr(store, "list_decisions", None)
-        for decision in list_decisions() if list_decisions else ():
+        for decision in store.list_decisions():
             try:
                 _, body = store.get_decision(decision.id)
             except Exception:

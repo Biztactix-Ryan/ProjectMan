@@ -421,13 +421,15 @@ WIDENED = {
     "pm_create_story": ("tags", "depends_on"),
     "pm_create_epic": ("tags",),
     "pm_create_task": ("tags", "depends_on"),
-    "pm_update": ("tags", "depends_on", "clear"),
+    "pm_update": ("tags", "depends_on", "clear", "blocks"),
     "pm_update_many": ("ids", "tags", "depends_on", "clear"),
     "pm_archive_many": ("ids",),
     "pm_get": ("id", "task_id"),
     "pm_batch_get": ("ids",),
     "pm_create_sprint": ("planned_stories",),
     "pm_update_sprint": ("planned_stories",),
+    "pm_create_decision": ("blocks",),
+    "pm_list_decisions": ("blocks",),
 }
 
 

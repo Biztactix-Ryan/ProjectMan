@@ -167,10 +167,17 @@ def test_every_gated_family_is_accounted_for(measurement):
 
 #: The `tools/list` payload recorded in `docs/telemetry/tool-list-size.md` at
 #: the end of the post-subtraction sweep, while 44 tools still advertised an
-#: optional `project`.  US-PM-34's first criterion is a *drop* from it, so the
-#: number is frozen here rather than read back out of the document it is the
-#: baseline for.
+#: optional `project`.  US-PM-34's first criterion was a *drop* from it; kept
+#: as the historical reference the ceiling below grew from.
 POST_SUBTRACTION_BASELINE_BYTES = 88441
+
+#: Ceiling on the default `tools/list` payload, frozen here rather than read
+#: back out of the document it bounds.  Raised from the post-subtraction
+#: baseline above on 2026-10-20 (human call, US-PM-63-9): the decision tools
+#: (`pm_create_decision`, `pm_list_decisions`) join the default surface because
+#: workers park with a decision (US-PM-64), so they are not gated.  Re-measure
+#: with `python -m tools.usage_telemetry.tool_list_size` before moving it again.
+DEFAULT_PAYLOAD_CEILING_BYTES = 93262
 
 
 def test_no_tool_advertises_a_project_parameter():
@@ -191,14 +198,17 @@ def test_no_tool_advertises_a_project_parameter():
     assert offenders == []
 
 
-def test_the_default_payload_dropped_below_the_pre_prefix_baseline(measurement):
-    """US-PM-34-1, second half — the removal has to show up on the wire.
+def test_the_default_payload_stays_under_its_ceiling(measurement):
+    """US-PM-34-1, second half — the default payload has a hard ceiling.
 
-    Replacing `project` with an optional `prefix` on the 21 ID-less verbs adds
-    bytes back, so this is not a free win: it holds the *net* below the number
-    the baseline recorded.
+    Originally this held the net of replacing `project` with an optional
+    `prefix` below the post-subtraction baseline.  The ceiling has since been
+    raised deliberately (US-PM-63-9, decision tools on by default), so it is
+    no longer a drop from that baseline — but any growth past it still fails
+    here and has to be a recorded decision, not drift.
     """
-    assert measurement["default"]["bytes"] < POST_SUBTRACTION_BASELINE_BYTES
+    assert DEFAULT_PAYLOAD_CEILING_BYTES > POST_SUBTRACTION_BASELINE_BYTES
+    assert measurement["default"]["bytes"] <= DEFAULT_PAYLOAD_CEILING_BYTES
 
 
 # ----------------------------------------------------- the drop is floored --

@@ -55,6 +55,7 @@ EXPECTED_HINTS: dict[str, tuple[bool, bool | None]] = {
     "pm_get": (True, None),
     "pm_get_sprint": (True, None),
     "pm_git_status": (True, None),
+    "pm_list_decisions": (True, None),
     "pm_list_sprints": (True, None),
     "pm_malformed": (True, None),
     "pm_run_log": (True, None),
@@ -65,6 +66,7 @@ EXPECTED_HINTS: dict[str, tuple[bool, bool | None]] = {
     # ─── writes, but additive or reversible ───────────────────────
     "pm_accept": (False, False),
     "pm_commit": (False, False),
+    "pm_create_decision": (False, False),
     "pm_create_epic": (False, False),
     "pm_create_sprint": (False, False),
     "pm_create_story": (False, False),
@@ -92,8 +94,8 @@ EXPECTED_HINTS: dict[str, tuple[bool, bool | None]] = {
     "pm_restore": (False, True),
 }
 
-#: 42 default tools plus the 5 in the gated families.
-EXPECTED_TOOL_COUNT = 47
+#: 44 default tools plus the 5 in the gated families.
+EXPECTED_TOOL_COUNT = 49
 
 #: The review outcome of US-PRJ-49, spelled out rather than derived: these
 #: five move item files out from under the caller or write to a git remote.

@@ -20,8 +20,11 @@ from .models import (
     SPRINT_ID,
     STORY_ID,
     TASK_ID,
+    DecisionOption,
+    DecisionStatus,
     Evidence,
     ProjectIndex,
+    TaskStatus,
 )
 from .store import (
     CLAIM_FIELDS,
@@ -2316,6 +2319,66 @@ def _do_update(
     return result
 
 
+#: pm_update parameters that only mean something on a decision, and the ones
+#: that mean nothing on one.  Either kind sent to the wrong item is refused
+#: rather than ignored, so a caller never believes a write landed that didn't.
+_DECISION_ONLY_PARAMS = (
+    "priority",
+    "blocks",
+    "options",
+    "recommendation",
+    "answer",
+    "rationale",
+)
+
+
+def _do_update_decision(
+    store: Store,
+    id: str,
+    *,
+    fields: dict,
+    body: Optional[str],
+    run_id: Optional[str],
+) -> dict:
+    """``pm_update`` on a decision: write *fields* and echo what changed.
+
+    ``fields`` holds the supplied decision fields (``None`` means "not
+    supplied").  Moving to ``answered`` stamps ``answered_at`` (now, UTC) and
+    ``answered_by`` (the activity-log actor) unless the decision was already
+    answered.  Every refusal — an unknown ``blocks`` ID, ``answered`` with no
+    answer text, a bad status or priority — comes from
+    ``Store.update_decision`` as a ``ValidationError`` before anything is
+    written, and reaches the caller as an ``invalid`` MCP error.
+    """
+    from datetime import datetime, timezone
+
+    supplied = {k: v for k, v in fields.items() if v is not None}
+    if "blocks" in supplied:
+        supplied["blocks"] = _as_list(supplied["blocks"])
+    if "options" in supplied:
+        supplied["options"] = _decision_options(supplied["options"])
+    if supplied.get("status") == DecisionStatus.answered.value:
+        old_meta, _ = store.get_decision(id)
+        if old_meta.status != DecisionStatus.answered:
+            supplied.setdefault("answered_at", datetime.now(timezone.utc))
+            supplied.setdefault("answered_by", store._resolve_actor())
+
+    meta = store.update_decision(id, body=body, run_id=run_id, **supplied)
+    _emit("project.updated", {"summary": f"Decision {meta.id} updated"})
+
+    dumped = meta.model_dump(mode="json")
+    updated = {"id": meta.id, "status": dumped["status"]}
+    for field in supplied:
+        if field in ("status", "options"):
+            continue
+        updated[field] = dumped.get(field)
+    if "options" in supplied:
+        updated["option_labels"] = [o.label for o in meta.options]
+    if body is not None:
+        updated["body_chars"] = len(body)
+    return {"updated": updated}
+
+
 @mcp.tool(
     title="Update Item",
     annotations=ToolAnnotations(
@@ -2339,16 +2402,27 @@ def pm_update(
     note: Optional[str] = None,
     task_id: Optional[str] = None,
     run_id: Optional[str] = None,
+    priority: Optional[str] = None,
+    blocks: Optional[Union[str, list[str]]] = None,
+    options: Optional[list[Union[str, dict]]] = None,
+    recommendation: Optional[str] = None,
+    answer: Optional[str] = None,
+    rationale: Optional[str] = None,
     evidence: Optional[Evidence] = None,
 ) -> str:
-    """Update an epic, story, or task.
+    """Update an epic, story, task or decision.
 
     To hand a task back, prefer `pm_release(<id>)` — it clears the assignee,
     resets the status and logs the reason in one call.
 
+    A decision (DEC-PRJ-N) takes title, body (its context), status, run_id
+    and the "decisions only" fields; anything else is an error. Answer it with
+    status="answered" plus answer text (refused without it); answered_at and
+    answered_by are stamped.
+
     Args:
-        id: Epic, story, or task ID (alias: task_id)
-        status: New status (epics: draft/active/done/archived; stories: backlog/ready/active/done/archived; tasks: todo/in-progress/review/done/blocked)
+        id: Epic, story, task or decision ID (alias: task_id)
+        status: New status (epics: draft/active/done/archived; stories: backlog/ready/active/done/archived; tasks: todo/in-progress/review/done/blocked; decisions: open/answered/withdrawn)
         points: New point estimate (fibonacci: 1,2,3,5,8,13)
         title: New title
         assignee: Assignee name (tasks only). To remove one, pass unassign=true — never an empty assignee.
@@ -2363,6 +2437,12 @@ def pm_update(
         note: Run-log note describing what was accomplished or what blocked progress. Longer notes are truncated server-side (4096 chars) with a visible marker, never rejected — the status/outcome write always lands. Requires outcome.
         task_id: Alias for id — either spelling works; passing both with different values is an error. Note epic_id is NOT an alias: it links a story to an epic.
         run_id: Opaque id of the orchestrator run making this edit, stamped on the activity-log event so `pm_activity(run_id=...)` returns it alongside the run's claims and verdicts. Not a frontmatter field and never a claim — for that use `pm_grab`. Omit on ordinary edits, which belong to no run.
+        priority: Decision priority: must, should, could, wont (decisions only)
+        blocks: Existing task/story/epic IDs the decision blocks, replacing the list (decisions only) — a list (["US-PRJ-1", "EPIC-PRJ-2"]) or a comma-separated string ("US-PRJ-1,EPIC-PRJ-2"); both mean the same thing.
+        options: Candidate answers replacing the list (decisions only) — {label, summary, pros, cons} objects or bare label strings
+        recommendation: Label of the recommended option (decisions only)
+        answer: An option label or free text (decisions only)
+        rationale: Why that answer (decisions only)
         evidence: Structured proof for the run-log entry — an object with `files` (paths changed), `tests` (objects with `command`, `passed`, optional `summary`), `dod_met` and `dod_unmet` (criteria). Put lists here, never in the note; the note stays a one-line summary (recommended <= 200 chars). Evidence on its own appends an entry (outcome `info`, empty note) — no outcome required. Bounded and clamped, never rejected: files <= 40, tests <= 10, each DoD list <= 20, each string <= 160 chars; when a clamp fires the response carries `evidence_clamped` and `evidence_dropped`.
 
     Response: always `updated: <item>`.  When — and only when — a supplied note
@@ -2382,6 +2462,53 @@ def pm_update(
         # story is being linked to, not another spelling of the item's own id.
         id = _resolve_id("id", id, task_id=task_id)
         store = _store_for_id(id)
+        decision_fields = {
+            "priority": priority,
+            "blocks": blocks,
+            "options": options,
+            "recommendation": recommendation,
+            "answer": answer,
+            "rationale": rationale,
+        }
+        if DECISION_ID.match(id):
+            not_for_decisions = sorted(
+                name
+                for name, value in {
+                    "points": points,
+                    "assignee": assignee,
+                    "unassign": unassign or None,
+                    "clear": clear,
+                    "epic_id": epic_id,
+                    "acceptance_criteria": acceptance_criteria,
+                    "tags": tags,
+                    "depends_on": depends_on,
+                    "outcome": outcome,
+                    "note": note,
+                    "evidence": evidence,
+                }.items()
+                if value is not None
+            )
+            if not_for_decisions:
+                raise ValidationError(
+                    f"{', '.join(not_for_decisions)} cannot be set on decision "
+                    f"{id}; a decision takes title, body, status, "
+                    f"{', '.join(_DECISION_ONLY_PARAMS)}"
+                )
+            return _yaml_dump(
+                _do_update_decision(
+                    store,
+                    id,
+                    fields={"title": title, "status": status, **decision_fields},
+                    body=body,
+                    run_id=run_id,
+                )
+            )
+        decision_only = sorted(k for k, v in decision_fields.items() if v is not None)
+        if decision_only:
+            raise ValidationError(
+                f"{', '.join(decision_only)} can only be set on a decision "
+                f"(DEC-<PREFIX>-<n>); {id} is not one"
+            )
         return _yaml_dump(
             _do_update(
                 store,
@@ -3766,6 +3893,9 @@ def pm_estimate(
     size has actually cost here. A `note` replaces the comparison while
     fewer than three tasks have been measured.
 
+    Sprints and decisions carry no points, so a SPRINT- or DEC- id is
+    refused as `invalid`, not estimated.
+
     Args:
         id: Story or task ID to estimate (alias: task_id)
         task_id: Alias for id — either spelling works; passing both with different values is an error
@@ -3775,6 +3905,13 @@ def pm_estimate(
 
         id = _resolve_id("id", id, task_id=task_id)
         store = _store_for_id(id)
+        if SPRINT_ID.match(id) or DECISION_ID.match(id):
+            # Both models lack `points`; without this the estimator dies
+            # on the attribute and the caller sees an `internal` error.
+            raise ValidationError(
+                f"{id} cannot be estimated — pm_estimate takes a story, "
+                f"task or epic ID; sprints and decisions carry no points"
+            )
         return estimate(store, id)
     except Exception as e:
         raise _failed(e) from e
@@ -4528,6 +4665,191 @@ def pm_update_sprint(
                 result["dependency_warnings"] = warnings
 
         return _yaml_dump(result)
+    except Exception as e:
+        raise _failed(e) from e
+
+
+# ─── Decision Tools ─────────────────────────────────────────────
+
+
+def _decision_options(
+    options: Optional[list[Union[str, DecisionOption, dict]]],
+) -> Optional[list[dict]]:
+    """Normalise an ``options`` argument to the dicts the store validates.
+
+    An entry is an option object (``{label, summary, pros, cons}``) or a bare
+    string, which is taken as that option's label alone.  ``None`` means "not
+    supplied" and is passed through; ``[]`` means "no options".
+    """
+    if options is None:
+        return None
+    normalised = []
+    for entry in options:
+        if isinstance(entry, str):
+            normalised.append({"label": entry})
+        elif isinstance(entry, DecisionOption):
+            normalised.append(entry.model_dump())
+        else:
+            normalised.append(dict(entry))
+    return normalised
+
+
+def _decision_number(decision_id: str) -> int:
+    return int(decision_id.rsplit("-", 1)[1])
+
+
+def _blocked_points_counter(store: Store):
+    """A function mapping a decision's ``blocks`` list to its blocked points.
+
+    Blocked points are the points of the *open* tasks — neither ``done`` nor
+    archived — that cannot proceed until the decision is answered: a task
+    named directly, every task of a named story, and every task under every
+    story of a named epic.  A task reached twice (its story and itself both
+    named) counts once; a task with no estimate counts zero.  One listing of
+    tasks and stories serves every decision on the page.
+    """
+    open_tasks = {
+        t.id: t
+        for t in store.list_tasks(archived=False)
+        if t.status != TaskStatus.done
+    }
+    tasks_by_story: dict[str, list[str]] = {}
+    for task in open_tasks.values():
+        tasks_by_story.setdefault(task.story_id, []).append(task.id)
+    stories_by_epic: dict[str, list[str]] = {}
+    for story in store.list_stories():
+        if story.epic_id:
+            stories_by_epic.setdefault(story.epic_id, []).append(story.id)
+
+    def blocked_points(blocks: list[str]) -> int:
+        task_ids: set[str] = set()
+        for item_id in blocks:
+            if EPIC_ID.match(item_id):
+                for story_id in stories_by_epic.get(item_id, []):
+                    task_ids.update(tasks_by_story.get(story_id, []))
+            elif TASK_ID.match(item_id):
+                if item_id in open_tasks:
+                    task_ids.add(item_id)
+            else:
+                task_ids.update(tasks_by_story.get(item_id, []))
+        return sum(open_tasks[t].points or 0 for t in task_ids)
+
+    return blocked_points
+
+
+@mcp.tool(
+    title="Create Decision",
+    annotations=ToolAnnotations(
+        title="Create Decision", readOnlyHint=False, destructiveHint=False
+    ),
+)
+def pm_create_decision(
+    title: str,
+    context: str = "",
+    options: Optional[list[Union[str, dict]]] = None,
+    recommendation: Optional[str] = None,
+    blocks: Optional[Union[str, list[str]]] = None,
+    priority: Optional[str] = None,
+    raised_from: Optional[str] = None,
+    raised_by: Optional[str] = None,
+) -> str:
+    """Record an open question the project needs answered, as a tracked decision.
+
+    Writes `.project/decisions/DEC-<PREFIX>-N.md` (next free number, status
+    `open`) and logs a `create` event. Answer or withdraw it with `pm_update`.
+
+    Args:
+        title: The question, short (e.g. "Which queue backend?")
+        context: Markdown body — what prompted the question and what is already known
+        options: Candidate answers — {label, summary, pros, cons} objects or bare label strings; labels non-blank and unique
+        recommendation: Label of the recommended option, if there is one
+        blocks: Existing task/story/epic IDs that wait on the answer — a list (["US-PRJ-1", "US-PRJ-2-1"]) or a comma-separated string ("US-PRJ-1,US-PRJ-2-1"); both mean the same thing.
+        priority: Priority level: must, should, could, wont (default should)
+        raised_from: The task, story, epic or decision ID the question came up on, if any
+        raised_by: Who asked — an agent or a human
+    """
+    try:
+        store = _store()
+        meta = store.create_decision(
+            title,
+            context,
+            priority=priority,
+            blocks=_as_list(blocks) or [],
+            raised_by=raised_by,
+            raised_from=raised_from,
+            options=_decision_options(options),
+            recommendation=recommendation,
+        )
+        dumped = meta.model_dump(mode="json")
+        created = {
+            "id": meta.id,
+            "title": meta.title,
+            "status": dumped["status"],
+            "priority": dumped["priority"],
+        }
+        for field in ("blocks", "raised_by", "raised_from", "recommendation"):
+            if dumped.get(field):
+                created[field] = dumped[field]
+        if meta.options:
+            created["option_labels"] = [o.label for o in meta.options]
+        _emit("project.updated", {"summary": f"Decision {meta.id} created"})
+        return _yaml_dump({"created": created})
+    except Exception as e:
+        raise _failed(e) from e
+
+
+@mcp.tool(
+    title="List Decisions",
+    annotations=ToolAnnotations(title="List Decisions", readOnlyHint=True),
+)
+def pm_list_decisions(
+    status: Optional[str] = None,
+    blocks: Optional[Union[str, list[str]]] = None,
+    limit: int = 50,
+    offset: int = 0,
+) -> str:
+    """List decisions with the points of work each one is holding up.
+
+    Each carries `blocked_points`: points of the open (not done/archived)
+    tasks it blocks directly, via a blocked story (its tasks) or a blocked
+    epic (tasks under its stories), each counted once. Number order.
+
+    Args:
+        status: Optional filter: open, answered, withdrawn
+        blocks: Only decisions whose `blocks` names one of these IDs exactly — a list (["US-PRJ-1", "EPIC-PRJ-2"]) or a comma-separated string ("US-PRJ-1,EPIC-PRJ-2"); both mean the same thing.
+        limit: Max decisions per page (default 50)
+        offset: Starting index for pagination (default 0)
+
+    Response: `decisions` (frontmatter + `blocked_points`, no body — use
+    `pm_get`), `count`, `total`, `offset`, `has_more`.
+    """
+    try:
+        store = _store()
+        wanted = _as_list(blocks) or []
+        for item_id in wanted:
+            _prefix_of(item_id)  # a malformed filter ID is an error, not a miss
+        decisions = sorted(
+            store.list_decisions(status=status), key=lambda d: _decision_number(d.id)
+        )
+        if wanted:
+            decisions = [d for d in decisions if set(d.blocks) & set(wanted)]
+        total = len(decisions)
+        page = decisions[offset : offset + limit]
+        blocked_points = _blocked_points_counter(store) if page else None
+        listed = []
+        for decision in page:
+            entry = decision.model_dump(mode="json")
+            entry["blocked_points"] = blocked_points(decision.blocks)
+            listed.append(entry)
+        return _yaml_dump(
+            {
+                "decisions": listed,
+                "count": len(listed),
+                "total": total,
+                "offset": offset,
+                "has_more": offset + len(listed) < total,
+            }
+        )
     except Exception as e:
         raise _failed(e) from e
 
