@@ -15,6 +15,7 @@ under ``tmp_path`` — never against this repository.
 
 import re
 import subprocess
+from pathlib import Path
 
 import pytest
 
@@ -116,3 +117,75 @@ def test_git_refuses_the_nested_form_and_accepts_the_sibling(tmp_path):
     assert sibling.returncode == 0, sibling.stderr
     listed = _git(repo, "branch", "--list", "orch/r1--*").stdout.split()
     assert listed == ["orch/r1--T-1"]
+
+
+# ─── the reference docs a reader meets before the skill ────────────────────
+#
+# ``orchestrate-design.md`` and ``skills.md`` describe the branch model in
+# prose; the tests above scan only the skills.  The design doc names the
+# nested form once on purpose — to say git refuses it — so an old-form hit is
+# allowed only inside that one explanatory sentence, matched verbatim (after
+# whitespace is normalised).  Any other sentence naming the nested form fails,
+# even one that mentions "refuses" nearby.
+
+REFERENCE_DOCS = {
+    name: Path(__file__).resolve().parent.parent / "docs" / "reference" / name
+    for name in ("orchestrate-design.md", "skills.md")
+}
+
+#: the docs spell the run ``<run-id>``
+DOC_NEW_FORM = "orch/<run-id>--<task-id>"
+
+
+#: the one sentence allowed to name the nested form: it says git refuses it
+ALLOWED_EXPLANATION = (
+    "git stores `orch/<run-id>` as a file, so it refuses to create "
+    "`orch/<run-id>/<task-id>` while the run branch exists"
+)
+
+
+def _normalise_ws(text: str) -> str:
+    return re.sub(r"\s+", " ", text)
+
+
+def _unexplained_old_form_hits(text: str) -> list[str]:
+    return OLD_FORM.findall(_normalise_ws(text).replace(ALLOWED_EXPLANATION, ""))
+
+
+@pytest.mark.parametrize("name", list(REFERENCE_DOCS), ids=list(REFERENCE_DOCS))
+def test_reference_docs_name_the_sibling_task_branch(name):
+    text = REFERENCE_DOCS[name].read_text(encoding="utf-8")
+    assert DOC_NEW_FORM in text, f"docs/reference/{name} names no {DOC_NEW_FORM}"
+    hits = _unexplained_old_form_hits(text)
+    assert not hits, (
+        f"docs/reference/{name} names the nested task branch form as the one "
+        f"in use, which git refuses while orch/<run-id> exists: {hits}"
+    )
+
+
+def test_reference_doc_carries_the_allowed_explanation():
+    """The allowance is pinned to text that exists — not a dead exemption."""
+    text = _normalise_ws(REFERENCE_DOCS["orchestrate-design.md"].read_text(encoding="utf-8"))
+    assert ALLOWED_EXPLANATION in text
+
+
+@pytest.mark.parametrize(
+    "regressed",
+    [
+        "a git worktree on `orch/<run-id>/<task-id>`, cut from the run branch",
+        "by reading `git branch --list 'orch/<run-id>/*'` against",
+        # "refuses" nearby must not excuse a nested form used as the instruction
+        "If git refuses the push, cut `orch/<run-id>/<task-id>` instead.",
+        "git refuses to create a tag, so cut `orch/<run-id>/<task-id>` instead",
+        "git stores `orch/<run-id>` as a file, so it refuses to create\n"
+        "`orch/<run-id>--<task-id>`; use `orch/<run-id>/<task-id>` instead",
+    ],
+)
+def test_the_docs_detector_bites(regressed):
+    """Falsification: the docs scan catches a nested form not explained away."""
+    assert _unexplained_old_form_hits(regressed)
+    # the exact explanatory sentence, however it is wrapped, is the only pass
+    assert not _unexplained_old_form_hits(
+        ALLOWED_EXPLANATION.replace(" `orch/<run-id>/", "\n`orch/<run-id>/")
+    )
+    assert _unexplained_old_form_hits(ALLOWED_EXPLANATION + " " + regressed)
