@@ -1,6 +1,6 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register, ToolCallInput } from 'claude-code'
-import type { ProjectmanBoardView, ProjectmanGuardDenial } from '../types'
+import type { ProjectmanBand, ProjectmanBandState, ProjectmanBoardView, ProjectmanGuardDenial } from '../types'
 import { BOARD_OPENED, BOARD_PANE, BOARD_PANE_TITLE, boardPane } from './board-pane.tsx'
 import { findBannedGit, GIT_RULE_REASON } from './git-guard.ts'
 import { absolutize, mentionsStore, STORE_RULE_REASON, storeHit, storeRoots, targetOf } from './store-guard.ts'
@@ -17,9 +17,17 @@ import {
 } from './pm-views.ts'
 import type { PmCommand, Yaml } from './pm-views.ts'
 import { viewMode } from './surface.ts'
+import { BAND_ACTIVE, BAND_NOTE, BAND_SPRINTS, bandFrom, bandSprintCall, activeSprintId, sprintBand } from './sprint-band.tsx'
+import type { BandCall } from './sprint-band.tsx'
 
 /** What the board pane draws (US-PM-60-7): null until the board is first read. */
 const board = atom({ plugin: 'projectman', key: 'board' } as const, null as ProjectmanBoardView | null)
+
+/**
+ * What the sprint band draws (US-PM-62-6): null until the band is first
+ * drawn, which is also how the turn.complete hook knows a surface shows it.
+ */
+const band = atom({ plugin: 'projectman', key: 'band' } as const, null as ProjectmanBandState | null)
 
 /** A command's MCP answers, parsed and in order, or why they could not be had. */
 type Fetched = { results: Yaml[] } | { error: string }
@@ -38,6 +46,44 @@ async function fetchCommand($: EngineInterface, command: PmCommand): Promise<Fet
     results.push(parseYaml(text))
   }
   return { results }
+}
+
+/**
+ * The band read from the MCP server: the active sprint, the first task in
+ * progress and the note, together, then the sprint's live progress when one
+ * is active. Null (nothing drawn) when the server is not connected or any
+ * call errors, as every call does where the directory has no store.
+ */
+async function readBand($: EngineInterface): Promise<ProjectmanBand | null> {
+  const connected = await $.mcp.connect(MCP_SERVER_KEY)
+  if (!connected.isConnected) return null
+  const server = connected.server
+  const call = async ({ tool, args }: BandCall): Promise<Yaml> => {
+    const answer = await $.mcp.call(server, tool, args)
+    if (answer.isError) throw new Error(`${tool} failed`)
+    return parseYaml(resultText(answer))
+  }
+  const [sprints, active, note] = await Promise.all([call(BAND_SPRINTS), call(BAND_ACTIVE), call(BAND_NOTE)])
+  const id = activeSprintId(sprints)
+  const sprint = id === null ? null : await call(bandSprintCall(id))
+  return bandFrom(sprint, active, note)
+}
+
+/**
+ * Re-reads the band and writes `projectman.band`, which redraws it. A read
+ * while one is in flight does nothing; a failed read hides the band.
+ */
+async function refreshBand($: EngineInterface): Promise<void> {
+  if ((await read($, band))?.isReading) return
+  await update($, band, (v) => ({ view: v?.view ?? null, isReading: true, reads: v?.reads ?? 0 }))
+  let view: ProjectmanBand | null = null
+  try {
+    view = await readBand($)
+  } catch {
+    view = null
+  }
+  const done = view
+  await update($, band, (v) => ({ view: done, isReading: false, reads: (v?.reads ?? 0) + 1 }))
 }
 
 /** The board as read: columns from `pm_board`, one more load counted. */
@@ -184,5 +230,29 @@ export const register: Register = (on, options) => {
   on('ui.render', { component: 'Pane', requestId: 'pm-board' }, async ($, e) => {
     const view = await read($, board)
     return boardPane($.ui.resolve(e), view, e.props.bodyColumns, () => void refreshBoard($))
+  })
+
+  // US-PM-62-6: the sprint band above the prompt, drawn from `projectman.band`.
+  // Its first draw schedules the first read (the timer runs it once this
+  // draw resolves, so the draw never waits on the MCP server); until then,
+  // and whenever there is nothing to show, it passes and the engine's own
+  // band shows. It yields to a survey.
+  on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
+    const state = await read($, band)
+    if (state === null) $.clock.after(0, () => void refreshBand($))
+    if (e.props.hasSurvey || !state?.view) return next(e)
+    return sprintBand($.ui.resolve(e), state.view, e.props.bodyColumns)
+  })
+
+  // After each turn, re-read the band where a surface has drawn it: a turn
+  // is what moves a task or writes the note. No band drawn, no MCP call.
+  on('turn.complete', async ($, e, next) => {
+    const result = await next(e)
+    try {
+      if ((await read($, band)) !== null) $.clock.after(0, () => void refreshBand($))
+    } catch {
+      // The band is a convenience; the turn's answer stands without it.
+    }
+    return result
   })
 }

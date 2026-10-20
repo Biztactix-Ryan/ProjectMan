@@ -281,18 +281,18 @@ export function parseYaml(src: string): Yaml {
 
 // ---------------------------------------------------------------- formatting
 
-type Row = { [key: string]: Yaml }
+export type Row = { [key: string]: Yaml }
 
-function asMap(v: Yaml | undefined): Row {
+export function asMap(v: Yaml | undefined): Row {
   return v !== null && typeof v === 'object' && !Array.isArray(v) ? v : {}
 }
-function asRows(v: Yaml | undefined): Row[] {
+export function asRows(v: Yaml | undefined): Row[] {
   return Array.isArray(v) ? v.map(asMap) : []
 }
-function num(v: Yaml | undefined): number | undefined {
+export function num(v: Yaml | undefined): number | undefined {
   return typeof v === 'number' ? v : undefined
 }
-function str(v: Yaml | undefined): string {
+export function str(v: Yaml | undefined): string {
   return v === null || v === undefined ? '' : typeof v === 'object' ? JSON.stringify(v) : String(v)
 }
 

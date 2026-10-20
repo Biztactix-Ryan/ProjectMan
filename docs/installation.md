@@ -189,6 +189,12 @@ still missing, start a new session.
 - **Status block:** start a session in a directory that has a `.project/`. The session
   opens with a `## ProjectMan context (<path>/.project)` block. The hook prints nothing
   in directories without a `.project/`, and no plugin skill or MCP tool creates one.
+- **Sprint band:** in the terminal and the desktop app, a dim line above the prompt shows
+  the active sprint's points, the task in progress and the first line of the NEXT.md
+  note, for example `Sprint 20 — 11/19 pts · ▶ US-PM-62-6 Draw the sprint band · next:
+  Close EPIC-PM-7`. The plugin reads it from its MCP server when the band is first drawn
+  and again after each turn, so it costs no model tokens. A part with nothing to show is
+  left out, and in a directory without a `.project/` the band shows nothing.
 
 Creating a store needs the `projectman init` CLI. If you installed the CLI, run
 `projectman init` in the project. On a plugin-only machine, run the copy that ships
