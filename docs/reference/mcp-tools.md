@@ -605,11 +605,12 @@ Record an open decision with the next free number, and log a `create` event.
 - **raised_by** (optional): Who asked — an agent or a human
 - **Returns**: `created:` with `id`, `title`, `status`, `priority`, and whichever of `blocks`, `raised_by`, `raised_from`, `recommendation` and `option_labels` are set
 
-### pm_list_decisions(status?, blocks?, limit?, offset?)
+### pm_list_decisions(status?, blocks?, limit?, offset?, order?)
 List decisions in number order, each with the points of work it is holding up.
 - **status** (optional): Filter by `open`, `answered` or `withdrawn`; anything else is an `invalid` error
 - **blocks** (optional): Only decisions whose `blocks` list names one of these IDs — a list or a comma-separated string ([both shapes](#token-list-parameters)). Matches the named ID itself: a decision blocking a story is not returned for one of that story's tasks.
-- **limit** / **offset** (optional, default `50` / `0`): Pagination
+- **limit** / **offset** (optional, default `50` / `0`; `limit` defaults to `7` with `order="session"`): Pagination
+- **order** (optional): `"session"` ranks the **open** decisions for a decision session (US-PM-65-8); any other value is an `invalid` error, and so is `status` other than `open` with it. Tiers, best first: `active` — the decision reaches a story planned in an active sprint; `planning` — one planned in a planning-status sprint; `other` — the rest. The stories a decision reaches are the story of each open task it names, each story it names, and each story of each epic it names. Within a tier: `blocked_points` descending (the same rollup as below — a story is its open tasks, an epic the open tasks under its stories), then oldest `created` first, then decision number. The page stops at `limit` (default `7`, the session's batch size). Each row adds `tier` and `blocked` — `{id, title}` per entry of its `blocks` list (`title` is `null` if the item cannot be read) — so the session needs no follow-up `pm_get`.
 - **Returns**: `decisions` (frontmatter, without the body, plus `blocked_points`), `count` on this page, `total` matching the filters, `offset` and `has_more`. `blocked_points` sums the points of the **open** tasks (neither `done` nor archived) the decision blocks — named directly, every task of a named story, every task under every story of a named epic — counting each task once; an unestimated task counts zero.
 
 ### pm_answer_decision(id, answer?, rationale?, withdraw?, reason?, overwrite?)

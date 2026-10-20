@@ -364,6 +364,146 @@ class TestBlockedPoints:
         assert [d["blocked_points"] for d in _list()["decisions"]] == [0, 0]
 
 
+# ─── pm_list_decisions(order="session") (US-PM-65-8) ─────────────
+#
+# Story US-PM-65 criterion: "The session orders open decisions by blocked
+# points with active and next sprint work first and stops after the batch
+# size".
+
+
+def _sprint(store, name, stories, status):
+    sprint = store.create_sprint(name=name, planned_stories=stories)
+    if status != "planning":
+        store.update_sprint(sprint.id, status=status)
+    return sprint.id
+
+
+def _set_created(store, decision_id, iso):
+    """Back-date a decision in the tmp store; ``created`` is immutable via the API."""
+    import frontmatter
+
+    path = store.project_dir / "decisions" / f"{decision_id}.md"
+    assert path.exists()  # server_store already pinned project_dir to tmp_path
+    post = frontmatter.load(str(path))
+    post.metadata["created"] = iso
+    path.write_text(frontmatter.dumps(post))
+
+
+def _session(**kwargs):
+    return _list(order="session", **kwargs)
+
+
+class TestSessionOrder:
+    def test_active_sprint_then_planning_then_rest(self, server_store):
+        active, _ = _story_with_tasks(server_store, "Active", [(1, "todo")])
+        planned, _ = _story_with_tasks(server_store, "Planned", [(5, "todo")])
+        rest, _ = _story_with_tasks(server_store, "Rest", [(13, "todo")])
+        _sprint(server_store, "Now", [active], "active")
+        _sprint(server_store, "Next", [planned], "planning")
+        _sprint(server_store, "Old", [rest], "completed")
+        _create(title="Rest?", blocks=rest)  # DEC-TST-1, most points
+        _create(title="Planned?", blocks=planned)  # DEC-TST-2
+        _create(title="Active?", blocks=active)  # DEC-TST-3, fewest points
+
+        rows = _session()["decisions"]
+        assert [d["id"] for d in rows] == ["DEC-TST-3", "DEC-TST-2", "DEC-TST-1"]
+        assert [d["tier"] for d in rows] == ["active", "planning", "other"]
+        assert [d["blocked_points"] for d in rows] == [1, 5, 13]
+
+    def test_tier_reaches_through_tasks_and_epics(self, server_store):
+        epic = server_store.create_epic("E", "Epic description").id
+        in_epic, _ = _story_with_tasks(server_store, "S1", [(2, "todo")], epic_id=epic)
+        other, tasks = _story_with_tasks(server_store, "S2", [(3, "todo"), (8, "done")])
+        _sprint(server_store, "Now", [in_epic, other], "active")
+        _create(title="Unplanned?")  # DEC-TST-1: blocks nothing
+        _create(title="Done task?", blocks=tasks[1])  # DEC-TST-2: no open work
+        _create(title="Epic?", blocks=epic)  # DEC-TST-3
+        _create(title="Task?", blocks=tasks[0])  # DEC-TST-4
+
+        rows = _session()["decisions"]
+        assert [(d["id"], d["tier"]) for d in rows] == [
+            ("DEC-TST-4", "active"),
+            ("DEC-TST-3", "active"),
+            ("DEC-TST-1", "other"),
+            ("DEC-TST-2", "other"),
+        ]
+
+    def test_points_descending_within_a_tier(self, server_store):
+        stories = []
+        for title, points in (("Two", 2), ("Eight", 8), ("Five", 5)):
+            story, _ = _story_with_tasks(server_store, title, [(points, "todo")])
+            stories.append(story)
+            _create(title=f"{title}?", blocks=story)
+        _sprint(server_store, "Now", stories, "active")
+
+        rows = _session()["decisions"]
+        assert [d["blocked_points"] for d in rows] == [8, 5, 2]
+        assert [d["id"] for d in rows] == ["DEC-TST-2", "DEC-TST-3", "DEC-TST-1"]
+
+    def test_oldest_first_breaks_a_points_tie(self, server_store):
+        story, _ = _story_with_tasks(server_store, "S", [(3, "todo")])
+        for i in range(4):
+            _create(title=f"Q{i + 1}?", blocks=story)
+        _set_created(server_store, "DEC-TST-1", "2026-03-03")
+        _set_created(server_store, "DEC-TST-2", "2026-01-01")
+        _set_created(server_store, "DEC-TST-3", "2026-02-02")
+        _set_created(server_store, "DEC-TST-4", "2026-02-02")
+
+        assert [d["id"] for d in _session()["decisions"]] == [
+            "DEC-TST-2",
+            "DEC-TST-3",  # same day as DEC-TST-4: number order
+            "DEC-TST-4",
+            "DEC-TST-1",
+        ]
+
+    def test_stops_after_the_batch_size(self, server_store):
+        for i in range(10):
+            _create(title=f"Q{i + 1}?")
+
+        batch = _session()
+        assert (batch["count"], batch["total"], batch["has_more"]) == (7, 10, True)
+        assert [d["id"] for d in batch["decisions"]] == [
+            f"DEC-TST-{n}" for n in range(1, 8)
+        ]
+        assert _session(limit=3)["count"] == 3
+        assert [d["id"] for d in _session(offset=7)["decisions"]] == [
+            "DEC-TST-8",
+            "DEC-TST-9",
+            "DEC-TST-10",
+        ]
+        # The default listing keeps its own page size of 50.
+        assert _list()["count"] == 10
+
+    def test_answered_and_withdrawn_are_excluded(self, server_store):
+        _create(title="Open?")
+        _create(title="Answered?")
+        _create(title="Withdrawn?")
+        server_store.update_decision("DEC-TST-2", status="answered", answer="yes")
+        server_store.update_decision("DEC-TST-3", status="withdrawn")
+
+        data = _session()
+        assert [d["id"] for d in data["decisions"]] == ["DEC-TST-1"]
+        assert data["total"] == 1
+        assert _session(status="open")["total"] == 1
+        with pytest.raises(ToolError, match=r"open decisions only.*\[code: invalid\]"):
+            _session(status="answered")
+
+    def test_rows_carry_blocked_ids_and_titles(self, server_store):
+        story, tasks = _story_with_tasks(server_store, "Login", [(3, "todo")])
+        _create(title="Q?", blocks=[story, tasks[0]])
+
+        row = _session()["decisions"][0]
+        assert row["blocked"] == [
+            {"id": story, "title": "Login"},
+            {"id": tasks[0], "title": "Login task 1"},
+        ]
+        assert "blocked" not in _list()["decisions"][0]
+
+    def test_unknown_order_is_invalid(self, server_store):
+        with pytest.raises(ToolError, match=r"Unknown order.*\[code: invalid\]"):
+            _list(order="points")
+
+
 # ─── pm_update on a decision (AC 5) ──────────────────────────────
 
 

@@ -179,9 +179,11 @@ POST_SUBTRACTION_BASELINE_BYTES = 88441
 #: call covers `pm_park`'s `decision` argument (US-PM-64-9), +387 bytes on
 #: re-measure.  US-PM-65-7 adds `pm_answer_decision` to the default surface
 #: (+1,751 bytes on re-measure): the pm-decide skill calls it, so gating it
-#: would break that skill on a default install.  Re-measure with
+#: would break that skill on a default install.  US-PM-65-8 adds
+#: `pm_list_decisions`'s `order` argument (the decision session's ranking),
+#: +301 bytes on re-measure.  Re-measure with
 #: `python -m tools.usage_telemetry.tool_list_size` before moving it again.
-DEFAULT_PAYLOAD_CEILING_BYTES = 95400
+DEFAULT_PAYLOAD_CEILING_BYTES = 95701
 
 #: Floor on the share of the all-families payload the gate saves, in percent.
 #: See `test_the_drop_is_measurable_not_marginal` for how it got here.

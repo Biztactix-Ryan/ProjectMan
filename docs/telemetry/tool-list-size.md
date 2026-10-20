@@ -6,7 +6,7 @@ US-PM-15 gates three tool families behind config flags. This file is the
 assumption.
 
 - Measured: **2026-10-20**
-- Commit basis: **2461134b132ca07547017bae4e89375a699c79a1 (working tree dirty)**
+- Commit basis: **ab27c8f4493574d455724139aec94514e9625db2 (working tree dirty)**
 - Command: `python -m tools.usage_telemetry.tool_list_size --markdown` (run from the repo root)
 - Serialisation: `mcp.types.ListToolsResult.model_dump_json(by_alias=True, exclude_none=True)` — exactly what the MCP
   session writes as the `result` of a `tools/list` request, so this moves if
@@ -16,9 +16,9 @@ assumption.
 
 | configuration | tools | `tools/list` bytes |
 | --- | ---: | ---: |
-| all families enabled | 50 | 99,313 |
-| default (`maintenance`, `web` all off) | 45 | 95,400 |
-| **saved** | **5** | **3,913 (3.94%)** |
+| all families enabled | 50 | 99,614 |
+| default (`maintenance`, `web` all off) | 45 | 95,701 |
+| **saved** | **5** | **3,913 (3.93%)** |
 
 ## Per family
 
@@ -42,12 +42,12 @@ commit the regenerated file.
 ```json
 {
   "all_families": {
-    "bytes": 99313,
+    "bytes": 99614,
     "tools": 50
   },
   "command": "python -m tools.usage_telemetry.tool_list_size --markdown",
   "default": {
-    "bytes": 95400,
+    "bytes": 95701,
     "tools": 45
   },
   "families": {
@@ -64,7 +64,7 @@ commit the regenerated file.
   },
   "reduction": {
     "bytes": 3913,
-    "pct": 3.94,
+    "pct": 3.93,
     "tools": 5
   },
   "schema": "projectman.tool-list-size/1",

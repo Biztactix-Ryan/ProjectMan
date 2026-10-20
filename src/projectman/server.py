@@ -4799,6 +4799,72 @@ def _blocked_points_counter(store: Store):
     return blocked_points
 
 
+#: Tier names for ``pm_list_decisions(order="session")``, best first.
+_SESSION_TIERS = ("active", "planning", "other")
+
+#: Default batch size of a session's decision walk (US-PM-65-8).
+_SESSION_LIMIT = 7
+
+
+def _session_order(
+    store: Store, decisions: list[DecisionFrontmatter], blocked_points
+) -> list[tuple[DecisionFrontmatter, str, int]]:
+    """Rank open decisions for a session: ``(decision, tier, points)`` rows.
+
+    A decision's tier is the best sprint its blocked work sits in: ``active``
+    if any story it reaches is planned in an active sprint, else ``planning``
+    if one is planned in a planning-status sprint, else ``other``.  The
+    stories a decision reaches are the story of each open task it names, each
+    story it names, and each story of each epic it names.  Within a tier:
+    blocked points descending (the ``blocked_points`` rollup — story = its
+    open tasks, epic = open tasks under its stories), then oldest ``created``
+    first, then decision number.
+    """
+    tier_of_story: dict[str, int] = {}
+    for rank, status in ((1, "planning"), (0, "active")):
+        for sprint in store.list_sprints(status=status):
+            for story_id in sprint.planned_stories:
+                tier_of_story[story_id] = rank
+    story_of_open_task = {
+        t.id: t.story_id
+        for t in store.list_tasks(archived=False)
+        if t.status != TaskStatus.done
+    }
+    stories_by_epic: dict[str, list[str]] = {}
+    for story in store.list_stories():
+        if story.epic_id:
+            stories_by_epic.setdefault(story.epic_id, []).append(story.id)
+
+    def tier(blocks: list[str]) -> int:
+        reached: set[str] = set()
+        for item_id in blocks:
+            if EPIC_ID.match(item_id):
+                reached.update(stories_by_epic.get(item_id, []))
+            elif TASK_ID.match(item_id):
+                if item_id in story_of_open_task:
+                    reached.add(story_of_open_task[item_id])
+            else:
+                reached.add(item_id)
+        return min((tier_of_story.get(s, 2) for s in reached), default=2)
+
+    rows = [(d, tier(d.blocks), blocked_points(d.blocks)) for d in decisions]
+    rows.sort(key=lambda r: (r[1], -r[2], r[0].created, _decision_number(r[0].id)))
+    return [(d, _SESSION_TIERS[t], p) for d, t, p in rows]
+
+
+def _blocked_titles(store: Store, blocks: list[str]) -> list[dict]:
+    """``{id, title}`` per blocked item; title ``None`` if it cannot be read."""
+    rows = []
+    for item_id in blocks:
+        try:
+            meta, _ = store.get(item_id)
+            title = meta.title
+        except Exception:
+            title = None
+        rows.append({"id": item_id, "title": title})
+    return rows
+
+
 @mcp.tool(
     title="Create Decision",
     annotations=ToolAnnotations(
@@ -4868,8 +4934,9 @@ def pm_create_decision(
 def pm_list_decisions(
     status: Optional[str] = None,
     blocks: Optional[Union[str, list[str]]] = None,
-    limit: int = 50,
+    limit: Optional[int] = None,
     offset: int = 0,
+    order: Optional[str] = None,
 ) -> str:
     """List decisions with the points of work each one is holding up.
 
@@ -4880,8 +4947,9 @@ def pm_list_decisions(
     Args:
         status: Optional filter: open, answered, withdrawn
         blocks: Only decisions whose `blocks` names one of these IDs exactly — a list (["US-PRJ-1", "EPIC-PRJ-2"]) or a comma-separated string ("US-PRJ-1,EPIC-PRJ-2"); both mean the same thing.
-        limit: Max decisions per page (default 50)
+        limit: Max decisions per page (default 50; 7 with order=session)
         offset: Starting index for pagination (default 0)
+        order: "session": open only; active-sprint work, then planning, then rest; each by blocked_points desc, oldest first. Rows add tier, blocked {id, title}
 
     Response: `decisions` (frontmatter + `blocked_points`, no body — use
     `pm_get`), `count`, `total`, `offset`, `has_more`.
@@ -4891,18 +4959,35 @@ def pm_list_decisions(
         wanted = _as_list(blocks) or []
         for item_id in wanted:
             _prefix_of(item_id)  # a malformed filter ID is an error, not a miss
+        session = order is not None
+        if session and order != "session":
+            raise ValidationError(f"Unknown order {order!r}; expected 'session'")
+        if session and status not in (None, DecisionStatus.open.value):
+            raise ValidationError("order='session' lists open decisions only")
+        if limit is None:
+            limit = _SESSION_LIMIT if session else 50
+        if session:
+            status = DecisionStatus.open.value
         decisions = sorted(
             store.list_decisions(status=status), key=lambda d: _decision_number(d.id)
         )
         if wanted:
             decisions = [d for d in decisions if set(d.blocks) & set(wanted)]
         total = len(decisions)
-        page = decisions[offset : offset + limit]
-        blocked_points = _blocked_points_counter(store) if page else None
+        blocked_points = _blocked_points_counter(store) if decisions else None
+        if session:
+            ranked = _session_order(store, decisions, blocked_points)
+        else:
+            ranked = [(d, None, None) for d in decisions]
         listed = []
-        for decision in page:
+        for decision, tier, points in ranked[offset : offset + limit]:
             entry = decision.model_dump(mode="json")
-            entry["blocked_points"] = blocked_points(decision.blocks)
+            if session:
+                entry["blocked_points"] = points
+                entry["tier"] = tier
+                entry["blocked"] = _blocked_titles(store, decision.blocks)
+            else:
+                entry["blocked_points"] = blocked_points(decision.blocks)
             listed.append(entry)
         return _yaml_dump(
             {
