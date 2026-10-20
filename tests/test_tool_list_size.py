@@ -175,9 +175,11 @@ POST_SUBTRACTION_BASELINE_BYTES = 88441
 #: back out of the document it bounds.  Raised from the post-subtraction
 #: baseline above on 2026-10-20 (human call, US-PM-63-9): the decision tools
 #: (`pm_create_decision`, `pm_list_decisions`) join the default surface because
-#: workers park with a decision (US-PM-64), so they are not gated.  Re-measure
-#: with `python -m tools.usage_telemetry.tool_list_size` before moving it again.
-DEFAULT_PAYLOAD_CEILING_BYTES = 93262
+#: workers park with a decision (US-PM-64), so they are not gated.  The same
+#: call covers `pm_park`'s `decision` argument (US-PM-64-9), +387 bytes on
+#: re-measure.  Re-measure with `python -m tools.usage_telemetry.tool_list_size`
+#: before moving it again.
+DEFAULT_PAYLOAD_CEILING_BYTES = 93649
 
 
 def test_no_tool_advertises_a_project_parameter():

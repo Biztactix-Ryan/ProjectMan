@@ -3086,12 +3086,17 @@ class Store:
         raised_from: Optional[str] = None,
         options: Optional[list] = None,
         recommendation: Optional[str] = None,
+        *,
+        dry_run: bool = False,
     ) -> DecisionFrontmatter:
         """Create an open decision at ``decisions/DEC-<PREFIX>-N.md``.
 
         *context* becomes the markdown body.  Every *blocks* entry must be an
         existing task, story or epic; the refusal happens before an ID is
-        allocated or anything is written.
+        allocated or anything is written.  ``dry_run=True`` runs every check
+        and returns the would-be frontmatter (placeholder ID) without
+        allocating or writing anything — ``pm_park`` validates its decision
+        this way before it parks the task (US-PM-64-9).
         """
         today = date.today()
         data = {
@@ -3109,8 +3114,10 @@ class Store:
         }
         # Validate everything before allocating, so a refused create never
         # burns a number.
-        self._build_decision(data)
+        placeholder = self._build_decision(data)
         self._validate_decision_blocks(data["blocks"])
+        if dry_run:
+            return placeholder
 
         self.decisions_dir.mkdir(parents=True, exist_ok=True)
         decision_id = self._next_decision_id()

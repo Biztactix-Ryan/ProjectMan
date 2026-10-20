@@ -3717,6 +3717,7 @@ def pm_park(
     task_id: Optional[str] = None,
     note: str = ...,
     id: Optional[str] = None,
+    decision: Optional[dict] = None,
     evidence: Optional[Evidence] = None,
 ) -> str:
     """Park a task — it is blocked on something a human has to resolve.
@@ -3735,10 +3736,12 @@ def pm_park(
         task_id: Task ID to park (e.g. US-PRJ-1-1) (alias: id)
         note: Run-log note saying what it is blocked on. Required — a blank note is an error. Longer notes are truncated server-side, never rejected.
         id: Alias for task_id — either spelling works; passing both with different values is an error
+        decision: {title, context, options, recommendation} as in pm_create_decision — also raises a decision blocking this task, raised_by its prior assignee, raised_from it. A bad payload is an error; nothing is written.
         evidence: Structured proof for the run-log entry — an object with `files` (paths changed), `tests` (objects with `command`, `passed`, optional `summary`), `dod_met` and `dod_unmet` (criteria). Put lists here, never in the note; the note stays a one-line summary (recommended <= 200 chars). Bounded and clamped, never rejected: files <= 40, tests <= 10, each DoD list <= 20, each string <= 160 chars; when a clamp fires the response carries `evidence_clamped` and `evidence_dropped`.
 
     Response: `parked:` with the full `task`, `from_status` and
-    `from_assignee` — the status and holder before the call. When — and only
+    `from_assignee` — the status and holder before the call; with
+    `decision`, also `decision_id`. When — and only
     when — the note had to be truncated, the response additionally carries
     `note_truncated: true`, `note_original_length`, `note_stored_length`,
     `note_dropped_chars` and `note_limit`, exactly as pm_update does.
@@ -3746,11 +3749,69 @@ def pm_park(
     try:
         task_id = _resolve_id("task_id", task_id, id=id)
         store = _store_for_id(task_id)
-        return _yaml_dump(
-            _do_verdict(store, "pm_park", task_id, note, evidence=evidence)
-        )
+        if decision is None:
+            return _yaml_dump(
+                _do_verdict(store, "pm_park", task_id, note, evidence=evidence)
+            )
+        # Every check before any write (US-PM-64-9): a refused decision
+        # leaves the task unparked, and a refused park leaves no decision.
+        _verdict_target("pm_park", store, task_id)
+        _require_note("pm_park", note)
+        current, _ = store.get_task(task_id)
+        fields = _park_decision_fields(decision, task_id, current.assignee)
+        store.create_decision(**fields, dry_run=True)
+        result = _do_verdict(store, "pm_park", task_id, note, evidence=evidence)
+        meta = store.create_decision(**fields)
+        _emit("project.updated", {"summary": f"Decision {meta.id} created"})
+        result["decision_id"] = meta.id
+        return _yaml_dump(result)
     except Exception as e:
         raise _failed(e) from e
+
+
+#: The keys `pm_park(decision=...)` accepts; the rest are fixed by the park.
+_PARK_DECISION_KEYS = ("title", "context", "options", "recommendation")
+
+
+def _park_decision_fields(
+    decision: object, task_id: str, raised_by: Optional[str]
+) -> dict:
+    """`pm_park`'s ``decision`` argument as ``Store.create_decision`` kwargs.
+
+    The caller supplies only the question; ``blocks`` (the parked task),
+    ``raised_from`` (the same task) and ``raised_by`` (its assignee before the
+    park) are the park's to set, so naming any of them — or any other key —
+    is refused, as is a missing or blank title.
+    """
+    if not isinstance(decision, dict):
+        raise ValidationError(
+            "pm_park decision must be an object with "
+            f"{', '.join(_PARK_DECISION_KEYS)}"
+        )
+    unknown = sorted(set(decision) - set(_PARK_DECISION_KEYS))
+    if unknown:
+        raise ValidationError(
+            f"pm_park decision does not take {', '.join(unknown)}; "
+            f"valid keys: {', '.join(_PARK_DECISION_KEYS)}"
+        )
+    title = decision.get("title")
+    if not isinstance(title, str) or not title.strip():
+        raise ValidationError("pm_park decision needs a non-blank title")
+    context = decision.get("context") or ""
+    if not isinstance(context, str):
+        raise ValidationError("pm_park decision context must be a string")
+    options = decision.get("options")
+    if options is not None and not isinstance(options, list):
+        raise ValidationError("pm_park decision options must be a list")
+    return {
+        "title": title,
+        "context": context,
+        "options": _decision_options(options),
+        "recommendation": decision.get("recommendation"),
+        "blocks": [task_id],
+        "raised_by": raised_by,
+        "raised_from": task_id,
+    }
 
 
 @mcp.tool(

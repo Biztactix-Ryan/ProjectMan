@@ -523,13 +523,14 @@ Retry a task — the attempt failed, hand it back to the pool for another go.
 - Always writes `status: todo` + `outcome: failed`, and clears the assignee
 - **Returns**: `retried:` with the full `task`, `from_status` and `from_assignee`, plus the `note_truncated` fields (see `pm_update`) when the note had to be truncated
 
-### pm_park(task_id, note, evidence?)
+### pm_park(task_id, note, decision?, evidence?)
 Park a task — it is blocked on something a human has to resolve.
 - **task_id**: Task ID to park (alias: `id`). Tasks only.
 - **note** (**required**): Run-log note saying what it is blocked on — the whole handover to whoever unblocks it
+- **decision** (optional): `{title, context?, options?, recommendation?}` — the same fields `pm_create_decision` takes. The same call also raises an open decision with `blocks: [<task_id>]`, `raised_from: <task_id>` and `raised_by` set to the task's assignee before the park; those three (and any other key) cannot be supplied. The decision's readiness gate then holds the task: `pm_grab` refuses it naming the decision, and `pm_board` lists it under `blocked`. A bad payload (missing or blank title, unknown key, malformed option, unknown recommendation) is an `invalid` error and **nothing** is written — the task is not parked and no decision file appears; a refused park (blank note, non-task id) likewise leaves no decision.
 - **evidence** (optional): Structured proof for the run-log entry — an object with `files` (paths changed), `tests` (`{command, passed, summary?}` objects), `dod_met` and `dod_unmet`. **Lists go here, never in the note**; the note stays a one-line human summary. See [Structured evidence](#structured-evidence) below.
 - Always writes `status: review` + `outcome: blocked`, and clears the assignee so it does not sit stale
-- **Returns**: `parked:` with the full `task`, `from_status` and `from_assignee`, plus the `note_truncated` fields (see `pm_update`) when the note had to be truncated
+- **Returns**: `parked:` with the full `task`, `from_status` and `from_assignee`, plus the `note_truncated` fields (see `pm_update`) when the note had to be truncated. With `decision`, also `decision_id` (e.g. `DEC-PRJ-3`) next to `parked`; without it the response is exactly as before.
 
 ### pm_review(task_id, note, evidence?)
 Send a task to review — the work partly landed and a human should look. The
