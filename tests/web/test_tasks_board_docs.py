@@ -1,5 +1,7 @@
 """Tests for tasks CRUD, board, docs, and error cases."""
 
+import pytest
+
 
 def _create_story(client, title="Test Story", status="active"):
     """Helper: create and activate a story, return its ID."""
@@ -271,6 +273,74 @@ def test_board_lists_a_decision_held_task_under_blocked(client, tmp_project):
     data = client.get("/api/board").json()
     assert sorted(row["id"] for row in data["board"]["available"]) == sorted(ids)
     assert data["summary"]["blocked"] == 0
+
+
+def _decision_tree(client, tmp_project):
+    """Guarded tmp store with EPIC > active story > two ready 1-point tasks."""
+    from projectman.web.app import app
+
+    store = app.state.store
+    # Guard before any write: the store must be the tmp one.
+    assert str(store.root).startswith(str(tmp_project))
+    body = (
+        "## Implementation\n\nDo the thing properly and completely.\n\n"
+        "## Testing\n\nTest the thing properly.\n"
+    )
+    epic = store.create_epic("Epic", "Epic description")
+    story_id = _create_story(client, status="active")
+    store.update(story_id, epic_id=epic.id)
+    ids = [
+        client.post(
+            "/api/tasks",
+            json={"story_id": story_id, "title": t, "description": body, "points": 1},
+        ).json()["id"]
+        for t in ("Held", "Free")
+    ]
+    return store, epic.id, story_id, ids
+
+
+@pytest.mark.parametrize("level", ["task", "story", "epic"])
+def test_us_pm_64_criterion_web_board_lists_decision_blocked_task(
+    client, tmp_project, level
+):
+    """US-PM-64 criterion: the web board lists decision-blocked tasks under
+    blocked with the decision id and title rather than as available, whether the
+    decision blocks the task, its story or its epic; the summary follows."""
+    store, epic_id, story_id, ids = _decision_tree(client, tmp_project)
+    target = {"task": ids[0], "story": story_id, "epic": epic_id}[level]
+    held = [ids[0]] if level == "task" else ids
+    free = [t for t in ids if t not in held]
+
+    decision = store.create_decision("Which database?", blocks=[target])
+    data = client.get("/api/board").json()
+
+    assert [row["id"] for row in data["board"]["blocked"]] == held
+    for row in data["board"]["blocked"]:
+        assert row["decisions"] == [{"id": decision.id, "title": "Which database?"}]
+    assert [row["id"] for row in data["board"]["available"]] == free
+    assert data["board"]["not_ready"] == []
+    assert data["summary"]["blocked"] == len(held)
+    assert data["summary"]["available"] == len(free)
+    assert data["summary"]["not_ready"] == 0
+
+
+def test_us_pm_64_criterion_web_board_lists_both_open_decisions(client, tmp_project):
+    """US-PM-64 criterion: a task held by two open decisions lists both on the
+    web board, matching pm_board."""
+    store, _, story_id, ids = _decision_tree(client, tmp_project)
+    first = store.create_decision("On the task?", blocks=[ids[0]])
+    second = store.create_decision("On the story?", blocks=[story_id])
+
+    data = client.get("/api/board").json()
+    rows = {row["id"]: row for row in data["board"]["blocked"]}
+
+    assert rows[ids[0]]["decisions"] == [
+        {"id": first.id, "title": "On the task?"},
+        {"id": second.id, "title": "On the story?"},
+    ]
+    assert rows[ids[1]]["decisions"] == [{"id": second.id, "title": "On the story?"}]
+    assert data["board"]["available"] == []
+    assert data["summary"]["blocked"] == 2
 
 
 def test_burndown_returns_points(client):

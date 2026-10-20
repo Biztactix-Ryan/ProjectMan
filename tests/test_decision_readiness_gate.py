@@ -534,3 +534,93 @@ def test_us_pm_64_criterion_a_second_open_decision_still_blocks(
     tree.update_decision("DEC-TST-2", status="withdrawn")
 
     assert _grab_as_run("US-TST-1-1")["grabbed"]["task"]["id"] == "US-TST-1-1"
+
+
+# ─── US-PM-64 criterion: the board lists decision-blocked tasks (US-PM-64-2) ───
+
+
+@_TARGETS
+def test_us_pm_64_criterion_board_lists_decision_blocked_task_under_blocked(
+    tree, target
+):
+    """US-PM-64 criterion: the board lists decision-blocked tasks under blocked
+    with the decision id and title rather than as available — whether the open
+    decision blocks the task, its story or its epic — and the summary counts
+    follow the rows."""
+    baseline = _board()
+    assert _ids(baseline["board"]["available"]) == ["US-TST-1-1", "US-TST-1-2"]
+    assert baseline["summary"]["blocked"] == 0
+
+    tree.create_decision("Which database?", blocks=[target])
+
+    data = _board()
+    board = data["board"]
+    held = ["US-TST-1-1"] if target == "US-TST-1-1" else ["US-TST-1-1", "US-TST-1-2"]
+    free = [t for t in ("US-TST-1-1", "US-TST-1-2") if t not in held]
+
+    assert _ids(board["blocked"]) == held
+    for row in board["blocked"]:
+        assert row["decisions"] == [{"id": "DEC-TST-1", "title": "Which database?"}]
+    assert _ids(board["available"]) == free
+    assert not set(held) & set(_ids(board["not_ready"]))
+    assert data["summary"] == {
+        **baseline["summary"],
+        "available": len(free),
+        "not_ready": 0,
+        "blocked": len(held),
+    }
+
+
+def test_us_pm_64_criterion_board_lists_both_open_decisions(tree):
+    """US-PM-64 criterion: a task held by two open decisions lists both, each
+    with its id and title; a resolved decision on the same task is not listed."""
+    tree.create_decision("On the task?", blocks=["US-TST-1-1"])
+    tree.create_decision("On the story?", blocks=["US-TST-1"])
+    tree.create_decision("Already settled?", blocks=["US-TST-1-1"])
+    tree.update_decision("DEC-TST-3", status="answered", answer="Yes")
+
+    data = _board()
+    rows = {row["id"]: row for row in data["board"]["blocked"]}
+
+    assert rows["US-TST-1-1"]["decisions"] == [
+        {"id": "DEC-TST-1", "title": "On the task?"},
+        {"id": "DEC-TST-2", "title": "On the story?"},
+    ]
+    assert rows["US-TST-1-2"]["decisions"] == [
+        {"id": "DEC-TST-2", "title": "On the story?"}
+    ]
+    assert data["board"]["available"] == []
+    assert data["summary"]["blocked"] == 2
+
+
+def test_us_pm_64_criterion_board_brief_and_fields_on_decision_rows(tree):
+    """US-PM-64 criterion: brief keeps a decision-blocked task under blocked but
+    drops `decisions` (it is not in BRIEF_BOARD_FIELDS); `fields="decisions"`
+    returns them; the counts are the same in every projection."""
+    from projectman.server import BRIEF_BOARD_FIELDS
+
+    assert "decisions" not in BRIEF_BOARD_FIELDS
+    tree.create_decision("Which database?", blocks=["US-TST-1-1"])
+    full = _board()
+
+    brief = _board(brief=True)
+    assert _ids(brief["board"]["blocked"]) == ["US-TST-1-1"]
+    assert "decisions" not in brief["board"]["blocked"][0]
+    assert _ids(brief["board"]["available"]) == ["US-TST-1-2"]
+    assert brief["summary"] == full["summary"]
+
+    projected = _board(fields="title,decisions")
+    assert projected["board"]["blocked"] == [
+        {
+            "id": "US-TST-1-1",
+            "title": "Task one",
+            "decisions": [{"id": "DEC-TST-1", "title": "Which database?"}],
+        }
+    ]
+    assert projected["summary"] == full["summary"]
+
+    # fields wins over brief, so naming decisions brings them back.
+    both = _board(brief=True, fields="decisions")
+    assert both["board"]["blocked"][0]["decisions"] == [
+        {"id": "DEC-TST-1", "title": "Which database?"}
+    ]

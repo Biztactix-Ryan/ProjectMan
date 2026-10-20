@@ -671,7 +671,10 @@ BOARD_ROW_FIELDS = (
 #: state, size, wiring and the claim metadata an orchestrator restarts on.
 #: The dropped keys are exactly the free text — the ``story`` label, the
 #: readiness ``blockers`` and the suitability ``hints`` — which is where the
-#: bytes are on a board of any size.  ``status`` and ``depends_on`` are named
+#: bytes are on a board of any size.  The ``decisions`` list on a
+#: decision-held ``blocked`` row (US-PM-64) is dropped too: the row stays
+#: under ``blocked``, and ``fields="decisions"`` brings the list back.
+#: ``status`` and ``depends_on`` are named
 #: because a row that carries them must keep them; like every ``_brief_item``
 #: preset this is intersected with the row, never demanded of it.
 BRIEF_BOARD_FIELDS = (
@@ -1457,7 +1460,7 @@ def pm_board(
         tag: Filter to show only tasks (or their parent stories) with this tag
         limit: Max items per board group (default 10). Totals are always shown.
         lane_compatible_with: Id of a task in flight in another lane. Keeps in `available` only the tasks safe to run beside it: a different story, no depends_on between the two tasks or on each other's story, and their stories unconnected by depends_on either way. Adds `lane_excluded: <n>`, the ready tasks hidden. An unknown id is an error.
-        brief: Drop the free text from every row (default false). Keeps whichever of id, title, status, assignee, points, depends_on, claimed_by_run, claim_age and stale the row has, and omits the story label, the blockers and the hints. Use it to scan the board: pm_board(brief=True).
+        brief: Drop the free text from every row (default false). Keeps whichever of id, title, status, assignee, points, depends_on, claimed_by_run, claim_age and stale the row has, and omits the story label, the blockers, the hints and the decisions (a decision-held row stays under blocked; pass fields="decisions" to see them). Use it to scan the board: pm_board(brief=True).
         fields: Comma-separated key names to return per row, e.g. "title,points" — everything else is omitted and `id` is always kept, exactly as on pm_get. Valid names are the board row keys: id, title, points, assignee, story, hints, blockers, decisions, claim_age, claimed_by_run, stale. An unknown name is an error listing the valid ones. If both are given, `fields` wins — explicit beats preset. Either way the counts, `stale_tasks` and the note stay; only the rows narrow. Omit both for the full board; the default is unchanged.
     """
     try:
