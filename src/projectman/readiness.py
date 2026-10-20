@@ -8,6 +8,39 @@ from .models import DecisionFrontmatter, StoryFrontmatter, TaskFrontmatter, Task
 from .store import Store
 
 
+def decision_blocker(decision: DecisionFrontmatter) -> str:
+    """The readiness blocker line an open decision contributes (US-PM-64)."""
+    return f"blocked by open decision {decision.id}: {decision.title}"
+
+
+def decision_hold(
+    task_meta: TaskFrontmatter,
+    blockers: list[str],
+    store: Store | None = None,
+    *,
+    decisions: Iterable[DecisionFrontmatter] | None = None,
+    stories: dict[str, StoryFrontmatter] | None = None,
+) -> tuple[list[dict], list[str]]:
+    """Split a not-ready verdict into the decisions holding it and the rest.
+
+    For the boards (US-PM-64-8): a task held by an open decision is shown
+    under ``blocked`` with the decisions as ``[{id, title}]`` rather than as
+    blocker prose.  Returns ``(decisions, other_blockers)`` -- the decisions
+    holding *task_meta* (empty when none do) and *blockers* minus the lines
+    those decisions contributed, so what remains is what would still keep
+    the task ``not_ready`` once they are answered.  Pass the same pre-loaded
+    ``decisions`` / ``stories`` as to ``check_readiness`` to avoid re-reads.
+    """
+    held = blocking_decisions(task_meta, store, decisions=decisions, stories=stories)
+    if not held:
+        return [], blockers
+    lines = {decision_blocker(d) for d in held}
+    return (
+        [{"id": d.id, "title": d.title} for d in held],
+        [b for b in blockers if b not in lines],
+    )
+
+
 def check_readiness(
     task_meta: TaskFrontmatter,
     task_body: str,
@@ -96,7 +129,7 @@ def check_readiness(
     for decision in blocking_decisions(
         task_meta, store, decisions=decisions, stories=story_lookup
     ):
-        blockers.append(f"blocked by open decision {decision.id}: {decision.title}")
+        blockers.append(decision_blocker(decision))
 
     # Soft gates (warnings only)
     #

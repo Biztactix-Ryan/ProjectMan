@@ -661,6 +661,7 @@ BOARD_ROW_FIELDS = (
     "story",
     "hints",
     "blockers",
+    "decisions",
     "claim_age",
     "claimed_by_run",
     "stale",
@@ -1411,9 +1412,9 @@ def pm_search(query: str, tag: Optional[str] = None) -> str:
 # Shipped verbatim on every pm_board call so callers can rely on it
 # being there.  Kept to one line: it is paid for in tokens per call.
 _BOARD_NOTE = (
-    "blocked = a status a human set on the task (external blocker). "
-    "not_ready = derived each build from readiness: no points, thin "
-    "description, or incomplete dependencies. Independent concepts."
+    "blocked = a status a human set, or held by an open decision (see "
+    "decisions). not_ready = derived from readiness: no points, thin "
+    "description, or incomplete dependencies."
 )
 
 
@@ -1438,8 +1439,11 @@ def pm_board(
     stale is an abandoned one — release it rather than waiting on it.
 
     `blocked` and `not_ready` are independent: `blocked` is a status a human
-    set on the task (external blocker), `not_ready` is derived each build from
-    readiness — no points, thin description, or incomplete dependencies.
+    set on the task (external blocker), or a todo task held by an open
+    decision — that row carries `decisions: [{id, title}]`, plus `blockers`
+    when something else would still hold it once they are answered.
+    `not_ready` is derived each build from readiness — no points, thin
+    description, or incomplete dependencies.
 
     The board grows a row per task, each carrying a story label and its
     readiness blockers or suitability hints. When you are scanning rather than
@@ -1454,10 +1458,10 @@ def pm_board(
         limit: Max items per board group (default 10). Totals are always shown.
         lane_compatible_with: Id of a task in flight in another lane. Keeps in `available` only the tasks safe to run beside it: a different story, no depends_on between the two tasks or on each other's story, and their stories unconnected by depends_on either way. Adds `lane_excluded: <n>`, the ready tasks hidden. An unknown id is an error.
         brief: Drop the free text from every row (default false). Keeps whichever of id, title, status, assignee, points, depends_on, claimed_by_run, claim_age and stale the row has, and omits the story label, the blockers and the hints. Use it to scan the board: pm_board(brief=True).
-        fields: Comma-separated key names to return per row, e.g. "title,points" — everything else is omitted and `id` is always kept, exactly as on pm_get. Valid names are the board row keys: id, title, points, assignee, story, hints, blockers, claim_age, claimed_by_run, stale. An unknown name is an error listing the valid ones. If both are given, `fields` wins — explicit beats preset. Either way the counts, `stale_tasks` and the note stay; only the rows narrow. Omit both for the full board; the default is unchanged.
+        fields: Comma-separated key names to return per row, e.g. "title,points" — everything else is omitted and `id` is always kept, exactly as on pm_get. Valid names are the board row keys: id, title, points, assignee, story, hints, blockers, decisions, claim_age, claimed_by_run, stale. An unknown name is an error listing the valid ones. If both are given, `fields` wins — explicit beats preset. Either way the counts, `stale_tasks` and the note stay; only the rows narrow. Omit both for the full board; the default is unchanged.
     """
     try:
-        from .readiness import check_readiness, compute_hints
+        from .readiness import check_readiness, compute_hints, decision_hold
         from .deps import topological_sort
 
         names = _field_names(fields)
@@ -1576,7 +1580,34 @@ def pm_board(
                     all_stories=all_stories,
                     decisions=open_decisions,
                 )
-                if readiness["ready"]:
+                # A task held by an open decision is blocked, not merely
+                # not ready (US-PM-64-8): naming the decision says who has
+                # to act.  Any other blockers ride along, so answering the
+                # decision does not surprise anyone with a not_ready row.
+                held, other_blockers = (
+                    decision_hold(
+                        task,
+                        readiness["blockers"],
+                        store,
+                        decisions=open_decisions,
+                        stories=story_cache,
+                    )
+                    if not readiness["ready"]
+                    else ([], [])
+                )
+                if held:
+                    row = {
+                        "id": task.id,
+                        "title": task.title,
+                        "points": task.points,
+                        "assignee": task.assignee,
+                        "story": story_label,
+                        "decisions": held,
+                    }
+                    if other_blockers:
+                        row["blockers"] = other_blockers
+                    blocked.append(row)
+                elif readiness["ready"]:
                     hints = compute_hints(task, task_body)
                     priority_order = {"must": 0, "should": 1, "could": 2, "wont": 3}
                     story_priority = priority_order.get(
@@ -1661,8 +1692,8 @@ def pm_board(
             "stale_after_hours": threshold_hours,
             "limit": limit,
             # Independent concepts, routinely confused: `blocked` is a status a
-            # human sets, `not_ready` is derived on every board build from the
-            # task's own readiness.  One short line, on every call, so callers
+            # human sets (or an open decision's hold), `not_ready` is derived
+            # on every board build from the task's own readiness.  One short line, on every call, so callers
             # can rely on it being there (US-PRJ-31-4).
             "note": _BOARD_NOTE,
         }

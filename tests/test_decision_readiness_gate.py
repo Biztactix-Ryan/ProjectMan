@@ -148,10 +148,165 @@ def test_board_agrees_with_grab(tree):
 
     available = [row["id"] for row in board["available"]]
     assert available == ["US-TST-1-2"]
-    rows = {row["id"]: row for row in board["not_ready"]}
-    assert rows["US-TST-1-1"]["blockers"] == [
-        "blocked by open decision DEC-TST-1: Which database?"
+    rows = {row["id"]: row for row in board["blocked"]}
+    assert rows["US-TST-1-1"]["decisions"] == [
+        {"id": "DEC-TST-1", "title": "Which database?"}
     ]
+
+
+# ─── Board: decision-held tasks are blocked (US-PM-64-8) ─────────
+
+
+def _board(**kwargs):
+    from projectman.server import pm_board
+
+    return yaml.safe_load(pm_board(**kwargs))
+
+
+def _ids(rows):
+    return [row["id"] for row in rows]
+
+
+@pytest.mark.parametrize("target", ["US-TST-1-1", "US-TST-1", "EPIC-TST-1"])
+def test_board_lists_a_decision_held_task_under_blocked(tree, target):
+    tree.create_decision("Which database?", blocks=[target])
+
+    data = _board()
+    board = data["board"]
+
+    held = ["US-TST-1-1"] if target == "US-TST-1-1" else ["US-TST-1-1", "US-TST-1-2"]
+    assert _ids(board["blocked"]) == held
+    for row in board["blocked"]:
+        assert row["decisions"] == [{"id": "DEC-TST-1", "title": "Which database?"}]
+        # Nothing else holds it, so there is no blocker prose to carry.
+        assert "blockers" not in row
+        assert row["title"] and row["story"].startswith("US-TST-1")
+    for group in ("available", "not_ready"):
+        assert not set(held) & set(_ids(board[group])), group
+    assert data["summary"]["blocked"] == len(held)
+    assert data["summary"]["available"] == 2 - len(held)
+    assert data["summary"]["not_ready"] == 0
+
+
+def test_board_names_every_holding_decision(tree):
+    tree.create_decision("First?", blocks=["US-TST-1-1"])
+    tree.create_decision("Second?", blocks=["EPIC-TST-1"])
+
+    rows = {row["id"]: row for row in _board()["board"]["blocked"]}
+
+    assert rows["US-TST-1-1"]["decisions"] == [
+        {"id": "DEC-TST-1", "title": "First?"},
+        {"id": "DEC-TST-2", "title": "Second?"},
+    ]
+    assert rows["US-TST-1-2"]["decisions"] == [{"id": "DEC-TST-2", "title": "Second?"}]
+
+
+def test_board_keeps_the_other_blockers_of_a_decision_held_task(tree):
+    from projectman.server import pm_create_tasks
+
+    pm_create_tasks("US-TST-1", [{"title": "Unsized", "description": BODY}])
+    tree.create_decision("Which database?", blocks=["US-TST-1-3"])
+
+    data = _board()
+    rows = {row["id"]: row for row in data["board"]["blocked"]}
+
+    assert rows["US-TST-1-3"]["decisions"] == [
+        {"id": "DEC-TST-1", "title": "Which database?"}
+    ]
+    assert rows["US-TST-1-3"]["blockers"]
+    assert not any("decision" in b for b in rows["US-TST-1-3"]["blockers"])
+    assert "US-TST-1-3" not in _ids(data["board"]["not_ready"])
+
+
+@pytest.mark.parametrize(
+    "resolution",
+    [{"status": "answered", "answer": "Postgres"}, {"status": "withdrawn"}],
+    ids=["answered", "withdrawn"],
+)
+def test_resolving_the_decision_returns_the_task_to_available(tree, resolution):
+    tree.create_decision("Which database?", blocks=["US-TST-1-1"])
+    assert _ids(_board()["board"]["blocked"]) == ["US-TST-1-1"]
+
+    tree.update_decision("DEC-TST-1", **resolution)
+
+    data = _board()
+    assert _ids(data["board"]["available"]) == ["US-TST-1-1", "US-TST-1-2"]
+    assert data["board"]["blocked"] == []
+    assert data["summary"]["available"] == 2
+    assert data["summary"]["blocked"] == 0
+
+
+def test_board_counts_human_and_decision_blocked_together(tree):
+    from projectman.server import pm_update
+
+    pm_update("US-TST-1-2", status="blocked")
+    tree.create_decision("Which database?", blocks=["US-TST-1-1"])
+
+    data = _board()
+
+    assert sorted(_ids(data["board"]["blocked"])) == ["US-TST-1-1", "US-TST-1-2"]
+    rows = {row["id"]: row for row in data["board"]["blocked"]}
+    assert "decisions" not in rows["US-TST-1-2"]
+    assert data["summary"]["blocked"] == 2
+    assert data["summary"]["available"] == 0
+
+
+def test_board_note_mentions_decision_held(tree):
+    note = _board()["note"]
+    assert "decision" in note
+    assert "not_ready" in note and "blocked" in note
+
+
+def test_board_fields_projection_reaches_decisions(tree):
+    tree.create_decision("Which database?", blocks=["US-TST-1-1"])
+
+    data = _board(fields="decisions")
+
+    assert data["board"]["blocked"] == [
+        {
+            "id": "US-TST-1-1",
+            "decisions": [{"id": "DEC-TST-1", "title": "Which database?"}],
+        }
+    ]
+    assert data["board"]["available"] == [{"id": "US-TST-1-2"}]
+    assert data["summary"] == _board()["summary"]
+
+
+def test_board_brief_keeps_the_held_task_under_blocked(tree):
+    from projectman.server import BRIEF_BOARD_FIELDS
+
+    tree.create_decision("Which database?", blocks=["US-TST-1-1"])
+
+    data = _board(brief=True)
+
+    assert _ids(data["board"]["blocked"]) == ["US-TST-1-1"]
+    for row in data["board"]["blocked"]:
+        assert set(row) <= set(BRIEF_BOARD_FIELDS)
+    assert data["summary"]["blocked"] == 1
+
+
+def test_lane_filter_never_offers_a_decision_held_task(tree):
+    from projectman.server import pm_create_story, pm_create_tasks, pm_update
+
+    pm_create_story("Other story", "Another story description long enough.")
+    pm_update("US-TST-2", status="active", epic_id="EPIC-TST-1")
+    pm_create_tasks(
+        "US-TST-2",
+        [
+            {"title": "Held", "description": BODY, "points": 1},
+            {"title": "Free", "description": BODY, "points": 1},
+        ],
+    )
+    tree.create_decision("Which database?", blocks=["US-TST-2-1"])
+    _grab("US-TST-1-1")
+
+    data = _board(lane_compatible_with="US-TST-1-1")
+
+    assert _ids(data["board"]["available"]) == ["US-TST-2-2"]
+    assert "US-TST-2-1" in _ids(data["board"]["blocked"])
+    # Held by the decision, not hidden by the lane: it never reached
+    # `available`, so only the lane's own-story sibling counts as excluded.
+    assert data["lane_excluded"] == 1
 
 
 def test_board_reads_decisions_once(tree, monkeypatch):

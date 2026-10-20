@@ -235,6 +235,44 @@ def test_board_returns_grouped_tasks(client):
     assert data["summary"]["available"] + data["summary"]["not_ready"] >= 1
 
 
+def test_board_lists_a_decision_held_task_under_blocked(client, tmp_project):
+    """US-PM-64-8: the web board groups decision-held tasks as pm_board does."""
+    from projectman.web.app import app
+
+    store = app.state.store
+    # Guard before any write: the store must be the tmp one.
+    assert str(store.root).startswith(str(tmp_project))
+    body = (
+        "## Implementation\n\nDo the thing properly and completely.\n\n"
+        "## Testing\n\nTest the thing properly.\n"
+    )
+    story_id = _create_story(client, status="active")
+    ids = [
+        client.post(
+            "/api/tasks",
+            json={"story_id": story_id, "title": t, "description": body, "points": 1},
+        ).json()["id"]
+        for t in ("Held", "Free")
+    ]
+    held, free = ids
+    decision = store.create_decision("Which database?", blocks=[held])
+
+    data = client.get("/api/board").json()
+
+    assert [row["id"] for row in data["board"]["available"]] == [free]
+    assert data["board"]["not_ready"] == []
+    rows = {row["id"]: row for row in data["board"]["blocked"]}
+    assert rows[held]["decisions"] == [{"id": decision.id, "title": "Which database?"}]
+    assert data["summary"]["blocked"] == 1
+    assert data["summary"]["available"] == 1
+
+    store.update_decision(decision.id, status="withdrawn")
+
+    data = client.get("/api/board").json()
+    assert sorted(row["id"] for row in data["board"]["available"]) == sorted(ids)
+    assert data["summary"]["blocked"] == 0
+
+
 def test_burndown_returns_points(client):
     r = client.get("/api/burndown")
     assert r.status_code == 200

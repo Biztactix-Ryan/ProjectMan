@@ -465,7 +465,7 @@ def api_board(
     store: Store = Depends(get_store),
 ) -> dict:
     """Task board grouped by status columns with readiness indicators."""
-    from projectman.readiness import check_readiness, compute_hints
+    from projectman.readiness import check_readiness, compute_hints, decision_hold
 
     all_tasks = store.list_tasks()
     story_cache = {s.id: s for s in store.list_stories()}
@@ -503,7 +503,24 @@ def api_board(
             readiness = check_readiness(
                 task, task_body, store, stories=story_cache, decisions=open_decisions
             )
-            if readiness["ready"]:
+            # Held by an open decision -> blocked, as on pm_board (US-PM-64-8).
+            held, other_blockers = (
+                decision_hold(
+                    task,
+                    readiness["blockers"],
+                    store,
+                    decisions=open_decisions,
+                    stories=story_cache,
+                )
+                if not readiness["ready"]
+                else ([], [])
+            )
+            if held:
+                row = {**entry, "decisions": held}
+                if other_blockers:
+                    row["blockers"] = other_blockers
+                blocked.append(row)
+            elif readiness["ready"]:
                 priority_order = {"must": 0, "should": 1, "could": 2, "wont": 3}
                 sort_key = (
                     priority_order.get(story.priority.value if story else "should", 1),
