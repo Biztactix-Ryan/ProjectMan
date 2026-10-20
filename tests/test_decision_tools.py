@@ -236,6 +236,35 @@ class TestList:
         ]
         assert _list(blocks="US-TST-404")["decisions"] == []
 
+    def test_blocks_filter_by_task_and_epic_ids_and_with_status(self, server_store):
+        epic = server_store.create_epic("E", "Epic description").id
+        story, tasks = _story_with_tasks(
+            server_store, "S", [(3, "todo"), (5, "todo")], epic_id=epic
+        )
+        _create(title="Blocks the task?", blocks=tasks[0])  # DEC-TST-1
+        _create(title="Blocks the epic?", blocks=epic)  # DEC-TST-2
+        _create(title="Blocks the story?", blocks=story)  # DEC-TST-3
+        _create(title="Also blocks the task?", blocks=tasks[0])  # DEC-TST-4
+        server_store.update_decision("DEC-TST-4", status="answered", answer="yes")
+
+        # Exact match: a task id does not pull in its story's or epic's blockers.
+        assert [d["id"] for d in _list(blocks=tasks[0])["decisions"]] == [
+            "DEC-TST-1",
+            "DEC-TST-4",
+        ]
+        assert [d["id"] for d in _list(blocks=epic)["decisions"]] == ["DEC-TST-2"]
+        assert _list(blocks=tasks[1])["decisions"] == []
+        # Filters compose: status and blocks together.
+        assert [
+            d["id"] for d in _list(status="open", blocks=tasks[0])["decisions"]
+        ] == ["DEC-TST-1"]
+        assert [
+            d["id"] for d in _list(status="answered", blocks=tasks[0])["decisions"]
+        ] == ["DEC-TST-4"]
+        # Each filtered entry still carries its blocked points.
+        by_id = {d["id"]: d["blocked_points"] for d in _list()["decisions"]}
+        assert by_id == {"DEC-TST-1": 3, "DEC-TST-2": 8, "DEC-TST-3": 8, "DEC-TST-4": 3}
+
     def test_malformed_blocks_filter_is_invalid(self, server_store):
         with pytest.raises(ToolError, match=r"malformed id.*\[code: invalid\]"):
             _list(blocks="not-an-id")
@@ -294,6 +323,19 @@ class TestBlockedPoints:
         story, tasks = _story_with_tasks(server_store, "S", [(3, "todo"), (5, "todo")])
         _create(title="Q?", blocks=[story, tasks[0]])
         assert _list()["decisions"][0]["blocked_points"] == 8
+
+    def test_epic_and_its_own_story_overlap_counts_once(self, server_store):
+        epic = server_store.create_epic("E", "Epic description").id
+        story, tasks = _story_with_tasks(
+            server_store, "S", [(3, "todo"), (5, "todo")], epic_id=epic
+        )
+        _create(title="Q?", blocks=[epic, story, tasks[1]])
+        assert _list()["decisions"][0]["blocked_points"] == 8
+
+    def test_a_done_task_named_directly_scores_zero(self, server_store):
+        _, tasks = _story_with_tasks(server_store, "S", [(5, "done")])
+        _create(title="Q?", blocks=tasks[0])
+        assert _list()["decisions"][0]["blocked_points"] == 0
 
     def test_unestimated_and_unblocking_decisions_score_zero(self, server_store):
         story, _ = _story_with_tasks(server_store, "S", [(None, "todo")])
