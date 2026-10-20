@@ -243,3 +243,68 @@ def test_dry_run_create_decision_writes_nothing(tree):
     assert _tree_bytes(tree) == before
     with pytest.raises(Exception):
         tree.create_decision("Q?", blocks=["US-TST-9-9"], dry_run=True)
+
+
+# ═══ US-PM-64-4 — the story criterion, end to end over the wire ═══
+
+
+def _call_over_the_wire(name, arguments):
+    """Drive one real ``tools/call`` through the low-level request handler."""
+    import anyio
+    from mcp import types
+
+    from projectman.server import mcp as mcp_server
+
+    handler = mcp_server._mcp_server.request_handlers[types.CallToolRequest]
+
+    async def run():
+        request = types.CallToolRequest(
+            method="tools/call",
+            params=types.CallToolRequestParams(name=name, arguments=arguments),
+        )
+        result = (await handler(request)).root
+        text = result.content[0].text if result.content else ""
+        return bool(result.isError), text
+
+    return anyio.run(run)
+
+
+def test_us_pm_64_criterion_park_with_decision_over_the_wire(tree):
+    """pm_park with a decision argument creates the decision blocking that
+    task and returns its id alongside the parked task."""
+    _grab("US-TST-1-1", assignee="worker-7")
+
+    is_error, text = _call_over_the_wire(
+        "pm_park",
+        {"task_id": "US-TST-1-1", "note": "needs a human call", "decision": QUESTION},
+    )
+
+    assert not is_error, text
+    data = yaml.safe_load(text)
+    assert set(data) == {"parked", "decision_id"}
+    assert data["parked"]["task"]["id"] == "US-TST-1-1"
+    assert data["parked"]["task"]["status"] == "review"
+    assert data["parked"]["from_assignee"] == "worker-7"
+    # The id the response names is a real open decision blocking the task.
+    meta, _ = tree.get_decision(data["decision_id"])
+    assert meta.blocks == ["US-TST-1-1"]
+    assert meta.status.value == "open"
+    assert meta.raised_by == "worker-7"
+    assert meta.raised_from == "US-TST-1-1"
+
+
+def test_us_pm_64_criterion_bad_decision_over_the_wire_is_an_error(tree):
+    _grab("US-TST-1-1", assignee="worker-7")
+    before = _tree_bytes(tree)
+
+    is_error, text = _call_over_the_wire(
+        "pm_park",
+        {
+            "task_id": "US-TST-1-1",
+            "note": "needs a human call",
+            "decision": {"context": "no title"},
+        },
+    )
+
+    assert is_error, text
+    assert _tree_bytes(tree) == before
