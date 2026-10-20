@@ -1492,6 +1492,9 @@ def pm_board(
         story_cache = {}
         for story in all_stories:
             story_cache[story.id] = story
+        # Open decisions gate readiness (US-PM-64); one read for the whole
+        # board instead of a list_decisions per task.
+        open_decisions = store.list_decisions(status="open")
 
         # Build topological position map per story for dependency-aware ordering
         story_tasks: dict[str, list] = {}
@@ -1571,6 +1574,7 @@ def pm_board(
                     stories=story_cache,
                     all_tasks=every_task,
                     all_stories=all_stories,
+                    decisions=open_decisions,
                 )
                 if readiness["ready"]:
                     hints = compute_hints(task, task_body)
@@ -3370,12 +3374,16 @@ def _do_accept(
         )
     )
 
-    # Readiness-check candidates lazily until one is grabbable
+    # Readiness-check candidates lazily until one is grabbable.  Open
+    # decisions (US-PM-64) are read once for the whole loop.
     next_grab = None
     not_ready_count = 0
+    open_decisions = store.list_decisions(status="open") if candidates else []
     for candidate in candidates:
         _, cand_body = store.get_task(candidate.id)
-        if check_readiness(candidate, cand_body, store)["ready"]:
+        if check_readiness(
+            candidate, cand_body, store, decisions=open_decisions
+        )["ready"]:
             grab = _do_grab(
                 store,
                 candidate.id,

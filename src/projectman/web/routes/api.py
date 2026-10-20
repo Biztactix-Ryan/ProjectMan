@@ -469,6 +469,7 @@ def api_board(
 
     all_tasks = store.list_tasks()
     story_cache = {s.id: s for s in store.list_stories()}
+    open_decisions = store.list_decisions(status="open")
 
     available = []
     not_ready = []
@@ -499,7 +500,9 @@ def api_board(
         elif task.status.value == "blocked":
             blocked.append(entry)
         elif task.status.value == "todo" and not assignee:
-            readiness = check_readiness(task, task_body, store)
+            readiness = check_readiness(
+                task, task_body, store, stories=story_cache, decisions=open_decisions
+            )
             if readiness["ready"]:
                 priority_order = {"must": 0, "should": 1, "could": 2, "wont": 3}
                 sort_key = (

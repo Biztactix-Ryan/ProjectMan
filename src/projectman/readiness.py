@@ -1,7 +1,10 @@
 """Task readiness checks — Definition of Ready enforcement."""
 
+from typing import Iterable
+
+from .decisions import blocking_decisions
 from .deps import incomplete_task_dependencies
-from .models import StoryFrontmatter, TaskFrontmatter, TaskStatus
+from .models import DecisionFrontmatter, StoryFrontmatter, TaskFrontmatter, TaskStatus
 from .store import Store
 
 
@@ -14,6 +17,7 @@ def check_readiness(
     stories: dict[str, StoryFrontmatter] | None = None,
     all_tasks: list[TaskFrontmatter] | None = None,
     all_stories: list[StoryFrontmatter] | None = None,
+    decisions: Iterable[DecisionFrontmatter] | None = None,
 ) -> dict:
     """Check if a task meets the Definition of Ready.
 
@@ -32,6 +36,11 @@ def check_readiness(
     stories while ``get_story`` reads them from disk, so treating a miss as
     "not found" would turn "parent story X is 'archived'" into "parent story X
     not found".  The fallback keeps the verdict byte-identical either way.
+
+    ``decisions``: pre-loaded decisions (all of them or only the open ones)
+    for the open-decision gate (US-PM-64).  Without it the gate reads
+    ``list_decisions`` once per call, so a caller checking many tasks should
+    load them once and pass them in.  Only open decisions ever block.
 
     Returns: {"ready": bool, "blockers": list[str], "warnings": list[str]}
     """
@@ -78,6 +87,16 @@ def check_readiness(
         if incomplete:
             dep_list = ", ".join(incomplete)
             blockers.append(f"incomplete dependencies: {dep_list}")
+
+    # Open-decision check (US-PM-64): a decision whose ``blocks`` names the
+    # task, its story or the story's epic holds the task until it is
+    # answered or withdrawn.  The story already resolved above seeds the
+    # lookup so this gate adds no get_story of its own.
+    story_lookup = {story_meta.id: story_meta} if story_meta is not None else stories
+    for decision in blocking_decisions(
+        task_meta, store, decisions=decisions, stories=story_lookup
+    ):
+        blockers.append(f"blocked by open decision {decision.id}: {decision.title}")
 
     # Soft gates (warnings only)
     #
