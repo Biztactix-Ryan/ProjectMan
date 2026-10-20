@@ -68,6 +68,26 @@ def test_active_sprint_line(store, tmp_project, runtime_dir):
     assert f"- active sprint: {sprint.id} Sprint one" in result.output
 
 
+def test_open_decisions_line(store, tmp_project, runtime_dir):
+    """US-PM-67-5: the same counts pm_status reports, overlap counted once."""
+    assert store.project_dir == tmp_project / ".project"
+    story, _ = store.create_story("A story", "Story body")
+    task = store.create_task(story.id, "Held", "Body", points=3)
+    store.create_task(story.id, "Also held", "Body", points=5)
+    store.create_decision("Q1?", blocks=[story.id])
+    store.create_decision("Q2?", blocks=[task.id])
+    closed = store.create_decision("Q3?", blocks=[task.id])
+    store.update_decision(closed.id, status="withdrawn", rationale="Moot")
+    result = _run(tmp_project)
+    assert "- decisions: 2 open, blocking 8 pts (/projectman:pm-decide)" in result.output
+
+
+def test_no_decisions_line_when_none_are_open(populated, runtime_dir):
+    result = _run(populated)
+    assert result.exit_code == 0, result.output
+    assert "- decisions:" not in result.output
+
+
 def test_silent_outside_a_store(tmp_path, runtime_dir):
     result = _run(tmp_path)
     assert result.exit_code == 0

@@ -237,7 +237,7 @@ Parameters that take both shapes:
 
 ### pm_status()
 Get project status summary.
-- **Returns**: Epic/story/task counts, points, completion percentage, status breakdown
+- **Returns**: Epic/story/task counts, points, completion percentage, status breakdown, and `decisions: {open, blocked_points}` — the number of open decisions and the points of the open (not done/archived) tasks they hold up, with the same reach as `pm_list_decisions` (task named directly, a named story's tasks, a named epic's tasks). Always present, zeros when there are none. `blocked_points` counts each blocked task once even when several decisions block it, so it can be less than the sum of the per-decision `blocked_points`; answered and withdrawn decisions are excluded.
 
 ### pm_get(id, include_log?, fields?)
 Get full details of one or more epics, stories, or tasks.

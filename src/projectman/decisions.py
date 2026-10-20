@@ -9,9 +9,17 @@ block -- answered and withdrawn ones never do.
 from __future__ import annotations
 
 import re
-from typing import TYPE_CHECKING, Iterable, Optional
+from typing import TYPE_CHECKING, Callable, Iterable, Optional
 
-from .models import DecisionFrontmatter, DecisionStatus, StoryFrontmatter, TaskFrontmatter
+from .models import (
+    EPIC_ID,
+    TASK_ID,
+    DecisionFrontmatter,
+    DecisionStatus,
+    StoryFrontmatter,
+    TaskFrontmatter,
+    TaskStatus,
+)
 
 if TYPE_CHECKING:  # pragma: no cover
     from .store import Store
@@ -103,6 +111,84 @@ def _decisions_naming(
     matched = [d for d in candidates if targets.intersection(d.blocks)]
     matched.sort(key=_decision_sort_key)
     return matched
+
+
+# ─── Blocked points (US-PM-63-9, US-PM-67-5) ─────────────────────
+
+
+def blocked_task_reach(
+    store: "Store",
+) -> tuple[Callable[[Iterable[str]], set[str]], dict[str, TaskFrontmatter]]:
+    """``(reach, open_tasks)``: the open task IDs a ``blocks`` list holds up.
+
+    Open means neither ``done`` nor archived.  ``reach(blocks)`` is the set of
+    open task IDs named directly, every open task of a named story, and every
+    open task under every story of a named epic -- a set, so a task reached
+    twice is one task.  One listing of tasks and stories serves every call.
+    """
+    open_tasks = {
+        t.id: t
+        for t in store.list_tasks(archived=False)
+        if t.status != TaskStatus.done
+    }
+    tasks_by_story: dict[str, list[str]] = {}
+    for task in open_tasks.values():
+        tasks_by_story.setdefault(task.story_id, []).append(task.id)
+    stories_by_epic: dict[str, list[str]] = {}
+    for story in store.list_stories():
+        if story.epic_id:
+            stories_by_epic.setdefault(story.epic_id, []).append(story.id)
+
+    def reach(blocks: Iterable[str]) -> set[str]:
+        task_ids: set[str] = set()
+        for item_id in blocks:
+            if EPIC_ID.match(item_id):
+                for story_id in stories_by_epic.get(item_id, []):
+                    task_ids.update(tasks_by_story.get(story_id, []))
+            elif TASK_ID.match(item_id):
+                if item_id in open_tasks:
+                    task_ids.add(item_id)
+            else:
+                task_ids.update(tasks_by_story.get(item_id, []))
+        return task_ids
+
+    return reach, open_tasks
+
+
+def blocked_points_counter(store: "Store") -> Callable[[Iterable[str]], int]:
+    """A function mapping a decision's ``blocks`` list to its blocked points.
+
+    The points of the open tasks :func:`blocked_task_reach` finds; a task with
+    no estimate counts zero.
+    """
+    reach, open_tasks = blocked_task_reach(store)
+
+    def blocked_points(blocks: Iterable[str]) -> int:
+        return sum(open_tasks[t].points or 0 for t in reach(blocks))
+
+    return blocked_points
+
+
+def open_decision_summary(store: "Store") -> dict[str, int]:
+    """``{open, blocked_points}`` over every open decision in *store*.
+
+    ``blocked_points`` is the points of the *union* of the open tasks the open
+    decisions hold up, so a task blocked by several decisions counts once --
+    the number answers "how much work is waiting on answers", not the sum of
+    the per-decision ``pm_list_decisions`` figures.  Answered and withdrawn
+    decisions are excluded.  Zeros when there are none.
+    """
+    decisions = store.list_decisions(status=DecisionStatus.open.value)
+    if not decisions:
+        return {"open": 0, "blocked_points": 0}
+    reach, open_tasks = blocked_task_reach(store)
+    held: set[str] = set()
+    for decision in decisions:
+        held |= reach(decision.blocks)
+    return {
+        "open": len(decisions),
+        "blocked_points": sum(open_tasks[t].points or 0 for t in held),
+    }
 
 
 # ─── Promoting an answer to an ADR (US-PM-66-6) ─────────────────

@@ -859,6 +859,8 @@ def _as_csv(value: Union[str, list[str], None]) -> Optional[str]:
 )
 def pm_status() -> str:
     """Get project status summary: story/task counts, points, completion percentage."""
+    from .decisions import open_decision_summary
+
     try:
         store = _store()
         index = build_index(store)
@@ -883,6 +885,10 @@ def pm_status() -> str:
             "completed_points": index.completed_points,
             "completion": f"{pct}%",
             "by_status": {k: len(v) for k, v in status_groups.items()},
+            # Always present, zeros when none: pm_status has no lean-output
+            # convention (by_status is always there too).  blocked_points
+            # counts each blocked task once across decisions (US-PM-67-5).
+            "decisions": open_decision_summary(store),
         }
 
         return _yaml_dump(result)
@@ -4780,45 +4786,6 @@ def _decision_number(decision_id: str) -> int:
     return int(decision_id.rsplit("-", 1)[1])
 
 
-def _blocked_points_counter(store: Store):
-    """A function mapping a decision's ``blocks`` list to its blocked points.
-
-    Blocked points are the points of the *open* tasks — neither ``done`` nor
-    archived — that cannot proceed until the decision is answered: a task
-    named directly, every task of a named story, and every task under every
-    story of a named epic.  A task reached twice (its story and itself both
-    named) counts once; a task with no estimate counts zero.  One listing of
-    tasks and stories serves every decision on the page.
-    """
-    open_tasks = {
-        t.id: t
-        for t in store.list_tasks(archived=False)
-        if t.status != TaskStatus.done
-    }
-    tasks_by_story: dict[str, list[str]] = {}
-    for task in open_tasks.values():
-        tasks_by_story.setdefault(task.story_id, []).append(task.id)
-    stories_by_epic: dict[str, list[str]] = {}
-    for story in store.list_stories():
-        if story.epic_id:
-            stories_by_epic.setdefault(story.epic_id, []).append(story.id)
-
-    def blocked_points(blocks: list[str]) -> int:
-        task_ids: set[str] = set()
-        for item_id in blocks:
-            if EPIC_ID.match(item_id):
-                for story_id in stories_by_epic.get(item_id, []):
-                    task_ids.update(tasks_by_story.get(story_id, []))
-            elif TASK_ID.match(item_id):
-                if item_id in open_tasks:
-                    task_ids.add(item_id)
-            else:
-                task_ids.update(tasks_by_story.get(item_id, []))
-        return sum(open_tasks[t].points or 0 for t in task_ids)
-
-    return blocked_points
-
-
 #: Tier names for ``pm_list_decisions(order="session")``, best first.
 _SESSION_TIERS = ("active", "planning", "other")
 
@@ -4994,7 +4961,9 @@ def pm_list_decisions(
         if wanted:
             decisions = [d for d in decisions if set(d.blocks) & set(wanted)]
         total = len(decisions)
-        blocked_points = _blocked_points_counter(store) if decisions else None
+        from .decisions import blocked_points_counter
+
+        blocked_points = blocked_points_counter(store) if decisions else None
         if session:
             ranked = _session_order(store, decisions, blocked_points)
         else:

@@ -1534,3 +1534,83 @@ def test_pm_update_doc_writes_atomically_and_logs(server_store):
         ("update", "note", {"doc": "DECISIONS.md"})
     ]
     assert not list(server_store.project_dir.glob(".DECISIONS.md.*.tmp"))
+
+
+# ─── pm_status decisions summary (US-PM-67-5) ────────────────────
+
+
+def _status_decisions():
+    from projectman.server import pm_status
+
+    return yaml.safe_load(pm_status())["decisions"]
+
+
+class TestStatusDecisions:
+    """pm_status reports the open decision count and the points they block."""
+
+    def test_zero_when_there_are_no_decisions(self, server_store):
+        _story_with_tasks(server_store, "S", [(3, "todo")])
+        assert _status_decisions() == {"open": 0, "blocked_points": 0}
+
+    def test_several_decisions_count_and_points(self, server_store):
+        _, a = _story_with_tasks(server_store, "A", [(3, "todo"), (5, "todo")])
+        story_b, _ = _story_with_tasks(server_store, "B", [(2, "todo"), (8, "done")])
+        _create(title="Q1?", blocks=a[0])
+        _create(title="Q2?", blocks=story_b)
+        _create(title="Q3?")  # blocks nothing, still open
+        assert _status_decisions() == {"open": 3, "blocked_points": 5}
+
+    def test_overlapping_blocks_count_each_task_once(self, server_store):
+        epic = server_store.create_epic("E", "Epic description").id
+        story, tasks = _story_with_tasks(
+            server_store, "S", [(3, "todo"), (5, "todo")], epic_id=epic
+        )
+        _create(title="Q1?", blocks=epic)
+        _create(title="Q2?", blocks=story)
+        _create(title="Q3?", blocks=tasks[1])
+        per_decision = [d["blocked_points"] for d in _list()["decisions"]]
+        assert per_decision == [8, 8, 5]  # the per-decision figures overlap
+        assert _status_decisions() == {"open": 3, "blocked_points": 8}
+
+    def test_answered_and_withdrawn_are_excluded(self, server_store):
+        from projectman.server import pm_answer_decision
+
+        _, tasks = _story_with_tasks(
+            server_store, "S", [(3, "todo"), (5, "todo"), (13, "todo")]
+        )
+        _create(title="Open?", blocks=tasks[0])
+        answered = _create(title="Answered?", blocks=tasks[1])["id"]
+        withdrawn = _create(title="Withdrawn?", blocks=tasks[2])["id"]
+        pm_answer_decision(answered, answer="Yes")
+        pm_answer_decision(withdrawn, withdraw=True, reason="Moot")
+        assert _status_decisions() == {"open": 1, "blocked_points": 3}
+
+    def test_done_and_archived_tasks_hold_no_points(self, server_store):
+        story, tasks = _story_with_tasks(
+            server_store, "S", [(3, "done"), (5, "todo"), (2, "todo")]
+        )
+        server_store.archive(tasks[1])
+        _create(title="Q?", blocks=story)
+        assert _status_decisions() == {"open": 1, "blocked_points": 2}
+
+    def test_existing_status_keys_are_kept(self, server_store):
+        from projectman.server import pm_status
+
+        assert set(yaml.safe_load(pm_status())) == {
+            "project", "epics", "stories", "tasks", "total_points",
+            "completed_points", "completion", "by_status", "decisions",
+        }
+
+
+def test_pm_status_skill_shows_the_open_decisions_line():
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1]
+    for path in (
+        root / "src/projectman/templates/skill_pm_status.md.j2",
+        root / "skills/pm-status/SKILL.md",
+    ):
+        text = path.read_text()
+        assert "`decisions.open` > 0" in text, path
+        assert "decisions open, blocking X pts — /projectman:pm-decide" in text, path
+        assert "decisions.blocked_points" in text, path

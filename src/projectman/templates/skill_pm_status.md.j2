@@ -9,6 +9,7 @@ description: Project status dashboard — completion, active sprint progress, in
 2. Call `pm_list_sprints(status="active")` — if a sprint is active, include its progress.
 3. Present a clean dashboard:
    - Project name and completion percentage
+   - If `pm_status` `decisions.open` > 0: `N decisions open, blocking X pts — /projectman:pm-decide` (X = `decisions.blocked_points`)
    - **Active sprint**: goal, days remaining, points done vs. planned (flag a sprint past its end date — suggest closing it via `/projectman:pm-plan`)
    - Story/task counts by status; points completed vs. remaining
    - Active work items with assignees — flag stale in-progress tasks (assigned but untouched)

@@ -1185,6 +1185,15 @@ def _session_context_lines(root: Path) -> list[str]:
         pct = round(index.completed_points * 100 / index.total_points)
         lines.append(f"- points: {index.completed_points}/{index.total_points} ({pct}%)")
 
+    from projectman.decisions import open_decision_summary
+
+    decisions = open_decision_summary(store)
+    if decisions["open"]:
+        lines.append(
+            f"- decisions: {decisions['open']} open, blocking "
+            f"{decisions['blocked_points']} pts (/projectman:pm-decide)"
+        )
+
     in_progress = [
         entry for entry in index.entries
         if entry.type == "task" and entry.status == "in-progress" and not entry.archived
@@ -1217,8 +1226,8 @@ def session_context():
     """Print the ProjectMan status block for a Claude Code SessionStart hook.
 
     Reads the hook's JSON on stdin (``cwd``, ``session_id``) and prints
-    project counts, points, in-flight tasks, the active sprint and the
-    next-session note when ``<cwd>/.project/config.yaml`` exists; anywhere
+    project counts, points, open decisions (when any), in-flight tasks, the
+    active sprint and the next-session note when ``<cwd>/.project/config.yaml`` exists; anywhere
     else it prints nothing.  It dedupes with session-start.sh through the
     same per-session marker, and always exits 0 so a broken store never
     blocks a session from starting.
