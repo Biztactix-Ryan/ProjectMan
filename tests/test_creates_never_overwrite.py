@@ -240,6 +240,21 @@ def _build_create_sprint(store, proj, monkeypatch):
     )
 
 
+def _build_create_decision(store, proj, monkeypatch):
+    """Decision IDs come from a disk scan, so the stub forces the collision."""
+    _prime_caches(store)
+    (proj / "decisions").mkdir(parents=True, exist_ok=True)
+    target = proj / "decisions" / "DEC-TST-77.md"
+    target.write_text(SENTINEL)
+    monkeypatch.setattr(store, "_next_decision_id", lambda: "DEC-TST-77")
+    return Case(
+        target,
+        "DEC-TST-77",
+        None,  # decisions are not held in the item cache
+        lambda: store.create_decision("Clobberer?", "Body"),
+    )
+
+
 #: Maps each builder to the ``Store.create_*`` method it exercises.  The
 #: method names are what :class:`TestTheEnumerationIsComplete` checks against
 #: ``Store`` itself, so adding a create method without adding a row here is a
@@ -251,6 +266,7 @@ STORE_CASES = {
     "create_task": _build_create_task,
     "create_tasks": _build_create_tasks,
     "create_sprint": _build_create_sprint,
+    "create_decision": _build_create_decision,
 }
 
 #: The ``Store.create_*`` methods the table above covers, with the synthetic
@@ -305,7 +321,7 @@ class TestTheEnumerationIsComplete:
             f"  stale rows: {sorted(COVERED_METHODS - found)}"
         )
 
-    def test_the_covered_methods_are_the_expected_five(self):
+    def test_the_covered_methods_are_the_expected_six(self):
         """A second, literal statement of the same fact.
 
         The reflective check compares two things that could drift together if
@@ -317,6 +333,7 @@ class TestTheEnumerationIsComplete:
             "create_task",
             "create_tasks",
             "create_sprint",
+            "create_decision",
         }
 
     def test_every_covered_method_actually_guards_its_target(self):

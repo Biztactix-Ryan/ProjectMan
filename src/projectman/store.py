@@ -534,6 +534,11 @@ def _exclusive_file_lock(path: Path):
 
 from .config import clear_config_cache, load_config
 from .models import (
+    EPIC_ID,
+    STORY_ID,
+    TASK_ID,
+    DecisionFrontmatter,
+    DecisionStatus,
     EVIDENCE_MAX_DOD,
     EVIDENCE_MAX_FILES,
     EVIDENCE_MAX_STRING,
@@ -656,6 +661,11 @@ class Store:
         #: memory ends with the process and a later session falls back to
         #: the disk scan, which still never collides with a live file.
         self._task_high_water: dict[str, int] = {}
+        #: Highest decision number this Store has handed out, for the same
+        #: reason as ``_task_high_water``: decision IDs are allocated from a
+        #: disk scan, not a config counter, so a number freed by a deletion
+        #: during this session is still never reissued by it (US-PM-63).
+        self._decision_high_water: int = 0
 
     def _load_config(self) -> ProjectConfig:
         """Load config.yaml from self.project_dir."""
@@ -2782,6 +2792,15 @@ class Store:
         ``status`` alone, so abandoned work keeps the status it really reached
         instead of being recorded as completed.
         """
+        if self._is_decision_id(item_id):
+            # A decision has no archived state to set: its "out of the way"
+            # status is withdrawn, which says something different from an
+            # answer.  Refuse rather than fall through to the story branch,
+            # which would report a baffling "Story not found".
+            raise ValidationError(
+                f"Decisions are not archived; withdraw {item_id} instead "
+                f"(status=withdrawn)"
+            )
         if self._is_epic_id(item_id):
             self.update(item_id, status=EpicStatus.archived.value)
         elif self._is_task_id(item_id):
@@ -2798,9 +2817,17 @@ class Store:
     def get(
         self, item_id: str
     ) -> tuple[
-        EpicFrontmatter | StoryFrontmatter | TaskFrontmatter | SprintFrontmatter, str
+        EpicFrontmatter
+        | StoryFrontmatter
+        | TaskFrontmatter
+        | SprintFrontmatter
+        | DecisionFrontmatter,
+        str,
     ]:
-        """Unified lookup by ID — dispatches to get_epic, get_story, get_task, or get_sprint."""
+        """Unified lookup by ID — dispatches to get_epic, get_story, get_task,
+        get_sprint or get_decision."""
+        if self._is_decision_id(item_id):
+            return self.get_decision(item_id)
         if self._is_epic_id(item_id):
             return self.get_epic(item_id)
         if self._is_sprint_id(item_id):
@@ -2965,6 +2992,233 @@ class Store:
         self._sprint_path(sprint_id).write_text(frontmatter.dumps(post))
         self._emit_log(
             EventType.update, sprint_id, ItemType.sprint, changes=changes, run_id=run_id
+        )
+        return meta
+
+    # ─── Decisions ───────────────────────────────────────────────
+    #
+    # Stored like sprints — their own directory, created on first write
+    # rather than by ``projectman init`` — and not held in the item cache,
+    # since a project carries a handful of open questions, not hundreds.
+    # Like stories, "archiving" is never a move: every decision ever made
+    # stays in ``decisions/`` with its status, so the disk scan that
+    # allocates numbers sees all of them, and a file that no longer parses
+    # is skipped by ``list_decisions`` and raises on ``get_decision``.
+
+    #: Frontmatter fields ``update_decision`` refuses to touch: the ID is the
+    #: filename and ``created`` is history.  ``updated`` is stamped by the
+    #: update itself.
+    _DECISION_IMMUTABLE_FIELDS = frozenset({"id", "created", "updated"})
+
+    @property
+    def decisions_dir(self) -> Path:
+        return self.project_dir / "decisions"
+
+    def _decision_path(self, decision_id: str) -> Path:
+        return self.decisions_dir / f"{decision_id}.md"
+
+    def _is_decision_id(self, item_id: str) -> bool:
+        return item_id.startswith("DEC-")
+
+    def _next_decision_id(self) -> str:
+        """Allocate a decision ID one past the highest number ever seen.
+
+        The floor is the highest ``DEC-<PREFIX>-N.md`` on disk, so a gap in
+        the sequence is skipped rather than filled and a file that arrived by
+        ``git pull`` is never collided with; ``_decision_high_water`` keeps a
+        number freed by a deletion during this session from being reissued.
+        """
+        next_num = max(
+            self._highest_numbered(
+                self.decisions_dir, f"DEC-{self.config.prefix}-"
+            )
+            + 1,
+            self._decision_high_water + 1,
+        )
+        self._decision_high_water = next_num
+        return f"DEC-{self.config.prefix}-{next_num}"
+
+    def _item_exists(self, item_id: str) -> bool:
+        """True if *item_id* names a task, story or epic file in this store."""
+        if TASK_ID.match(item_id):
+            return self._task_path(item_id).exists()
+        if STORY_ID.match(item_id):
+            return self._story_path(item_id).exists()
+        if EPIC_ID.match(item_id):
+            return self._epic_path(item_id).exists()
+        return False
+
+    def _validate_decision_blocks(self, blocks: list[str]) -> None:
+        """Refuse a ``blocks`` list naming any item this store does not hold.
+
+        The model checks the shape of each entry; whether the item exists is
+        only knowable here.  Archived items still exist, so they pass.
+        """
+        missing = [item_id for item_id in blocks if not self._item_exists(item_id)]
+        if missing:
+            raise ValidationError(
+                "Decision blocks must name existing tasks, stories or epics; "
+                f"not found: {', '.join(missing)}"
+            )
+
+    @staticmethod
+    def _build_decision(data: dict) -> DecisionFrontmatter:
+        """Validate *data* as a decision, raising the store's ValidationError."""
+        try:
+            meta = DecisionFrontmatter(**data)
+        except PydanticValidationError as exc:
+            raise ValidationError(str(exc)) from exc
+        if meta.status == DecisionStatus.answered and not (
+            meta.answer and meta.answer.strip()
+        ):
+            raise ValidationError(
+                f"Decision {meta.id} cannot be answered without answer text"
+            )
+        return meta
+
+    def create_decision(
+        self,
+        title: str,
+        context: str = "",
+        priority: Optional[str] = None,
+        blocks: Optional[list[str]] = None,
+        raised_by: Optional[str] = None,
+        raised_from: Optional[str] = None,
+        options: Optional[list] = None,
+        recommendation: Optional[str] = None,
+    ) -> DecisionFrontmatter:
+        """Create an open decision at ``decisions/DEC-<PREFIX>-N.md``.
+
+        *context* becomes the markdown body.  Every *blocks* entry must be an
+        existing task, story or epic; the refusal happens before an ID is
+        allocated or anything is written.
+        """
+        today = date.today()
+        data = {
+            "id": f"DEC-{self.config.prefix}-0",  # placeholder, shape-valid
+            "title": title,
+            "status": DecisionStatus.open,
+            "priority": Priority(priority) if priority else Priority.should,
+            "blocks": list(blocks or []),
+            "raised_by": raised_by,
+            "raised_from": raised_from,
+            "options": list(options or []),
+            "recommendation": recommendation,
+            "created": today,
+            "updated": today,
+        }
+        # Validate everything before allocating, so a refused create never
+        # burns a number.
+        self._build_decision(data)
+        self._validate_decision_blocks(data["blocks"])
+
+        self.decisions_dir.mkdir(parents=True, exist_ok=True)
+        decision_id = self._next_decision_id()
+        decision_path = self._decision_path(decision_id)
+        # Last line of defence (US-PM-24): a create never overwrites.
+        if decision_path.exists():
+            raise FileExistsError(f"{decision_id} already exists: {decision_path}")
+        data["id"] = decision_id
+        meta = self._build_decision(data)
+
+        post = frontmatter.Post(content=context, **meta.model_dump(mode="json"))
+        _atomic_write_text(decision_path, frontmatter.dumps(post))
+        self._emit_log(EventType.create, decision_id, ItemType.decision)
+        return meta
+
+    def get_decision(self, decision_id: str) -> tuple[DecisionFrontmatter, str]:
+        """Read a decision, returning (frontmatter, body)."""
+        path = self._decision_path(decision_id)
+        if not path.exists():
+            raise NotFoundError(f"Decision not found: {decision_id}")
+        post = frontmatter.load(str(path))
+        meta = DecisionFrontmatter(**post.metadata)
+        return meta, post.content
+
+    def list_decisions(
+        self, status: Optional[str] = None
+    ) -> list[DecisionFrontmatter]:
+        """List decisions, optionally filtered by status. Skips malformed files."""
+        if status is not None:
+            try:
+                DecisionStatus(status)
+            except ValueError:
+                raise ValidationError(
+                    f"Unknown decision status {status!r}; expected one of "
+                    f"{', '.join(s.value for s in DecisionStatus)}"
+                ) from None
+        if not self.decisions_dir.exists():
+            return []
+        decisions = []
+        for path in sorted(self.decisions_dir.glob("*.md")):
+            try:
+                post = frontmatter.load(str(path))
+                meta = DecisionFrontmatter(**post.metadata)
+            except Exception:
+                continue
+            if status is None or meta.status.value == status:
+                decisions.append(meta)
+        return decisions
+
+    def update_decision(
+        self,
+        decision_id: str,
+        *,
+        body: Optional[str] = None,
+        run_id: Optional[str] = None,
+        **fields,
+    ) -> DecisionFrontmatter:
+        """Update a decision's frontmatter fields and/or body.
+
+        ``None`` values are ignored, as in :meth:`update`.  Unknown and
+        immutable fields are refused, a changed ``blocks`` list must name
+        existing items, and the result must validate as a decision —
+        including that an answered decision carries answer text.  Nothing is
+        written unless every check passes.  ``run_id`` is stamped on the
+        activity-log event only.
+        """
+        path = self._decision_path(decision_id)
+        if not path.exists():
+            raise NotFoundError(f"Decision not found: {decision_id}")
+        post = frontmatter.load(str(path))
+        old_meta = self._build_decision(dict(post.metadata))
+        old_body = post.content
+
+        updates = {k: v for k, v in fields.items() if v is not None}
+        bad = sorted(
+            k
+            for k in updates
+            if k in self._DECISION_IMMUTABLE_FIELDS
+            or k not in DecisionFrontmatter.model_fields
+        )
+        if bad:
+            raise ValidationError(
+                f"Cannot update decision field(s): {', '.join(bad)}"
+            )
+
+        old_dump = old_meta.model_dump(mode="json")
+        data = {**old_meta.model_dump(), **updates, "updated": date.today()}
+        meta = self._build_decision(data)
+        if "blocks" in updates:
+            self._validate_decision_blocks(meta.blocks)
+
+        new_dump = meta.model_dump(mode="json")
+        changes: dict[str, dict] = {}
+        for key in updates:
+            if old_dump.get(key) != new_dump.get(key):
+                changes[key] = {"before": old_dump.get(key), "after": new_dump.get(key)}
+        new_body = old_body if body is None else body
+        if new_body != old_body:
+            changes["body"] = {"before": old_body, "after": new_body}
+
+        post = frontmatter.Post(content=new_body, **new_dump)
+        _atomic_write_text(path, frontmatter.dumps(post))
+        self._emit_log(
+            EventType.update,
+            decision_id,
+            ItemType.decision,
+            changes=changes,
+            run_id=run_id,
         )
         return meta
 

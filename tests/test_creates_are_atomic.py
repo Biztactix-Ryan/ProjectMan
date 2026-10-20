@@ -52,7 +52,7 @@ import projectman.store as store_module
 def _proj(tmp_project):
     """The .project dir with every item subdirectory present."""
     proj = tmp_project / ".project"
-    for sub in ("stories", "tasks", "epics", "sprints"):
+    for sub in ("stories", "tasks", "epics", "sprints", "decisions"):
         (proj / sub).mkdir(parents=True, exist_ok=True)
     return proj
 
@@ -169,7 +169,16 @@ def _case_sprint(store, proj):
     )
 
 
+def _case_decision(store, proj):
+    return (
+        proj / "decisions",
+        proj / "decisions" / "DEC-TST-1.md",
+        lambda: store.create_decision("Doomed?", "Body"),
+    )
+
+
 CASES = {
+    "create_decision": _case_decision,
     "create_story": _case_story,
     "create_task": _case_task,
     "create_tasks": _case_tasks,
@@ -382,7 +391,14 @@ class TestCreatedFilesAreNotOwnerOnly:
 
     @pytest.mark.parametrize(
         "name",
-        ["create_story", "create_task", "create_tasks", "create_epic", "create_sprint"],
+        [
+            "create_story",
+            "create_task",
+            "create_tasks",
+            "create_epic",
+            "create_sprint",
+            "create_decision",
+        ],
     )
     def test_created_files_are_not_owner_only(self, name, store, tmp_project):
         proj = _proj(tmp_project)
