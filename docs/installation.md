@@ -220,6 +220,31 @@ logged in; the reply is then "Not logged in", which does not affect the check.
 `guard_main_session`, which defaults to off. You only need to set it if you want the
 worker git guards in the main session too (`/plugin configure projectman@projectman`).
 
+### Letting a clean orchestrate run merge
+
+When a `/projectman:pm-orchestrate` run ends with nothing parked, nothing in review and
+no unmerged task branch, it merges its run branch `orch/<run-id>` into the branch you
+started it from and deletes the run branch. Claude Code's auto-mode classifier blocks
+that merge, because it changes your branch without asking. Unless you add a permission
+rule, the run prints the merge command for you to run instead. To let it merge, allow
+just those commands in `.claude/settings.json` (or `~/.claude/settings.json`):
+
+```json
+{
+  "permissions": {
+    "allow": [
+      "Bash(git merge --ff-only orch/*)",
+      "Bash(git merge --no-ff -m * orch/*)",
+      "Bash(git branch -d orch/*)"
+    ]
+  }
+}
+```
+
+Keep the rules this narrow. The first is the normal case. The second covers a start
+branch that moved during the run, and the third deletes the run branch once it has been
+merged. A run with parked or review work never merges, whatever the rules allow.
+
 ### Updating
 
 ```

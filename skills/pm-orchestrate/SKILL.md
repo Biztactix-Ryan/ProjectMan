@@ -20,15 +20,15 @@ Dispatch each task, then **independently validate** it. Why: `docs/reference/orc
 
 ### Run id
 
-Mint `orch-<YYYY-MM-DD>-<4 hex>`; the `orch-` prefix is load-bearing. Pass `run_id=<this run>` on every claim, verdict, `pm_update*` and prompt; 22 reads `pm_activity(run_id=<this run>)`.
+Mint `orch-<YYYY-MM-DD>-<4 hex>`; `orch-` is required. Pass `run_id=<this run>` on every claim, verdict, `pm_update*` and prompt; 22 reads `pm_activity(run_id=<this run>)`.
 
 ### Run branch
 
-Dirt outside `.project/` (`git status --short`) **stops the run**: report the dirty list. Else `git branch orch/<this run> HEAD` (`<rb>`), `git worktree add <scratch>/orch-<this run> <rb>` (`<rw>`, merges); `<tb>` = `<rb>--<task-id>`.
+Dirt outside `.project/` (`git status --short`) **stops the run**: report the dirty list. Else `<sb>` = `git branch --show-current`; `git branch orch/<this run> HEAD` (`<rb>`), `git worktree add <scratch>/orch-<this run> <rb>` (`<rw>`, merges); `<tb>` = `<rb>--<task-id>`.
 
 ### Heartbeat
 
-`CronCreate(cron="13,43 * * * *", prompt="Heartbeat <this run>: worker out → reply in five words, no tools; no run in flight → CronDelete this job")`, session-only: a cheap read every 30 min, so a worker wait past 1h never re-sends the prompt; 24 deletes it.
+`CronCreate(cron="13,43 * * * *", prompt="Heartbeat <this run>: worker out → reply in five words, no tools; no run in flight → CronDelete this job")`, session-only.
 
 ## Phase 1 — Pre-flight
 
@@ -37,7 +37,7 @@ Dirt outside `.project/` (`git status --short`) **stops the run**: report the di
 3. **Classify in-progress claims from the data.** `pm_board(brief=True)` and `pm_active` give `claimed_by_run`, `claim_age`, `stale: true` (2 h, `stale_after=<hours>`), `stale_tasks`. By that:
    - another `orch-` run, stale or silent since its claim (`pm_activity(item_id=<task-id>, event_type="update")`) → `pm_grab(<task-id>, run_id=<this run>)` + `pm_update(<task-id>, outcome="info", note="recovered from run <old-run-id>")`; still emitting → live: skip under `--auto`.
    - a human, or any id without the `orch-` prefix — **never touch it**.
-4. `git status --short` — the modified list, `.project/` after Phase 0. Over **200** entries: warn — step 23 and every dispatch walk it; commit or clean first. `--auto` continues; report in Phase 4.
+4. `git status --short` (`.project/` after Phase 0). Over **200** entries: warn — step 23 and every dispatch walk it; commit or clean first. `--auto` continues; report in Phase 4.
 
 ## Phase 2 — Plan
 
@@ -48,7 +48,7 @@ Dirt outside `.project/` (`git status --short`) **stops the run**: report the di
 
 11. `pm_accept` returned `next` → use it, skip to 13; else `pm_board`; for lane B `pm_board(lane_compatible_with=<A's task>)`, first `available` in plan order (the filter bars a dependency in flight); none → B idles till A is accepted.
 12. Else the first plan `todo`, dependency-clear, unassigned or step 3 recoverable: `pm_grab(<id>, run_id=<this run>)`; never one held elsewhere; none → exit.
-13. `--max` exceeded (retries too; both lanes count) → stop, report, release any pre-claimed task in either lane: `pm_release(<id>, note="<why>", run_id=<this run>)`.
+13. `--max` exceeded (retries too; both lanes count) → stop, report, `pm_release(<id>, ...)` any pre-claimed task in either lane.
 14. Note lane and `<tb>` before **each** dispatch; `--lanes 2`: one claim per lane, by run id — A and B: task, `<tb>`, returned?
 15. `Agent`: `subagent_type: general-purpose`, `model:` `--executor-model` else `opus`, `isolation: "worktree"`, branch `orch/<this run>--<task-id>` off `<rb>`; prompt below, in the background. Two in flight: take the first notification to land through 16-19 while the other worker runs — one lane validated or merged at a time — then refill it (11/12, compatible with the task in flight) and wait.
 
@@ -56,7 +56,7 @@ Dirt outside `.project/` (`git status --short`) **stops the run**: report the di
 17. **Validation**: an `Agent` (`subagent_type: general-purpose`, step 15's model, foreground, no worktree) with the Validator Prompt Template returns files, tests, DoD — **never run them yourself**.
 18. Missing or malformed verdict = one failure: re-run the validator once, then `pm_park(task_id, note="validator returned no verdict")`.
 19. **Verdict** — its `verdict` picks the verb; the object minus `verdict`/`note` is `evidence`, its `note` the note: **ONE line, at most 200 characters** (`note_long: true` = over).
-    - **Accept**: `pm_accept(task_id, note="<one line>", run_id=<this run>, evidence={"files":[...],"tests":[{"command":"...","passed":true}],"dod_met":[...]})` → `done`; `story_closed` on the last task; `next` claimed else `no_next_task`. Merge in `<rw>` before the next dispatch: `git merge --ff-only <tb>` else `--no-ff -m "<task-id>"`; on conflict `merge --abort` + `pm_retry` (paths in `evidence.files`, note "rebase onto `<rb>`"); a second conflict parks. Merge order is acceptance order, never dispatch order: B was cut before A's merge, so a conflict is expected; that retry keeps its lane and `<tb>`, and is not a new dispatch for `--max`.
+    - **Accept**: `pm_accept(task_id, note="<one line>", run_id=<this run>, evidence={"files":[...],"tests":[{"command":"...","passed":true}],"dod_met":[...]})` → `done`. Merge in `<rw>` before the next dispatch: `git merge --ff-only <tb>` else `--no-ff -m "<task-id>"`; on conflict `merge --abort` + `pm_retry` (paths in `evidence.files`, note "rebase onto `<rb>`"); a second conflict parks. Merge order is acceptance order, never dispatch order: B, cut before A's merge, may conflict; that retry keeps its lane and `<tb>`, and is not a new dispatch for `--max`.
     - **Retry** (first failure): `pm_retry(task_id, note="<why>", evidence={"tests":[<failing>]})` → `todo`; dispatch **one** retry worker.
     - **Park** (second failure/blocker): `pm_park(task_id, note="<why>", evidence={"tests":[<failing>],"dod_unmet":[...]})`; continue.
     - **Accept-as-review** (human needed): `pm_review(task_id, note="<why>", evidence={"dod_met":[...],"dod_unmet":[...]})`.
@@ -66,12 +66,12 @@ Dirt outside `.project/` (`git status --short`) **stops the run**: report the di
 ## Phase 4 — Report
 
 22. **From the log**: `pm_activity(run_id=<this run>)`, page `offset` while `has_more: true`: **Accepted** (`→ done`), **Retried** (`→ todo`, `failed`), **Parked**/**accept-as-review** (`→ review`, `pm_run_log(<id>)`: `blocked`/`partial`), **Recovered claims** (`claimed_by_run` → `<this run>`), **Released** (`info`), **Stories closed**, **Points moved** (`pm_get(<ids>, fields="points")`), **Untouched**. Notes cross-check; on disagreement **the log wins**.
-23. **Branches**: `<rb>`; `git branch --list '<rb>--*'` vs `git branch --merged <rb>`: **merged**, **unmerged** (parked/review), **abandoned** (released) — per 22's log. `git diff --stat HEAD...<rb>` (code); `git status --short -- .project/` (store).
+23. **Branches**: `<rb>`; `git branch --list '<rb>--*'` vs `git branch --merged <rb>`: **merged**, **unmerged** (parked/review), **abandoned** (released) — per 22's log. `git diff --stat HEAD...<rb>`; `git status --short -- .project/`.
 24. `CronDelete` the heartbeat. All tasks `done` → `pm_update_sprint(sprint_id, status="completed", run_id=<this run>)`.
 
 ## Resume
 
-`--resume` only. Mint a new id; never reuse the old. `pm_activity(run_id=<old-run-id>)`, page `offset` while `has_more: true`. Adopt only tasks still `in-progress` and `claimed_by_run: <old-run-id>`: `pm_grab(<task-id>, run_id=<this run>)` + `pm_update(..., outcome="info", note="recovered from run <old-run-id>", run_id=<this run>)`; leave the rest. Adopted tasks go out as **retries** (`<on resume: ...>`). **Never adopt** a claim without the `orch-` prefix, or from a live run.
+`--resume` only. Mint a new id; never reuse the old. `pm_activity(run_id=<old-run-id>)`, page `offset` while `has_more: true`. Adopt only tasks still `in-progress` and `claimed_by_run: <old-run-id>`: `pm_grab(<task-id>, run_id=<this run>)` + `pm_update(..., outcome="info", note="recovered from run <old-run-id>", run_id=<this run>)`; leave the rest. Adopted tasks go out as **retries** (`<on resume>`). **Never adopt** a claim without the `orch-` prefix, or from a live run.
 
 ## Worker Prompt Template
 
@@ -94,7 +94,7 @@ Rules:
 - Edit tracked files directly with the Edit tool; do not stage code through scratchpad files.
 - Mutation tests: they must end byte-identical — the branch diff shows it.
 - Git plumbing must never run the new command against the real repo.
-- Finish: `git add -A -- <code paths>` (code only, never .project), one commit titled `<task-id>`, worktree left in place. No git push, pm_commit, pm_push.
+- Finish: `git add -A -- <code paths>` (never .project), one commit titled `<task-id>`, worktree left in place. No git push, pm_commit, pm_push.
 - Do NOT mark the task done, run pm_done_next or pass --complete; pm_accept
   closes it (a worker-set done answers already_done). Blockers:
   pm_update(note=...).
@@ -125,7 +125,7 @@ One JSON object <1500 chars, no prose:
 
 ## Stop Conditions
 
-Stop when all sprint tasks are `done` or parked, `--max` is reached, `pm_audit` finds a new ERROR-level finding (`unchanged: true` never is), or `--resume` named a live run. Run Phase 4 first, releasing any pre-claimed unstarted task in either lane: `pm_release(<id>, note="<why>", run_id=<this run>)`. 23's merged: `git worktree remove <path>`, `git branch -D <tb>`; parked/review keep both; remove `<rw>` last, after 23's list. Print `git merge --no-ff <rb>`.
+Stop when all sprint tasks are `done` or parked, `--max` is reached, `pm_audit` finds a new ERROR-level finding (`unchanged: true` never is), or `--resume` named a live run. Run Phase 4 first, releasing any pre-claimed unstarted task in either lane: `pm_release(<id>, note="<why>", run_id=<this run>)`. 23's merged: `git worktree remove <path>`, `git branch -D <tb>`; parked/review keep both; remove `<rw>` last, after 23's list. Then, if 22's log has nothing parked, in review or unmerged and `git status --short` is clean outside `.project/`, on `<sb>`: `git merge --ff-only <rb>` (moved: `--no-ff -m "<this run>"`), `git branch -d <rb>`, report it; else keep `<rb>`, print `git merge --no-ff <rb>`.
 
 ## What This Skill Does NOT Do
 

@@ -72,7 +72,9 @@ def test_stop_conditions_force_delete_only_merged_task_branches():
     text = _render_template("skill_pm_orchestrate.md.j2")
     stop = text.split("## Stop Conditions", 1)[1].split("\n## ", 1)[0]
     assert "git branch -D <tb>" in stop
-    assert "git branch -d" not in stop
+    # the one ``-d`` left is the run branch's, run on ``<sb>`` after the clean-run
+    # merge (US-PM-68-7) — there HEAD does carry it, so ``-d`` is the safe form
+    assert re.findall(r"git branch -d [^`\s]+", stop) in ([], ["git branch -d <rb>"])
     assert "23's merged" in stop, "the -D is not tied to step 23's --merged list"
 
 
