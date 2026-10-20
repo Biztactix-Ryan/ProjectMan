@@ -90,6 +90,7 @@ REPORT_SECTIONS = (
     "accept-as-review",
     "Recovered claims",
     "Released",
+    "Decisions raised",  # US-PM-64-5: pm_park(decision=...) during the run
     "Stories closed",
     "Points moved",
     "Untouched",
@@ -198,6 +199,22 @@ def test_step_22_sums_points_from_the_store_not_from_memory(path):
     step = _step(_text(path), REPORT_STEP)
     assert "pm_get(" in step and "points" in step, (
         "step 22 gives no way to total the points it reports"
+    )
+
+
+@pytest.mark.parametrize("path", DOCS)
+def test_step_22_lists_the_decisions_the_run_raised_from_the_store(path):
+    """US-PM-64-5: decisions raised by parks are listed from the store.
+
+    ``pm_park(decision=...)`` raises a decision blocking the parked task, so
+    the run's decisions are the ones whose ``blocks`` names a parked task —
+    read with ``pm_list_decisions(blocks=...)``, not recalled.
+    """
+    step = _step(_text(path), REPORT_STEP)
+    calls = [args for name, args in TOOL_CALL.findall(step) if name == "pm_list_decisions"]
+    assert calls, "step 22 never calls pm_list_decisions — decisions raised come from memory"
+    assert any("blocks=" in args and "park" in args.lower() for args in calls), (
+        f"step 22's pm_list_decisions calls {calls!r} are not scoped to the parked tasks"
     )
 
 
