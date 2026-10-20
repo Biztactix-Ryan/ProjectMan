@@ -364,3 +364,100 @@ class TestTools:
         data = yaml.safe_load(pm_search("cluster"))
         assert [r["id"] for r in data["results"]] == ["DEC-TST-1"]
         assert data["skipped"] == 1
+
+
+# ─── US-PM-63 criterion 3, end to end through the MCP tools ──────
+
+
+@pytest.fixture
+def keyword_only(monkeypatch):
+    """Force pm_search onto its keyword path: the embeddings import fails."""
+    import sys
+
+    monkeypatch.setitem(sys.modules, "projectman.embeddings", None)
+
+
+class TestCriterion:
+    """US-PM-63 criterion: pm_get, pm_search and the index include decisions,
+    and INDEX.md lists open decisions."""
+
+    def test_pm_get_returns_decision_frontmatter_and_body(self, server_store):
+        """US-PM-63 criterion: pm_get(DEC id) returns frontmatter + body."""
+        from projectman.server import pm_get
+
+        data = yaml.safe_load(pm_get("DEC-TST-2"))
+        assert data["id"] == "DEC-TST-2"
+        assert data["title"] == "Ship on Fridays?"
+        assert data["status"] == "answered"
+        assert data["answer"] == "no"
+        assert "The release train question." in data["body"]
+
+    def test_pm_search_keyword_finds_decision_by_question(
+        self, server_store, keyword_only
+    ):
+        """US-PM-63 criterion: pm_search (keyword path) finds a decision by its question."""
+        from projectman.server import pm_search
+
+        data = yaml.safe_load(pm_search("Which queue backend"))
+        assert [(r["id"], r["type"]) for r in data["results"]] == [
+            ("DEC-TST-1", "decision")
+        ]
+        assert data["results"][0]["title"] == "Which queue backend?"
+
+    def test_pm_search_keyword_finds_decision_by_context(
+        self, server_store, keyword_only
+    ):
+        """US-PM-63 criterion: pm_search (keyword path) finds a decision by its context text."""
+        from projectman.server import pm_search
+
+        data = yaml.safe_load(pm_search("already deployed on the cluster"))
+        assert [(r["id"], r["type"]) for r in data["results"]] == [
+            ("DEC-TST-1", "decision")
+        ]
+        assert data["skipped"] == 0
+
+    def test_pm_search_embeddings_finds_decision(self, server_store, monkeypatch):
+        """US-PM-63 criterion: pm_search (embeddings path, after pm_reindex) finds a
+        decision by its question and by its context text."""
+        pytest.importorskip("numpy")
+        from projectman.embeddings import EmbeddingStore
+        from projectman.server import pm_reindex, pm_search
+
+        monkeypatch.setattr(EmbeddingStore, "model", _FakeModel(), raising=True)
+        assert pm_reindex() == "reindexed: index.yaml + embeddings"
+
+        by_question = yaml.safe_load(pm_search("Which queue backend?"))
+        assert "snippet" not in by_question["results"][0]  # embeddings path
+        assert by_question["results"][0]["id"] == "DEC-TST-1"
+        assert by_question["results"][0]["type"] == "decision"
+
+        by_context = yaml.safe_load(pm_search("redis already deployed cluster"))
+        assert by_context["results"][0]["id"] == "DEC-TST-1"
+        assert by_context["results"][0]["type"] == "decision"
+
+    def test_pm_reindex_index_includes_decision_rows(self, server_store, keyword_only):
+        """US-PM-63 criterion: the index (index.yaml, via pm_reindex) includes decision rows."""
+        from projectman.server import pm_reindex
+
+        pm_reindex()
+        data = yaml.safe_load((server_store.project_dir / "index.yaml").read_text())
+        rows = {e["id"]: e["status"] for e in data["entries"] if e["type"] == "decision"}
+        assert rows == {
+            "DEC-TST-1": "open",
+            "DEC-TST-2": "answered",
+            "DEC-TST-3": "withdrawn",
+        }
+
+    def test_pm_reindex_index_md_lists_open_decisions_only(
+        self, server_store, keyword_only
+    ):
+        """US-PM-63 criterion: INDEX.md's open-decisions section lists open decisions only."""
+        from projectman.server import pm_reindex
+
+        pm_reindex()
+        text = (server_store.project_dir / "INDEX.md").read_text()
+        section = text.split("## Open decisions", 1)[1]
+        assert "[DEC-TST-1](decisions/DEC-TST-1.md)" in section
+        assert "Which queue backend?" in section
+        for closed in ("DEC-TST-2", "DEC-TST-3", "Ship on Fridays?", "Rename the CLI?"):
+            assert closed not in section
