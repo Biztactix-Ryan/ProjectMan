@@ -32,6 +32,8 @@ General entry point for project management. Routes to the appropriate MCP tools 
 /pm show US-PRJ-1            # Route to pm_get
 /pm scope US-PRJ-1           # Decompose story into tasks
 /pm audit                    # Run drift detection
+/pm decisions                # Open decisions and the points they hold (pm_list_decisions)
+/pm decide                   # Redirect to /pm-decide
 /pm fix                      # Fix malformed files
 /pm web start                # Launch the web dashboard
 /pm web stop                 # Stop the web server
@@ -64,7 +66,7 @@ Guided sprint planning workflow. Walks through the full planning process.
 2. `pm_audit` — check for drift
 3. `pm_active` — what's in-flight
 4. `pm_burndown` — velocity trend
-5. Review and prioritize backlog
+5. Review and prioritize backlog, then check open decisions blocking the candidates (`pm_list_decisions(status="open", blocks=...)`) and suggest `/pm-decide` before sizing
 6. Scope unscoped stories (`pm_scope`)
 7. Estimate unestimated stories (`pm_estimate`)
 8. Assign stories to sprint

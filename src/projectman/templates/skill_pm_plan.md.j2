@@ -21,26 +21,30 @@ A sprint is the unit of orchestrated work: `/projectman:pm-orchestrate` drives t
 4. List backlog stories by priority. Order candidates by the dependency graph:
    - Stories others depend on come first; never plan a story without its dependency stories.
    - Visualize the chain when it matters: "US-PRJ-3 depends on US-PRJ-2 which depends on US-PRJ-1".
+5. Decision check, before sizing — an open decision holds back the work it blocks, and a task it blocks never becomes ready. `pm_list_decisions(status="open", blocks="<ids>")` with the candidate stories, their tasks and epics, comma-separated:
+   - List each hit: "DEC-PRJ-2 — Which queue backend? blocks US-PRJ-3 (8 pts held)" from `id`, `title`, `blocks`, `blocked_points`.
+   - Suggest answering them first with `/projectman:pm-decide`, then resume here; a story still blocked stays out of the sprint.
+   - Empty list → nothing is waiting on a decision; move on.
 
 ## Phase 3 — Select and scope to capacity
 
-5. Propose a **sprint goal** — one sentence describing the outcome, not a list of tickets. Ask the user to confirm or edit it.
-6. Select stories whose summed points fit the velocity from step 2. Say explicitly when you're leaving something out for capacity reasons — an honest sprint beats an aspirational one.
-7. Scoping gate — every selected story must be executable:
+6. Propose a **sprint goal** — one sentence describing the outcome, not a list of tickets. Ask the user to confirm or edit it.
+7. Select stories whose summed points fit the velocity from step 2. Say explicitly when you're leaving something out for capacity reasons — an honest sprint beats an aspirational one.
+8. Scoping gate — every selected story must be executable:
    - Check audit findings for `missing-implementation-tasks`; for flagged stories call `pm_auto_scope` and create the proposed tasks on approval.
    - For each undecomposed story: `pm_scope(story_id)`, propose a task breakdown with `depends_on` (intra- and cross-story) and points — `pm_estimate(id)` returns the fibonacci bands and this project's averages if you want a calibration — create on approval.
    - A story still lacking tasks or estimates does not enter the sprint.
 
 ## Phase 4 — Persist and activate
 
-8. `pm_create_sprint` with name, goal, start/end dates, and the planned story IDs.
-9. Long-task check — `pm_get_sprint(id)` and read `long_task_risk` before activating. A task that runs past the hour outlives the orchestrator's prompt cache (one-hour TTL), so the next dispatch pays a full prefix rewrite.
+9. `pm_create_sprint` with name, goal, start/end dates, and the planned story IDs.
+10. Long-task check — `pm_get_sprint(id)` and read `long_task_risk` before activating. A task that runs past the hour outlives the orchestrator's prompt cache (one-hour TTL), so the next dispatch pays a full prefix rewrite.
    - Every entry carries `id`, `points`, `p50`, `p90` and `max_task_minutes`. List them: "US-PRJ-12-3 (3 pts) — band p90 88 min, ceiling 60 min".
    - Offer to re-scope each flagged task into smaller tasks with `pm_scope(story_id)` before activating; the user can also accept the risk and go as planned.
    - An empty list means nothing is flagged (or the history is too thin to judge) — say so and move on.
-10. Set it active (`pm_update_sprint(id, status="active")`) unless the user wants to start later.
-11. Summarize: sprint ID, goal, stories with points vs. velocity, dependency order, and flagged risks (long-task risks, cross-sprint dependencies, unestimated leftovers).
-12. Suggest the natural next step: "Run it with `/projectman:pm-orchestrate`" or "grab the first task with `/projectman:pm-do <id>`".
+11. Set it active (`pm_update_sprint(id, status="active")`) unless the user wants to start later.
+12. Summarize: sprint ID, goal, stories with points vs. velocity, dependency order, and flagged risks (long-task risks, cross-sprint dependencies, unestimated leftovers, open decisions).
+13. Suggest the natural next step: "Run it with `/projectman:pm-orchestrate`" or "grab the first task with `/projectman:pm-do <id>`".
 
 ## Cross-Story Dependency Planning
 

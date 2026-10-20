@@ -27,6 +27,8 @@ Call `pm_status`, then `pm_active`, then `pm_list_sprints(status="active")`. Sug
 - `burndown` → `pm_burndown`
 - `deps [id]` → show what an item depends on and what depends on it (from `pm_get` `depends_on` fields; `pm_audit` for graph-wide checks)
 - `history <id>` / `runs <id>` → `pm_run_log(id)` — attempt history: which agents worked it, outcomes, failures
+- `decisions [id]` → `pm_list_decisions(status="open")`, or `blocks="<id>"` for what holds one item back — each with `blocked_points`
+- `decide` / "answer the open questions" → redirect to `/projectman:pm-decide`
 
 ### Sprints
 - `sprints` → `pm_list_sprints` — all sprints with status
