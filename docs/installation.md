@@ -222,12 +222,16 @@ worker git guards in the main session too (`/plugin configure projectman@project
 
 ### Letting a clean orchestrate run merge
 
-When a `/projectman:pm-orchestrate` run ends with nothing parked, nothing in review and
-no unmerged task branch, it merges its run branch `orch/<run-id>` into the branch you
-started it from and deletes the run branch. Claude Code's auto-mode classifier blocks
-that merge, because it changes your branch without asking. Unless you add a permission
-rule, the run prints the merge command for you to run instead. To let it merge, allow
-just those commands in `.claude/settings.json` (or `~/.claude/settings.json`):
+When a `/projectman:pm-orchestrate` run ends, it merges its run branch `orch/<run-id>`
+into the branch you started it from and deletes the run branch. The run branch only ever
+holds accepted, validated work, so it lands even when some tasks were parked or sent to
+review: those tasks stay on their own `orch/<run-id>--<task-id>` branches and worktrees,
+and the report lists each one as "not landed". Only a dirty working tree outside
+`.project/`, or a merge that conflicts, keeps the run branch. Claude Code's auto-mode
+classifier blocks the merge, because it changes your branch without asking. Unless you
+add a permission rule, the run prints the merge command for you to run instead. To let it
+merge, allow just those commands in `.claude/settings.local.json` (or
+`.claude/settings.json`, or `~/.claude/settings.json`):
 
 ```json
 {
@@ -243,7 +247,8 @@ just those commands in `.claude/settings.json` (or `~/.claude/settings.json`):
 
 Keep the rules this narrow. The first is the normal case. The second covers a start
 branch that moved during the run, and the third deletes the run branch once it has been
-merged. A run with parked or review work never merges, whatever the rules allow.
+merged. Parked and review task branches are never merged by the run, whatever the
+rules allow; you read them and decide.
 
 ### Updating
 

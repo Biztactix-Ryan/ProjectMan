@@ -41,7 +41,8 @@ from projectman.cli import _render_template
 # stash bans (US-PM-59-9 cut the render from 10199 to 10167 characters).
 # US-PM-68 (task-branch form, clean-run merge, pm-do for workers, retry in the
 # first worktree) kept 10170 without a raise (10168 characters), paid for by
-# trimming asides.  A raise must add its value and reason here and to the
+# trimming asides; so did the always-land merge rule on 2026-10-20 (10168
+# characters, trimming asides again).  A raise must add its value and reason here and to the
 # size test's docstring — test_the_budget_history_names_the_current_budget.
 MAX_CHARS = 10170
 

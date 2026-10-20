@@ -51,18 +51,24 @@ ref nested under it: git stores `orch/<run-id>` as a file, so it refuses to crea
 `.project` — and the orchestrator merges that branch onto the run branch when, and only
 when, it accepts the task. Nothing is pushed and the store is never committed by a run: no
 `git push`, no `pm_push`, no `pm_commit`. The run's product is a run branch, and what
-happens to it depends on how the run went (US-PM-68). **A clean run lands:** when the
-activity log shows nothing parked, nothing sent to review and no task branch left unmerged,
-and the working tree outside `.project/` is still clean, the run merges `<rb>` into the
-branch it started from (`<sb>`, recorded in Phase 0 with `git branch --show-current`) —
-`git merge --ff-only <rb>`, or `--no-ff -m "<run-id>"` if `<sb>` moved during the run —
-and deletes `<rb>` with `git branch -d`, which is safe there because `<sb>` now carries it.
-Every task on that branch was independently validated and accepted, so there is nothing
-left for a human to read before it lands, and a branch nobody needs to read is just a
-chore. **A run with parked or review work stays a branch to read:** the user has
-decisions to make about that work, so the run keeps `<rb>` and prints the
-`git merge --no-ff <rb>` line, as before. Merging is local only; nothing is pushed either
-way. Claude Code's auto-mode classifier blocks the merge unless the user allows it with a
+happens to it does not depend on how the other tasks went. **The run branch always lands:**
+a task's work reaches `<rb>` only through an accept, so a run branch never holds unaccepted
+work — every commit on it was independently validated. Parked and review tasks live on
+their own task branches `<tb>` and were never merged into `<rb>`, so they are no reason to
+hold it back. At the end of the run, if `<rb>` has commits beyond the branch it started from
+(`<sb>`, recorded in Phase 0 with `git branch --show-current`) and the working tree outside
+`.project/` is still clean, the run merges it into `<sb>` — `git merge --ff-only <rb>`, or
+`--no-ff -m "<run-id>"` if `<sb>` moved during the run — and deletes `<rb>` with
+`git branch -d`, which is safe there because `<sb>` now carries it. A run branch with no
+commits beyond `<sb>` is simply deleted. Only a dirty tree outside `.project/`, or a merge
+that conflicts (aborted with `git merge --abort`), keeps `<rb>` and prints the
+`git merge --no-ff <rb>` line instead. US-PM-68 first kept the whole run branch unmerged
+whenever any task was parked or in review; since 2026-10-20 it lands regardless, after a user
+had to merge nineteen accepted commits by hand because a single task was waiting for review. **Review and parked branches are what the
+user reads:** each one keeps its `<tb>` and worktree and is listed in the report as
+`not landed: <task> <tb> <worktree>`, so the decisions a human still has to make are about
+those branches alone, never about accepted work. Merging is local only; nothing is pushed
+either way. Claude Code's auto-mode classifier blocks the merge unless the user allows it with a
 permission rule — see [Installation](../installation.md#letting-a-clean-orchestrate-run-merge);
 without one the run falls back to printing the command. This is what keeps a bad run cheap: a rejected sprint is a branch the user
 deletes, not a history to unwind and not a pushed remote to revert. It also makes two tasks'
