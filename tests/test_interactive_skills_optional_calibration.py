@@ -78,6 +78,7 @@ OUT_OF_SCOPE = {
     "skill_pm_status.md.j2": "read-only reporting: writes no points",
     "skill_pm_cleanup.md.j2": "archiving: writes no points",
     "skill_pm_next.md.j2": "scratch note read/write: not a backlog item, writes no points",
+    "skill_pm_decide.md.j2": "answers decisions: writes no points",
 }
 
 PM_ESTIMATE_CALL = re.compile(r"\bpm_estimate\b")

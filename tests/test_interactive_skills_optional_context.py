@@ -95,6 +95,10 @@ INTERACTIVE_DOCS = {
         TEMPLATES / "skill_pm_next.md.j2",
         RENDERED_SKILLS / "pm-next" / "SKILL.md",
     ),
+    "pm-decide": (
+        TEMPLATES / "skill_pm_decide.md.j2",
+        RENDERED_SKILLS / "pm-decide" / "SKILL.md",
+    ),
     "agent-pm": (
         TEMPLATES / "agent_pm.md.j2",
         REPO_ROOT / "agents" / "pm.md",

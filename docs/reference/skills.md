@@ -1,10 +1,10 @@
 # Skills Reference
 
-ProjectMan installs 8 Claude Code skills (slash commands) via the Claude Code plugin (as `/projectman:pm`, `/projectman:pm-status`, ...; the deprecated `projectman setup-claude` installed them unprefixed) — `/pm`, `/pm-status`, `/pm-plan`, `/pm-do`, `/pm-orchestrate`, `/pm-autoscope`, `/pm-cleanup` and `/pm-next`. These provide the primary interface for interacting with ProjectMan from Claude Code. This page is the single place that states the count; other docs point here rather than repeating it.
+ProjectMan installs 9 Claude Code skills (slash commands) via the Claude Code plugin (as `/projectman:pm`, `/projectman:pm-status`, ...; the deprecated `projectman setup-claude` installed them unprefixed) — `/pm`, `/pm-status`, `/pm-plan`, `/pm-do`, `/pm-orchestrate`, `/pm-autoscope`, `/pm-cleanup`, `/pm-next` and `/pm-decide`. These provide the primary interface for interacting with ProjectMan from Claude Code. This page is the single place that states the count; other docs point here rather than repeating it.
 
 ## Routing and access
 
-Every `/pm-*` entry on this page routes through the same path: the `/pm` skill hands the request to the **pm agent** (`.claude/agents/pm.md`), and the agent calls the MCP tools. The named entry points (`/pm-status`, `/pm-plan`, `/pm-do`, `/pm-orchestrate`, `/pm-autoscope`, `/pm-cleanup`, `/pm-next`) are shortcuts into that same path, not separate programs. Anything written as `/pm <word> <args>` — `/pm scope US-PRJ-1`, `/pm board`, `/pm commit` — is an *argument to `/pm`*, never a standalone command of its own. The `projectman` CLI is a separate surface, and it deliberately covers setup and git plumbing only: most project operations have no CLI equivalent at all.
+Every `/pm-*` entry on this page routes through the same path: the `/pm` skill hands the request to the **pm agent** (`.claude/agents/pm.md`), and the agent calls the MCP tools. The named entry points (`/pm-status`, `/pm-plan`, `/pm-do`, `/pm-orchestrate`, `/pm-autoscope`, `/pm-cleanup`, `/pm-next`, `/pm-decide`) are shortcuts into that same path, not separate programs. Anything written as `/pm <word> <args>` — `/pm scope US-PRJ-1`, `/pm board`, `/pm commit` — is an *argument to `/pm`*, never a standalone command of its own. The `projectman` CLI is a separate surface, and it deliberately covers setup and git plumbing only: most project operations have no CLI equivalent at all.
 
 | Operation | CLI command | MCP tool | Skill invocation |
 | --- | --- | --- | --- |
@@ -18,6 +18,7 @@ Every `/pm-*` entry on this page routes through the same path: the `/pm` skill h
 | Plan a sprint | — | `pm_create_sprint` | `/pm-plan` |
 | Orchestrate the active sprint | — | — (the loop drives `pm_grab`, `pm_accept`, `pm_retry`, `pm_park`, `pm_review`) | `/pm-orchestrate` |
 | Note for the next session | — | `pm_next` | `/pm-next` |
+| Answer open decisions | — | `pm_list_decisions`, `pm_answer_decision` | `/pm-decide` |
 
 A `—` means the operation has no equivalent on that surface. Two more rows worth knowing: drift detection is `projectman audit` / `pm_audit` / `/pm audit`, and store git state is `projectman git-status` / `pm_git_status` / `/pm git status`. The full CLI surface is in [`cli.md`](cli.md); the full tool surface, with every argument, is in [`mcp-tools.md`](mcp-tools.md).
 
@@ -196,6 +197,23 @@ Read, save or clear the short note the next session should see first — the one
 4. Offers to clear the note once the work it describes is finished
 
 The note is scratch text with one owner and a short life: plain markdown in `.project/NEXT.md`, deliberately not a story or an epic, not indexed, not audited, not returned by `pm_search`. It is committed with the rest of `.project/`, so it travels with the project. `pm_context` returns it ahead of everything else under `next_time`, so a fresh session sees it without anyone remembering it exists — `/pm-next` is for writing it, reading it back on demand, and retiring it. See [A note to the next session](../user-guide/daily-workflow.md#a-note-to-the-next-session).
+
+## /pm-decide
+
+Work through open decisions one at a time, in the order that unblocks the most work, and record each answer.
+
+```
+/pm-decide        # a batch of up to 7 open decisions
+/pm-decide 3      # a batch of 3
+```
+
+**Workflow:**
+
+1. `pm_list_decisions(order="session", limit=n)` — open decisions, active-sprint blockers first, then by points held; contexts fetched in one `pm_get(..., fields="body")`
+2. Per decision, a short brief — question, context, what it blocks, the options and the recommendation — with `pm_docs` excerpts only when the context cites a project doc
+3. One question per decision: the recommended option first and marked, the other options, skip and withdraw; a free-text answer is always accepted
+4. Records the outcome with `pm_answer_decision` (an answer, or `withdraw=true` with a reason; skip writes nothing) and reports the task IDs each answer unblocked
+5. Ends with a summary of answered, skipped and withdrawn decisions and the points unblocked, then offers `/pm-plan`
 
 ## Web Dashboard via /pm
 

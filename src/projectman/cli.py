@@ -209,6 +209,7 @@ CLAUDE_SKILLS = [
     ("pm-autoscope", "skill_pm_autoscope.md.j2"),
     ("pm-cleanup", "skill_pm_cleanup.md.j2"),
     ("pm-next", "skill_pm_next.md.j2"),
+    ("pm-decide", "skill_pm_decide.md.j2"),
 ]
 
 # Skills from older versions that were folded into /pm — removed on install.
