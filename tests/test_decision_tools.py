@@ -944,3 +944,184 @@ class TestWithdraw:
         with pytest.raises(ToolError, match=r"already withdrawn.*\[code: conflict\]"):
             _answer("DEC-TST-1", answer="redis")
         assert _snapshot(server_store) == before
+
+
+# ─── Answers logged onto the tasks they unblock (US-PM-66-4) ─────
+#
+# Story US-PM-66 criterion: "Answering a decision adds a run-log entry to each
+# unblocked task naming the decision id, the answer and the rationale".
+#
+# Choice pinned here: every open task the decision names gets the entry, even
+# one another open decision still holds (suffixed "still held by"), but only
+# the truly free ones are reported as `unblocked`.  Withdrawals log too, with
+# the reason.  Done and archived tasks get nothing; refusals write nothing.
+
+
+def _decision_notes(store, task_id):
+    """Run-log entries on *task_id* written by a decision answer, oldest first."""
+    entries = store.get_run_log(task_id, limit=100)
+    return [e for e in reversed(entries) if e.note.startswith("Decision ")]
+
+
+def _logs_snapshot(store):
+    logs = store.project_dir / "logs"
+    if not logs.exists():
+        return {}
+    return {p.name: p.read_bytes() for p in sorted(logs.iterdir())}
+
+
+class TestAnswerRunLog:
+    def test_each_unblocked_task_gets_an_entry_naming_id_answer_and_rationale(
+        self, server_store
+    ):
+        """The US-PM-66 criterion, direct block."""
+        _story, (t1, t2) = _story_with_tasks(server_store, "A", [(1, "todo"), (2, "todo")])
+        _create(title="Which queue?", blocks=t1)
+
+        out = _answer("DEC-TST-1", answer="redis", rationale="already deployed")
+        assert out["answered"]["unblocked"] == [t1]
+
+        (entry,) = _decision_notes(server_store, t1)
+        assert "DEC-TST-1" in entry.note
+        assert "redis" in entry.note
+        assert "already deployed" in entry.note
+        assert entry.note == "Decision DEC-TST-1 answered: redis; rationale: already deployed"
+        assert entry.outcome.value == "info"
+        assert entry.status == "todo"
+        assert entry.actor == "test-actor"
+        # A task the decision never named is left alone.
+        assert _decision_notes(server_store, t2) == []
+
+    def test_entry_is_read_back_by_pm_run_log(self, server_store):
+        from projectman.server import pm_run_log
+
+        _story, (t1,) = _story_with_tasks(server_store, "A", [(1, "todo")])
+        _create(title="Q?", blocks=t1)
+        _answer("DEC-TST-1", answer="sqs", rationale="cheaper")
+        text = pm_run_log(t1)
+        assert "Decision DEC-TST-1 answered: sqs; rationale: cheaper" in text
+
+    def test_via_story_every_open_task_gets_it(self, server_store):
+        story, (t1, t2, done) = _story_with_tasks(
+            server_store, "A", [(1, "todo"), (2, "in-progress"), (3, "done")]
+        )
+        _create(title="Q?", blocks=story)
+        assert _answer("DEC-TST-1", answer="go", rationale="why not")["answered"][
+            "unblocked"
+        ] == [t1, t2]
+        for task_id, status in ((t1, "todo"), (t2, "in-progress")):
+            (entry,) = _decision_notes(server_store, task_id)
+            assert entry.note == "Decision DEC-TST-1 answered: go; rationale: why not"
+            assert entry.status == status
+        assert _decision_notes(server_store, done) == []
+
+    def test_via_epic_every_open_task_under_it_gets_it(self, server_store):
+        epic = server_store.create_epic("E", "An epic description long enough")
+        _sa, (a1,) = _story_with_tasks(server_store, "A", [(1, "todo")], epic_id=epic.id)
+        _sb, (b1, b_arch) = _story_with_tasks(
+            server_store, "B", [(1, "review"), (1, "todo")], epic_id=epic.id
+        )
+        _sc, (c1,) = _story_with_tasks(server_store, "C", [(1, "todo")])
+        server_store.archive(b_arch)
+        _create(title="Q?", blocks=epic.id)
+
+        assert _answer("DEC-TST-1", answer="go", rationale="r")["answered"][
+            "unblocked"
+        ] == [a1, b1]
+        assert len(_decision_notes(server_store, a1)) == 1
+        assert len(_decision_notes(server_store, b1)) == 1
+        assert _decision_notes(server_store, b_arch) == []
+        assert _decision_notes(server_store, c1) == []
+
+    def test_done_and_archived_tasks_get_no_entry(self, server_store):
+        _story, (done, archived) = _story_with_tasks(
+            server_store, "A", [(1, "done"), (1, "todo")]
+        )
+        server_store.archive(archived)
+        _create(title="Q?", blocks=f"{done},{archived}")
+        before = _logs_snapshot(server_store)
+        assert _answer("DEC-TST-1", answer="x", rationale="y")["answered"]["unblocked"] == []
+        assert _logs_snapshot(server_store) == before
+
+    def test_task_still_held_gets_the_entry_but_is_not_unblocked(self, server_store):
+        story, (t1, t2) = _story_with_tasks(server_store, "A", [(1, "todo"), (1, "todo")])
+        _create(title="Wide?", blocks=story)
+        _create(title="Narrow?", blocks=t2)
+
+        assert _answer("DEC-TST-1", answer="go", rationale="r")["answered"][
+            "unblocked"
+        ] == [t1]
+        (free,) = _decision_notes(server_store, t1)
+        assert free.note == "Decision DEC-TST-1 answered: go; rationale: r"
+        (held,) = _decision_notes(server_store, t2)
+        assert held.note == (
+            "Decision DEC-TST-1 answered: go; rationale: r; still held by DEC-TST-2"
+        )
+
+    def test_missing_rationale_is_said_so(self, server_store):
+        _story, (t1,) = _story_with_tasks(server_store, "A", [(1, "todo")])
+        _create(title="Q?", blocks=t1)
+        _answer("DEC-TST-1", answer="redis")
+        (entry,) = _decision_notes(server_store, t1)
+        assert entry.note == "Decision DEC-TST-1 answered: redis; rationale: (none given)"
+
+    def test_withdrawal_logs_the_reason(self, server_store):
+        _story, (t1,) = _story_with_tasks(server_store, "A", [(1, "todo")])
+        _create(title="Q?", blocks=t1)
+        _answer("DEC-TST-1", withdraw=True, reason="no longer relevant")
+        (entry,) = _decision_notes(server_store, t1)
+        assert entry.note == "Decision DEC-TST-1 withdrawn; reason: no longer relevant"
+        assert entry.outcome.value == "info"
+
+    def test_overwrite_logs_again(self, server_store):
+        _story, (t1,) = _story_with_tasks(server_store, "A", [(1, "todo")])
+        _create(title="Q?", blocks=t1)
+        _answer("DEC-TST-1", answer="redis", rationale="first")
+        out = _answer("DEC-TST-1", answer="sqs", rationale="second", overwrite=True)
+        # Nothing new is unblocked, but the history still records the change.
+        assert out["answered"]["unblocked"] == []
+        notes = [e.note for e in _decision_notes(server_store, t1)]
+        assert notes == [
+            "Decision DEC-TST-1 answered: redis; rationale: first",
+            "Decision DEC-TST-1 answered: sqs; rationale: second",
+        ]
+
+    def test_task_files_are_not_touched(self, server_store):
+        _story, (t1,) = _story_with_tasks(server_store, "A", [(1, "todo")])
+        _create(title="Q?", blocks=t1)
+        task_file = server_store.project_dir / "tasks" / f"{t1}.md"
+        before = task_file.read_bytes()
+        _answer("DEC-TST-1", answer="x", rationale="y")
+        assert task_file.read_bytes() == before
+        assert len(_decision_notes(server_store, t1)) == 1
+
+    @pytest.mark.parametrize(
+        "first, kwargs",
+        [
+            (False, {"answer": None}),
+            (False, {"answer": "   "}),
+            (False, {"answer": "x", "reason": "why"}),
+            (False, {"withdraw": True, "reason": None}),
+            (False, {"withdraw": True, "reason": "moot", "answer": "x"}),
+            (True, {"answer": "again"}),
+            (True, {"withdraw": True, "reason": "again"}),
+        ],
+        ids=[
+            "no-answer",
+            "blank-answer",
+            "reason-without-withdraw",
+            "withdraw-no-reason",
+            "withdraw-with-answer",
+            "conflict-answer",
+            "conflict-withdraw",
+        ],
+    )
+    def test_refused_answers_write_no_entries(self, server_store, first, kwargs):
+        story, (_t1,) = _story_with_tasks(server_store, "A", [(1, "todo")])
+        _create(title="Q?", blocks=story)
+        if first:
+            _answer("DEC-TST-1", answer="redis", rationale="first")
+        before = _logs_snapshot(server_store)
+        with pytest.raises(ToolError):
+            _answer("DEC-TST-1", **kwargs)
+        assert _logs_snapshot(server_store) == before

@@ -5002,31 +5002,60 @@ def pm_list_decisions(
         raise _failed(e) from e
 
 
-def _unblocked_by(store: Store, old: DecisionFrontmatter) -> list[str]:
-    """Open task IDs *old* held that no open decision holds any more.
+def _decision_closed(store: Store, old: DecisionFrontmatter, note: str) -> list[str]:
+    """Log *note* on every open task *old* names; return the IDs it unblocked.
 
-    Called after the decision was closed.  A decision that was not ``open``
-    held nothing, so closing it again unblocks nothing.  A task is one *old*
-    held — named directly, via its story or via its story's epic, the same
-    reach as the readiness gate — that is neither ``done`` nor archived, and
-    it is unblocked only if no other open decision still holds it.
+    Called after the decision was closed (answered, withdrawn, or either one
+    overwritten).  A task *old* names is one its ``blocks`` reaches — named
+    directly, via its story or via its story's epic, the same reach as the
+    readiness gate — that is neither ``done`` nor archived.
+
+    Run log (US-PM-66-4): each such task gets one ``info`` entry carrying
+    *note* — the decision id with the answer and rationale, or with the
+    withdrawal reason — appended through ``Store._append_run_log``, the path
+    ``pm_update(outcome, note)`` ends in, so ``pm_run_log`` and ``pm_get``
+    read it like any other entry.  A task another open decision still holds
+    gets the entry too, because the answer bears on it, suffixed ``still held
+    by <ids>`` so it never reads as a release.  An overwrite logs again; done
+    and archived tasks get nothing.  The task file itself is not touched.
+
+    Unblocked: only when *old* was ``open`` (a closed decision held nothing,
+    so closing it again unblocks nothing) and no other open decision still
+    holds the task.  Returned in ID order.
     """
-    if old.status != DecisionStatus.open or not old.blocks:
+    if not old.blocks:
         return []
     from .decisions import blocking_decisions
+    from .models import Outcome
+    from .store import truncate_run_log_note
 
     stories = {s.id: s for s in store.list_stories()}
+    # blocking_decisions only counts open decisions: probe with *old*'s reach
+    # as though it were open, so re-closing a closed decision still finds them.
+    probe = old.model_copy(update={"status": DecisionStatus.open})
     still_open = store.list_decisions(status=DecisionStatus.open.value)
     unblocked = []
-    for task in store.list_tasks(archived=False):
+    for task in sorted(
+        store.list_tasks(archived=False),
+        key=lambda t: [int(n) for n in t.id.split("-")[2:]],
+    ):
         if task.status == TaskStatus.done:
             continue
-        if not blocking_decisions(task, store, decisions=[old], stories=stories):
+        if not blocking_decisions(task, store, decisions=[probe], stories=stories):
             continue
-        if blocking_decisions(task, store, decisions=still_open, stories=stories):
-            continue
-        unblocked.append(task.id)
-    return sorted(unblocked, key=lambda t: [int(n) for n in t.split("-")[2:]])
+        holders = blocking_decisions(task, store, decisions=still_open, stories=stories)
+        entry = note
+        if holders:
+            entry += f"; still held by {', '.join(d.id for d in holders)}"
+        elif old.status == DecisionStatus.open:
+            unblocked.append(task.id)
+        store._append_run_log(
+            task.id,
+            outcome=Outcome.info,
+            note=truncate_run_log_note(entry)[0],
+            status=task.status.value,
+        )
+    return unblocked
 
 
 @mcp.tool(
@@ -5045,10 +5074,10 @@ def pm_answer_decision(
 ) -> str:
     """Answer or withdraw a decision, lifting the block it holds.
 
-    Answering sets status `answered`, answer, rationale, `answered_by` and
-    `answered_at`. `withdraw=true` sets `withdrawn`, storing the required
-    `reason` as the rationale. Logs an `update` event. An already closed
-    decision is a `conflict` unless `overwrite=true`; refusals write nothing.
+    Answering sets `answered`, answer, rationale, `answered_by` and
+    `answered_at`; `withdraw=true` sets `withdrawn`, `reason` as rationale.
+    Logs an `update` event and a run-log note on each open task it names.
+    A closed one is a `conflict` unless `overwrite`; refusals write nothing.
 
     Args:
         id: Decision ID (DEC-PRJ-N)
@@ -5108,7 +5137,13 @@ def pm_answer_decision(
                 "answered_at": datetime.now(timezone.utc),
             }
         meta = store.update_decision(id, **fields)
-        unblocked = _unblocked_by(store, old)
+        if withdraw:
+            log_note = f"Decision {id} withdrawn; reason: {reason}"
+        else:
+            log_note = f"Decision {id} answered: {answer}; rationale: " + (
+                rationale if rationale and rationale.strip() else "(none given)"
+            )
+        unblocked = _decision_closed(store, old, log_note)
         verb = "withdrawn" if withdraw else "answered"
         _emit("project.updated", {"summary": f"Decision {meta.id} {verb}"})
 
