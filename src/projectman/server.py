@@ -1139,8 +1139,6 @@ def pm_update_doc(
         content: The full new content for the document
     """
     try:
-        proj_dir = _project_dir()
-
         doc_map = {
             "project": "PROJECT.md",
             "infrastructure": "INFRASTRUCTURE.md",
@@ -1156,8 +1154,7 @@ def pm_update_doc(
                 f"unknown doc '{doc}'. Use: project, infrastructure, security, vision, architecture, or decisions"
             )
 
-        path = proj_dir / filename
-        path.write_text(content)
+        _store().write_doc(filename, content)
         return f"updated: {filename}"
     except Exception as e:
         raise _failed(e) from e
@@ -5094,6 +5091,7 @@ def pm_answer_decision(
     withdraw: bool = False,
     reason: Optional[str] = None,
     overwrite: bool = False,
+    promote: bool = False,
 ) -> str:
     """Answer or withdraw a decision, lifting the block it holds.
 
@@ -5109,6 +5107,7 @@ def pm_answer_decision(
         withdraw: Close as withdrawn instead of answering
         reason: Why withdrawn; required with withdraw, refused without it
         overwrite: Replace the outcome of an answered or withdrawn decision
+        promote: Also add the answer to DECISIONS.md as the next ADR; alone, promotes an answered one
 
     Response: `answered:` or `withdrawn:` with the fields written and
     `unblocked` — open task IDs it held that no open decision still holds.
@@ -5121,6 +5120,19 @@ def pm_answer_decision(
                 f"pm_answer_decision takes a decision ID (DEC-<PREFIX>-<n>), got {id!r}"
             )
         store = _store_for_id(id)
+        if promote and withdraw:
+            raise ValidationError("a withdrawn decision cannot be promoted to an ADR")
+        if promote and answer is None:
+            if rationale is not None:
+                raise ValidationError("rationale goes with an answer; promote alone takes none")
+            meta, body = store.get_decision(id)
+            if meta.status != DecisionStatus.answered:
+                raise ConflictError(
+                    f"Decision {id} is {meta.status.value}; only an answered "
+                    f"decision can be promoted to an ADR"
+                )
+            _promotable(meta)
+            return _yaml_dump({"promoted": {"id": id, "adr": _promote(store, meta, body)}})
         if withdraw:
             if answer is not None:
                 raise ValidationError(
@@ -5148,6 +5160,8 @@ def pm_answer_decision(
                 f"Decision {id} is already {old.status.value}; pass overwrite=true "
                 f"to replace it"
             )
+        if promote:
+            _promotable(old)
 
         if withdraw:
             fields = {"status": DecisionStatus.withdrawn, "rationale": reason}
@@ -5178,9 +5192,40 @@ def pm_answer_decision(
         if old.status != DecisionStatus.open:
             result["overwrote"] = old.status.value
         result["unblocked"] = unblocked
+        if promote:
+            result["adr"] = _promote(store, meta, store.get_decision(id)[1])
         return _yaml_dump({verb: result})
     except Exception as e:
         raise _failed(e) from e
+
+
+def _promotable(meta: DecisionFrontmatter) -> None:
+    """Refuse a second promotion: a decision maps to one ADR."""
+    if meta.adr:
+        raise ConflictError(f"Decision {meta.id} is already promoted to {meta.adr}")
+
+
+def _promote(store: Store, meta: DecisionFrontmatter, body: str) -> str:
+    """Add *meta*'s answer to DECISIONS.md as the next ADR; record it; return its id.
+
+    The ADR is numbered after the highest ``## ADR-NNN`` there (ADR-001 in a
+    missing or ADR-less file), written newest-first through
+    :meth:`Store.write_doc`, and cites the DEC id; the decision gets ``adr``.
+    """
+    from .decisions import insert_adr, next_adr_number, render_adr
+
+    path = store.project_dir / "DECISIONS.md"
+    text = path.read_text() if path.exists() else None
+    number = next_adr_number(text or "")
+    adr = f"ADR-{number:03d}"
+    store.write_doc(
+        "DECISIONS.md",
+        insert_adr(text, render_adr(number, meta, body)),
+        changes={"adr": adr, "decision": meta.id},
+    )
+    store.update_decision(meta.id, adr=adr)
+    _emit("project.updated", {"summary": f"Decision {meta.id} promoted to {adr}"})
+    return adr
 
 
 # ─── Web Server Tools ───────────────────────────────────────────

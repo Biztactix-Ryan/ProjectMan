@@ -183,9 +183,11 @@ POST_SUBTRACTION_BASELINE_BYTES = 88441
 #: `pm_list_decisions`'s `order` argument (the decision session's ranking),
 #: +301 bytes on re-measure.  US-PM-66-5 adds the `decisions` section to
 #: `pm_grab`'s docstring (answered decisions carried to the worker), +88 bytes
-#: on re-measure.  Re-measure with
+#: on re-measure.  US-PM-66-6 adds `pm_answer_decision`'s `promote` argument
+#: (a decision's answer recorded as the next ADR), +166 bytes on re-measure.
+#: Re-measure with
 #: `python -m tools.usage_telemetry.tool_list_size` before moving it again.
-DEFAULT_PAYLOAD_CEILING_BYTES = 95789
+DEFAULT_PAYLOAD_CEILING_BYTES = 95955
 
 #: Floor on the share of the all-families payload the gate saves, in percent.
 #: See `test_the_drop_is_measurable_not_marginal` for how it got here.

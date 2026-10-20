@@ -1282,3 +1282,255 @@ class TestGrabCarriesAnsweredDecisions:
         monkeypatch.setattr(Store, "list_decisions", counting)
         assert "decisions" in _grabbed()
         assert calls == [None]
+
+
+# ─── Promoting a decision to an ADR (US-PM-66-6) ─────────────────
+#
+# Story US-PM-66 criterion: "Promoting a decision appends an ADR to
+# DECISIONS.md numbered after the last ADR, and the decision and ADR
+# reference each other".
+#
+# Choices pinned here: `pm_answer_decision(promote=True)` promotes while
+# answering, and `promote=True` with no answer promotes a decision already
+# answered.  The ADR goes newest-first (above the first existing ADR, as
+# DECISIONS.md is kept), numbered one past the highest `## ADR-NNN` heading
+# — gaps are not reused — and starts at ADR-001 when the file is missing or
+# holds no ADR (then it is appended at the end).  Open, withdrawn and
+# already-promoted decisions are refused and the refusal writes nothing.
+
+_EXISTING = (
+    "# Decisions\n\nNewest first.\n\n---\n\n"
+    '<a id="adr-007"></a>\n\n## ADR-007: Seventh (2026-01-07)\n\n'
+    "**Status:** Accepted\n\n---\n\n"
+    '<a id="adr-002"></a>\n\n## ADR-002: Second (2026-01-02)\n\n'
+    "**Status:** Accepted\n"
+)
+
+
+def _decisions_md(store):
+    return store.project_dir / "DECISIONS.md"
+
+
+def _promote_snapshot(store, decision_id="DEC-TST-1"):
+    """Decision file, activity log and DECISIONS.md bytes, for refusals."""
+    md = _decisions_md(store)
+    return _snapshot(store, decision_id) + (md.read_bytes() if md.exists() else None,)
+
+
+def _queue_decision(store):
+    """DEC-TST-1 with context and three options, two of them to be rejected."""
+    import os
+
+    # Guard: the server writes into the tmp store, never the real one.
+    assert os.getcwd() == str(store.project_dir.parent)
+    _create(
+        title="Which queue backend?",
+        context="Workers need a durable queue; Redis is already deployed.",
+        options=[
+            {"label": "redis", "summary": "Redis streams", "cons": ["memory bound"]},
+            {"label": "sqs", "summary": "Amazon SQS", "cons": ["vendor lock-in"]},
+            {"label": "kafka", "summary": "Apache Kafka", "cons": ["heavy to run"]},
+        ],
+        recommendation="redis",
+    )
+
+
+class TestPromote:
+    def test_answer_and_promote_numbers_after_the_highest_adr_despite_gaps(
+        self, server_store
+    ):
+        """The criterion: numbered after the last ADR; both cite each other."""
+        _decisions_md(server_store).write_text(_EXISTING)
+        _queue_decision(server_store)
+
+        answered = _answer(
+            "DEC-TST-1", answer="redis", rationale="already deployed", promote=True
+        )["answered"]
+        assert answered["adr"] == "ADR-008"
+
+        meta, _ = server_store.get_decision("DEC-TST-1")
+        assert meta.status.value == "answered"
+        assert meta.adr == "ADR-008"
+
+        text = _decisions_md(server_store).read_text()
+        # Newest first: above ADR-007, the header kept, nothing lost.
+        assert text.startswith("# Decisions\n\nNewest first.\n\n---\n\n")
+        assert (
+            text.index("## ADR-008:")
+            < text.index("## ADR-007:")
+            < text.index("## ADR-002:")
+        )
+        assert text.count("## ADR-") == 3
+        assert _EXISTING.split("---\n\n", 1)[1] in text
+        entry = text[text.index("## ADR-008:"):text.index("## ADR-007:")]
+        assert "DEC-TST-1" in entry
+
+    def test_adr_content_has_context_decision_rejected_options_and_dec_id(
+        self, server_store
+    ):
+        _queue_decision(server_store)
+        _answer("DEC-TST-1", answer="redis", rationale="already deployed", promote=True)
+
+        text = _decisions_md(server_store).read_text()
+        entry = text[text.index('<a id="adr-001"></a>'):]
+        assert "## ADR-001: Which queue backend? (" in entry
+        assert "**Status:** Accepted" in entry and "DEC-TST-1" in entry
+        assert (
+            "**Context.** Workers need a durable queue; Redis is already deployed."
+            in entry
+        )
+        decision = entry[
+            entry.index("**Decision.**"):entry.index("**Alternatives rejected.**")
+        ]
+        assert "redis" in decision and "Redis streams" in decision
+        assert "already deployed" in decision
+        rejected = entry[entry.index("**Alternatives rejected.**"):]
+        assert "- **sqs.** Amazon SQS" in rejected and "vendor lock-in" in rejected
+        assert "- **kafka.** Apache Kafka" in rejected and "heavy to run" in rejected
+        assert "**redis.**" not in rejected
+
+    @pytest.mark.parametrize(
+        "existing",
+        [None, "# Decision Log\n\n## Decisions\n\n<!-- none yet -->\n"],
+        ids=["missing", "no-adrs"],
+    )
+    def test_first_adr_is_001(self, server_store, existing):
+        if existing is not None:
+            _decisions_md(server_store).write_text(existing)
+        _create(title="Q?")
+        answered = _answer("DEC-TST-1", answer="yes", promote=True)["answered"]
+        assert answered["adr"] == "ADR-001"
+        text = _decisions_md(server_store).read_text()
+        assert "## ADR-001: Q? (" in text
+        assert '<a id="adr-001"></a>' in text
+        if existing is not None:
+            assert text.startswith(existing.rstrip())
+        assert server_store.get_decision("DEC-TST-1")[0].adr == "ADR-001"
+
+    def test_promote_alone_promotes_an_answered_decision(self, server_store):
+        _decisions_md(server_store).write_text(_EXISTING)
+        _queue_decision(server_store)
+        _answer("DEC-TST-1", answer="sqs", rationale="managed")
+        assert "## ADR-008" not in _decisions_md(server_store).read_text()
+
+        out = _answer("DEC-TST-1", promote=True)
+        assert out == {"promoted": {"id": "DEC-TST-1", "adr": "ADR-008"}}
+        meta, _ = server_store.get_decision("DEC-TST-1")
+        assert (meta.status.value, meta.answer, meta.adr) == ("answered", "sqs", "ADR-008")
+        text = _decisions_md(server_store).read_text()
+        entry = text[text.index("## ADR-008:"):text.index("## ADR-007:")]
+        rejected = entry.split("**Alternatives rejected.**")[1]
+        assert "**redis.**" in rejected and "**sqs.**" not in rejected
+        assert "managed" in entry
+
+    def test_promotion_is_logged_on_the_doc_and_the_decision(self, server_store):
+        _create(title="Q?")
+        _answer("DEC-TST-1", answer="yes", promote=True)
+        doc_events = _events(server_store, "DECISIONS")
+        assert [(e["event_type"], e["item_type"]) for e in doc_events] == [
+            ("update", "note")
+        ]
+        assert doc_events[0]["changes"]["adr"] == "ADR-001"
+        assert doc_events[0]["changes"]["decision"] == "DEC-TST-1"
+        last = _events(server_store, "DEC-TST-1")[-1]
+        assert last["changes"]["adr"] == {"before": None, "after": "ADR-001"}
+
+    def test_without_promote_nothing_is_written_to_decisions_md(self, server_store):
+        _create(title="Q?")
+        answered = _answer("DEC-TST-1", answer="yes")["answered"]
+        assert "adr" not in answered
+        assert not _decisions_md(server_store).exists()
+        assert server_store.get_decision("DEC-TST-1")[0].adr is None
+
+    def test_promote_alone_on_an_open_decision_is_refused(self, server_store):
+        _decisions_md(server_store).write_text(_EXISTING)
+        _create(title="Q?")
+        before = _promote_snapshot(server_store)
+        with pytest.raises(
+            ToolError, match=r"is open; only an answered.*\[code: conflict\]"
+        ):
+            _answer("DEC-TST-1", promote=True)
+        assert _promote_snapshot(server_store) == before
+
+    def test_a_withdrawn_decision_is_refused(self, server_store):
+        _decisions_md(server_store).write_text(_EXISTING)
+        _create(title="Q?")
+        _answer("DEC-TST-1", withdraw=True, reason="moot")
+        before = _promote_snapshot(server_store)
+        with pytest.raises(
+            ToolError, match=r"is withdrawn; only an answered.*\[code: conflict\]"
+        ):
+            _answer("DEC-TST-1", promote=True)
+        with pytest.raises(ToolError, match=r"cannot be promoted.*\[code: invalid\]"):
+            _answer(
+                "DEC-TST-1", withdraw=True, reason="again", overwrite=True, promote=True
+            )
+        assert _promote_snapshot(server_store) == before
+
+    def test_withdraw_with_promote_is_refused(self, server_store):
+        _create(title="Q?")
+        before = _promote_snapshot(server_store)
+        with pytest.raises(ToolError, match=r"cannot be promoted.*\[code: invalid\]"):
+            _answer("DEC-TST-1", withdraw=True, reason="moot", promote=True)
+        assert _promote_snapshot(server_store) == before
+        assert server_store.get_decision("DEC-TST-1")[0].status.value == "open"
+
+    def test_promoting_twice_is_refused(self, server_store):
+        _decisions_md(server_store).write_text(_EXISTING)
+        _create(title="Q?")
+        _answer("DEC-TST-1", answer="yes", promote=True)
+        before = _promote_snapshot(server_store)
+        with pytest.raises(
+            ToolError, match=r"already promoted to ADR-008.*\[code: conflict\]"
+        ):
+            _answer("DEC-TST-1", promote=True)
+        # Re-answering with overwrite cannot mint a second ADR either.
+        with pytest.raises(
+            ToolError, match=r"already promoted to ADR-008.*\[code: conflict\]"
+        ):
+            _answer("DEC-TST-1", answer="no", overwrite=True, promote=True)
+        assert _promote_snapshot(server_store) == before
+        is_error, text = call_over_the_wire(
+            "pm_answer_decision", {"id": "DEC-TST-1", "promote": True}
+        )
+        assert is_error and "already promoted" in text
+        assert _promote_snapshot(server_store) == before
+
+    def test_promote_alone_refuses_a_rationale(self, server_store):
+        _create(title="Q?")
+        _answer("DEC-TST-1", answer="yes")
+        before = _promote_snapshot(server_store)
+        with pytest.raises(
+            ToolError, match=r"rationale goes with an answer.*\[code: invalid\]"
+        ):
+            _answer("DEC-TST-1", promote=True, rationale="why")
+        assert _promote_snapshot(server_store) == before
+
+    def test_the_adr_field_is_validated(self):
+        from datetime import date
+
+        from projectman.models import DecisionFrontmatter
+
+        base = {
+            "id": "DEC-TST-1",
+            "title": "Q?",
+            "created": date.today(),
+            "updated": date.today(),
+        }
+        assert DecisionFrontmatter(**base).adr is None
+        assert DecisionFrontmatter(**base, adr="ADR-012").adr == "ADR-012"
+        with pytest.raises(ValueError):
+            DecisionFrontmatter(**base, adr="ADR-1")
+
+
+def test_pm_update_doc_writes_atomically_and_logs(server_store):
+    """pm_update_doc shares the promotion's write path (US-PM-66-6)."""
+    from projectman.server import pm_update_doc
+
+    assert pm_update_doc("decisions", "# Decisions\n") == "updated: DECISIONS.md"
+    assert _decisions_md(server_store).read_text() == "# Decisions\n"
+    events = _events(server_store, "DECISIONS")
+    assert [(e["event_type"], e["item_type"], e["changes"]) for e in events] == [
+        ("update", "note", {"doc": "DECISIONS.md"})
+    ]
+    assert not list(server_store.project_dir.glob(".DECISIONS.md.*.tmp"))

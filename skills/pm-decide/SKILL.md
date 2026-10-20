@@ -37,6 +37,7 @@ For each decision, in list order:
    - Free-text answer → `pm_answer_decision(id, answer="<their words>", rationale=…)`, recorded as typed.
    - Withdraw → `pm_answer_decision(id, withdraw=true, reason="<why>")`. No reason given → ask for one; withdrawing needs it.
    - Skip → write nothing; it stays open.
+   - An answer with lasting architectural weight → offer to record it as an ADR: add `promote=true` to the answer call, or `pm_answer_decision(id, promote=true)` once answered.
    - A `conflict` means someone closed it meanwhile: report the existing outcome and move on. Pass `overwrite=true` only when the user asks to replace it.
 8. Keep the `unblocked` task IDs each call returns, and say them in one line: "Unblocked US-PRJ-4-2, US-PRJ-4-3."
 

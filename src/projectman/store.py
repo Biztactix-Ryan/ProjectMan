@@ -1083,6 +1083,25 @@ class Store:
         )
         return body
 
+    def write_doc(
+        self, filename: str, content: str, changes: dict | None = None
+    ) -> Path:
+        """Replace a project doc (``DECISIONS.md`` …) atomically and log it.
+
+        The one doc-write path: ``pm_update_doc`` and a decision promoted to
+        an ADR (US-PM-66-6) both land here, as one :attr:`ItemType.note`
+        ``update`` event whose item id is the doc's stem (``DECISIONS``).
+        """
+        path = self.project_dir / filename
+        _atomic_write_text(path, content)
+        self._emit_log(
+            EventType.update,
+            path.stem,
+            ItemType.note,
+            changes={"doc": filename, **(changes or {})},
+        )
+        return path
+
     def clear_next(self) -> bool:
         """Delete the note; return whether there was one to delete.
 

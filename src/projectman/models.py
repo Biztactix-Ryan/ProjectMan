@@ -29,6 +29,8 @@ TASK_ID = re.compile(rf"^US-{PREFIX}-\d+-\d+$")
 EPIC_ID = re.compile(rf"^EPIC-{PREFIX}-\d+$")
 SPRINT_ID = re.compile(rf"^SPRINT-{PREFIX}-\d+$")
 DECISION_ID = re.compile(rf"^DEC-{PREFIX}-\d+$")
+#: An architectural decision record heading in DECISIONS.md (US-PM-66-6).
+ADR_ID = re.compile(r"^ADR-\d{3,}$")
 
 #: Default claim-staleness threshold, in hours (US-PM-14-5).  Named once so
 #: the field default and the fallback a malformed config value lands on cannot
@@ -339,8 +341,17 @@ class DecisionFrontmatter(BaseModel):
     rationale: Optional[str] = None
     answered_by: Optional[str] = None
     answered_at: Optional[datetime] = None
+    #: The ADR this answer was promoted to in DECISIONS.md (US-PM-66-6).
+    adr: Optional[str] = None
     created: date
     updated: date
+
+    @field_validator("adr")
+    @classmethod
+    def validate_adr(cls, v: Optional[str]) -> Optional[str]:
+        if v is not None and not ADR_ID.match(v):
+            raise ValueError(f"Decision adr must look like ADR-001, got: {v}")
+        return v
 
     @field_validator("id")
     @classmethod

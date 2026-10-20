@@ -6,7 +6,7 @@ US-PM-15 gates three tool families behind config flags. This file is the
 assumption.
 
 - Measured: **2026-10-20**
-- Commit basis: **5231ef3c52cc7bd15d22fd446b641f3df050f71d (working tree dirty)**
+- Commit basis: **c53842a9aa645b21137303a3240ee3dc9d50dd96 (working tree dirty)**
 - Command: `python -m tools.usage_telemetry.tool_list_size --markdown` (run from the repo root)
 - Serialisation: `mcp.types.ListToolsResult.model_dump_json(by_alias=True, exclude_none=True)` — exactly what the MCP
   session writes as the `result` of a `tools/list` request, so this moves if
@@ -16,8 +16,8 @@ assumption.
 
 | configuration | tools | `tools/list` bytes |
 | --- | ---: | ---: |
-| all families enabled | 50 | 99,697 |
-| default (`maintenance`, `web` all off) | 45 | 95,784 |
+| all families enabled | 50 | 99,863 |
+| default (`maintenance`, `web` all off) | 45 | 95,950 |
 | **saved** | **5** | **3,913 (3.92%)** |
 
 ## Per family
@@ -42,12 +42,12 @@ commit the regenerated file.
 ```json
 {
   "all_families": {
-    "bytes": 99697,
+    "bytes": 99863,
     "tools": 50
   },
   "command": "python -m tools.usage_telemetry.tool_list_size --markdown",
   "default": {
-    "bytes": 95784,
+    "bytes": 95950,
     "tools": 45
   },
   "families": {

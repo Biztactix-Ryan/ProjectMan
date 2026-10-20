@@ -103,3 +103,79 @@ def _decisions_naming(
     matched = [d for d in candidates if targets.intersection(d.blocks)]
     matched.sort(key=_decision_sort_key)
     return matched
+
+
+# ─── Promoting an answer to an ADR (US-PM-66-6) ─────────────────
+
+_ADR_HEADING = re.compile(r"^## ADR-(\d+)\b", re.MULTILINE)
+_ADR_START = re.compile(r'^(?:<a id="adr-\d+"></a>|## ADR-\d+\b)', re.MULTILINE)
+
+#: The header a DECISIONS.md created by a promotion starts with.
+DECISIONS_HEADER = (
+    "# Decisions\n\n"
+    "Architectural decision record. Newest first. Each entry: context, "
+    "decision, alternatives rejected.\n\n---\n"
+)
+
+
+def next_adr_number(text: str) -> int:
+    """One past the highest ``## ADR-NNN`` heading in *text*; 1 when none.
+
+    The highest, not the count: a gap left by a removed ADR is never reused.
+    """
+    numbers = [int(n) for n in _ADR_HEADING.findall(text)]
+    return max(numbers, default=0) + 1
+
+
+def render_adr(number: int, decision: DecisionFrontmatter, body: str) -> str:
+    """The ADR entry for an answered *decision*, in DECISIONS.md's format.
+
+    Context is the decision's body, Decision its answer (with the chosen
+    option's summary) and rationale, Alternatives rejected every other
+    option; the Status line cites the DEC id.
+    """
+    adr_id = f"ADR-{number:03d}"
+    when = (decision.answered_at.date() if decision.answered_at else decision.updated)
+    chosen = next((o for o in decision.options if o.label == decision.answer), None)
+    decided = decision.answer or ""
+    if chosen is not None and chosen.summary:
+        decided += f" — {chosen.summary}"
+    decided = _sentence(decided)
+    if decision.rationale:
+        decided += f" Rationale: {_sentence(decision.rationale)}"
+    rejected = [o for o in decision.options if o is not chosen]
+    lines = [
+        f"- **{o.label}.**"
+        + (f" {_sentence(o.summary)}" if o.summary else "")
+        + (f" Cons: {_sentence('; '.join(o.cons))}" if o.cons else "")
+        for o in rejected
+    ] or ["- None recorded."]
+    by = f", answered by {decision.answered_by}" if decision.answered_by else ""
+    return (
+        f'<a id="adr-{number:03d}"></a>\n\n'
+        f"## {adr_id}: {decision.title} ({when.isoformat()})\n\n"
+        f"**Status:** Accepted ({when.isoformat()}) — promoted from "
+        f"{decision.id}{by}.\n\n"
+        f"**Context.** {body.strip() or '(none recorded)'}\n\n"
+        f"**Decision.** {decided}\n\n"
+        "**Alternatives rejected.**\n\n" + "\n".join(lines) + "\n"
+    )
+
+
+def _sentence(text: str) -> str:
+    text = text.strip()
+    return text if not text or text[-1] in ".!?" else f"{text}."
+
+
+def insert_adr(text: Optional[str], entry: str) -> str:
+    """*text* with *entry* added newest-first, as DECISIONS.md is kept.
+
+    It goes above the first existing ADR, separated by ``---``; with no ADR
+    yet it is appended at the end; with no file it follows a fresh header.
+    """
+    if text is None or not text.strip():
+        return f"{DECISIONS_HEADER}\n{entry}"
+    first = _ADR_START.search(text)
+    if first is None:
+        return f"{text.rstrip()}\n\n{entry}"
+    return f"{text[:first.start()]}{entry}\n---\n\n{text[first.start():]}"
