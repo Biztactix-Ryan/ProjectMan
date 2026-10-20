@@ -33,7 +33,8 @@ Your cwd may be a git worktree on branch `orch/<run>--<task-id>`. Never `git res
 6. Record the outcome in **one** call:
    - All DoD items evidenced, continuing to another task → `pm_done_next(task_id, outcome="success", note="<tests run + result, files changed>")` — completes the task, appends the run log, closes the story if this was its last open task, and returns the next ready task, claimed.
    - All DoD items evidenced, stopping here (e.g. `--complete`) → `pm_update(task_id, status="done", outcome="success", note="...")`
-   - Partially done / needs human judgment → `pm_update(task_id, status="review", outcome="partial", note="<what's unmet>")`
+   - Partially done → `pm_update(task_id, status="review", outcome="partial", note="<what's unmet>")`
+   - Needs a human call → `pm_park(task_id, note="<one line>", decision={title, context, options, recommendation})`
    - Couldn't proceed → keep an accurate status and log `outcome="blocked"` or `"failed"` with why
 7. **`--complete` rule**: `status="done"` only if step 5 produced evidence for every DoD item — anything less is `review`. Never mark done on unverified claims; the orchestrator validates independently and a false "done" becomes a failed retry.
 8. Story rollup: `pm_done_next` (and `pm_accept`, which shares its body) closes the story when this was its last open task. `pm_update(status="done")` does **not** — if you used it and all siblings are now `done`, in `--complete` mode set the story `done` yourself; interactively, suggest it.
@@ -47,4 +48,3 @@ Your cwd may be a git worktree on branch `orch/<run>--<task-id>`. Never `git res
 For `depends_on` entries from other stories:
 - Dependency status is shown in `pm_grab` and `pm_context` responses (id, title, status, type).
 - A task whose dependency is not done cannot be grabbed.
-- Completing one may unblock tasks in other stories — name them in your summary.

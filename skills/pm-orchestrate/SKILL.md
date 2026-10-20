@@ -7,7 +7,7 @@ args: "[--sprint <id>] [--max <n>] [--lanes <1|2>] [--orchestrator-model|--execu
 
 # /projectman:pm-orchestrate
 
-Dispatch, then **independently validate**. Why: `docs/reference/orchestrate-design.md`.
+Why: `docs/reference/orchestrate-design.md`.
 
 ## Flags
 
@@ -20,13 +20,11 @@ Dispatch, then **independently validate**. Why: `docs/reference/orchestrate-desi
 
 ### Run id
 
-Mint `orch-<YYYY-MM-DD>-<4 hex>`; `orch-` is required. Pass `run_id=<this run>` on every claim, verdict, `pm_update*` and prompt; 22 reads `pm_activity(run_id=)`.
+Mint `orch-<YYYY-MM-DD>-<4 hex>`. Pass `run_id=<this run>` on every claim, verdict, `pm_update*` and prompt; 22 reads `pm_activity(run_id=)`.
 
 ### Run branch
 
 Dirt outside `.project/` (`git status --short`) **stops the run**: report the dirty list. Else `<sb>` = `git branch --show-current`; `git branch orch/<this run> HEAD` (`<rb>`), `git worktree add <scratch>/orch-<this run> <rb>` (`<rw>`, merges); `<tb>` = `<rb>--<task-id>`.
-
-### Heartbeat
 
 `CronCreate(cron="13,43 * * * *", prompt="Heartbeat <this run>: worker out → reply in five words, no tools; no run in flight → CronDelete this job")`, session-only.
 
@@ -39,17 +37,17 @@ Dirt outside `.project/` (`git status --short`) **stops the run**: report the di
    - a human, or any id without the `orch-` prefix — **never touch it**.
 4. `git status --short`: over **200** entries: warn — step 23 and every dispatch walk it; commit or clean first. `--auto` continues; report in Phase 4.
 
-## Phase 2 — Plan
+## Phase 2
 
 5. Stories: `pm_batch_get(ids=<story ids>, fields="title,status,points,depends_on,acceptance_criteria,body")`.
 6-10. Keep `{todo, in-progress, review, blocked}`, order by `depends_on`, flag out-of-sprint blockers; `--dry-run` stops, else confirm unless `--auto`.
 
-## Phase 3 — Execution
+## Phase 3
 
 11. `pm_accept` returned `next` → use it, skip to 13; else `pm_board`; for lane B `pm_board(lane_compatible_with=<A's task>)`, first `available` in plan order (it bars a dependency in flight); none → B idles till A is accepted.
 12. Else the first plan `todo`, dependency-clear, unassigned or step 3 recoverable: `pm_grab(<id>, run_id=<this run>)`; never one held elsewhere; none → exit.
 13. `--max` exceeded (retries too; both lanes count) → stop, report, `pm_release(<id>, ...)` any pre-claimed task in either lane.
-14. Note lane and `<tb>` before **each** dispatch, then its worktree path; `--lanes 2`: one claim per lane, by run id — A and B: task, `<tb>`, path, returned?
+14. Note lane and `<tb>` before **each** dispatch, then its worktree path; `--lanes 2`: one claim per lane, by run id.
 15. `Agent`: `subagent_type: general-purpose`, `model:` `--executor-model` else `opus`, `isolation: "worktree"`, branch `orch/<this run>--<task-id>` off `<rb>`; prompt below, in the background. Two in flight: take the first notification through 16-19 while the other worker runs — one lane validated or merged at a time — then refill it (11/12, compatible with the task in flight) and wait.
 
 16. **Status check**: `pm_get(task_id, fields="status,assignee")` — deliberate: `status` `in-progress`/`review`, `assignee` `claude`.
@@ -58,14 +56,14 @@ Dirt outside `.project/` (`git status --short`) **stops the run**: report the di
 19. **Verdict** — its `verdict` picks the verb; the object minus `verdict`/`note` is `evidence`, its `note` the note: **ONE line, at most 200 characters** (`note_long` = over).
     - **Accept**: `pm_accept(task_id, note="<one line>", run_id=<this run>, evidence={"files":[...],"tests":[{"command":"...","passed":true}],"dod_met":[...]})` → `story_closed` if last. Merge in `<rw>` before the next dispatch: `git merge --ff-only <tb>` else `--no-ff -m "<task-id>"`; on conflict `merge --abort` + `pm_retry` (paths in `evidence.files`, note "rebase onto `<rb>`"); a second conflict parks. Merge order is acceptance order, never dispatch order: B, cut before A's merge, may conflict; that retry keeps its lane and `<tb>`, and is not a new dispatch for `--max`.
     - **Retry** (first failure): `pm_retry(task_id, note="<why>", evidence={"tests":[<failing>]})`; dispatch **one** retry worker as 15, no `isolation`, naming 14's path.
-    - **Park** (second failure/blocker): `pm_park(task_id, note="<why>", evidence={"tests":[<failing>],"dod_unmet":[...]})`; continue.
+    - **Park** (second failure/blocker): `pm_park(task_id, note="<why>", evidence={"tests":[<failing>],"dod_unmet":[...]})`, plus `decision=` if a human must choose; continue.
     - **Accept-as-review** (human needed): `pm_review(task_id, note="<why>", evidence={"dod_met":[...],"dod_unmet":[...]})`.
 20. Only `pm_accept` closes a task, never a worker.
 21. **Health check** every 3 accepted tasks, both lanes: `pm_audit(since=<last audit digest>)`: `unchanged: true` passes; else **stop** on new ERROR-level findings; `digest:` is the new last audit digest.
 
-## Phase 4 — Report
+## Phase 4
 
-22. **From the log**: `pm_activity(run_id=<this run>)`, page `offset` while `has_more: true`: **Accepted** (`→ done`), **Retried** (`→ todo`, `failed`), **Parked**/**accept-as-review** (`→ review`, `pm_run_log(<id>)`: `blocked`/`partial`), **Recovered claims** (`claimed_by_run` → `<this run>`), **Released** (`info`), **Stories closed**, **Points moved** (`pm_get(<ids>, fields="points")`), **Untouched**. Notes cross-check; disagree → **the log wins**.
+22. **From the log**: `pm_activity(run_id=<this run>)`, page `offset` while `has_more: true`: **Accepted** (`→ done`), **Retried** (`→ todo`, `failed`), **Parked**/**accept-as-review** (`→ review`, `pm_run_log(<id>)`: `blocked`/`partial`), **Recovered claims** (`claimed_by_run` → `<this run>`), **Released** (`info`), **Decisions raised** (`pm_list_decisions(blocks=<parked>)`), **Stories closed**, **Points moved** (`pm_get(<ids>, fields="points")`), **Untouched**. Notes cross-check; disagree → **the log wins**.
 23. **Branches**: `<rb>`; `git branch --list '<rb>--*'` vs `git branch --merged <rb>`: **merged**, **unmerged** (parked/review), **abandoned** (released) — per 22's log. `git diff --stat HEAD...<rb>`; `git status --short -- .project/`.
 24. `CronDelete` the heartbeat. All tasks `done` → `pm_update_sprint(sprint_id, status="completed", run_id=<this run>)`.
 
@@ -98,7 +96,7 @@ Rules:
 - Finish: `git add -A -- <code paths>` (never .project), one commit titled `<task-id>`, worktree left in place. No git push, pm_commit, pm_push.
 - Do NOT mark the task done, run pm_done_next or pass --complete; pm_accept
   closes it (a worker-set done answers already_done). Blockers:
-  pm_update(note=...).
+  pm_update(note=...); a human call: pm_park(note=..., decision=...).
 
 Report back under 1500 chars, no code or logs: files changed
 (paths only); tests as `command -> pass|fail (n passed)`; DoD met; DoD unmet;
@@ -113,8 +111,7 @@ DoD: <dod items>. Criteria: <criteria>.
 Branches <run branch>/<task branch>, worktree <path>, sha <sha>. Worker
 report: <report>.
 Run `git diff --stat <run branch>...<task branch>` and `git diff --name-only`;
-forbidden files come from that list. Run the DoD tests in the worktree
-(`cd <path>`).
+forbidden files come from that list. Run the DoD tests in the worktree.
 Other lane in flight: <other task> — its files are out of scope; a diff touching
 them is a retry, not a park.
 Worker rules: no reset, one commit, no Store write.
