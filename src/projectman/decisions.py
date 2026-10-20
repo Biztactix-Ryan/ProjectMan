@@ -51,8 +51,41 @@ def blocking_decisions(
             raise ValueError("blocking_decisions needs a store or pre-loaded decisions")
         decisions = store.list_decisions(status=DecisionStatus.open.value)
 
-    open_decisions = [d for d in decisions if d.status == DecisionStatus.open]
-    if not open_decisions:
+    return _decisions_naming(
+        task_meta, store, decisions, DecisionStatus.open, stories=stories
+    )
+
+
+def answered_decisions(
+    task_meta: TaskFrontmatter,
+    store: Optional["Store"],
+    decisions: Iterable[DecisionFrontmatter],
+    *,
+    stories: Optional[dict[str, StoryFrontmatter]] = None,
+) -> list[DecisionFrontmatter]:
+    """The answered decisions that blocked *task_meta*, ordered by number.
+
+    The same task / story / epic match as :func:`blocking_decisions`, over
+    the pre-loaded ``decisions`` (US-PM-66-5: pm_grab hands these to the
+    worker so a settled question is not re-asked).  Withdrawn ones are
+    excluded -- they settled nothing.
+    """
+    return _decisions_naming(
+        task_meta, store, decisions, DecisionStatus.answered, stories=stories
+    )
+
+
+def _decisions_naming(
+    task_meta: TaskFrontmatter,
+    store: Optional["Store"],
+    decisions: Iterable[DecisionFrontmatter],
+    status: DecisionStatus,
+    *,
+    stories: Optional[dict[str, StoryFrontmatter]] = None,
+) -> list[DecisionFrontmatter]:
+    """Decisions in *status* whose ``blocks`` name the task, story or epic."""
+    candidates = [d for d in decisions if d.status == status]
+    if not candidates:
         return []
 
     targets = {task_meta.id}
@@ -67,6 +100,6 @@ def blocking_decisions(
         if story_meta is not None and story_meta.epic_id:
             targets.add(story_meta.epic_id)
 
-    blocking = [d for d in open_decisions if targets.intersection(d.blocks)]
-    blocking.sort(key=_decision_sort_key)
-    return blocking
+    matched = [d for d in candidates if targets.intersection(d.blocks)]
+    matched.sort(key=_decision_sort_key)
+    return matched

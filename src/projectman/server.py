@@ -612,6 +612,7 @@ GRAB_SECTIONS = (
     "sibling_tasks_total",
     "sibling_tasks_done",
     "dependency_status",
+    "decisions",
     "warnings",
 )
 
@@ -2991,12 +2992,19 @@ def _do_grab(
 
     Returns a dict — either an expected-negative payload or {"grabbed": {...}}.
     """
+    from .decisions import answered_decisions
     from .readiness import check_readiness
 
     task_meta, task_body = store.get_task(task_id)
 
+    # One decision read serves both the open-decision gate and the answered
+    # ones carried in the payload (US-PM-66-5) — the gate filters to open.
+    all_decisions = store.list_decisions()
+
     # Validate readiness (re-claiming your own task is idempotent)
-    readiness = check_readiness(task_meta, task_body, store, reclaim_for=assignee)
+    readiness = check_readiness(
+        task_meta, task_body, store, reclaim_for=assignee, decisions=all_decisions
+    )
     if not readiness["ready"]:
         # Expected negative, not a failure: the caller asked whether it
         # could take this task and got a valid, informative no.  The
@@ -3044,8 +3052,10 @@ def _do_grab(
     # Load parent story context (body only when requested — it is identical
     # for every grab within the same story)
     story_context = {}
+    story_lookup: dict = {}
     try:
         story_meta, story_body = store.get_story(task_meta.story_id)
+        story_lookup[story_meta.id] = story_meta
         story_context = {
             "id": story_meta.id,
             "title": story_meta.title,
@@ -3114,6 +3124,17 @@ def _do_grab(
     # Omit the key entirely when there is nothing to warn about — an empty
     # `warnings: []` costs bytes on every call and reads as a signal.  Its
     # presence now means "something genuinely applies to this task".
+    # Answered decisions that blocked the task, its story or its epic
+    # (US-PM-66-5): the settled answers the worker must build on.  Omitted
+    # when empty, like `warnings`.
+    answered = answered_decisions(
+        task_meta, store, all_decisions, stories=story_lookup
+    )
+    if answered:
+        grabbed["decisions"] = [
+            {"id": d.id, "title": d.title, "answer": d.answer, "rationale": d.rationale}
+            for d in answered
+        ]
     if readiness["warnings"]:
         grabbed["warnings"] = readiness["warnings"]
     return {"grabbed": grabbed}
@@ -3143,6 +3164,8 @@ def pm_grab(
     Re-claiming a task already assigned to the same assignee (e.g. pre-claimed
     by an orchestrator via pm_done_next) succeeds and returns the same payload.
 
+    `decisions`: answered decisions that blocked the task, story or epic.
+
     A win records `claimed_at` and `claimed_by_run` on the task, so a claim
     left behind by a crashed run is identifiable later — see `pm_active` /
     `pm_board`, which flag it `stale: true`.
@@ -3153,7 +3176,7 @@ def pm_grab(
         include_story: Include the parent story body (default true). Pass false when grabbing another task from a story whose context you already have.
         id: Alias for task_id — either spelling works; passing both with different values is an error
         run_id: Opaque id of the run making the claim, recorded on the task as `claimed_by_run` and on the activity-log event. Pass a value that is stable for one orchestrator run and different across runs, so a restarted run can query `pm_activity` for the claims its predecessor took. Omit and the server's own per-process id is used, so every claim still has an owner.
-        fields: Comma-separated key names to return, e.g. "status,assignee" — a re-claim used only to verify state is `pm_grab(task_id, fields="status,assignee")` and comes back as `grabbed: {task: {id, status, assignee}}`. Names are either keys of the task (status, assignee, points, title, story_id, depends_on, …) or whole top-level sections (body, story_context, sibling_tasks, sibling_tasks_total, sibling_tasks_done, dependency_status, warnings); unnamed sections are omitted and `id` is always kept. Projection is output-only — the claim is identical either way, and expected negatives come back in full. An unknown name is an error listing the valid ones. Omit for the full payload — the default is unchanged.
+        fields: Comma-separated key names to return, e.g. "status,assignee" — a re-claim used only to verify state is `pm_grab(task_id, fields="status,assignee")` and comes back as `grabbed: {task: {id, status, assignee}}`. Names are either keys of the task (status, assignee, points, title, story_id, depends_on, …) or whole top-level sections (body, story_context, sibling_tasks, sibling_tasks_total, sibling_tasks_done, dependency_status, decisions, warnings); unnamed sections are omitted and `id` is always kept. Projection is output-only — the claim is identical either way, and expected negatives come back in full. An unknown name is an error listing the valid ones. Omit for the full payload — the default is unchanged.
     """
     try:
         task_id = _resolve_id("task_id", task_id, id=id)

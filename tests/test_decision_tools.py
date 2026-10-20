@@ -1125,3 +1125,160 @@ class TestAnswerRunLog:
         with pytest.raises(ToolError):
             _answer("DEC-TST-1", **kwargs)
         assert _logs_snapshot(server_store) == before
+
+
+# ─── pm_grab carries answered decisions (US-PM-66-5) ─────────────
+#
+# Story US-PM-66 criterion: "pm_grab's response lists answered decisions
+# that blocked the task, its story or its epic".  Each entry is
+# {id, title, answer, rationale}; open and withdrawn decisions are never
+# listed, the key is absent when nothing applies, `decisions` is a
+# projectable section, and a re-claim returns it too.
+
+_GRAB_BODY = (
+    "## Implementation\n\nDo the thing properly and completely.\n\n"
+    "## Testing\n\nTest the thing properly.\n"
+)
+
+
+@pytest.fixture
+def grab_tree(server_store):
+    """EPIC-TST-1 > US-TST-1 (active) > US-TST-1-1, US-TST-1-2 (ready)."""
+    epic = server_store.create_epic("Epic", "Epic description")
+    story, _ = server_store.create_story(
+        "Story", "Story description long enough to matter."
+    )
+    server_store.update(story.id, status="active", epic_id=epic.id)
+    for title in ("Task one", "Task two"):
+        server_store.create_task(story.id, title, _GRAB_BODY, points=1)
+    return server_store
+
+
+def _grabbed(task_id="US-TST-1-1", **kwargs):
+    from projectman.server import pm_grab
+
+    return yaml.safe_load(pm_grab(task_id, **kwargs))["grabbed"]
+
+
+def _answered(blocks, answer="redis", rationale="already deployed", title="Q?"):
+    created = _create(title=title, blocks=blocks)
+    _answer(created["id"], answer=answer, rationale=rationale)
+    return created["id"]
+
+
+class TestGrabCarriesAnsweredDecisions:
+    @pytest.mark.parametrize("target", ["US-TST-1-1", "US-TST-1", "EPIC-TST-1"])
+    def test_criterion_answered_decision_on_task_story_or_epic_is_listed(
+        self, grab_tree, target
+    ):
+        """US-PM-66 criterion: pm_grab's response lists answered decisions
+        that blocked the task, its story or its epic."""
+        dec_id = _answered(target, title="Which queue backend?")
+        grabbed = _grabbed()
+        assert grabbed["decisions"] == [
+            {
+                "id": dec_id,
+                "title": "Which queue backend?",
+                "answer": "redis",
+                "rationale": "already deployed",
+            }
+        ]
+
+    def test_all_three_levels_listed_in_number_order(self, grab_tree):
+        ids = [
+            _answered("EPIC-TST-1", answer="a"),
+            _answered("US-TST-1", answer="b"),
+            _answered("US-TST-1-1", answer="c"),
+        ]
+        grabbed = _grabbed()
+        assert [d["id"] for d in grabbed["decisions"]] == ids
+        assert [d["answer"] for d in grabbed["decisions"]] == ["a", "b", "c"]
+
+    def test_open_and_withdrawn_decisions_are_excluded(self, grab_tree):
+        answered = _answered("US-TST-1")
+        withdrawn = _create(title="Moot?", blocks="US-TST-1")["id"]
+        _answer(withdrawn, withdraw=True, reason="no longer relevant")
+        # Open, but on the sibling task: an open decision on US-TST-1-1 itself
+        # (or its story/epic) would refuse the grab outright.
+        _create(title="Still open?", blocks="US-TST-1-2")
+        grabbed = _grabbed()
+        assert [d["id"] for d in grabbed["decisions"]] == [answered]
+
+    def test_open_decision_on_the_task_refuses_the_grab_with_no_list(
+        self, grab_tree
+    ):
+        from projectman.server import pm_grab
+
+        _answered("US-TST-1")
+        _create(title="Still open?", blocks="US-TST-1-1")
+        out = yaml.safe_load(pm_grab("US-TST-1-1"))
+        assert out["status"] == "not_ready"
+        assert "grabbed" not in out and "decisions" not in out
+
+    def test_decision_on_another_item_is_not_listed(self, grab_tree):
+        _answered("US-TST-1-2")
+        assert "decisions" not in _grabbed()
+
+    def test_key_absent_when_no_decisions_exist(self, grab_tree):
+        assert "decisions" not in _grabbed()
+
+    def test_key_absent_when_only_withdrawn_apply(self, grab_tree):
+        withdrawn = _create(title="Moot?", blocks="EPIC-TST-1")["id"]
+        _answer(withdrawn, withdraw=True, reason="moot")
+        assert "decisions" not in _grabbed()
+
+    def test_rationale_is_null_when_none_was_given(self, grab_tree):
+        dec = _create(title="Q?", blocks="US-TST-1")["id"]
+        _answer(dec, answer="redis")
+        assert _grabbed()["decisions"] == [
+            {"id": dec, "title": "Q?", "answer": "redis", "rationale": None}
+        ]
+
+    def test_fields_projection_includes_decisions_when_named(self, grab_tree):
+        dec = _answered("US-TST-1")
+        grabbed = _grabbed(fields="decisions")
+        assert set(grabbed) == {"task", "decisions"}
+        assert grabbed["task"] == {"id": "US-TST-1-1"}
+        assert [d["id"] for d in grabbed["decisions"]] == [dec]
+
+    def test_verification_shape_excludes_decisions(self, grab_tree):
+        _answered("US-TST-1")
+        grabbed = _grabbed(fields="status,assignee")
+        assert grabbed == {
+            "task": {"id": "US-TST-1-1", "status": "in-progress", "assignee": "claude"}
+        }
+
+    def test_naming_decisions_with_none_applicable_is_not_an_error(self, grab_tree):
+        assert _grabbed(fields="decisions") == {"task": {"id": "US-TST-1-1"}}
+
+    def test_reclaim_returns_decisions_too(self, grab_tree):
+        dec = _answered("EPIC-TST-1")
+        first = _grabbed(run_id="run-a")
+        again = _grabbed(run_id="run-a")
+        assert again["decisions"] == first["decisions"]
+        assert [d["id"] for d in again["decisions"]] == [dec]
+
+    def test_done_next_grab_carries_decisions(self, grab_tree):
+        from projectman.server import pm_done_next
+
+        dec = _answered("US-TST-1-2")
+        _grabbed()
+        result = yaml.safe_load(pm_done_next("US-TST-1-1", note="done", run_id="r"))
+        assert result["next"]["task"]["id"] == "US-TST-1-2"
+        assert [d["id"] for d in result["next"]["decisions"]] == [dec]
+
+    def test_grab_reads_the_decision_directory_once(self, grab_tree, monkeypatch):
+        """One listing serves the open-decision gate and the answered list."""
+        from projectman.store import Store
+
+        _answered("US-TST-1")
+        calls = []
+        real = Store.list_decisions
+
+        def counting(self, status=None):
+            calls.append(status)
+            return real(self, status=status)
+
+        monkeypatch.setattr(Store, "list_decisions", counting)
+        assert "decisions" in _grabbed()
+        assert calls == [None]
