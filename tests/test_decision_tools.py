@@ -31,6 +31,10 @@ def server_store(tmp_project, monkeypatch):
 
     clear_all_caches()
     _store_cache.clear()
+    from projectman.server import _store
+
+    # Guard: the server must resolve to the tmp store, never the real one.
+    assert _store().project_dir == tmp_project / ".project"
     yield Store(tmp_project)
     clear_all_caches()
     _store_cache.clear()
@@ -118,6 +122,57 @@ class TestCreate:
         assert _create(title="First?")["id"] == "DEC-TST-1"
         assert _create(title="Second?")["id"] == "DEC-TST-2"
         assert (server_store.decisions_dir / "DEC-TST-2.md").exists()
+
+    def test_next_free_number_after_existing_files_and_a_gap(self, server_store):
+        """End to end: existing DEC files on disk (with a gap) set the floor,
+        the tool writes DEC-PREFIX-N.md whose frontmatter round-trips, and
+        exactly one create event lands in the activity log for it."""
+        import frontmatter
+
+        decisions = server_store.decisions_dir
+        decisions.mkdir(parents=True)
+        (decisions / "DEC-TST-1.md").write_text("---\nid: DEC-TST-1\n---\n")
+        (decisions / "DEC-TST-5.md").write_text("---\nid: DEC-TST-5\n---\n")
+
+        created = _create(
+            title="After the gap?",
+            context="Context body.",
+            options=["a", "b"],
+            recommendation="a",
+            priority="could",
+        )
+        assert created["id"] == "DEC-TST-6"
+
+        path = server_store.project_dir / "decisions" / "DEC-TST-6.md"
+        assert path.is_file()
+        assert sorted(p.name for p in decisions.glob("*.md")) == [
+            "DEC-TST-1.md",
+            "DEC-TST-5.md",
+            "DEC-TST-6.md",
+        ]
+
+        post = frontmatter.load(str(path))
+        assert post.metadata["id"] == "DEC-TST-6"
+        assert post.metadata["title"] == "After the gap?"
+        assert post.metadata["status"] == "open"
+        assert post.metadata["priority"] == "could"
+        assert post.metadata["recommendation"] == "a"
+        assert [o["label"] for o in post.metadata["options"]] == ["a", "b"]
+        assert post.content == "Context body."
+        meta, body = server_store.get_decision("DEC-TST-6")
+        assert meta.model_dump(mode="json") == post.metadata
+        assert body == post.content
+
+        events = _events(server_store, "DEC-TST-6")
+        assert [(e["event_type"], e["item_type"]) for e in events] == [
+            ("create", "decision")
+        ]
+        assert events[0]["actor"] == "test-actor"
+        # The pre-existing files were not re-logged.
+        assert _events(server_store, "DEC-TST-1") == []
+        assert _events(server_store, "DEC-TST-5") == []
+
+        assert _create(title="Next?")["id"] == "DEC-TST-7"
 
     def test_blocks_accepts_a_list(self, server_store):
         server_store.create_story("A story", "A description long enough to pass")
