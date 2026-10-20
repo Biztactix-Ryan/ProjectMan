@@ -142,3 +142,98 @@ def test_a_fresh_worktree_cannot_switch_to_a_branch_checked_out_elsewhere(tmp_pa
     assert _git(first, "commit", "-q", "-a", "--amend", "--no-edit").returncode == 0
     count = _git(first, "rev-list", "--count", "orch/r..orch/r--T-1").stdout.strip()
     assert count == "1", "amending in the first worktree did not keep one commit"
+
+
+# --- US-PM-68-4: the prescribed retry flow, end to end, under tmp_path ------
+
+
+def _ok(cwd, *args):
+    result = _git(cwd, *args)
+    assert result.returncode == 0, f"git {' '.join(args)} failed:\n{result.stderr}"
+    return result.stdout.strip()
+
+
+def _run_layout(tmp_path):
+    """A repo with run branch ``orch/r`` merged in its own worktree ``rw``."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _ok(repo, "init", "-q", "-b", "main")
+    _ok(repo, "config", "user.email", "t@example.invalid")
+    _ok(repo, "config", "user.name", "t")
+    _ok(repo, "config", "commit.gpgsign", "false")
+    (repo / "f").write_text("base\n", encoding="utf-8")
+    (repo / "g").write_text("base\n", encoding="utf-8")
+    _ok(repo, "add", "f", "g")
+    _ok(repo, "commit", "-q", "-m", "init")
+    _ok(repo, "branch", "orch/r", "HEAD")
+    rw = tmp_path / "rw"
+    _ok(repo, "worktree", "add", "-q", str(rw), "orch/r")
+    return repo, rw
+
+
+def _first_attempt(repo, path, task, filename, content):
+    """What an isolated first worker does: own worktree, `switch -c`, one commit."""
+    _ok(repo, "worktree", "add", "-q", "--detach", str(path), "orch/r")
+    _ok(path, "switch", "-q", "-c", f"orch/r--{task}", "orch/r")
+    (path / filename).write_text(content, encoding="utf-8")
+    _ok(path, "commit", "-q", "-am", task)
+    return _ok(path, "rev-parse", "HEAD")
+
+
+def _commits_ahead(cwd, task):
+    return _ok(cwd, "rev-list", "--count", f"orch/r..orch/r--{task}")
+
+
+def test_a_retry_in_the_first_worktree_amends_to_one_commit_and_ff_merges(tmp_path):
+    """Retry: cd into the first worktree, fix, amend; the run branch ff-merges it."""
+    repo, rw = _run_layout(tmp_path)
+    first = tmp_path / "first"
+    first_sha = _first_attempt(repo, first, "T-1", "f", "attempt 1\n")
+
+    # the retry worker skips the first line: re-cutting the branch is refused
+    assert _git(first, "switch", "-c", "orch/r--T-1", "orch/r").returncode != 0
+
+    # retry: same worktree, same branch, amend
+    assert _ok(first, "branch", "--show-current") == "orch/r--T-1"
+    (first / "f").write_text("attempt 2\n", encoding="utf-8")
+    _ok(first, "commit", "-q", "-a", "--amend", "--no-edit")
+    retry_sha = _ok(first, "rev-parse", "HEAD")
+    assert retry_sha != first_sha
+    assert _commits_ahead(first, "T-1") == "1"
+
+    # step 19 Accept: merge in <rw> while the task branch stays checked out in first
+    _ok(rw, "merge", "--ff-only", "orch/r--T-1")
+    assert _ok(rw, "rev-parse", "HEAD") == retry_sha
+    assert (rw / "f").read_text(encoding="utf-8") == "attempt 2\n"
+    merged = _git(rw, "merge-base", "--is-ancestor", first_sha, "HEAD")
+    assert merged.returncode != 0, "the failed first attempt reached the run branch"
+
+
+def test_a_conflict_retry_rebases_in_the_first_worktree_and_keeps_one_commit(tmp_path):
+    """Conflict retry: `git rebase orch/r` in the first worktree, then one commit."""
+    repo, rw = _run_layout(tmp_path)
+    lane_a, lane_b = tmp_path / "lane-a", tmp_path / "lane-b"
+    _first_attempt(repo, lane_a, "T-A", "f", "from A\n")
+    # B is cut before A's merge and touches the same file
+    _first_attempt(repo, lane_b, "T-B", "f", "from B\n")
+
+    _ok(rw, "merge", "--ff-only", "orch/r--T-A")
+    assert _git(rw, "merge", "--no-ff", "-m", "T-B", "orch/r--T-B").returncode != 0
+    _ok(rw, "merge", "--abort")
+
+    # retry worker: cd into B's first worktree, rebase onto the run branch first
+    assert _git(lane_b, "rebase", "orch/r").returncode != 0, "expected a rebase conflict"
+    (lane_b / "f").write_text("from A\nfrom B\n", encoding="utf-8")
+    _ok(lane_b, "add", "f")
+    _ok(lane_b, "-c", "core.editor=true", "rebase", "--continue")
+    # ...then the retry's fix, amended into the same commit
+    (lane_b / "g").write_text("fixed by B's retry\n", encoding="utf-8")
+    _ok(lane_b, "commit", "-q", "-a", "--amend", "--no-edit")
+
+    assert _ok(lane_b, "branch", "--show-current") == "orch/r--T-B"
+    assert _commits_ahead(lane_b, "T-B") == "1"
+    _ok(rw, "merge", "--ff-only", "orch/r--T-B")
+    assert (rw / "f").read_text(encoding="utf-8") == "from A\nfrom B\n"
+    assert (rw / "g").read_text(encoding="utf-8") == "fixed by B's retry\n"
+    log = _ok(rw, "log", "--format=%s", "main..orch/r").splitlines()
+    assert log == ["T-B", "T-A"], log
