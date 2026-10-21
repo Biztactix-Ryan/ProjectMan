@@ -445,6 +445,53 @@ test('US-PM-61-3 criterion: without heartbeats the same wait is a marked miss, n
   await ui.unmount()
 })
 
+test('US-PM-61-3 criterion: a heartbeat that bridged no wait shows its exact cost and zero avoided writes', async ($, on) => {
+  const clock = mock.clock(on, { now: 0 })
+  const w = world(on)
+  await grab($, 'US-PM-61-7')
+  await startTurn($, 'turn-1', 'run the sprint')
+  await request($, w, usage(2, 30000, 200), { turnId: 'turn-1' })
+  await clock.advance(30 * MIN)
+  await startTurn($, 'hb-1', HEARTBEAT)
+  await request($, w, usage(1, 30200, 0, 8), { turnId: 'hb-1' })
+  // The hand-back comes 40m after the last real request: inside the TTL, nothing bridged.
+  await clock.advance(10 * MIN)
+  await startTurn($, 'turn-2', '<task-notification>US-PM-61-7 done</task-notification>')
+  await request($, w, usage(3, 30200, 900), { turnId: 'turn-2' })
+
+  const runNow = live(w)?.run
+  expect(runNow?.tasks['US-PM-61-7']).toEqual({ requests: 2, input: 5, cacheRead: 60200, cacheWrite: 1100, output: 20 })
+  expect(runNow?.heartbeat).toEqual({ requests: 1, input: 1, cacheRead: 30200, cacheWrite: 0, output: 8, bridged: 0, avoidedWrites: 0 })
+
+  const ui = await mount($, 'terminal')
+  expect(await ui.find({ type: 'Text', text: '1 req · input 1 · cache read 30.2k · cache write 0' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: 'Bridged 0 waits over the TTL · avoided 0 cache-write tokens' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: 'US-PM-61-7  2 req · input 5 · cache read 60.2k · cache write 1.1k' })).toBeDefined()
+  await ui.unmount()
+})
+
+test('US-PM-61-3 criterion: a prompt that mentions the heartbeat but does not open with it is not counted as one', async ($, on) => {
+  const clock = mock.clock(on, { now: 0 })
+  const w = world(on)
+  await grab($, 'US-PM-61-7')
+  await startTurn($, 'turn-1', `Why did the ${HEARTBEAT}`)
+  await request($, w, usage(2, 30000, 200), { turnId: 'turn-1' })
+  await clock.advance(5 * MIN)
+  await startTurn($, 'turn-2', `heartbeat ${RUN}: is it still running?`)
+  await request($, w, usage(1, 30200, 0, 8), { turnId: 'turn-2' })
+
+  const runNow = live(w)?.run
+  expect(runNow?.heartbeat).toBeUndefined()
+  expect(runNow?.tasks['US-PM-61-7']).toEqual({ requests: 2, input: 3, cacheRead: 60200, cacheWrite: 200, output: 18 })
+  expect(live(w)?.requests.map((r) => r.isHeartbeat)).toEqual([false, false])
+
+  const ui = await mount($, 'terminal')
+  expect(await ui.find({ type: 'Text', text: 'No heartbeat requests yet.' })).toBeDefined()
+  expect(await ui.findAll({ type: 'Text', text: /heartbeat  input/ })).toEqual([])
+  expect(await ui.find({ type: 'Text', text: 'US-PM-61-7  2 req · input 3 · cache read 60.2k · cache write 200' })).toBeDefined()
+  await ui.unmount()
+})
+
 test("a subagent's turn never starts the heartbeat bucket, and a plain turn writes no mark", async ($, on) => {
   mock.clock(on, { now: 0 })
   const w = world(on)
