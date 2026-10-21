@@ -8,6 +8,7 @@ import {
   COST_RUNS_KEY,
   emptyCounts,
   KEPT_REQUESTS,
+  KEPT_RUNS,
   MAIN_LOOP,
   newRun,
   pmRunCall,
@@ -346,4 +347,127 @@ test('a store that cannot be written leaves the live recording standing', async 
   w.storeFails = false
   await request($, w, usage(1, 2, 3))
   expect((await stored(w, clock))[RUN]).toEqual(live(w)?.run)
+})
+
+// A session restart, as two tests: each test loads the plugin afresh (its
+// `$.state` empty, `register` run again), so the second test is a new mod
+// instance whose only link to the first is the `$.store` the first left.
+// The second is handed that store as written; it fails, naming why, when
+// run without the first.
+let sessionOne: { store: Record<string, unknown>; run: ProjectmanCostRun } | undefined
+
+test('US-PM-61-5 criterion: restart, session one leaves its exact run summary in $.store', async ($, on) => {
+  const clock = mock.clock(on, { now: 1000 })
+  const w = world(on)
+  await pmCall($, 'mcp__projectman__pm_update_sprint', { sprint_id: 'SPRINT-PM-21', status: 'active', run_id: RUN })
+  await request($, w, usage(7, 100, 30))
+  await pmCall($, GRAB, { task_id: 'US-PM-61-6', run_id: RUN })
+  await request($, w, usage(3, 20000, 500))
+  await request($, w, usage(10, 0, 9000), WORKER)
+
+  const expected: ProjectmanCostRun = {
+    runId: RUN,
+    startedAt: 1000,
+    updatedAt: 1000,
+    tasks: { 'US-PM-61-6': { requests: 2, input: 13, cacheRead: 20000, cacheWrite: 9500, output: 20 } },
+    unattributed: { requests: 1, input: 7, cacheRead: 100, cacheWrite: 30, output: 10 },
+    totals: { requests: 3, input: 20, cacheRead: 20100, cacheWrite: 9530, output: 30 },
+  }
+  expect(live(w)?.run).toEqual(expected)
+  const kept = await stored(w, clock)
+  expect(Object.keys(kept)).toEqual([RUN])
+  expect(kept[RUN]).toEqual(expected)
+  sessionOne = { store: structuredClone(w.store), run: expected }
+})
+
+test('US-PM-61-5 criterion: restart, a fresh instance reads the kept summary back exactly and adds to it', async ($, on) => {
+  if (sessionOne === undefined) throw new Error('needs the session-one test above to have run first')
+  const clock = mock.clock(on, { now: 50000 })
+  const w = world(on, sessionOne.store)
+  // A fresh instance: nothing live until a run-carrying pm call.
+  await request($, w, usage(99, 99, 99))
+  expect(w.cost).toEqual([])
+
+  // The same run id goes on from the kept summary, totals exact.
+  await pmCall($, ACCEPT, { task_id: 'US-PM-61-6', run_id: RUN })
+  expect(live(w)?.run).toEqual(sessionOne.run)
+
+  // Requests add to it, never replace it.
+  await request($, w, usage(2, 30000, 40, 5))
+  await pmCall($, GRAB, { task_id: 'US-PM-61-7', run_id: RUN }, 'agent-worker-2')
+  await request($, w, usage(4, 0, 7000), 'agent-worker-2')
+  const expected: ProjectmanCostRun = {
+    runId: RUN,
+    startedAt: 1000,
+    updatedAt: 50000,
+    tasks: {
+      'US-PM-61-6': { requests: 3, input: 15, cacheRead: 50000, cacheWrite: 9540, output: 25 },
+      'US-PM-61-7': { requests: 1, input: 4, cacheRead: 0, cacheWrite: 7000, output: 10 },
+    },
+    unattributed: { requests: 1, input: 7, cacheRead: 100, cacheWrite: 30, output: 10 },
+    totals: { requests: 5, input: 26, cacheRead: 50100, cacheWrite: 16570, output: 45 },
+  }
+  expect(live(w)?.run).toEqual(expected)
+  const kept = await stored(w, clock)
+  expect(Object.keys(kept)).toEqual([RUN])
+  expect(kept[RUN]).toEqual(expected)
+})
+
+test("US-PM-61-5 criterion: switching run ids keeps the old run's last summary, and switching back resumes it", async ($, on) => {
+  const clock = mock.clock(on, { now: 2000 })
+  const w = world(on)
+  await pmCall($, GRAB, { task_id: 'US-PM-61-6', run_id: RUN })
+  await request($, w, usage(1, 2, 3))
+  await request($, w, usage(4, 5, 6))
+  const last = live(w)?.run
+  expect(last?.totals).toEqual({ requests: 2, input: 5, cacheRead: 7, cacheWrite: 9, output: 20 })
+
+  // The switch comes before the last request's write lands: that summary is still the one kept.
+  await pmCall($, GRAB, { task_id: 'US-PM-61-7', run_id: OTHER_RUN })
+  await request($, w, usage(5, 6, 7))
+  let kept = await stored(w, clock)
+  expect(kept[RUN]).toEqual(last)
+  expect(kept[OTHER_RUN]).toEqual(live(w)?.run)
+
+  // More of the new run leaves the old run's summary as it was.
+  await request($, w, usage(1, 1, 1))
+  kept = await stored(w, clock)
+  expect(kept[RUN]).toEqual(last)
+  expect(kept[OTHER_RUN]?.totals.requests).toBe(2)
+
+  // Back to the old run id: it goes on from its kept summary, not afresh.
+  await pmCall($, GRAB, { task_id: 'US-PM-61-6', run_id: RUN })
+  expect(live(w)?.run).toEqual(last)
+  await request($, w, usage(1, 1, 1))
+  expect(live(w)?.run?.totals).toEqual({ requests: 3, input: 6, cacheRead: 8, cacheWrite: 10, output: 30 })
+  kept = await stored(w, clock)
+  expect(kept[RUN]).toEqual(live(w)?.run)
+  expect(kept[OTHER_RUN]?.totals.requests).toBe(2)
+})
+
+test('US-PM-61-5 criterion: $.store keeps the 20 most recent runs, evicting the oldest', async ($, on) => {
+  expect(KEPT_RUNS).toBe(20)
+  const seeded: Record<string, ProjectmanCostRun> = {}
+  for (let i = 1; i <= KEPT_RUNS; i++) seeded[`orch-old-${i}`] = newRun(`orch-old-${i}`, i)
+  const clock = mock.clock(on, { now: 1000 })
+  const w = world(on, { [COST_RUNS_KEY]: seeded })
+
+  // A 21st run evicts the least recently updated one alone.
+  await pmCall($, GRAB, { task_id: 'US-PM-61-6', run_id: RUN })
+  await request($, w, usage(1, 2, 3))
+  let kept = await stored(w, clock)
+  expect(Object.keys(kept).length).toBe(KEPT_RUNS)
+  expect(kept['orch-old-1']).toBeUndefined()
+  for (let i = 2; i <= KEPT_RUNS; i++) expect(kept[`orch-old-${i}`]).toEqual(seeded[`orch-old-${i}`])
+  expect(kept[RUN]).toEqual(live(w)?.run)
+
+  // A 22nd evicts the next oldest; the runs this session updated stay.
+  await pmCall($, GRAB, { task_id: 'US-PM-61-7', run_id: OTHER_RUN })
+  await request($, w, usage(1, 2, 3))
+  kept = await stored(w, clock)
+  expect(Object.keys(kept).length).toBe(KEPT_RUNS)
+  expect(kept['orch-old-2']).toBeUndefined()
+  expect(kept['orch-old-3']).toEqual(seeded['orch-old-3'])
+  expect(kept[RUN]?.totals.requests).toBe(1)
+  expect(kept[OTHER_RUN]).toEqual(live(w)?.run)
 })
