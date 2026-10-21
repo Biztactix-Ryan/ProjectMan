@@ -1,5 +1,6 @@
 """Embedding-based semantic search using fastembed + SQLite."""
 
+import functools
 import hashlib
 import os
 import sqlite3
@@ -17,6 +18,19 @@ class EmbeddingResult:
     title: str
     type: str
     score: float
+
+
+@functools.lru_cache(maxsize=1)
+def _shared_model():
+    """Load the embedding model once per process.
+
+    Store builds a fresh EmbeddingStore for every write, and loading the ONNX
+    model costs far more than embedding one item, so each create or update
+    used to pay a full model load.
+    """
+    from fastembed import TextEmbedding
+
+    return TextEmbedding("sentence-transformers/all-MiniLM-L6-v2")
 
 
 class EmbeddingStore:
@@ -57,8 +71,7 @@ class EmbeddingStore:
     @property
     def model(self):
         if self._model is None:
-            from fastembed import TextEmbedding
-            self._model = TextEmbedding("sentence-transformers/all-MiniLM-L6-v2")
+            self._model = _shared_model()
         return self._model
 
     def _content_hash(self, text: str) -> str:

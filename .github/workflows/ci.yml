@@ -6,6 +6,11 @@ on:
   pull_request:
     branches: [main]
 
+# A newer push to the same ref supersedes the run in flight.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test:
     name: "Python ${{ matrix.python-version }}"
@@ -31,15 +36,21 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
 
+      # No fastembed: with it every store write embeds through the real model,
+      # which multiplies the suite's runtime across the matrix. numpy keeps
+      # the stubbed-model embedding tests running; the integration jobs below
+      # install [all] and cover the real embedding path.
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -e ".[all]"
+          pip install -e ".[mcp,web]" numpy
 
       - name: Run unit tests
         run: |
-          pip install pytest pytest-tmp-files httpx
-          python -m pytest tests/ -v \
+          pip install pytest pytest-tmp-files httpx pytest-xdist
+          python -m pytest tests/ -v -n auto \
+            --ignore=tests/integration \
+            --ignore=tests/web \
             --ignore=tests/test_pr_workflow_integration.py \
             --ignore=tests/test_create_pr.py \
             --ignore=tests/test_hub_pr_workflow.py \
