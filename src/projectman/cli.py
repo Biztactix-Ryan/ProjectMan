@@ -1441,6 +1441,16 @@ def orch_cost(run_id, transcripts, as_json):
             f"heartbeats {report['heartbeats']}"
         )
 
+        totals = report["totals"]
+        click.echo("")
+        click.echo(
+            "  tokens  "
+            f"input {_thousands(totals['input'])}  "
+            f"cache read {_thousands(totals['cache_read'])}  "
+            f"cache write {_thousands(totals['cache_write'])}  "
+            f"output {_thousands(totals['output'])}"
+        )
+
         click.echo("")
         click.echo("  full cache misses")
         if report["misses"]:

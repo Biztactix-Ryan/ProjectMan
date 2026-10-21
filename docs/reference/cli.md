@@ -273,6 +273,7 @@ command says so on stderr and exits non-zero.
 | `worker waits (minutes)` | p50, p90, max and `n` from an `Agent` launch to the task notification that answered it |
 | `cache ttl (calls writing)` | Calls that wrote a cache entry under the five-minute and the one-hour TTL, from `usage.cache_creation` — a run that silently dropped to the five-minute cache (usage-credit overage, or an API key) shows here before it shows as a wall of misses |
 | `heartbeats` | Firings of the `/pm-orchestrate` keep-alive cron (user records opening `Heartbeat <run-id>`), each a cheap cached read that refreshed the TTL during a worker wait |
+| `tokens` | The run's input, cache-read, cache-write and output tokens summed over its calls (once per message id) — the numbers the `/pm-cost` pane records live; `totals` in `--json` |
 | `full cache misses` | Every call whose fresh tokens (`cache_creation + input`) exceeded half the context — the prefix cache was gone and the whole prompt was re-sent — with the idle gap in minutes before it |
 
 **An example of what to expect** (measured 2026-09-09 across several real
@@ -299,6 +300,61 @@ minutes later, a full cache miss after a known idle gap, and `pm_grab` /
 report off it — one from a single `analyze()` call, one through
 `projectman orch-cost <run-id> --transcripts <dir>` in both text and `--json`
 form. Extend that fixture, not a new one, when the report grows a section.
+
+### Cross-check with the cost pane
+
+The mod's `/pm-cost` pane (`hooks/cost-record.ts`, `hooks/cost-pane.tsx`)
+records the same usage in-process while a run is live; `orch-cost` reads it
+back from the transcript afterwards. US-PM-61-8 runs both on one recorded run:
+`tests/fixtures/orch-replay/session.jsonl` is a synthetic orchestrator
+transcript (three tasks claimed with `pm_grab` and accepted with `pm_accept`,
+each carrying the run id; one `Heartbeat orch-...` turn that bridged a
+67-minute worker wait; one 74-minute wait with no heartbeat that cost a full
+cache miss). `tests/mod/cost-crosscheck.test.ts` replays it through the mod's
+hooks — a prompt starts a turn, the first record of each message id is one
+request answering with its usage, each `tool_use` is a tool call made after
+that request — and `tests/test_orch_cost_pane_crosscheck.py` runs `orch-cost`
+on the file and holds the two to one set of numbers (the mod test reads the
+transcript from the generated mirror `tests/mod/fixtures/orch-replay.ts`,
+which the pytest keeps byte-identical to the `.jsonl`).
+
+**Tolerance: zero tokens per run** for input, cache read, cache write and
+output, after one adjustment. The differences are systematic, not noise:
+
+- **Run start.** `orch-cost` starts at the first record mentioning the run id;
+  the mod starts its run at the first projectman call carrying `run_id`, and
+  the engine runs a request before the tool call it produced. So `orch-cost`
+  also counts the *opening requests* — from the first mention up to and
+  including the request that made the run's first run-carrying pm call (one
+  request in the fixture, and on a real run usually the first `pm_grab`).
+  Take those off `orch-cost`'s side and the totals match exactly; without the
+  adjustment `orch-cost` reads exactly that much more.
+- **Per task.** `orch-cost` has no per-task attribution, so there is nothing
+  per task to compare. The mod's tasks, heartbeat bucket and unattributed
+  bucket partition its run total, which is what is compared. Its attribution
+  rule charges a request to the task its loop last named, so the request that
+  issues `pm_grab` for the next task is still charged to the previous one.
+- **Workers.** The mod records every loop in the session, workers (by
+  `agentId`) included. `orch-cost` reads the orchestrator's session file,
+  where only the main loop's requests are; workers' requests are written to
+  their own transcripts. On a real run the pane's totals exceed `orch-cost`'s
+  by the workers' requests; the fixture is main-loop only, so it compares like
+  with like.
+- **Heartbeats.** `orch-cost` counts firings (user records opening
+  `Heartbeat orch-`); the mod counts the requests made in heartbeat turns,
+  kept out of every task. They are equal while each firing is answered in one
+  request, as the skill's prompt asks; the mod's count is never lower.
+- **TTL gaps.** `orch-cost` finds a full cache miss by token shape (fresh
+  tokens over half the context), with the gap from the previous call in the
+  file; the mod marks a request *past TTL* by the clock (over one hour since
+  its own loop's previous request) and calls a wait bridged when a heartbeat
+  kept the gap under the TTL. They agree on a one-hour-cache run: every wait
+  over the TTL is a miss. On a run that fell to the five-minute cache
+  (`5m` above zero) `orch-cost` shows misses the mod does not mark.
+- **Display.** The recorded counts are exact; the pane's text rounds them to
+  0.1k / 0.1M, so a number read off the pane agrees only to that precision.
+- **Restarts.** The mod goes on adding to a run's kept summary across session
+  restarts; `orch-cost` measures each matching transcript on its own.
 
 ## projectman migrate-archived
 

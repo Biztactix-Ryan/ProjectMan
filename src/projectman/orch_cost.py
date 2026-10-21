@@ -265,6 +265,11 @@ def analyze(path: Path | str, run_id: Optional[str] = None) -> dict[str, Any]:
         shows up here before it shows up as a wall of misses.
     ``heartbeats``
         User records that are the skill's keep-alive prompt firing.
+    ``totals``
+        ``{input, cache_read, cache_write, output}`` — the run's token counts
+        summed over its calls (once per message id).  These are the numbers
+        the mod's ``/pm-cost`` pane records live; see *Cross-check with the
+        cost pane* in ``docs/reference/cli.md`` for how the two agree.
     ``dispatches``/``accepts``/``calls``
         The raw counts the ratios are built from.
     """
@@ -286,6 +291,7 @@ def analyze(path: Path | str, run_id: Optional[str] = None) -> dict[str, Any]:
     dispatches = 0
     accepts = 0
     output_tokens = 0
+    totals = {"input": 0, "cache_read": 0, "cache_write": 0, "output": 0}
     previous_call: Optional[datetime] = None
     # Gate on the run id only when the file actually mentions it: a run id
     # that never appears means this is not that run's transcript, and
@@ -327,6 +333,10 @@ def analyze(path: Path | str, run_id: Optional[str] = None) -> dict[str, Any]:
                 )
                 calls += 1
                 output_tokens += _int(usage.get("output_tokens"))
+                totals["input"] += inputs
+                totals["cache_read"] += _int(usage.get("cache_read_input_tokens"))
+                totals["cache_write"] += creation
+                totals["output"] += _int(usage.get("output_tokens"))
                 if base is None:
                     base = context
                 peak = max(peak, context)
@@ -412,6 +422,7 @@ def analyze(path: Path | str, run_id: Optional[str] = None) -> dict[str, Any]:
         "misses": misses,
         "ttl": ttl,
         "heartbeats": heartbeats,
+        "totals": totals,
         "dispatches": dispatches,
         "accepts": accepts,
         "calls": calls,

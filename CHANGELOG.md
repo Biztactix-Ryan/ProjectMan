@@ -19,6 +19,14 @@ checklist is under Deployment Process in `.project/INFRASTRUCTURE.md`.
   bucket of their own with the waits they bridged and the cache writes they
   avoided. No model request or MCP call; where no surface draws it answers
   with the same content as text.
+- **`projectman orch-cost` reports token totals (US-PM-61-8).** A `tokens`
+  line (`totals` in `--json`): the run's input, cache-read, cache-write and
+  output tokens, once per message id. A replayed synthetic run
+  (`tests/fixtures/orch-replay/`) holds them to the `/pm-cost` pane's
+  recorded totals: zero tokens apart once the request that made the run's
+  first pm call, which only `orch-cost` sees, is taken off. The other
+  systematic differences are under *Cross-check with the cost pane* in
+  `docs/reference/cli.md`.
 
 ## [0.12.0] - 2026-10-21
 
