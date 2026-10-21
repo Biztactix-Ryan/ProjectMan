@@ -1071,6 +1071,11 @@ def clone_of(origin: Path, dest: Path, *args: str) -> Path:
     on the remote rather than trusting the pushing repo's own refs.
     """
     git("clone", *args, str(origin), str(dest), cwd=dest.parent)
+    # Committer-configured like init_repo: a CI runner has no global identity,
+    # so a commit made in the clone would otherwise fail.
+    git("config", "user.name", "Test User", cwd=dest)
+    git("config", "user.email", "test@example.com", cwd=dest)
+    git("config", "commit.gpgsign", "false", cwd=dest)
     return dest
 
 

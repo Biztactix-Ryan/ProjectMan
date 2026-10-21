@@ -37,11 +37,11 @@ owned by ``tests/test_skill_verdict_verbs.py``:
 
 import inspect
 import re
-from datetime import datetime
 
 import pytest
 import yaml
 
+from projectman.activity_log import parse_timestamp
 from tests.test_skill_guidance_tools import _step, _worker_fence
 from tests.test_skill_verdict_verbs import DOCS, _outside_fences, _text
 
@@ -410,7 +410,7 @@ def test_a_reclaim_by_a_new_run_really_takes_the_dead_runs_task(
         "grabbed"
     ]["task"]
     assert task["claimed_by_run"] == "orch-2026-08-22-live"
-    assert datetime.fromisoformat(str(task["claimed_at"])) > stale_at, (
+    assert parse_timestamp(str(task["claimed_at"])) > stale_at, (
         "a takeover by a different run must reset claimed_at, or the "
         "recovered task would look stale to the run that just claimed it"
     )

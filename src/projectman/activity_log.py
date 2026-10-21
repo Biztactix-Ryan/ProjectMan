@@ -88,6 +88,15 @@ def log_paths(project_dir: Path) -> list[Path]:
     return paths
 
 
+def parse_timestamp(raw: str) -> datetime:
+    """Parse a log timestamp, accepting the ``Z`` suffix the writer uses.
+
+    ``datetime.fromisoformat`` rejects ``Z`` before Python 3.11, so it is
+    spelled out as ``+00:00`` first.  Raises ValueError like fromisoformat.
+    """
+    return datetime.fromisoformat(raw[:-1] + "+00:00" if raw.endswith("Z") else raw)
+
+
 def _first_entry_timestamp(path: Path) -> Optional[datetime]:
     """The timestamp of the oldest entry in ``path``, or None.
 
@@ -113,7 +122,7 @@ def _first_entry_timestamp(path: Path) -> Optional[datetime]:
                 if not isinstance(raw, str):
                     continue
                 try:
-                    parsed = datetime.fromisoformat(raw)
+                    parsed = parse_timestamp(raw)
                 except ValueError:
                     continue
                 if parsed.tzinfo is None:

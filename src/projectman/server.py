@@ -5400,7 +5400,7 @@ def pm_activity(
     """
     from datetime import datetime
 
-    from .activity_log import log_paths, read_log_entries
+    from .activity_log import log_paths, parse_timestamp, read_log_entries
 
     try:
         # Optional filter, so "neither" means "no filter" rather than an error.
@@ -5440,14 +5440,14 @@ def pm_activity(
         if run_id:
             entries = [e for e in entries if e.get("run_id") == run_id]
         if from_date:
-            from_dt = datetime.fromisoformat(from_date)
+            from_dt = parse_timestamp(from_date)
             entries = [
-                e for e in entries if datetime.fromisoformat(e["timestamp"]) >= from_dt
+                e for e in entries if parse_timestamp(e["timestamp"]) >= from_dt
             ]
         if to_date:
-            to_dt = datetime.fromisoformat(to_date)
+            to_dt = parse_timestamp(to_date)
             entries = [
-                e for e in entries if datetime.fromisoformat(e["timestamp"]) <= to_dt
+                e for e in entries if parse_timestamp(e["timestamp"]) <= to_dt
             ]
 
         total = len(entries)

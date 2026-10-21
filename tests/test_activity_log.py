@@ -7,6 +7,7 @@ from pathlib import Path
 
 from pydantic import ValidationError
 
+from projectman.activity_log import parse_timestamp
 from projectman.models import EventType, ItemType, LogEntry, LogSource
 
 
@@ -353,7 +354,7 @@ class TestEntriesIncludeISO8601Timestamps:
         parsed = json.loads(log_file.read_text().strip())
         ts_str = parsed["timestamp"]
         # Must be parseable as ISO 8601
-        dt = datetime.fromisoformat(ts_str)
+        dt = parse_timestamp(ts_str)
         assert dt.year == 2026
         assert dt.month == 3
         assert dt.day == 1
@@ -390,7 +391,7 @@ class TestEntriesIncludeISO8601Timestamps:
         append_log_entry(log_file, self._make_entry(timestamp=original_ts))
 
         parsed = json.loads(log_file.read_text().strip())
-        restored = datetime.fromisoformat(parsed["timestamp"])
+        restored = parse_timestamp(parsed["timestamp"])
         assert restored == original_ts
 
     def test_timestamp_field_present_in_every_entry(self, tmp_path):
@@ -405,7 +406,7 @@ class TestEntriesIncludeISO8601Timestamps:
         for line in log_file.read_text().strip().splitlines():
             parsed = json.loads(line)
             assert "timestamp" in parsed, "Every entry must include a timestamp field"
-            datetime.fromisoformat(parsed["timestamp"])  # must not raise
+            parse_timestamp(parsed["timestamp"])  # must not raise
 
 
 class TestFileCreatedOnFirstWrite:

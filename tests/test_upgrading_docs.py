@@ -98,7 +98,9 @@ def _optional_dependencies() -> dict:
     assert block, "pyproject.toml declares no [project.optional-dependencies]"
     return {
         m.group(1): re.findall(r'"([^"]+)"', m.group(2))
-        for m in re.finditer(r"^(\w[\w.-]*)\s*=\s*(\[[^\]]*\])", block.group(1), re.MULTILINE)
+        # Greedy to the line's last ``]``: a spec like ``mcp[cli]>=1.0`` has
+        # brackets of its own.
+        for m in re.finditer(r"^(\w[\w.-]*)\s*=\s*(\[.*\])\s*$", block.group(1), re.MULTILINE)
     }
 
 
