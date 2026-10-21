@@ -167,6 +167,45 @@ def test_heartbeats_and_ttl_gaps_agree(mod_run):
     assert len(report["misses"]) == 1
 
 
+#: The documented cross-check, the source of the stated tolerance.
+CLI_DOC = ROOT.parent / "docs" / "reference" / "cli.md"
+
+#: Number words the docs may spell a tolerance in.
+_WORDS = {"zero": 0, "one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "ten": 10}
+
+
+def _doc_section(text: str, heading: str) -> str:
+    """The body of a markdown section, up to the next heading of any level."""
+    match = re.search(rf"^#+ {re.escape(heading)}\n(.*?)(?=^#+ |\Z)", text, re.M | re.S)
+    assert match, f"section {heading!r} not found in {CLI_DOC}"
+    return match.group(1)
+
+
+def test_the_documented_tolerance_is_the_one_enforced():
+    """US-PM-61-4: docs state the tolerance these tests hold the totals to.
+
+    Changing either ``TOLERANCE_TOKENS`` or the docs' bold *Tolerance* line
+    alone fails here, so the stated number cannot drift from the enforced one.
+    """
+    section = _doc_section(CLI_DOC.read_text(encoding="utf-8"), "Cross-check with the cost pane")
+    stated = re.findall(r"\*\*Tolerance: ([\w,]+) tokens? per run\*\*", section)
+    assert len(stated) == 1, f"expected one stated tolerance, found {stated!r}"
+    word = stated[0].lower()
+    tokens = _WORDS[word] if word in _WORDS else int(word.replace(",", ""))
+    assert tokens == TOLERANCE_TOKENS
+    # It covers the four counts the per-run comparison checks, after the one
+    # adjustment the comparison makes.
+    statement = section[section.index("**Tolerance:"):].split("\n\n", 1)[0]
+    for kind in ("input", "cache read", "cache write", "output"):
+        assert kind in statement, kind
+    assert "one adjustment" in statement
+    assert set(KEYS) == {"input", "cacheRead", "cacheWrite", "output"}
+    # And it names the tests that enforce it.
+    for path in ("tests/mod/cost-crosscheck.test.ts", "tests/test_orch_cost_pane_crosscheck.py",
+                 "tests/fixtures/orch-replay/session.jsonl", "tests/mod/fixtures/orch-replay.ts"):
+        assert path in section, path
+
+
 def test_the_cli_reports_the_same_totals(monkeypatch, tmp_path):
     from click.testing import CliRunner
 
