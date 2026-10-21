@@ -10,6 +10,16 @@ checklist is under Deployment Process in `.project/INFRASTRUCTURE.md`.
 
 ## [Unreleased]
 
+### Added
+
+- **Cache-cost pane (US-PM-61).** `/pm-cost` opens a pane with the active (or
+  last kept) orchestrator run's input, cache-read and cache-write tokens per
+  task, a marker on each request that followed a gap longer than the one-hour
+  cache TTL in its loop, and the `Heartbeat orch-...` keep-alive requests in a
+  bucket of their own with the waits they bridged and the cache writes they
+  avoided. No model request or MCP call; where no surface draws it answers
+  with the same content as text.
+
 ## [0.12.0] - 2026-10-21
 
 Sprints 17-20 (EPIC-PM-8, EPIC-PM-9, US-PM-68). ProjectMan now ships as a

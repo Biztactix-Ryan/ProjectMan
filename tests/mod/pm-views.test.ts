@@ -167,7 +167,7 @@ function run(command: string): CommandRunInput {
 
 const ANSWERS = { pm_board: BOARD_YAML, pm_status: STATUS_YAML, pm_next: NOTE_YAML }
 
-test('session start registers the three commands, runnable mid-turn', async ($, on) => {
+test('session start registers the three commands (and /pm-cost, US-PM-61-7), runnable mid-turn', async ($, on) => {
   const seen = engine(on, ANSWERS)
   on('session.start', ($, e) => ({ cwd: e.cwd }))
   await $.session.start({ cwd: '/work/proj', surface: 'terminal', isInteractive: true })
@@ -176,6 +176,7 @@ test('session start registers the three commands, runnable mid-turn', async ($, 
     expect.objectContaining({ name: 'pm-board', immediate: true }),
     expect.objectContaining({ name: 'pm-status-view', immediate: true }),
     expect.objectContaining({ name: 'pm-next-task', immediate: true }),
+    expect.objectContaining({ name: 'pm-cost', immediate: true }),
   ])
 })
 

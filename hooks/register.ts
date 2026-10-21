@@ -28,7 +28,28 @@ import { BAND_ACTIVE, BAND_NOTE, BAND_SPRINTS, bandFrom, bandSprintCall, activeS
 import type { BandCall } from './sprint-band.tsx'
 import { movesBand, PM_TOOL } from './band-refresh.ts'
 import { bandSessionValue } from './band-session.ts'
-import { attribute, COST_RUNS_KEY, keptRuns, MAIN_LOOP, pmRunCall, recordRequest, rememberRun } from './cost-record.ts'
+import {
+  attribute,
+  COST_RUNS_KEY,
+  keptRuns,
+  latestRun,
+  MAIN_LOOP,
+  markTurn,
+  pmRunCall,
+  recordRequest,
+  rememberRun,
+} from './cost-record.ts'
+import {
+  COST_COMMAND,
+  COST_COMMAND_DESCRIPTION,
+  COST_OPENED,
+  COST_PANE,
+  COST_PANE_TITLE,
+  costPane,
+  costSummary,
+  costView,
+} from './cost-pane.tsx'
+import type { CostView } from './cost-pane.tsx'
 
 /** What the board pane draws (US-PM-60-7): null until the board is first read. */
 const board = atom({ plugin: 'projectman', key: 'board' } as const, null as ProjectmanBoardView | null)
@@ -90,6 +111,22 @@ async function keptRun($: EngineInterface, runId: string): Promise<ProjectmanCos
   } catch {
     return undefined
   }
+}
+
+/**
+ * What the cost pane draws (US-PM-61-7): the live run, else the most recent
+ * summary kept in `$.store` (none when the store cannot be read).
+ */
+async function readCostView($: EngineInterface): Promise<CostView | null> {
+  const state = await read($, cost)
+  if (state?.run) return costView(state, null)
+  let kept = null
+  try {
+    kept = latestRun(await $.store.get(COST_RUNS_KEY))
+  } catch {
+    kept = null
+  }
+  return costView(state, kept)
 }
 
 /** Asks for the run summary to be persisted, on the timer so no request waits on the store. */
@@ -334,6 +371,8 @@ export const register: Register = (on, options) => {
     for (const command of PM_COMMANDS) {
       await $.command.register({ name: command.name, description: command.description, immediate: true })
     }
+    // US-PM-61-7: /pm-cost opens the cache-cost pane from the mod's own state.
+    await $.command.register({ name: COST_COMMAND, description: COST_COMMAND_DESCRIPTION, immediate: true })
     return next(e)
   })
 
@@ -384,6 +423,24 @@ export const register: Register = (on, options) => {
   on('ui.render', { component: 'Pane', requestId: 'pm-board' }, async ($, e) => {
     const view = await read($, board)
     return boardPane($.ui.resolve(e), view, e.props.bodyColumns, () => void refreshBoard($))
+  })
+
+  // US-PM-61-7: /pm-cost opens the cache-cost pane where a surface draws and
+  // can seat it, and answers with the same content as text otherwise. It
+  // reads only the mod's own state and store: no MCP call, no model request.
+  on('command.run', { command: 'pm-cost' }, async ($, e, next) => {
+    if (e.command !== COST_COMMAND) return next(e)
+    const view = await readCostView($)
+    if ((await viewMode($)) !== 'pane') return { text: costSummary(view) }
+    const opened = await $.ui.open({ id: COST_PANE, title: COST_PANE_TITLE }).catch(() => undefined)
+    return { text: opened?.isPlaced === true ? COST_OPENED : costSummary(view) }
+  }).catch(($, e) => ({ text: `ProjectMan: /${e.command} failed to read the cost recording` }))
+
+  // US-PM-61-7: the cache-cost pane, drawn from `projectman.cost`; the read
+  // subscribes it, so each recorded request redraws it. The id spelled out
+  // (COST_PANE) so `claude plugin validate` reads the matcher.
+  on('ui.render', { component: 'Pane', requestId: 'pm-cost' }, async ($, e) => {
+    return costPane($.ui.resolve(e), await readCostView($))
   })
 
   // US-PM-62-6: the sprint band above the prompt, drawn from `projectman.band`.
@@ -465,12 +522,29 @@ export const register: Register = (on, options) => {
       if (usage !== null && (await read($, cost))?.run) {
         const at = await $.clock.now()
         const loop = e.agentId ?? MAIN_LOOP
-        await update($, cost, (v) => recordRequest(v, loop, usage, at))
+        await update($, cost, (v) => recordRequest(v, loop, usage, at, { turnId: e.turnId }))
         persistCost($)
       }
     } catch {
       // Recording is a convenience; the response stands without it.
     }
     return response
+  })
+
+  // US-PM-61-7: a main-loop turn the heartbeat prompt starts (`Heartbeat
+  // orch-...`, the /pm-orchestrate keep-alive) is marked, so its requests go
+  // to the run's heartbeat bucket; the next main-loop turn clears the mark.
+  // Written only when the mark changes, and only while a run is active.
+  on('turn.start', async ($, e, next) => {
+    try {
+      const loop = e.agentId ?? MAIN_LOOP
+      const current = await read($, cost)
+      if (markTurn(current, loop, e.turnId, e.text) !== current) {
+        await update($, cost, (v) => markTurn(v, loop, e.turnId, e.text))
+      }
+    } catch {
+      // Recording is a convenience; the turn starts without it.
+    }
+    return next(e)
   })
 }
