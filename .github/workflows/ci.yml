@@ -45,7 +45,11 @@ jobs:
           python -m pip install --upgrade pip
           pip install -e ".[mcp,web]" numpy
 
+      # Timing benchmarks compare speedups that a shared runner running four
+      # xdist workers cannot hold steady; they stay on for local runs.
       - name: Run unit tests
+        env:
+          PROJECTMAN_SKIP_BENCH: "1"
         run: |
           pip install pytest pytest-tmp-files httpx pytest-xdist
           python -m pytest tests/ -v -n auto \
