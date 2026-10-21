@@ -10,6 +10,97 @@ checklist is under Deployment Process in `.project/INFRASTRUCTURE.md`.
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-10-21
+
+Sprints 17-20 (EPIC-PM-8, EPIC-PM-9, US-PM-68). ProjectMan now ships as a
+Claude Code plugin with its own mod, the project can ask a human a tracked
+question and wait for the answer, and a clean orchestrated run merges itself.
+
+### Added
+
+- **Claude Code plugin (US-PM-55..58, ADR-006).** The repo root is the plugin
+  and its own marketplace: `/plugin marketplace add Biztactix-Ryan/ProjectMan`,
+  then `/plugin install projectman@projectman`. The plugin carries the pm
+  skills, the pm agent, the MCP server (launched with
+  `uv run --project ${CLAUDE_PLUGIN_ROOT} --extra all projectman serve`, so it
+  needs uv on `PATH`) and a SessionStart hook. Skills and the agent are
+  rendered from `src/projectman/templates` by `projectman build-plugin`, and a
+  test fails when the committed copies drift. Every cross-reference between
+  skills resolves under the plugin namespace (`/projectman:pm-do`, ...), and a
+  test scans the templates for names the plugin does not provide.
+- **`projectman session-context` (US-PM-56-9).** Prints the session-start
+  status block (counts, points, active sprint, in-flight work, NEXT.md note)
+  and is the plugin's SessionStart hook; silent outside a store.
+- **`projectman migrate-to-plugin` (US-PM-57).** Moves a setup-claude machine
+  to the plugin: removes the ProjectMan-managed skill and agent copies, the
+  user-scope projectman MCP server, the `./.mcp.json` entry and the
+  per-project pm-context.sh hook, leaves user-authored files alone and lists
+  every change. `--dry-run` previews.
+- **Orchestration guards (US-PM-59).** A hooks module refuses `git checkout`,
+  `git restore` and `git stash` in worker Bash calls, and Write/Edit calls on
+  the real `.project/` store, with a reason naming the rule; pm MCP tools keep
+  working. Guards apply to subagents only unless the `guard_main_session`
+  plugin option is on. The orchestrate and pm-do skills dropped the prose the
+  guards now enforce.
+- **Board, status and next without a Claude turn (US-PM-60).** `/pm-board`,
+  `/pm-status-view` and `/pm-next-task` call the MCP server directly, with no
+  model request, and work mid-turn. The board opens as a pane on the terminal
+  and desktop surfaces and replies as text elsewhere.
+- **Sprint band above the prompt (US-PM-62).** Shows the active sprint's
+  points, the task in flight and the head of the NEXT.md note; hidden outside
+  a store. It refreshes after any pm tool call that writes, under both the
+  plugin (`mcp__plugin_projectman_projectman__`) and bare (`mcp__projectman__`)
+  tool names. Where the band draws (terminal and desktop), the SessionStart
+  block is shortened, saving about 111 tokens (42%) a session; anywhere else
+  the block is unchanged. Measurement: `docs/telemetry/session-context-size.md`.
+- **Decisions (EPIC-PM-9).** A new item type for questions only a human can
+  answer, stored as `.project/decisions/DEC-PREFIX-N.md`:
+  - `pm_create_decision`, `pm_list_decisions` and `pm_answer_decision`;
+    `pm_get`, `pm_search` and INDEX.md include decisions (US-PM-63).
+  - An open decision blocks the tasks, stories or epics it names: `pm_grab`
+    refuses them naming the decision, and the board lists them as blocked.
+    `pm_park(decision=...)` raises one for the parked task, and the pm-do and
+    pm-orchestrate skills tell workers to use it (US-PM-64).
+  - `/pm-decide` works through the open decisions in a short session, ranked
+    by blocked points with active-sprint work first
+    (`pm_list_decisions(order="session")`), with the options and the
+    recommendation for each, and ends with a summary of what was unblocked
+    (US-PM-65).
+  - Answering or withdrawing logs a run-log entry on every task the decision
+    named; `pm_grab` returns the answered decisions that affected the task,
+    its story or its epic; `pm_answer_decision(promote=True)` writes the
+    answer to DECISIONS.md as the next ADR, cross-referenced both ways
+    (US-PM-66).
+  - `pm_status`, `/pm-status` and the session-start block show open decisions
+    and the points they block; `/pm-plan` checks candidate stories for
+    blocking decisions before sizing; `/pm` routes `decide` and `decisions`;
+    `pm_audit` warns on decisions open longer than `decision_stale_days`
+    (default 14), blocking nothing open, or blocking archived items (US-PM-67).
+
+### Changed
+
+- **A clean orchestrated run lands itself (US-PM-68).** When nothing is
+  parked, in review or unmerged, `/pm-orchestrate` fast-forwards the run
+  branch into the branch it started from and deletes it; otherwise it keeps
+  the run branch and prints the merge command. Task branches are now
+  `orch/<run>--<task-id>` (git cannot hold both `orch/<run>` and
+  `orch/<run>/<task>`), and a retry worker continues in the first attempt's
+  worktree.
+- `.project/` lives on its own `projectman` worktree branch in this repo, and
+  the rendered skill copies moved from `.claude/` to the plugin-root `skills/`
+  and `agents/`.
+- `pm_update_doc` writes atomically and logs an update event.
+- The default `tools/list` payload ceiling rose with the decision tools (they
+  are ungated because workers park with a decision), and the gating-savings
+  floor in `tests/test_tool_list_size.py` moved from 4% to 3.5%: the gate saves
+  the same bytes of a larger payload.
+
+### Deprecated
+
+- `projectman setup-claude` and `projectman refresh-skills` print the plugin
+  install steps and write nothing; the old behaviour stays behind a hidden
+  `--legacy` flag for one release.
+
 ## [0.11.0] - 2026-09-17
 
 US-PM-54 (EPIC-PM-7). Measured on 2026-09-17, every full prompt-cache miss on
@@ -627,7 +718,9 @@ The 0.8.0 link points at its own release commit, having no predecessor here.
 0.9.0 onward is tagged `vX.Y.Z`.
 -->
 
-[Unreleased]: https://github.com/Biztactix-Ryan/ProjectMan/compare/v0.10.0...main
+[Unreleased]: https://github.com/Biztactix-Ryan/ProjectMan/compare/v0.12.0...main
+[0.12.0]: https://github.com/Biztactix-Ryan/ProjectMan/compare/v0.11.0...v0.12.0
+[0.11.0]: https://github.com/Biztactix-Ryan/ProjectMan/compare/v0.10.0...v0.11.0
 [0.10.0]: https://github.com/Biztactix-Ryan/ProjectMan/compare/v0.9.2...v0.10.0
 [0.9.2]: https://github.com/Biztactix-Ryan/ProjectMan/compare/v0.9.1...v0.9.2
 [0.9.1]: https://github.com/Biztactix-Ryan/ProjectMan/compare/v0.9.0...v0.9.1

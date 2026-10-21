@@ -202,10 +202,10 @@ with the plugin, through the same `uv` environment the plugin's MCP server uses:
 
 ```bash
 cd /path/to/your/project
-uv run --project ~/.claude/plugins/cache/projectman/projectman/0.11.0 --extra all projectman init
+uv run --project ~/.claude/plugins/cache/projectman/projectman/0.12.0 --extra all projectman init
 ```
 
-Replace `0.11.0` with the installed version. If you're not sure of the path, run
+Replace `0.12.0` with the installed version. If you're not sure of the path, run
 `claude plugin list --json` and use the `installPath` it shows. Then start a new
 session in the project to see the status block.
 
