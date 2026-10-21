@@ -93,6 +93,19 @@ RICH_EXECUTABLE = ".project/hooks/pre-commit.sh"
 RICH_EMPTY_DIR = ".project/empty-drawer"
 
 
+@pytest.fixture(autouse=True)
+def _own_tempdir(tmp_path, monkeypatch):
+    """Give each test a temp dir of its own for the migration stash.
+
+    The stash tests compare ``projectman-migrate-*`` globs of the temp dir
+    before and after a migration; in the shared one, another xdist worker's
+    migration can have its stash there mid-run.
+    """
+    own = tmp_path / "tempdir"
+    own.mkdir()
+    monkeypatch.setattr(tempfile, "tempdir", str(own))
+
+
 @pytest.fixture
 def rich_repo(tmp_path):
     """A repo whose tracked .project/ exercises every awkward file shape."""
