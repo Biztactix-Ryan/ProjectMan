@@ -1,6 +1,13 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register, ToolCallInput } from 'claude-code'
-import type { ProjectmanBand, ProjectmanBandState, ProjectmanBoardView, ProjectmanGuardDenial } from '../types'
+import type {
+  ProjectmanBand,
+  ProjectmanBandState,
+  ProjectmanBoardView,
+  ProjectmanCostRun,
+  ProjectmanCostState,
+  ProjectmanGuardDenial,
+} from '../types'
 import { BOARD_OPENED, BOARD_PANE, BOARD_PANE_TITLE, boardPane } from './board-pane.tsx'
 import { findBannedGit, GIT_RULE_REASON } from './git-guard.ts'
 import { absolutize, mentionsStore, STORE_RULE_REASON, storeHit, storeRoots, targetOf } from './store-guard.ts'
@@ -21,6 +28,7 @@ import { BAND_ACTIVE, BAND_NOTE, BAND_SPRINTS, bandFrom, bandSprintCall, activeS
 import type { BandCall } from './sprint-band.tsx'
 import { movesBand, PM_TOOL } from './band-refresh.ts'
 import { bandSessionValue } from './band-session.ts'
+import { attribute, COST_RUNS_KEY, keptRuns, MAIN_LOOP, pmRunCall, recordRequest, rememberRun } from './cost-record.ts'
 
 /** What the board pane draws (US-PM-60-7): null until the board is first read. */
 const board = atom({ plugin: 'projectman', key: 'board' } as const, null as ProjectmanBoardView | null)
@@ -30,6 +38,71 @@ const board = atom({ plugin: 'projectman', key: 'board' } as const, null as Proj
  * drawn, which is also how the turn.complete hook knows a surface shows it.
  */
 const band = atom({ plugin: 'projectman', key: 'band' } as const, null as ProjectmanBandState | null)
+
+/**
+ * The active orchestrator run's token usage (US-PM-61-6): null until a pm
+ * call carries a run id. Its `run` is also kept in `$.store` (persistCost).
+ */
+const cost = atom({ plugin: 'projectman', key: 'cost' } as const, null as ProjectmanCostState | null)
+
+/**
+ * The run summary's writes to `$.store`, coalesced: each write takes the
+ * summary as it stands then, and a request recorded while one runs makes
+ * one more after it, so the store never settles on an older summary. The
+ * module's own, like bandQueue.
+ */
+const costQueue = {
+  isStale: false,
+  isDraining: false,
+  /** Runs no longer active whose last summary is not yet written, by run id. */
+  retired: {} as Record<string, ProjectmanCostRun>,
+}
+
+/**
+ * Writes the retired runs' and the active run's summaries into the kept runs
+ * until none is outstanding: the one writer, so no write loses another's
+ * run. Never throws.
+ */
+async function drainCost($: EngineInterface): Promise<void> {
+  try {
+    while (costQueue.isStale) {
+      costQueue.isStale = false
+      const retired = Object.values(costQueue.retired)
+      costQueue.retired = {}
+      const active = (await read($, cost))?.run
+      const runs = active ? [...retired, active] : retired
+      if (runs.length === 0) continue
+      let kept: unknown = await $.store.get(COST_RUNS_KEY)
+      for (const run of runs) kept = rememberRun(kept, run)
+      await $.store.set(COST_RUNS_KEY, kept)
+    }
+  } catch {
+    // Persisting is a convenience; the live value stands without it.
+  } finally {
+    costQueue.isDraining = false
+  }
+}
+
+/** A run's kept summary from `$.store`; undefined when there is none or the store cannot be read. */
+async function keptRun($: EngineInterface, runId: string): Promise<ProjectmanCostRun | undefined> {
+  try {
+    return keptRuns(await $.store.get(COST_RUNS_KEY))[runId]
+  } catch {
+    return undefined
+  }
+}
+
+/** Asks for the run summary to be persisted, on the timer so no request waits on the store. */
+function persistCost($: EngineInterface): void {
+  costQueue.isStale = true
+  if (costQueue.isDraining) return
+  costQueue.isDraining = true
+  try {
+    $.clock.after(0, () => void drainCost($))
+  } catch {
+    costQueue.isDraining = false
+  }
+}
 
 /** A command's MCP answers, parsed and in order, or why they could not be had. */
 type Fetched = { results: Yaml[] } | { error: string }
@@ -353,4 +426,51 @@ export const register: Register = (on, options) => {
     }
     return result
   }).catch(($, e, next) => next(e))
+
+  // US-PM-61-6: a pm call carrying a run id makes that run the active one
+  // and, when it names a task, sets the task its loop (the main session or
+  // the subagent by `agentId`) works on. A run new to this session goes on
+  // from its summary in `$.store`, so a restart keeps adding to it. A
+  // refused call attributes nothing.
+  on('tool.call', { tool: PM_TOOL }, async ($, e, next) => {
+    const result = await next(e)
+    try {
+      const call = pmRunCall(e as unknown as { tool: string } & Record<string, unknown>)
+      if (call !== undefined && result.deny === undefined) {
+        const loop = e.agentId ?? MAIN_LOOP
+        const at = await $.clock.now()
+        const current = await read($, cost)
+        const seed = current?.run?.runId === call.runId ? undefined : await keptRun($, call.runId)
+        await update($, cost, (v) => {
+          // A run this call ends: its last summary is written with the next drain.
+          if (v?.run && v.run.runId !== call.runId) costQueue.retired[v.run.runId] = v.run
+          return attribute(v, call, loop, at, seed)
+        })
+        persistCost($)
+      }
+    } catch {
+      // Recording is a convenience; the tool's result stands without it.
+    }
+    return result
+  }).catch(($, e, next) => next(e))
+
+  // US-PM-61-6: each model request's input, cache-read and cache-write
+  // tokens, once its response is whole, charged to the task of the loop it
+  // was made in. Nothing is recorded while no run is active. The response
+  // streams through untouched.
+  on('turn.step', async function* ($, e, next) {
+    const response = yield* next(e)
+    try {
+      const usage = response.usage
+      if (usage !== null && (await read($, cost))?.run) {
+        const at = await $.clock.now()
+        const loop = e.agentId ?? MAIN_LOOP
+        await update($, cost, (v) => recordRequest(v, loop, usage, at))
+        persistCost($)
+      }
+    } catch {
+      // Recording is a convenience; the response stands without it.
+    }
+    return response
+  })
 }

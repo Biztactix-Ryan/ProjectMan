@@ -61,12 +61,66 @@ export type ProjectmanBandState = {
   reads: number
 }
 
+// US-PM-61-6: each model request's token usage while an orchestrator run is
+// active, charged to the task its loop works on. Live in `projectman.cost`;
+// the run's summary is also kept in `$.store` under `costRuns`, by run id.
+
+/** Token counts summed over some requests. */
+export type ProjectmanTokenCounts = {
+  requests: number
+  /** Uncached input tokens. */
+  input: number
+  /** Input tokens the prompt cache served. */
+  cacheRead: number
+  /** Input tokens written to the prompt cache. */
+  cacheWrite: number
+  output: number
+}
+
+/** One model request of the active run, as the API reported its usage. */
+export type ProjectmanCostRequest = {
+  /** When the response was whole, in `$.clock.now()`'s milliseconds. */
+  at: number
+  /** The task it was charged to; null when none could be found. */
+  taskId: string | null
+  /** The subagent's loop it was made in; null for the main session. */
+  agentId: string | null
+  model: string
+  input: number
+  cacheRead: number
+  cacheWrite: number
+  output: number
+}
+
+/** A run's summary: what is persisted in `$.store`. */
+export type ProjectmanCostRun = {
+  runId: string
+  startedAt: number
+  updatedAt: number
+  /** Counts per task id. */
+  tasks: Record<string, ProjectmanTokenCounts>
+  /** Requests no task could be found for. */
+  unattributed: ProjectmanTokenCounts
+  totals: ProjectmanTokenCounts
+}
+
+/** The live recording: the active run, its recent requests and each loop's task. */
+export type ProjectmanCostState = {
+  /** The active run's summary; null before any run-carrying pm call. */
+  run: ProjectmanCostRun | null
+  /** The active run's most recent requests, newest last. */
+  requests: ProjectmanCostRequest[]
+  /** Loop key (`main`, or a subagent's id) to the task it last named. */
+  loops: Record<string, string>
+}
+
 declare module 'claude-code' {
   interface PluginState {
     projectman: {
       lastDenial: ProjectmanGuardDenial | null
       board: ProjectmanBoardView | null
       band: ProjectmanBandState | null
+      cost: ProjectmanCostState | null
     }
   }
 }
