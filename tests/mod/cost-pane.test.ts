@@ -312,6 +312,50 @@ test('US-PM-61-2 criterion: the pane redraws as each request is recorded', async
   await ui.unmount()
 })
 
+test('US-PM-61-2 criterion: the pane marks a gap over the TTL per loop, and not one of exactly the TTL', async ($, on) => {
+  // Main loop at 0 and 60m (exactly the TTL: not past it); the worker at 30m
+  // and 90m + 1ms (its own gap is past the TTL, though only 30m + 1ms after
+  // the main loop's last request, so a gap taken across loops would miss it).
+  const clock = mock.clock(on, { now: 0 })
+  const w = world(on)
+  await grab($, 'US-PM-61-6')
+  await request($, w, usage(3, 1200, 400))
+  await clock.advance(30 * MIN)
+  await grab($, 'US-PM-61-7', WORKER)
+  await request($, w, usage(5, 0, 900), { agentId: WORKER })
+  await clock.advance(30 * MIN)
+  await request($, w, usage(2, 1600, 0))
+  await clock.advance(30 * MIN + 1)
+  await request($, w, usage(4, 0, 1100), { agentId: WORKER })
+
+  // Recorded exactly, per task.
+  const recorded = live(w)?.run
+  expect(recorded?.tasks).toEqual({
+    'US-PM-61-6': { requests: 2, input: 5, cacheRead: 2800, cacheWrite: 400, output: 20 },
+    'US-PM-61-7': { requests: 2, input: 9, cacheRead: 0, cacheWrite: 2000, output: 20 },
+  })
+  expect(recorded?.pastTtl).toEqual({ 'US-PM-61-7': 1 })
+
+  const ui = await mount($, 'terminal')
+  expect((await ui.find({ type: 'Text', text: /requests · cache TTL/ }))?.text).toBe('4 requests · cache TTL 1h00m · 1 past TTL')
+  const rows = (await ui.findAll({ type: 'Text', text: /req · input/ })).map((t) => t.text)
+  expect(rows).toEqual([
+    'US-PM-61-6  2 req · input 5 · cache read 2.8k · cache write 400',
+    'US-PM-61-7  2 req · input 9 · cache read 0 · cache write 2k · 1 past TTL',
+    'Total  4 req · input 14 · cache read 2.8k · cache write 2.4k',
+  ])
+  // Newest first: only the worker's request past its own loop's TTL is marked.
+  const requests = (await ui.findAll({ type: 'Text', text: /  input \d/ })).map((t) => [t.text, t.props.color])
+  expect(requests).toEqual([
+    [`+1h00m  US-PM-61-7 (worker)  input 4 · read 0 · write 1.1k  ${PAST_TTL_MARK}`, 'warning'],
+    ['+1h00m  US-PM-61-6  input 2 · read 1.6k · write 0', undefined],
+    ['first  US-PM-61-7 (worker)  input 5 · read 0 · write 900', undefined],
+    ['first  US-PM-61-6  input 3 · read 1.2k · write 400', undefined],
+  ])
+  expect(live(w)?.requests.map((r) => r.gapMs)).toEqual([null, null, CACHE_TTL_MS, CACHE_TTL_MS + 1])
+  await ui.unmount()
+})
+
 test('with no run live the pane draws the most recently kept run, and says so', async ($, on) => {
   const older: ProjectmanCostRun = { ...newRun('orch-2026-10-01-0001', 1), updatedAt: 10 }
   const recent: ProjectmanCostRun = {
