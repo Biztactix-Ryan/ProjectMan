@@ -475,6 +475,15 @@ def test_the_reference_transcript_reports_every_number(baseline_transcript):
     assert report["ttl"] == {"5m": 1, "1h": 2}
     assert report["heartbeats"] == 1
 
+    # Summed once per message id, like `calls`: the triplicated dispatch
+    # record counts its usage once.
+    assert report["totals"] == {
+        "input": 160,
+        "cache_read": 140_460,
+        "cache_write": 26_380,
+        "output": 700,
+    }
+
     assert report["waits"] == {"p50": 8.0, "p90": 70.0, "max": 70.0, "n": 2}
 
     assert report["misses"] == [
@@ -506,6 +515,7 @@ def test_the_cli_prints_and_serialises_the_reference_report(baseline_transcript)
     for headline in (
         "20,000", "30,000", "10,000", "5,000.0", "10,000.0", "63.0",
         "5m 1  1h 2  heartbeats 1",
+        "input 160  cache read 140,460  cache write 26,380  output 700",
     ):
         assert headline in text.output, f"{headline!r} missing:\n{text.output}"
 

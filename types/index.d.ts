@@ -61,12 +61,101 @@ export type ProjectmanBandState = {
   reads: number
 }
 
+// US-PM-61-6: each model request's token usage while an orchestrator run is
+// active, charged to the task its loop works on. Live in `projectman.cost`;
+// the run's summary is also kept in `$.store` under `costRuns`, by run id.
+
+/** Token counts summed over some requests. */
+export type ProjectmanTokenCounts = {
+  requests: number
+  /** Uncached input tokens. */
+  input: number
+  /** Input tokens the prompt cache served. */
+  cacheRead: number
+  /** Input tokens written to the prompt cache. */
+  cacheWrite: number
+  output: number
+}
+
+/** One model request of the active run, as the API reported its usage. */
+export type ProjectmanCostRequest = {
+  /** When the response was whole, in `$.clock.now()`'s milliseconds. */
+  at: number
+  /** The task it was charged to; null when none could be found. */
+  taskId: string | null
+  /** The subagent's loop it was made in; null for the main session. */
+  agentId: string | null
+  model: string
+  input: number
+  cacheRead: number
+  cacheWrite: number
+  output: number
+  // US-PM-61-7: the request's place in its loop's cache timeline.
+  /** Milliseconds since the previous request in the same loop; null for the loop's first. */
+  gapMs: number | null
+  /** The gap outlived the cache TTL: the loop's cached prefix had expired. */
+  isPastTtl: boolean
+  /** Made in a heartbeat turn: counted in the run's `heartbeat`, not a task's. */
+  isHeartbeat: boolean
+}
+
+/** The heartbeat requests' counts and what they saved (US-PM-61-7). */
+export type ProjectmanHeartbeatCounts = ProjectmanTokenCounts & {
+  /**
+   * Waits a heartbeat bridged: a request whose wait since its loop's last
+   * non-heartbeat request outlived the TTL, yet a heartbeat in between kept
+   * the gap under it, so the cache still served the prefix.
+   */
+  bridged: number
+  /** Those requests' cache-read tokens: the prefix they would have written afresh. */
+  avoidedWrites: number
+}
+
+/** A run's summary: what is persisted in `$.store`. */
+export type ProjectmanCostRun = {
+  runId: string
+  startedAt: number
+  updatedAt: number
+  /** Counts per task id. */
+  tasks: Record<string, ProjectmanTokenCounts>
+  /** Requests no task could be found for. */
+  unattributed: ProjectmanTokenCounts
+  totals: ProjectmanTokenCounts
+  /** Heartbeat requests, kept out of `tasks` (US-PM-61-7); absent until the first one. */
+  heartbeat?: ProjectmanHeartbeatCounts
+  /**
+   * Requests that followed a gap over the cache TTL, by the bucket they were
+   * counted in: a task id, `heartbeat` or `unattributed` (US-PM-61-7);
+   * absent until the first one.
+   */
+  pastTtl?: Record<string, number>
+}
+
+/** The live recording: the active run, its recent requests and each loop's task. */
+export type ProjectmanCostState = {
+  /** The active run's summary; null before any run-carrying pm call. */
+  run: ProjectmanCostRun | null
+  /** The active run's most recent requests, newest last. */
+  requests: ProjectmanCostRequest[]
+  /** Loop key (`main`, or a subagent's id) to the task it last named. */
+  loops: Record<string, string>
+  // US-PM-61-7: gap timing and heartbeat detection. Absent until first set;
+  // carried across a change of run, as a loop's cache outlives the run id.
+  /** Loop key to when its last request's response was whole. */
+  lastAt?: Record<string, number>
+  /** Loop key to when its last non-heartbeat request's response was whole. */
+  lastWorkAt?: Record<string, number>
+  /** The main-loop turn the heartbeat prompt started; null when the current turn is not one. */
+  heartbeatTurn?: string | null
+}
+
 declare module 'claude-code' {
   interface PluginState {
     projectman: {
       lastDenial: ProjectmanGuardDenial | null
       board: ProjectmanBoardView | null
       band: ProjectmanBandState | null
+      cost: ProjectmanCostState | null
     }
   }
 }
