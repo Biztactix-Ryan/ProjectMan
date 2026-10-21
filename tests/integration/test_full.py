@@ -924,9 +924,9 @@ class TestSearchAndIndex:
         )
         result = client.call_tool("pm_search", {"query": "auth"})
         data = yaml.safe_load(result)
-        assert isinstance(data, list)
-        # Should find the auth story (keyword or embedding)
-        assert len(data) >= 1 or data == []  # OK if empty if search not implemented
+        # A mapping of the ranked hits and the unparseable-file count (US-PM-40).
+        assert isinstance(data["results"], list)
+        assert "skipped" in data
 
     def test_pm_burndown(self, client):
         """pm_burndown returns correct point totals."""

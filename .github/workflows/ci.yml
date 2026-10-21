@@ -18,6 +18,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # The .project store lives on the projectman branch (a worktree at
+      # .project locally); tests that guard the ADRs read it from there.
+      - name: Check out the .project store
+        uses: actions/checkout@v4
+        with:
+          ref: projectman
+          path: .project
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
@@ -36,8 +44,7 @@ jobs:
             --ignore=tests/test_create_pr.py \
             --ignore=tests/test_hub_pr_workflow.py \
             --ignore=tests/test_feature_branch_workflow.py \
-            --ignore=tests/test_simultaneous_prs.py \
-            -x
+            --ignore=tests/test_simultaneous_prs.py
 
   integration-stdio:
     name: "Integration: STDIO transport"

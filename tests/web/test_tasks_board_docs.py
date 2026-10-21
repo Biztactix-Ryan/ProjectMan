@@ -371,8 +371,13 @@ def test_search_returns_results(client):
     assert payload["skipped"] == 0
 
 
-def test_search_reports_files_it_could_not_parse(client, tmp_project):
+def test_search_reports_files_it_could_not_parse(client, tmp_project, monkeypatch):
     """A broken item file is skipped and counted, not raised (US-PM-40)."""
+    import sys
+
+    # Only the keyword path parses item files; with fastembed installed the
+    # embedding index answers first and always reports 0 skipped.
+    monkeypatch.setitem(sys.modules, "projectman.embeddings", None)
     _create_story(client, "Searchable Story")
     (tmp_project / ".project" / "stories" / "US-TST-99.md").write_text(
         "---\n: bad\n---\n", encoding="utf-8"

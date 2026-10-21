@@ -310,8 +310,13 @@ def test_pm_search_tag_filter(tmp_project):
     assert data["skipped"] == 0
 
 
-def test_pm_search_skips_a_malformed_file_and_reports_the_count(tmp_project):
+def test_pm_search_skips_a_malformed_file_and_reports_the_count(tmp_project, monkeypatch):
     """One broken item file costs that file, not the whole search (US-PM-40)."""
+    import sys
+
+    # Only the keyword path parses item files; with fastembed installed the
+    # embedding index answers first and always reports 0 skipped.
+    monkeypatch.setitem(sys.modules, "projectman.embeddings", None)
     from projectman.server import pm_create_story, pm_search
 
     pm_create_story("Authentication system", "Login and signup flow")
